@@ -193,6 +193,11 @@ impl Database {
     /// Create a new channel
     pub async fn create_channel(&self, name: &str, created_by: Uuid) -> Result<Channel> {
         let channel_id = Uuid::new_v4();
+        self.create_channel_with_id(channel_id, name, created_by).await
+    }
+
+    /// Create a new channel with a specific ID
+    pub async fn create_channel_with_id(&self, channel_id: Uuid, name: &str, created_by: Uuid) -> Result<Channel> {
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

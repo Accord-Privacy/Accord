@@ -454,7 +454,7 @@ async fn test_channel_join_leave_and_messaging() {
     sink2.send(WsMessage::Text(join_message2.to_string())).await.unwrap();
 
     // Give some time for join operations to complete
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Verify both users are in the channel
     let channel_members = server.state.get_channel_members(channel_id).await;
@@ -509,7 +509,7 @@ async fn test_channel_join_leave_and_messaging() {
     sink2.send(WsMessage::Text(leave_message.to_string())).await.unwrap();
 
     // Give some time for leave operation to complete
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Verify only user1 is in the channel now
     let channel_members = server.state.get_channel_members(channel_id).await;

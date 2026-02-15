@@ -123,11 +123,27 @@ impl AppState {
         }
     }
 
-    /// Add user to channel
+    /// Add user to channel (auto-creates channel if it doesn't exist)
     pub async fn join_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
-        match self.db.add_user_to_channel(channel_id, user_id).await {
-            Ok(()) => Ok(()),
-            Err(e) => Err(format!("Failed to join channel: {}", e)),
+        // Check if channel exists, if not create it
+        match self.db.get_channel(channel_id).await {
+            Ok(None) => {
+                // Channel doesn't exist, create it with a default name and the specific ID
+                let channel_name = format!("Channel-{}", channel_id.simple());
+                // Create channel will automatically add the creator as a member
+                match self.db.create_channel_with_id(channel_id, &channel_name, user_id).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(format!("Failed to create channel: {}", e)),
+                }
+            }
+            Ok(Some(_)) => {
+                // Channel exists, just add the user
+                match self.db.add_user_to_channel(channel_id, user_id).await {
+                    Ok(()) => Ok(()),
+                    Err(e) => Err(format!("Failed to join channel: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Database error: {}", e)),
         }
     }
 
@@ -224,3 +240,36 @@ impl AppState {
 
 /// Shared application state type
 pub type SharedState = Arc<AppState>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_join_channel_auto_create() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        // Create two users
+        let user1_id = state.register_user("user1".to_string(), "key1".to_string()).await.unwrap();
+        let user2_id = state.register_user("user2".to_string(), "key2".to_string()).await.unwrap();
+
+        let channel_id = Uuid::new_v4();
+
+        // User1 joins channel (should create it)
+        let result1 = state.join_channel(user1_id, channel_id).await;
+        assert!(result1.is_ok(), "User1 should be able to join channel: {:?}", result1);
+
+        let members = state.get_channel_members(channel_id).await;
+        assert_eq!(members.len(), 1);
+        assert!(members.contains(&user1_id));
+
+        // User2 joins channel (should add to existing)
+        let result2 = state.join_channel(user2_id, channel_id).await;
+        assert!(result2.is_ok(), "User2 should be able to join channel: {:?}", result2);
+
+        let members = state.get_channel_members(channel_id).await;
+        assert_eq!(members.len(), 2, "Channel should have 2 members, got {:?}", members);
+        assert!(members.contains(&user1_id), "Channel should contain user1");
+        assert!(members.contains(&user2_id), "Channel should contain user2");
+    }
+}
