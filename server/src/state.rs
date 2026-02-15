@@ -1,6 +1,7 @@
 //! State management for the Accord relay server with SQLite persistence
 
 use crate::db::Database;
+use crate::files::FileHandler;
 use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
 use crate::permissions::{Permission, has_permission};
@@ -15,6 +16,8 @@ use uuid::Uuid;
 pub struct AppState {
     /// Database connection for persistent storage
     pub db: Database,
+    /// File handler for encrypted file storage
+    pub file_handler: FileHandler,
     /// Active authentication tokens (in-memory for performance)
     pub auth_tokens: RwLock<HashMap<String, AuthToken>>,
     /// Active WebSocket connections indexed by user ID
@@ -41,8 +44,11 @@ impl AppState {
     /// Create new application state with database connection
     pub async fn new(db_path: &str) -> Result<Self> {
         let db = Database::new(db_path).await?;
+        let file_handler = FileHandler::with_default_config();
+        file_handler.init().await?;
         Ok(Self {
             db,
+            file_handler,
             auth_tokens: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             voice_channels: RwLock::new(HashMap::new()),

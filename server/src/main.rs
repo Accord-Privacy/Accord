@@ -4,6 +4,7 @@
 //! without having access to decrypt user content.
 
 mod db;
+mod files;
 mod handlers;
 mod models;
 mod node;
@@ -16,7 +17,14 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use handlers::{auth_handler, create_invite_handler, create_node_handler, delete_channel_handler, get_channel_messages_handler, get_node_handler, get_node_members_handler, get_user_profile_handler, join_node_handler, kick_user_handler, leave_node_handler, list_invites_handler, revoke_invite_handler, search_messages_handler, update_node_handler, update_user_profile_handler, use_invite_handler, health_handler, register_handler, ws_handler};
+use handlers::{
+    auth_handler, create_invite_handler, create_node_handler, delete_channel_handler, 
+    get_channel_messages_handler, get_node_handler, get_node_members_handler, get_user_profile_handler, 
+    join_node_handler, kick_user_handler, leave_node_handler, list_invites_handler, revoke_invite_handler, 
+    search_messages_handler, update_node_handler, update_user_profile_handler, use_invite_handler, 
+    health_handler, register_handler, ws_handler,
+    upload_file_handler, download_file_handler, list_channel_files_handler, delete_file_handler,
+};
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -88,6 +96,11 @@ async fn main() -> Result<()> {
         // Channel endpoints
         .route("/channels/:id", delete(delete_channel_handler))
         .route("/channels/:id/messages", get(get_channel_messages_handler))
+        // File sharing endpoints
+        .route("/channels/:id/files", post(upload_file_handler))
+        .route("/channels/:id/files", get(list_channel_files_handler))
+        .route("/files/:id", get(download_file_handler))
+        .route("/files/:id", delete(delete_file_handler))
         // Search endpoints
         .route("/nodes/:id/search", get(search_messages_handler))
         // User profile endpoints

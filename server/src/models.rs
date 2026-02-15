@@ -255,6 +255,19 @@ pub struct MessageMetadata {
     pub created_at: u64,
 }
 
+/// File metadata for encrypted file sharing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileMetadata {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub uploader_id: Uuid,
+    pub encrypted_filename: Vec<u8>, // Encrypted filename (server can't read)
+    pub file_size_bytes: i64,
+    pub content_hash: String, // SHA-256 of encrypted content
+    pub storage_path: String,
+    pub created_at: u64,
+}
+
 /// Response for paginated message history
 #[derive(Debug, Serialize)]
 pub struct MessageHistoryResponse {

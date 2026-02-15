@@ -3,7 +3,7 @@
 //! Provides persistent storage for users, nodes, channels, and messages while maintaining
 //! zero-knowledge properties for encrypted content.
 
-use crate::models::{Channel, User, NodeInvite};
+use crate::models::{Channel, User, NodeInvite, FileMetadata};
 use base64::Engine;
 use crate::node::{Node, NodeMember, NodeRole};
 use anyhow::{Context, Result};
@@ -180,6 +180,27 @@ impl Database {
         .await
         .context("Failed to create user_profiles table")?;
 
+        // Create files table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS files (
+                id TEXT PRIMARY KEY NOT NULL,
+                channel_id TEXT NOT NULL,
+                uploader_id TEXT NOT NULL,
+                encrypted_filename BLOB NOT NULL,
+                file_size_bytes INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                storage_path TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE,
+                FOREIGN KEY (uploader_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create files table")?;
+
         // Create indexes
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
             .execute(&self.pool)
@@ -212,6 +233,15 @@ impl Database {
             .execute(&self.pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_user_profiles_status ON user_profiles (status)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_channel ON files (channel_id, created_at)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_uploader ON files (uploader_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files (content_hash)")
             .execute(&self.pool)
             .await?;
 
@@ -920,6 +950,89 @@ impl Database {
 
         rows.iter().map(|r| parse_member_with_profile(r)).collect()
     }
+
+    // ── File Operations ──
+
+    /// Store file metadata in the database
+    pub async fn store_file_metadata(
+        &self,
+        file_id: Uuid,
+        channel_id: Uuid,
+        uploader_id: Uuid,
+        encrypted_filename: &[u8],
+        file_size_bytes: i64,
+        content_hash: &str,
+        storage_path: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO files (id, channel_id, uploader_id, encrypted_filename, file_size_bytes, content_hash, storage_path, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#
+        )
+        .bind(file_id.to_string())
+        .bind(channel_id.to_string())
+        .bind(uploader_id.to_string())
+        .bind(encrypted_filename)
+        .bind(file_size_bytes)
+        .bind(content_hash)
+        .bind(storage_path)
+        .bind(now() as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to store file metadata")?;
+
+        Ok(())
+    }
+
+    /// Get file metadata by ID
+    pub async fn get_file_metadata(&self, file_id: Uuid) -> Result<Option<FileMetadata>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, channel_id, uploader_id, encrypted_filename, file_size_bytes, content_hash, storage_path, created_at
+            FROM files
+            WHERE id = ?
+            "#
+        )
+        .bind(file_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query file metadata")?;
+
+        match row {
+            Some(row) => Ok(Some(parse_file_metadata(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// List files in a channel
+    pub async fn list_channel_files(&self, channel_id: Uuid) -> Result<Vec<FileMetadata>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, channel_id, uploader_id, encrypted_filename, file_size_bytes, content_hash, storage_path, created_at
+            FROM files
+            WHERE channel_id = ?
+            ORDER BY created_at DESC
+            "#
+        )
+        .bind(channel_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channel files")?;
+
+        rows.iter().map(|r| parse_file_metadata(r)).collect()
+    }
+
+    /// Delete file metadata from database
+    pub async fn delete_file_metadata(&self, file_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM files WHERE id = ?")
+            .bind(file_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete file metadata")?;
+
+        Ok(())
+    }
 }
 
 // ── Helpers ──
@@ -1003,6 +1116,19 @@ fn parse_member_with_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::mod
             custom_status: row.get("custom_status"),
             updated_at: 0, // Will be set properly when profile exists
         },
+    })
+}
+
+fn parse_file_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::FileMetadata> {
+    Ok(crate::models::FileMetadata {
+        id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+        channel_id: Uuid::parse_str(&row.get::<String, _>("channel_id"))?,
+        uploader_id: Uuid::parse_str(&row.get::<String, _>("uploader_id"))?,
+        encrypted_filename: row.get::<Vec<u8>, _>("encrypted_filename"),
+        file_size_bytes: row.get::<i64, _>("file_size_bytes"),
+        content_hash: row.get("content_hash"),
+        storage_path: row.get("storage_path"),
+        created_at: row.get::<i64, _>("created_at") as u64,
     })
 }
 

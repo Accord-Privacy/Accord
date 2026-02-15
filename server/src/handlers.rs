@@ -3,7 +3,7 @@
 use crate::models::{
     AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest, 
     ErrorResponse, HealthResponse, RegisterRequest, RegisterResponse, UseInviteResponse, 
-    WsMessage, WsMessageType,
+    WsMessage, WsMessageType, FileMetadata,
 };
 use crate::node::NodeInfo;
 use crate::permissions::{Permission, has_permission};
@@ -11,12 +11,13 @@ use crate::state::SharedState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Query, State,
+        Multipart, Path, Query, State,
     },
-    http::StatusCode,
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
     Json,
 };
+use axum::body::Body;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
@@ -762,6 +763,304 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
     }
 
     Ok(())
+}
+
+// ── File Sharing Endpoints ──
+
+/// Upload an encrypted file to a channel
+pub async fn upload_file_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Get user from auth token (this assumes auth middleware sets user info)
+    // For now, we'll extract it from a custom header - in a real implementation,
+    // this would be handled by auth middleware
+    let user_id = match extract_user_from_request(&state).await {
+        Ok(user_id) => user_id,
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
+            error: "Authentication required".into(), 
+            code: 401 
+        })))
+    };
+
+    // Check if user is member of the channel
+    match state.db.get_channel_members(channel_id).await {
+        Ok(members) if members.contains(&user_id) => {},
+        Ok(_) => return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+            error: "Not a member of this channel".into(), 
+            code: 403 
+        }))),
+        Err(_) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
+            error: "Channel not found".into(), 
+            code: 404 
+        })))
+    }
+
+    // Extract file data from multipart
+    let mut encrypted_filename: Option<Vec<u8>> = None;
+    let mut file_data: Option<Vec<u8>> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("");
+        match name {
+            "encrypted_filename" => {
+                if let Ok(data) = field.bytes().await {
+                    encrypted_filename = Some(data.to_vec());
+                }
+            }
+            "file" => {
+                if let Ok(data) = field.bytes().await {
+                    file_data = Some(data.to_vec());
+                }
+            }
+            _ => continue,
+        }
+    }
+
+    let encrypted_filename = encrypted_filename.ok_or_else(|| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { 
+            error: "Missing encrypted filename".into(), 
+            code: 400 
+        }))
+    })?;
+
+    let file_data = file_data.ok_or_else(|| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { 
+            error: "Missing file data".into(), 
+            code: 400 
+        }))
+    })?;
+
+    // Store file and metadata
+    let file_id = Uuid::new_v4();
+    match state.file_handler.store_file(file_id, &file_data).await {
+        Ok((storage_path, content_hash)) => {
+            // Store metadata in database
+            if let Err(e) = state.db.store_file_metadata(
+                file_id,
+                channel_id,
+                user_id,
+                &encrypted_filename,
+                file_data.len() as i64,
+                &content_hash,
+                &storage_path,
+            ).await {
+                // Clean up stored file if database insertion fails
+                let _ = state.file_handler.delete_file(&storage_path).await;
+                error!("Failed to store file metadata: {}", e);
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                    error: "Failed to store file metadata".into(), 
+                    code: 500 
+                })));
+            }
+
+            info!("File uploaded: {} to channel {}", file_id, channel_id);
+            Ok(Json(serde_json::json!({
+                "file_id": file_id,
+                "message": "File uploaded successfully"
+            })))
+        }
+        Err(e) => {
+            error!("Failed to store file: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: format!("Failed to store file: {}", e), 
+                code: 500 
+            })))
+        }
+    }
+}
+
+/// Download an encrypted file by ID
+pub async fn download_file_handler(
+    State(state): State<SharedState>,
+    Path(file_id): Path<Uuid>,
+) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
+    // Get user from auth token
+    let user_id = match extract_user_from_request(&state).await {
+        Ok(user_id) => user_id,
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
+            error: "Authentication required".into(), 
+            code: 401 
+        })))
+    };
+
+    // Get file metadata
+    let file_metadata = match state.db.get_file_metadata(file_id).await {
+        Ok(Some(metadata)) => metadata,
+        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
+            error: "File not found".into(), 
+            code: 404 
+        }))),
+        Err(e) => {
+            error!("Failed to get file metadata: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: "Failed to get file metadata".into(), 
+                code: 500 
+            })));
+        }
+    };
+
+    // Check if user is member of the channel
+    match state.db.get_channel_members(file_metadata.channel_id).await {
+        Ok(members) if members.contains(&user_id) => {},
+        Ok(_) => return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+            error: "Not a member of this channel".into(), 
+            code: 403 
+        }))),
+        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+            error: "Failed to check channel membership".into(), 
+            code: 500 
+        })))
+    }
+
+    // Read file data
+    match state.file_handler.read_file(&file_metadata.storage_path).await {
+        Ok(file_data) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, "application/octet-stream".parse().unwrap());
+            headers.insert(header::CONTENT_LENGTH, file_data.len().to_string().parse().unwrap());
+            headers.insert(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", file_id).parse().unwrap()
+            );
+
+            Ok((headers, file_data).into_response())
+        }
+        Err(e) => {
+            error!("Failed to read file: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: "Failed to read file".into(), 
+                code: 500 
+            })))
+        }
+    }
+}
+
+/// List files in a channel
+pub async fn list_channel_files_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+) -> Result<Json<Vec<FileMetadata>>, (StatusCode, Json<ErrorResponse>)> {
+    // Get user from auth token
+    let user_id = match extract_user_from_request(&state).await {
+        Ok(user_id) => user_id,
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
+            error: "Authentication required".into(), 
+            code: 401 
+        })))
+    };
+
+    // Check if user is member of the channel
+    match state.db.get_channel_members(channel_id).await {
+        Ok(members) if members.contains(&user_id) => {},
+        Ok(_) => return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+            error: "Not a member of this channel".into(), 
+            code: 403 
+        }))),
+        Err(_) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
+            error: "Channel not found".into(), 
+            code: 404 
+        })))
+    }
+
+    // Get file list
+    match state.db.list_channel_files(channel_id).await {
+        Ok(files) => Ok(Json(files)),
+        Err(e) => {
+            error!("Failed to list channel files: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: "Failed to list channel files".into(), 
+                code: 500 
+            })))
+        }
+    }
+}
+
+/// Delete a file
+pub async fn delete_file_handler(
+    State(state): State<SharedState>,
+    Path(file_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Get user from auth token
+    let user_id = match extract_user_from_request(&state).await {
+        Ok(user_id) => user_id,
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
+            error: "Authentication required".into(), 
+            code: 401 
+        })))
+    };
+
+    // Get file metadata
+    let file_metadata = match state.db.get_file_metadata(file_id).await {
+        Ok(Some(metadata)) => metadata,
+        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
+            error: "File not found".into(), 
+            code: 404 
+        }))),
+        Err(e) => {
+            error!("Failed to get file metadata: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: "Failed to get file metadata".into(), 
+                code: 500 
+            })));
+        }
+    };
+
+    // Check permissions - only uploader or admin can delete
+    let is_uploader = file_metadata.uploader_id == user_id;
+    
+    // Check if user is admin of the node containing this channel
+    let is_admin = match state.db.get_channel(file_metadata.channel_id).await {
+        Ok(Some(channel)) => {
+            match state.db.get_node_member(channel.node_id, user_id).await {
+                Ok(Some(member)) => matches!(member.role, crate::node::NodeRole::Admin),
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+
+    if !is_uploader && !is_admin {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+            error: "Only the uploader or admins can delete files".into(), 
+            code: 403 
+        })));
+    }
+
+    // Delete from filesystem
+    if let Err(e) = state.file_handler.delete_file(&file_metadata.storage_path).await {
+        error!("Failed to delete file from disk: {}", e);
+        // Continue with database deletion even if file deletion fails
+    }
+
+    // Delete from database
+    match state.db.delete_file_metadata(file_id).await {
+        Ok(()) => {
+            info!("File deleted: {}", file_id);
+            Ok(Json(serde_json::json!({
+                "message": "File deleted successfully"
+            })))
+        }
+        Err(e) => {
+            error!("Failed to delete file metadata: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: "Failed to delete file metadata".into(), 
+                code: 500 
+            })))
+        }
+    }
+}
+
+/// Extract user ID from request (placeholder - should be handled by auth middleware)
+async fn extract_user_from_request(_state: &SharedState) -> Result<Uuid, anyhow::Error> {
+    // This is a placeholder implementation
+    // In a real implementation, this would extract the user ID from a JWT token
+    // or session stored in headers/cookies, validated by auth middleware
+    
+    // For development/testing, we'll use a hardcoded user ID
+    // TODO: Replace with proper authentication
+    Ok(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000")?)
 }
 
 fn now_secs() -> u64 {
