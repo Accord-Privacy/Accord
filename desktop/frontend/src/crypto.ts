@@ -153,6 +153,72 @@ export async function decryptMessage(key: CryptoKey, ciphertext: string): Promis
 }
 
 /**
+ * Encrypt a file buffer using AES-256-GCM
+ */
+export async function encryptFile(key: CryptoKey, fileBuffer: ArrayBuffer): Promise<ArrayBuffer> {
+  try {
+    // Generate a random IV (96 bits for GCM)
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    
+    const encrypted = await window.crypto.subtle.encrypt(
+      {
+        name: 'AES-GCM',
+        iv: iv
+      },
+      key,
+      fileBuffer
+    );
+    
+    // Combine IV and encrypted data
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encrypted), iv.length);
+    
+    return combined.buffer;
+  } catch (error) {
+    throw new Error(`Failed to encrypt file: ${error}`);
+  }
+}
+
+/**
+ * Decrypt a file buffer using AES-256-GCM
+ */
+export async function decryptFile(key: CryptoKey, encryptedBuffer: ArrayBuffer): Promise<ArrayBuffer> {
+  try {
+    // Extract IV and encrypted data
+    const iv = new Uint8Array(encryptedBuffer.slice(0, 12));
+    const encrypted = encryptedBuffer.slice(12);
+    
+    const decrypted = await window.crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: iv
+      },
+      key,
+      encrypted
+    );
+    
+    return decrypted;
+  } catch (error) {
+    throw new Error(`Failed to decrypt file: ${error}`);
+  }
+}
+
+/**
+ * Encrypt filename using the same method as messages
+ */
+export async function encryptFilename(key: CryptoKey, filename: string): Promise<string> {
+  return encryptMessage(key, filename);
+}
+
+/**
+ * Decrypt filename using the same method as messages
+ */
+export async function decryptFilename(key: CryptoKey, encryptedFilename: string): Promise<string> {
+  return decryptMessage(key, encryptedFilename);
+}
+
+/**
  * Export public key as base64 for server registration
  */
 export async function exportPublicKey(publicKey: CryptoKey): Promise<string> {

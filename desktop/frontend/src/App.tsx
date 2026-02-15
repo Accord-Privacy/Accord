@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "./api";
 import { AccordWebSocket } from "./ws";
-import { AppState, Message, WsIncomingMessage } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -13,6 +13,7 @@ import {
   clearChannelKeyCache,
   isCryptoSupported 
 } from "./crypto";
+import { FileUploadButton, FileList } from "./FileManager";
 
 // Mock data as fallback
 const MOCK_SERVERS = ["Accord Dev", "Gaming", "Music"];
@@ -52,6 +53,13 @@ function App() {
   const [activeServer, setActiveServer] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [ws, setWs] = useState<AccordWebSocket | null>(null);
+
+  // Real data state
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [members, setMembers] = useState<Array<NodeMember & { user: User }>>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
   // Check server availability on mount
   useEffect(() => {
@@ -131,6 +139,109 @@ function App() {
     });
   }, []);
 
+  // Load user's nodes
+  const loadNodes = useCallback(async () => {
+    if (!appState.token || !serverAvailable) return;
+    
+    try {
+      const userNodes = await api.getUserNodes(appState.token);
+      setNodes(userNodes);
+      
+      // Auto-select first node if none selected
+      if (userNodes.length > 0 && !selectedNodeId) {
+        setSelectedNodeId(userNodes[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to load nodes:', error);
+    }
+  }, [appState.token, serverAvailable, selectedNodeId]);
+
+  // Load channels for selected node
+  const loadChannels = useCallback(async (nodeId: string) => {
+    if (!appState.token || !serverAvailable) return;
+    
+    try {
+      const nodeChannels = await api.getNodeChannels(nodeId, appState.token);
+      setChannels(nodeChannels);
+      
+      // Auto-select first channel if none selected
+      if (nodeChannels.length > 0 && !selectedChannelId) {
+        setSelectedChannelId(nodeChannels[0].id);
+      }
+    } catch (error) {
+      console.error('Failed to load channels:', error);
+      setChannels([]);
+    }
+  }, [appState.token, serverAvailable, selectedChannelId]);
+
+  // Load members for selected node
+  const loadMembers = useCallback(async (nodeId: string) => {
+    if (!appState.token || !serverAvailable) return;
+    
+    try {
+      const nodeMembers = await api.getNodeMembers(nodeId, appState.token);
+      setMembers(nodeMembers);
+    } catch (error) {
+      console.error('Failed to load members:', error);
+      setMembers([]);
+    }
+  }, [appState.token, serverAvailable]);
+
+  // Load message history for selected channel
+  const loadMessages = useCallback(async (channelId: string) => {
+    if (!appState.token || !serverAvailable) return;
+    
+    try {
+      const messages = await api.getChannelMessages(channelId, appState.token);
+      
+      // Format messages for display
+      const formattedMessages = messages.map(msg => ({
+        ...msg,
+        time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }));
+      
+      setAppState(prev => ({
+        ...prev,
+        messages: formattedMessages,
+      }));
+    } catch (error) {
+      console.error('Failed to load messages:', error);
+      setAppState(prev => ({
+        ...prev,
+        messages: [],
+      }));
+    }
+  }, [appState.token, serverAvailable]);
+
+  // Handle node selection
+  const handleNodeSelect = useCallback((nodeId: string, index: number) => {
+    setSelectedNodeId(nodeId);
+    setSelectedChannelId(null);
+    setActiveServer(index);
+    setChannels([]);
+    setMembers([]);
+    setAppState(prev => ({ ...prev, messages: [] }));
+    
+    // Load channels and members for the selected node
+    loadChannels(nodeId);
+    loadMembers(nodeId);
+  }, [loadChannels, loadMembers]);
+
+  // Handle channel selection
+  const handleChannelSelect = useCallback((channelId: string, channelName: string) => {
+    setSelectedChannelId(channelId);
+    setActiveChannel(channelName);
+    setAppState(prev => ({ ...prev, activeChannel: channelId }));
+    
+    // Load message history for the selected channel
+    loadMessages(channelId);
+    
+    // Join channel via WebSocket if connected
+    if (ws && ws.isSocketConnected()) {
+      ws.joinChannel(channelId);
+    }
+  }, [loadMessages, ws]);
+
   // Handle authentication
   const handleAuth = async () => {
     if (!serverAvailable) {
@@ -185,6 +296,9 @@ function App() {
         setWs(socket);
         socket.connect();
 
+        // Load initial data
+        setTimeout(() => loadNodes(), 100);
+
       } else {
         // Register
         let publicKeyToUse = publicKey.trim();
@@ -236,6 +350,13 @@ function App() {
     setKeyPair(null);
     clearChannelKeyCache();
     
+    // Clear navigation state
+    setNodes([]);
+    setChannels([]);
+    setMembers([]);
+    setSelectedNodeId(null);
+    setSelectedChannelId(null);
+    
     setIsAuthenticated(false);
     setAppState({
       isAuthenticated: false,
@@ -253,16 +374,18 @@ function App() {
   const handleSendMessage = async () => {
     if (!message.trim()) return;
 
-    if (ws && ws.isSocketConnected() && appState.activeChannel) {
+    const channelToUse = selectedChannelId || appState.activeChannel;
+    
+    if (ws && ws.isSocketConnected() && channelToUse) {
       // Send via WebSocket if connected and we have an active channel
       try {
         let messageToSend = message;
         let isEncrypted = false;
 
         // Encrypt message if encryption is enabled and we have keys
-        if (encryptionEnabled && keyPair && appState.activeChannel) {
+        if (encryptionEnabled && keyPair && channelToUse) {
           try {
-            const channelKey = await getChannelKey(keyPair.privateKey, appState.activeChannel);
+            const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
             messageToSend = await encryptMessage(channelKey, message);
             isEncrypted = true;
           } catch (error) {
@@ -270,7 +393,7 @@ function App() {
           }
         }
 
-        ws.sendChannelMessage(appState.activeChannel, messageToSend);
+        ws.sendChannelMessage(channelToUse, messageToSend);
 
         // Add to local messages for immediate display
         const newMessage: Message = {
@@ -279,7 +402,7 @@ function App() {
           content: message, // Show original plaintext locally
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestamp: Date.now(),
-          channel_id: appState.activeChannel,
+          channel_id: channelToUse,
           isEncrypted: isEncrypted,
         };
 
@@ -339,11 +462,29 @@ function App() {
         setupWebSocketHandlers(socket);
         setWs(socket);
         socket.connect();
+
+        // Load initial data
+        setTimeout(() => loadNodes(), 100);
       }
     };
 
     checkExistingSession();
-  }, [serverAvailable, setupWebSocketHandlers, encryptionEnabled]);
+  }, [serverAvailable, setupWebSocketHandlers, encryptionEnabled, loadNodes]);
+
+  // Load channels and members when node is selected
+  useEffect(() => {
+    if (selectedNodeId && appState.token && serverAvailable) {
+      loadChannels(selectedNodeId);
+      loadMembers(selectedNodeId);
+    }
+  }, [selectedNodeId, appState.token, serverAvailable, loadChannels, loadMembers]);
+
+  // Load messages when channel is selected
+  useEffect(() => {
+    if (selectedChannelId && appState.token && serverAvailable) {
+      loadMessages(selectedChannelId);
+    }
+  }, [selectedChannelId, appState.token, serverAvailable, loadMessages]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -510,24 +651,33 @@ function App() {
   }
 
   // Use server data if available, fallback to mock data
-  const servers = appState.nodes.length > 0 ? appState.nodes.map(n => n.name) : MOCK_SERVERS;
-  const channels = MOCK_CHANNELS; // TODO: Replace with real channel data from selected node
-  const users = MOCK_USERS; // TODO: Replace with real member data from selected node
+  const servers = nodes.length > 0 ? nodes.map(n => n.name) : MOCK_SERVERS;
+  const channelList = channels.length > 0 ? channels.map(ch => `# ${ch.name}`) : MOCK_CHANNELS;
+  const users = members.length > 0 ? members.map(m => m.user.username) : MOCK_USERS;
 
   return (
     <div className="app">
       {/* Server list */}
       <div className="server-list">
-        {servers.map((s, i) => (
-          <div
-            key={s}
-            className={`server-icon ${i === activeServer ? "active" : ""}`}
-            onClick={() => setActiveServer(i)}
-            title={s}
-          >
-            {s[0]}
-          </div>
-        ))}
+        {servers.map((s, i) => {
+          const nodeId = nodes.length > 0 ? nodes[i]?.id : null;
+          return (
+            <div
+              key={nodeId || s}
+              className={`server-icon ${i === activeServer ? "active" : ""}`}
+              onClick={() => {
+                if (nodeId) {
+                  handleNodeSelect(nodeId, i);
+                } else {
+                  setActiveServer(i);
+                }
+              }}
+              title={s}
+            >
+              {s[0]}
+            </div>
+          );
+        })}
         <div className="server-icon add-server" title="Add Server">+</div>
       </div>
 
@@ -543,15 +693,25 @@ function App() {
           )}
         </div>
         <div className="channel-list">
-          {channels.map((ch) => (
-            <div
-              key={ch}
-              className={`channel ${ch === activeChannel ? "active" : ""}`}
-              onClick={() => setActiveChannel(ch)}
-            >
-              {ch}
-            </div>
-          ))}
+          {channelList.map((ch, i) => {
+            const channel = channels.length > 0 ? channels[i] : null;
+            const isActive = channel ? channel.id === selectedChannelId : ch === activeChannel;
+            return (
+              <div
+                key={channel?.id || ch}
+                className={`channel ${isActive ? "active" : ""}`}
+                onClick={() => {
+                  if (channel) {
+                    handleChannelSelect(channel.id, ch);
+                  } else {
+                    setActiveChannel(ch);
+                  }
+                }}
+              >
+                {ch}
+              </div>
+            );
+          })}
         </div>
         <div className="user-panel">
           <div className="user-avatar">
@@ -657,6 +817,15 @@ function App() {
           ))}
         </div>
         <div className="message-input-container">
+          {/* File attachment button */}
+          {serverAvailable && appState.activeChannel && (
+            <FileUploadButton
+              channelId={appState.activeChannel}
+              token={appState.token || ''}
+              keyPair={keyPair}
+              encryptionEnabled={encryptionEnabled}
+            />
+          )}
           <input
             className="message-input"
             type="text"
@@ -669,18 +838,56 @@ function App() {
               }
             }}
           />
+          {/* File list button */}
+          {serverAvailable && appState.activeChannel && (
+            <FileList
+              channelId={appState.activeChannel}
+              token={appState.token || ''}
+              keyPair={keyPair}
+              encryptionEnabled={encryptionEnabled}
+            />
+          )}
         </div>
       </div>
 
       {/* Member sidebar */}
       <div className="member-sidebar">
         <div className="member-header">Members — {users.length}</div>
-        {users.map((u) => (
-          <div key={u} className="member">
-            <div className="member-avatar">{u[0]}</div>
-            <span className="member-name">{u}</span>
-          </div>
-        ))}
+        {members.length > 0 ? (
+          members.map((member) => (
+            <div key={member.user.id} className="member">
+              <div className="member-avatar">{member.user.username[0]}</div>
+              <span className="member-name">{member.user.username}</span>
+              <span 
+                className="member-status"
+                style={{ 
+                  marginLeft: 'auto', 
+                  fontSize: '12px',
+                  color: '#43b581' // Online color - we'll assume all are online for now
+                }}
+              >
+                ●
+              </span>
+            </div>
+          ))
+        ) : (
+          users.map((u) => (
+            <div key={u} className="member">
+              <div className="member-avatar">{u[0]}</div>
+              <span className="member-name">{u}</span>
+              <span 
+                className="member-status"
+                style={{ 
+                  marginLeft: 'auto', 
+                  fontSize: '12px',
+                  color: '#43b581'
+                }}
+              >
+                ●
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

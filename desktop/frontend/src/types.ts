@@ -130,8 +130,23 @@ export interface Message {
   id: string;
   author: string;
   content: string;
-  time: string;
+  time?: string;
   channel_id?: string;
   timestamp: number;
   isEncrypted?: boolean;
+}
+
+// File types
+export interface FileMetadata {
+  id: string;
+  encrypted_filename: string;
+  file_size_bytes: number;
+  created_at: number;
+  uploader_id: string;
+}
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+  percentage: number;
 }
