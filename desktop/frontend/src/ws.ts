@@ -25,6 +25,9 @@ export interface WsEvents {
   voice_speaking: (data: any) => void;
   reaction_add: (data: any) => void;
   reaction_remove: (data: any) => void;
+  message_pin: (data: any) => void;
+  message_unpin: (data: any) => void;
+  typing_start: (data: any) => void;
 }
 
 type EventListener<T = any> = (data: T) => void;
@@ -276,6 +279,20 @@ export class AccordWebSocket {
 
   removeReaction(messageId: string, emoji: string): void {
     this.sendMessage({ RemoveReaction: { message_id: messageId, emoji } });
+  }
+
+  // Message pinning (admin/mod only)
+  pinMessage(messageId: string): void {
+    this.sendMessage({ PinMessage: { message_id: messageId } });
+  }
+
+  unpinMessage(messageId: string): void {
+    this.sendMessage({ UnpinMessage: { message_id: messageId } });
+  }
+
+  // Typing indicators
+  sendTypingStart(channelId: string): void {
+    this.sendMessage({ TypingStart: { channel_id: channelId } });
   }
 
   // Note: encryptedData should be base64-encoded encrypted content

@@ -1090,7 +1090,10 @@ async fn handle_ws_message(
         // ── Reaction operations ──
         WsMessageType::AddReaction { message_id, emoji } => {
             // Check if user has access to the message
-            let message_details = state.db.get_message_details(message_id).await
+            let message_details = state
+                .db
+                .get_message_details(message_id)
+                .await
                 .map_err(|e| format!("Failed to get message details: {}", e))?;
 
             let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
@@ -1099,7 +1102,10 @@ async fn handle_ws_message(
             };
 
             // Check if user is a member of the channel
-            let channel_members = state.db.get_channel_members(channel_id).await
+            let channel_members = state
+                .db
+                .get_channel_members(channel_id)
+                .await
                 .map_err(|e| format!("Failed to get channel members: {}", e))?;
 
             if !channel_members.contains(&sender_user_id) {
@@ -1107,11 +1113,17 @@ async fn handle_ws_message(
             }
 
             // Add the reaction
-            state.db.add_reaction(message_id, sender_user_id, &emoji).await
+            state
+                .db
+                .add_reaction(message_id, sender_user_id, &emoji)
+                .await
                 .map_err(|e| format!("Failed to add reaction: {}", e))?;
 
             // Get updated reactions for broadcasting
-            let reactions = state.db.get_message_reactions(message_id).await
+            let reactions = state
+                .db
+                .get_message_reactions(message_id)
+                .await
                 .map_err(|e| format!("Failed to get reactions: {}", e))?;
 
             // Broadcast reaction_add event to channel
@@ -1125,14 +1137,20 @@ async fn handle_ws_message(
                 "timestamp": now_secs()
             });
 
-            if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+            if let Err(e) = state
+                .send_to_channel(channel_id, reaction_event.to_string())
+                .await
+            {
                 error!("Failed to broadcast reaction add: {}", e);
             }
         }
 
         WsMessageType::RemoveReaction { message_id, emoji } => {
             // Check if user has access to the message
-            let message_details = state.db.get_message_details(message_id).await
+            let message_details = state
+                .db
+                .get_message_details(message_id)
+                .await
                 .map_err(|e| format!("Failed to get message details: {}", e))?;
 
             let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
@@ -1141,12 +1159,18 @@ async fn handle_ws_message(
             };
 
             // Remove the reaction
-            let removed = state.db.remove_reaction(message_id, sender_user_id, &emoji).await
+            let removed = state
+                .db
+                .remove_reaction(message_id, sender_user_id, &emoji)
+                .await
                 .map_err(|e| format!("Failed to remove reaction: {}", e))?;
 
             if removed {
                 // Get updated reactions for broadcasting
-                let reactions = state.db.get_message_reactions(message_id).await
+                let reactions = state
+                    .db
+                    .get_message_reactions(message_id)
+                    .await
                     .map_err(|e| format!("Failed to get reactions: {}", e))?;
 
                 // Broadcast reaction_remove event to channel
@@ -1160,10 +1184,208 @@ async fn handle_ws_message(
                     "timestamp": now_secs()
                 });
 
-                if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+                if let Err(e) = state
+                    .send_to_channel(channel_id, reaction_event.to_string())
+                    .await
+                {
                     error!("Failed to broadcast reaction remove: {}", e);
                 }
             }
+        }
+
+        // ── Typing operations ──
+        WsMessageType::TypingStart { channel_id } => {
+            // Get user information for broadcasting
+            let user = state
+                .db
+                .get_user_by_id(sender_user_id)
+                .await
+                .map_err(|e| format!("Failed to get user: {}", e))?
+                .ok_or_else(|| "User not found".to_string())?;
+
+            // Check if user is a member of the channel
+            let channel_members = state
+                .db
+                .get_channel_members(channel_id)
+                .await
+                .map_err(|e| format!("Failed to get channel members: {}", e))?;
+
+            if !channel_members.contains(&sender_user_id) {
+                return Err("Not a member of this channel".into());
+            }
+
+            // Broadcast typing event to other channel members (exclude sender)
+            let typing_event = serde_json::json!({
+                "type": "typing_start",
+                "channel_id": channel_id,
+                "user_id": sender_user_id,
+                "username": user.username,
+                "timestamp": now_secs()
+            });
+
+            // Send to all channel members except the sender
+            for &member_id in &channel_members {
+                if member_id != sender_user_id {
+                    if let Err(e) = state
+                        .send_to_user(member_id, typing_event.to_string())
+                        .await
+                    {
+                        // Log error but don't fail the whole operation
+                        error!("Failed to send typing event to user {}: {}", member_id, e);
+                    }
+                }
+            }
+        }
+
+        // ── Message Pinning operations ──
+        WsMessageType::PinMessage { message_id } => {
+            // Get message details to find the channel
+            let message_details = state
+                .db
+                .get_message_details(message_id)
+                .await
+                .map_err(|e| format!("Failed to get message details: {}", e))?;
+
+            let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+                Some(details) => details,
+                None => return Err("Message not found".into()),
+            };
+
+            // Get the channel to find the node
+            let channel = state
+                .db
+                .get_channel(channel_id)
+                .await
+                .map_err(|e| format!("Failed to get channel: {}", e))?;
+
+            let channel = match channel {
+                Some(ch) => ch,
+                None => return Err("Channel not found".into()),
+            };
+
+            // Check if user has admin/mod permissions
+            let member = state
+                .db
+                .get_node_member(channel.node_id, sender_user_id)
+                .await
+                .map_err(|e| format!("Failed to get node member: {}", e))?;
+
+            let member = match member {
+                Some(m) => m,
+                None => return Err("Not a member of this node".into()),
+            };
+
+            // Check if user has sufficient permissions (admin or moderator)
+            if !matches!(
+                member.role,
+                crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
+            ) {
+                return Err("Insufficient permissions. Admin or moderator required.".into());
+            }
+
+            // Pin the message
+            let success = state
+                .db
+                .pin_message(message_id, sender_user_id)
+                .await
+                .map_err(|e| format!("Failed to pin message: {}", e))?;
+
+            if !success {
+                return Err("Message is already pinned".into());
+            }
+
+            // Broadcast pin event to channel
+            let pin_event = serde_json::json!({
+                "type": "message_pin",
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "pinned_by": sender_user_id,
+                "timestamp": now_secs()
+            });
+
+            state
+                .send_to_channel(channel_id, pin_event.to_string())
+                .await?;
+
+            info!(
+                "Message {} pinned by {} in channel {}",
+                message_id, sender_user_id, channel_id
+            );
+        }
+
+        WsMessageType::UnpinMessage { message_id } => {
+            // Get message details to find the channel
+            let message_details = state
+                .db
+                .get_message_details(message_id)
+                .await
+                .map_err(|e| format!("Failed to get message details: {}", e))?;
+
+            let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+                Some(details) => details,
+                None => return Err("Message not found".into()),
+            };
+
+            // Get the channel to find the node
+            let channel = state
+                .db
+                .get_channel(channel_id)
+                .await
+                .map_err(|e| format!("Failed to get channel: {}", e))?;
+
+            let channel = match channel {
+                Some(ch) => ch,
+                None => return Err("Channel not found".into()),
+            };
+
+            // Check if user has admin/mod permissions
+            let member = state
+                .db
+                .get_node_member(channel.node_id, sender_user_id)
+                .await
+                .map_err(|e| format!("Failed to get node member: {}", e))?;
+
+            let member = match member {
+                Some(m) => m,
+                None => return Err("Not a member of this node".into()),
+            };
+
+            // Check if user has sufficient permissions (admin or moderator)
+            if !matches!(
+                member.role,
+                crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
+            ) {
+                return Err("Insufficient permissions. Admin or moderator required.".into());
+            }
+
+            // Unpin the message
+            let success = state
+                .db
+                .unpin_message(message_id)
+                .await
+                .map_err(|e| format!("Failed to unpin message: {}", e))?;
+
+            if !success {
+                return Err("Message is not pinned".into());
+            }
+
+            // Broadcast unpin event to channel
+            let unpin_event = serde_json::json!({
+                "type": "message_unpin",
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "unpinned_by": sender_user_id,
+                "timestamp": now_secs()
+            });
+
+            state
+                .send_to_channel(channel_id, unpin_event.to_string())
+                .await?;
+
+            info!(
+                "Message {} unpinned by {} in channel {}",
+                message_id, sender_user_id, channel_id
+            );
         }
 
         // ── Voice operations ──
@@ -1855,7 +2077,10 @@ pub async fn add_reaction_handler(
     }
 
     // Check if user has access to the message (via channel membership)
-    let message_details = state.db.get_message_details(message_id).await
+    let message_details = state
+        .db
+        .get_message_details(message_id)
+        .await
         .map_err(|e| {
             error!("Failed to get message details: {}", e);
             (
@@ -1881,7 +2106,10 @@ pub async fn add_reaction_handler(
     };
 
     // Check if user is a member of the channel
-    let channel_members = state.db.get_channel_members(channel_id).await
+    let channel_members = state
+        .db
+        .get_channel_members(channel_id)
+        .await
         .map_err(|e| {
             error!("Failed to get channel members: {}", e);
             (
@@ -1904,7 +2132,10 @@ pub async fn add_reaction_handler(
     }
 
     // Add the reaction
-    state.db.add_reaction(message_id, user_id, &emoji).await
+    state
+        .db
+        .add_reaction(message_id, user_id, &emoji)
+        .await
         .map_err(|e| {
             error!("Failed to add reaction: {}", e);
             (
@@ -1917,7 +2148,10 @@ pub async fn add_reaction_handler(
         })?;
 
     // Get updated reactions for broadcasting
-    let reactions = state.db.get_message_reactions(message_id).await
+    let reactions = state
+        .db
+        .get_message_reactions(message_id)
+        .await
         .map_err(|e| {
             error!("Failed to get reactions: {}", e);
             (
@@ -1940,11 +2174,16 @@ pub async fn add_reaction_handler(
         "timestamp": now_secs()
     });
 
-    if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+    if let Err(e) = state
+        .send_to_channel(channel_id, reaction_event.to_string())
+        .await
+    {
         error!("Failed to broadcast reaction add: {}", e);
     }
 
-    Ok(Json(serde_json::json!({"success": true, "reactions": reactions})))
+    Ok(Json(
+        serde_json::json!({"success": true, "reactions": reactions}),
+    ))
 }
 
 /// Remove reaction from message (DELETE /messages/:id/reactions/:emoji)
@@ -1966,7 +2205,10 @@ pub async fn remove_reaction_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     // Check if user has access to the message
-    let message_details = state.db.get_message_details(message_id).await
+    let message_details = state
+        .db
+        .get_message_details(message_id)
+        .await
         .map_err(|e| {
             error!("Failed to get message details: {}", e);
             (
@@ -1992,7 +2234,10 @@ pub async fn remove_reaction_handler(
     };
 
     // Remove the reaction
-    let removed = state.db.remove_reaction(message_id, user_id, &emoji).await
+    let removed = state
+        .db
+        .remove_reaction(message_id, user_id, &emoji)
+        .await
         .map_err(|e| {
             error!("Failed to remove reaction: {}", e);
             (
@@ -2015,7 +2260,10 @@ pub async fn remove_reaction_handler(
     }
 
     // Get updated reactions for broadcasting
-    let reactions = state.db.get_message_reactions(message_id).await
+    let reactions = state
+        .db
+        .get_message_reactions(message_id)
+        .await
         .map_err(|e| {
             error!("Failed to get reactions: {}", e);
             (
@@ -2038,11 +2286,16 @@ pub async fn remove_reaction_handler(
         "timestamp": now_secs()
     });
 
-    if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+    if let Err(e) = state
+        .send_to_channel(channel_id, reaction_event.to_string())
+        .await
+    {
         error!("Failed to broadcast reaction remove: {}", e);
     }
 
-    Ok(Json(serde_json::json!({"success": true, "reactions": reactions})))
+    Ok(Json(
+        serde_json::json!({"success": true, "reactions": reactions}),
+    ))
 }
 
 /// Get reactions for a message (GET /messages/:id/reactions)
@@ -2064,7 +2317,10 @@ pub async fn get_message_reactions_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     // Check if user has access to the message
-    let message_details = state.db.get_message_details(message_id).await
+    let message_details = state
+        .db
+        .get_message_details(message_id)
+        .await
         .map_err(|e| {
             error!("Failed to get message details: {}", e);
             (
@@ -2090,7 +2346,10 @@ pub async fn get_message_reactions_handler(
     };
 
     // Check if user is a member of the channel
-    let channel_members = state.db.get_channel_members(channel_id).await
+    let channel_members = state
+        .db
+        .get_channel_members(channel_id)
+        .await
         .map_err(|e| {
             error!("Failed to get channel members: {}", e);
             (
@@ -2113,7 +2372,10 @@ pub async fn get_message_reactions_handler(
     }
 
     // Get the reactions
-    let reactions = state.db.get_message_reactions(message_id).await
+    let reactions = state
+        .db
+        .get_message_reactions(message_id)
+        .await
         .map_err(|e| {
             error!("Failed to get reactions: {}", e);
             (
@@ -2126,4 +2388,391 @@ pub async fn get_message_reactions_handler(
         })?;
 
     Ok(Json(MessageReactionsResponse { reactions }))
+}
+
+// ── Message Pinning endpoints ──
+
+/// Pin a message (PUT /messages/:id/pin)
+pub async fn pin_message_handler(
+    Path(message_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get message details to find the channel
+    let message_details = state
+        .db
+        .get_message_details(message_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get message details: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to access message".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+        Some(details) => details,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Message not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Get the channel to find the node
+    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+        error!("Failed to get channel: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to get channel".into(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let channel = match channel {
+        Some(ch) => ch,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Check if user has admin/mod permissions
+    let member = state
+        .db
+        .get_node_member(channel.node_id, user_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get node member: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check permissions".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let member = match member {
+        Some(m) => m,
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Not a member of this node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    };
+
+    // Check if user has sufficient permissions (admin or moderator)
+    if !matches!(
+        member.role,
+        crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
+    ) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions. Admin or moderator required.".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Pin the message
+    let success = state
+        .db
+        .pin_message(message_id, user_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to pin message: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to pin message".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !success {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "Message is already pinned".into(),
+                code: 409,
+            }),
+        ));
+    }
+
+    // Broadcast pin event to channel
+    let pin_event = serde_json::json!({
+        "type": "message_pin",
+        "message_id": message_id,
+        "channel_id": channel_id,
+        "pinned_by": user_id,
+        "timestamp": now_secs()
+    });
+
+    if let Err(e) = state
+        .send_to_channel(channel_id, pin_event.to_string())
+        .await
+    {
+        error!("Failed to broadcast message pin: {}", e);
+    }
+
+    Ok(Json(
+        serde_json::json!({"success": true, "message": "Message pinned successfully"}),
+    ))
+}
+
+/// Unpin a message (DELETE /messages/:id/pin)
+pub async fn unpin_message_handler(
+    Path(message_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get message details to find the channel
+    let message_details = state
+        .db
+        .get_message_details(message_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get message details: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to access message".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+        Some(details) => details,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Message not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Get the channel to find the node
+    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+        error!("Failed to get channel: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to get channel".into(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let channel = match channel {
+        Some(ch) => ch,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Check if user has admin/mod permissions
+    let member = state
+        .db
+        .get_node_member(channel.node_id, user_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get node member: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check permissions".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let member = match member {
+        Some(m) => m,
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Not a member of this node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    };
+
+    // Check if user has sufficient permissions (admin or moderator)
+    if !matches!(
+        member.role,
+        crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
+    ) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions. Admin or moderator required.".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Unpin the message
+    let success = state.db.unpin_message(message_id).await.map_err(|e| {
+        error!("Failed to unpin message: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to unpin message".into(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    if !success {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Message is not pinned".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    // Broadcast unpin event to channel
+    let unpin_event = serde_json::json!({
+        "type": "message_unpin",
+        "message_id": message_id,
+        "channel_id": channel_id,
+        "unpinned_by": user_id,
+        "timestamp": now_secs()
+    });
+
+    if let Err(e) = state
+        .send_to_channel(channel_id, unpin_event.to_string())
+        .await
+    {
+        error!("Failed to broadcast message unpin: {}", e);
+    }
+
+    Ok(Json(
+        serde_json::json!({"success": true, "message": "Message unpinned successfully"}),
+    ))
+}
+
+/// Get pinned messages for a channel (GET /channels/:id/pins)
+pub async fn get_pinned_messages_handler(
+    Path(channel_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let channel_id = Uuid::parse_str(&channel_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid channel ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user has access to the channel
+    let channel_members = state
+        .db
+        .get_channel_members(channel_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get channel members: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel access".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !channel_members.contains(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Access denied. You're not a member of this channel.".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Get pinned messages
+    let pinned_messages = state
+        .db
+        .get_pinned_messages(channel_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get pinned messages: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get pinned messages".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "pinned_messages": pinned_messages
+    })))
 }

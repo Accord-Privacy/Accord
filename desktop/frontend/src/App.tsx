@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { AccordWebSocket } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -95,6 +95,10 @@ function App() {
   const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null);
   const [voiceChannelName, setVoiceChannelName] = useState<string>("");
 
+  // Pinned messages state
+  const [showPinnedPanel, setShowPinnedPanel] = useState(false);
+  const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+
   // Node discovery state
   // Removed unused node dialog state variables
 
@@ -117,6 +121,14 @@ function App() {
 
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
+
+  // Typing indicators state
+  const [typingUsers, setTypingUsers] = useState<Map<string, TypingUser[]>>(new Map());
+  const [typingTimeouts, setTypingTimeouts] = useState<Map<string, number>>(new Map());
+  const [lastTypingSent, setLastTypingSent] = useState<number>(0);
+  const typingIndicatorsEnabled = useState(() => 
+    localStorage.getItem('accord-typing-indicators') !== 'false'
+  )[0];
 
   // Permission checking utilities
   const getCurrentUserRole = useCallback((nodeId: string) => {
@@ -154,6 +166,29 @@ function App() {
     }
     setTimeout(() => setError(""), 5000); // Clear error after 5 seconds
   };
+
+  // Typing indicator functions
+  const sendTypingIndicator = useCallback((channelId: string) => {
+    if (!typingIndicatorsEnabled || !ws || !channelId) return;
+    
+    const now = Date.now();
+    const timeSinceLastTyping = now - lastTypingSent;
+    
+    // Throttle typing events to once per 3 seconds
+    if (timeSinceLastTyping >= 3000) {
+      ws.sendTypingStart(channelId);
+      setLastTypingSent(now);
+    }
+  }, [ws, typingIndicatorsEnabled, lastTypingSent]);
+
+  const formatTypingUsers = useCallback((channelId: string): string => {
+    const users = typingUsers.get(channelId) || [];
+    
+    if (users.length === 0) return '';
+    if (users.length === 1) return `${users[0].username} is typing...`;
+    if (users.length === 2) return `${users[0].username} and ${users[1].username} are typing...`;
+    return `${users[0].username}, ${users[1].username} and ${users.length - 2} other${users.length > 3 ? 's' : ''} are typing...`;
+  }, [typingUsers]);
 
   // Check server availability on mount
   useEffect(() => {
@@ -337,10 +372,109 @@ function App() {
       }));
     });
 
+    // Handle message pin events
+    socket.on('message_pin', (data) => {
+      console.log('Message pin event:', data);
+      
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(msg => 
+          msg.id === data.message_id
+            ? { ...msg, pinned_at: data.timestamp, pinned_by: data.pinned_by }
+            : msg
+        ),
+      }));
+    });
+
+    // Handle message unpin events
+    socket.on('message_unpin', (data) => {
+      console.log('Message unpin event:', data);
+      
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(msg => 
+          msg.id === data.message_id
+            ? { ...msg, pinned_at: undefined, pinned_by: undefined }
+            : msg
+        ),
+      }));
+    });
+
+    // Handle typing start events
+    socket.on('typing_start', (data: TypingStartMessage) => {
+      console.log('Typing start event:', data);
+      
+      const typingUser: TypingUser = {
+        user_id: data.user_id,
+        username: data.username,
+        startedAt: Date.now(),
+      };
+
+      // Update typing users for the channel
+      setTypingUsers(prev => {
+        const newMap = new Map(prev);
+        const channelTyping = newMap.get(data.channel_id) || [];
+        
+        // Remove any existing entry for this user
+        const filteredTyping = channelTyping.filter(user => user.user_id !== data.user_id);
+        
+        // Add the new typing user
+        newMap.set(data.channel_id, [...filteredTyping, typingUser]);
+        
+        return newMap;
+      });
+
+      // Set timeout to auto-remove this user after 5 seconds
+      const timeoutKey = `${data.channel_id}_${data.user_id}`;
+      setTypingTimeouts(prev => {
+        const newMap = new Map(prev);
+        
+        // Clear existing timeout if any
+        const existingTimeout = newMap.get(timeoutKey);
+        if (existingTimeout) {
+          clearTimeout(existingTimeout);
+        }
+        
+        // Set new timeout
+        const timeout = window.setTimeout(() => {
+          setTypingUsers(prevTyping => {
+            const newTypingMap = new Map(prevTyping);
+            const channelTyping = newTypingMap.get(data.channel_id) || [];
+            const filteredTyping = channelTyping.filter(user => user.user_id !== data.user_id);
+            
+            if (filteredTyping.length > 0) {
+              newTypingMap.set(data.channel_id, filteredTyping);
+            } else {
+              newTypingMap.delete(data.channel_id);
+            }
+            
+            return newTypingMap;
+          });
+          
+          // Clean up timeout
+          setTypingTimeouts(prevTimeouts => {
+            const newTimeoutsMap = new Map(prevTimeouts);
+            newTimeoutsMap.delete(timeoutKey);
+            return newTimeoutsMap;
+          });
+        }, 5000);
+        
+        newMap.set(timeoutKey, timeout);
+        return newMap;
+      });
+    });
+
     socket.on('error', (error: Error) => {
       console.error('WebSocket error:', error);
     });
   }, [encryptionEnabled, keyPair]);
+
+  // Cleanup typing timeouts on unmount
+  useEffect(() => {
+    return () => {
+      typingTimeouts.forEach(timeout => clearTimeout(timeout));
+    };
+  }, [typingTimeouts]);
 
   // Load user's nodes
   const loadNodes = useCallback(async () => {
@@ -1013,6 +1147,72 @@ function App() {
     }
   };
 
+  // Pin message (admin/mod only)
+  const handlePinMessage = async (messageId: string) => {
+    if (!appState.token) return;
+
+    try {
+      if (ws && ws.isSocketConnected()) {
+        // Send via WebSocket
+        ws.pinMessage(messageId);
+      } else {
+        // Send via REST API
+        await api.pinMessage(messageId, appState.token);
+      }
+    } catch (error) {
+      console.error('Failed to pin message:', error);
+      setError('Failed to pin message');
+    }
+  };
+
+  // Unpin message (admin/mod only)
+  const handleUnpinMessage = async (messageId: string) => {
+    if (!appState.token) return;
+
+    try {
+      if (ws && ws.isSocketConnected()) {
+        // Send via WebSocket
+        ws.unpinMessage(messageId);
+      } else {
+        // Send via REST API
+        await api.unpinMessage(messageId, appState.token);
+      }
+    } catch (error) {
+      console.error('Failed to unpin message:', error);
+      setError('Failed to unpin message');
+    }
+  };
+
+  // Load pinned messages for current channel
+  const loadPinnedMessages = async () => {
+    if (!selectedChannelId || !appState.token) return;
+
+    try {
+      const response = await api.getPinnedMessages(selectedChannelId, appState.token);
+      const formattedPinnedMessages = response.pinned_messages.map((msg: any) => ({
+        ...msg,
+        time: new Date(msg.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        pinned_at: msg.pinned_at * 1000, // Convert to milliseconds
+        timestamp: msg.created_at * 1000,
+      }));
+      
+      setPinnedMessages(formattedPinnedMessages);
+    } catch (error) {
+      console.error('Failed to load pinned messages:', error);
+      setError('Failed to load pinned messages');
+    }
+  };
+
+  // Toggle pinned messages panel
+  const togglePinnedPanel = () => {
+    setShowPinnedPanel(prev => {
+      if (!prev) {
+        loadPinnedMessages();
+      }
+      return !prev;
+    });
+  };
+
   // Toggle reaction (add if not present, remove if present)
   const handleToggleReaction = async (messageId: string, emoji: string) => {
     if (!appState.user) return;
@@ -1626,6 +1826,23 @@ function App() {
             <span className="chat-topic">Welcome to {activeChannel}!</span>
           </div>
           <div className="chat-header-right">
+            <button
+              onClick={togglePinnedPanel}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '18px',
+                cursor: 'pointer',
+                color: showPinnedPanel ? '#faa61a' : '#666',
+                marginRight: '12px',
+                padding: '4px',
+                borderRadius: '4px',
+                transition: 'color 0.2s'
+              }}
+              title="Toggle pinned messages"
+            >
+              📌
+            </button>
             {encryptionEnabled && keyPair && (
               <span 
                 style={{ 
@@ -1741,6 +1958,18 @@ function App() {
                       🔒
                     </span>
                   )}
+                  {msg.pinned_at && (
+                    <span 
+                      style={{ 
+                        fontSize: '12px', 
+                        color: '#faa61a',
+                        marginLeft: '8px'
+                      }}
+                      title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}
+                    >
+                      📌
+                    </span>
+                  )}
                   {/* Message Actions - Show on hover for own messages or if admin/mod */}
                   {appState.user && (msg.author === appState.user.username || canDeleteMessage(msg)) && (
                     <div className="message-actions">
@@ -1760,6 +1989,16 @@ function App() {
                           title="Delete message"
                         >
                           🗑️
+                        </button>
+                      )}
+                      {/* Pin/Unpin button for admin/moderator users */}
+                      {canDeleteMessage(msg) && (
+                        <button
+                          onClick={() => msg.pinned_at ? handleUnpinMessage(msg.id) : handlePinMessage(msg.id)}
+                          className="message-action-btn"
+                          title={msg.pinned_at ? "Unpin message" : "Pin message"}
+                        >
+                          {msg.pinned_at ? '📌' : '📌'}
                         </button>
                       )}
                     </div>
@@ -1883,6 +2122,18 @@ function App() {
               </div>
             </div>
           ))}
+          
+          {/* Typing indicator */}
+          {selectedChannelId && formatTypingUsers(selectedChannelId) && (
+            <div className="typing-indicator">
+              <span className="typing-text">{formatTypingUsers(selectedChannelId)}</span>
+              <span className="typing-dots">
+                <span>.</span>
+                <span>.</span>
+                <span>.</span>
+              </span>
+            </div>
+          )}
         </div>
         <div className="message-input-container">
           {/* File attachment button */}
@@ -1899,7 +2150,13 @@ function App() {
             type="text"
             placeholder={`Message ${activeChannel}`}
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              // Send typing indicator when user types (throttled)
+              if (selectedChannelId) {
+                sendTypingIndicator(selectedChannelId);
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 handleSendMessage();
@@ -2170,6 +2427,149 @@ function App() {
           }
         }}
       />
+
+      {/* Pinned Messages Panel */}
+      {showPinnedPanel && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            right: 0,
+            width: '400px',
+            height: '100vh',
+            background: 'var(--background)',
+            borderLeft: '1px solid var(--border)',
+            zIndex: 1000,
+            display: 'flex',
+            flexDirection: 'column',
+            color: 'var(--text)',
+          }}
+        >
+          {/* Panel Header */}
+          <div
+            style={{
+              padding: '16px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>
+              📌 Pinned Messages
+            </h3>
+            <button
+              onClick={() => setShowPinnedPanel(false)}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '18px',
+                cursor: 'pointer',
+                color: 'var(--text)',
+                padding: '4px',
+                borderRadius: '4px',
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Pinned Messages List */}
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: '16px',
+            }}
+          >
+            {pinnedMessages.length === 0 ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  marginTop: '50px',
+                }}
+              >
+                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📌</div>
+                <p>No pinned messages in this channel yet.</p>
+                <p style={{ fontSize: '14px' }}>
+                  Pin messages to keep important information easily accessible.
+                </p>
+              </div>
+            ) : (
+              <div>
+                {pinnedMessages.map((msg, i) => (
+                  <div
+                    key={msg.id || i}
+                    style={{
+                      marginBottom: '16px',
+                      padding: '12px',
+                      background: 'var(--background-modifier-accent)',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        marginBottom: '8px',
+                        fontSize: '14px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          background: 'var(--primary)',
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          marginRight: '8px',
+                        }}
+                      >
+                        {msg.author[0]}
+                      </div>
+                      <span style={{ fontWeight: 600, marginRight: '8px' }}>
+                        {msg.author}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                        {new Date(msg.timestamp).toLocaleDateString()} at {msg.time}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        marginLeft: '32px',
+                        lineHeight: '1.4',
+                      }}
+                      dangerouslySetInnerHTML={{
+                        __html: notificationManager.highlightMentions(msg.content),
+                      }}
+                    />
+                    <div
+                      style={{
+                        marginLeft: '32px',
+                        marginTop: '8px',
+                        fontSize: '12px',
+                        color: 'var(--text-muted)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      📌 Pinned {new Date(msg.pinned_at!).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Removed non-existent dialog components */}
     </div>

@@ -132,8 +132,11 @@ impl Database {
                 encrypted_payload BLOB NOT NULL,
                 created_at INTEGER NOT NULL,
                 edited_at INTEGER,
+                pinned_at INTEGER,
+                pinned_by TEXT,
                 FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE,
-                FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE CASCADE
+                FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (pinned_by) REFERENCES users (id) ON DELETE SET NULL
             )
             "#,
         )
@@ -143,6 +146,17 @@ impl Database {
 
         // Add edited_at column to existing messages table if it doesn't exist
         sqlx::query("ALTER TABLE messages ADD COLUMN edited_at INTEGER")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
+
+        // Add pinning columns to existing messages table if they don't exist
+        sqlx::query("ALTER TABLE messages ADD COLUMN pinned_at INTEGER")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
+
+        sqlx::query("ALTER TABLE messages ADD COLUMN pinned_by TEXT")
             .execute(&self.pool)
             .await
             .ok(); // Ignore error if column already exists
@@ -292,9 +306,11 @@ impl Database {
         .context("Failed to create message_reactions table")?;
 
         // Create indexes for reactions
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions (message_id)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions (message_id)",
+        )
+        .execute(&self.pool)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_reactions_user ON message_reactions (user_id)")
             .execute(&self.pool)
             .await?;
@@ -714,7 +730,7 @@ impl Database {
 
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, u.username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, u.username
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 WHERE m.channel_id = ? AND m.created_at < ?
@@ -728,7 +744,7 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, u.username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, u.username
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 WHERE m.channel_id = ?
@@ -755,6 +771,10 @@ impl Database {
                 let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
                 let created_at = row.get::<i64, _>("created_at") as u64;
                 let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
+                let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
+                let pinned_by = row
+                    .get::<Option<String>, _>("pinned_by")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
 
                 crate::models::MessageMetadata {
                     id: message_id,
@@ -765,6 +785,8 @@ impl Database {
                         .encode(&encrypted_payload),
                     created_at,
                     edited_at,
+                    pinned_at,
+                    pinned_by,
                 }
             })
             .collect();
@@ -789,7 +811,7 @@ impl Database {
         let base_query = if let Some(channel_filter) = channel_id_filter {
             format!(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at,
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
                        u.username as sender_username, c.name as channel_name
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
@@ -803,7 +825,7 @@ impl Database {
         } else {
             format!(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at,
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
                        u.username as sender_username, c.name as channel_name
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
@@ -1285,12 +1307,7 @@ impl Database {
     // ── Message Reaction operations ──
 
     /// Add a reaction to a message
-    pub async fn add_reaction(
-        &self,
-        message_id: Uuid,
-        user_id: Uuid,
-        emoji: &str,
-    ) -> Result<()> {
+    pub async fn add_reaction(&self, message_id: Uuid, user_id: Uuid, emoji: &str) -> Result<()> {
         let created_at = now();
         sqlx::query(
             "INSERT OR IGNORE INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)"
@@ -1314,7 +1331,7 @@ impl Database {
         emoji: &str,
     ) -> Result<bool> {
         let result = sqlx::query(
-            "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?"
+            "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
         )
         .bind(message_id.to_string())
         .bind(user_id.to_string())
@@ -1337,7 +1354,7 @@ impl Database {
             FROM message_reactions
             WHERE message_id = ?
             ORDER BY created_at ASC
-            "#
+            "#,
         )
         .bind(message_id.to_string())
         .fetch_all(&self.pool)
@@ -1345,14 +1362,16 @@ impl Database {
         .context("Failed to query message reactions")?;
 
         // Group reactions by emoji
-        let mut reaction_map: std::collections::HashMap<String, Vec<(Uuid, u64)>> = std::collections::HashMap::new();
-        
+        let mut reaction_map: std::collections::HashMap<String, Vec<(Uuid, u64)>> =
+            std::collections::HashMap::new();
+
         for row in rows {
             let emoji: String = row.get("emoji");
             let user_id = Uuid::parse_str(&row.get::<String, _>("user_id"))?;
             let created_at = row.get::<i64, _>("created_at") as u64;
-            
-            reaction_map.entry(emoji)
+
+            reaction_map
+                .entry(emoji)
                 .or_insert_with(Vec::new)
                 .push((user_id, created_at));
         }
@@ -1371,6 +1390,86 @@ impl Database {
         // Sort by creation time (earliest first)
         reactions.sort_by_key(|r| r.created_at);
         Ok(reactions)
+    }
+
+    // ── Message Pinning operations ──
+
+    /// Pin a message (admin/mod only)
+    pub async fn pin_message(&self, message_id: Uuid, pinned_by: Uuid) -> Result<bool> {
+        let pinned_at = now();
+
+        let result = sqlx::query(
+            "UPDATE messages SET pinned_at = ?, pinned_by = ? WHERE id = ? AND pinned_at IS NULL",
+        )
+        .bind(pinned_at as i64)
+        .bind(pinned_by.to_string())
+        .bind(message_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to pin message")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Unpin a message (admin/mod only)
+    pub async fn unpin_message(&self, message_id: Uuid) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = ? AND pinned_at IS NOT NULL"
+        )
+        .bind(message_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to unpin message")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get pinned messages for a channel
+    pub async fn get_pinned_messages(
+        &self,
+        channel_id: Uuid,
+    ) -> Result<Vec<crate::models::MessageMetadata>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, u.username
+            FROM messages m
+            JOIN users u ON m.sender_id = u.id
+            WHERE m.channel_id = ? AND m.pinned_at IS NOT NULL
+            ORDER BY m.pinned_at DESC
+            "#,
+        )
+        .bind(channel_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query pinned messages")?;
+
+        let messages: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+                let sender_username: String = row.get("username");
+                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+                let created_at = row.get::<i64, _>("created_at") as u64;
+                let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
+
+                crate::models::MessageMetadata {
+                    id: message_id,
+                    channel_id,
+                    sender_id,
+                    sender_username,
+                    encrypted_payload: base64::engine::general_purpose::STANDARD
+                        .encode(&encrypted_payload),
+                    created_at,
+                    edited_at,
+                    pinned_at: None,
+                    pinned_by: None,
+                }
+            })
+            .collect();
+
+        Ok(messages)
     }
 }
 

@@ -98,6 +98,9 @@ export type WsMessageType =
   | { DeleteMessage: { message_id: string } }
   | { AddReaction: { message_id: string; emoji: string } }
   | { RemoveReaction: { message_id: string; emoji: string } }
+  | { PinMessage: { message_id: string } }
+  | { UnpinMessage: { message_id: string } }
+  | { TypingStart: { channel_id: string } }
   | 'Ping'
   | 'Pong';
 
@@ -178,6 +181,8 @@ export interface Message {
   channel_id?: string;
   timestamp: number;
   edited_at?: number;
+  pinned_at?: number;
+  pinned_by?: string;
   isEncrypted?: boolean;
   reactions?: MessageReaction[];
 }
@@ -283,4 +288,36 @@ export interface ReactionRemoveMessage {
   emoji: string;
   reactions: MessageReaction[];
   timestamp: number;
+}
+
+// Message pinning WebSocket messages
+export interface MessagePinMessage {
+  type: 'message_pin';
+  message_id: string;
+  channel_id: string;
+  pinned_by: string;
+  timestamp: number;
+}
+
+export interface MessageUnpinMessage {
+  type: 'message_unpin';
+  message_id: string;
+  channel_id: string;
+  unpinned_by: string;
+  timestamp: number;
+}
+
+// Typing indicator messages
+export interface TypingStartMessage {
+  type: 'typing_start';
+  channel_id: string;
+  user_id: string;
+  username: string;
+  timestamp: number;
+}
+
+export interface TypingUser {
+  user_id: string;
+  username: string;
+  startedAt: number;
 }

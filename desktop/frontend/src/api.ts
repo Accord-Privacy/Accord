@@ -403,6 +403,33 @@ export class AccordApi {
     );
   }
 
+  // Pin a message (admin/mod only)
+  async pinMessage(messageId: string, token: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(
+      `/messages/${messageId}/pin?token=${encodeURIComponent(token)}`,
+      {
+        method: 'PUT',
+      }
+    );
+  }
+
+  // Unpin a message (admin/mod only)
+  async unpinMessage(messageId: string, token: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(
+      `/messages/${messageId}/pin?token=${encodeURIComponent(token)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  // Get pinned messages for a channel
+  async getPinnedMessages(channelId: string, token: string): Promise<{ pinned_messages: any[] }> {
+    return this.request<{ pinned_messages: any[] }>(
+      `/channels/${channelId}/pins?token=${encodeURIComponent(token)}`
+    );
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

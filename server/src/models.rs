@@ -75,15 +75,18 @@ pub enum WsMessageType {
 
     // ── Reaction operations ──
     /// Add a reaction to a message
-    AddReaction {
-        message_id: Uuid,
-        emoji: String,
-    },
+    AddReaction { message_id: Uuid, emoji: String },
     /// Remove a reaction from a message
-    RemoveReaction {
-        message_id: Uuid,
-        emoji: String,
-    },
+    RemoveReaction { message_id: Uuid, emoji: String },
+
+    /// Pin a message (admin/mod only)
+    PinMessage { message_id: Uuid },
+    /// Unpin a message (admin/mod only)
+    UnpinMessage { message_id: Uuid },
+
+    // ── Typing operations ──
+    /// User started typing in a channel
+    TypingStart { channel_id: Uuid },
 
     // ── Voice operations ──
     /// Join a voice channel
@@ -286,6 +289,8 @@ pub struct MessageMetadata {
     pub encrypted_payload: String, // Base64 encoded encrypted content
     pub created_at: u64,
     pub edited_at: Option<u64>,
+    pub pinned_at: Option<u64>,
+    pub pinned_by: Option<Uuid>,
 }
 
 /// File metadata for encrypted file sharing

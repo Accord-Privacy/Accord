@@ -1634,3 +1634,229 @@ body {
   --text-primary: #2e3338;
   --text-secondary: #747f8d;
 }
+
+/* Typing Indicators */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  font-size: 13px;
+  color: #72767d;
+  font-style: italic;
+  margin-bottom: 4px;
+}
+
+.typing-text {
+  opacity: 0.8;
+}
+
+.typing-dots {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.typing-dots span {
+  animation: typing-bounce 1.5s infinite;
+  color: #72767d;
+  font-weight: bold;
+}
+
+.typing-dots span:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 300ms;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 600ms;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+/* Pinned Messages Styles */
+.message-pinned-indicator {
+  font-size: 12px;
+  color: #faa61a;
+  margin-left: 8px;
+  transition: color 0.2s ease;
+}
+
+.message-pin-btn {
+  background: none;
+  border: none;
+  color: #72767d;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.message-pin-btn:hover {
+  color: #faa61a;
+  background: rgba(250, 166, 26, 0.1);
+}
+
+.message-pin-btn.pinned {
+  color: #faa61a;
+}
+
+.pinned-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 400px;
+  height: 100vh;
+  background: var(--bg-primary, #36393f);
+  border-left: 1px solid var(--bg-tertiary, #202225);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary, #dcddde);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
+}
+
+.pinned-panel-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--bg-tertiary, #202225);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-secondary, #2f3136);
+}
+
+.pinned-panel-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, #dcddde);
+}
+
+.pinned-panel-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-secondary, #72767d);
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.pinned-panel-close:hover {
+  color: var(--text-primary, #dcddde);
+  background: var(--bg-tertiary, #40444b);
+}
+
+.pinned-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.pinned-message {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--bg-secondary, #2f3136);
+  border-radius: 8px;
+  border: 1px solid var(--bg-tertiary, #202225);
+  transition: all 0.15s ease;
+}
+
+.pinned-message:hover {
+  border-color: var(--text-secondary, #72767d);
+}
+
+.pinned-message-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.pinned-message-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #5865f2;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.pinned-message-author {
+  font-weight: 600;
+  margin-right: 8px;
+  color: var(--text-primary, #dcddde);
+}
+
+.pinned-message-time {
+  color: var(--text-secondary, #72767d);
+  font-size: 12px;
+}
+
+.pinned-message-content {
+  margin-left: 32px;
+  line-height: 1.4;
+  color: var(--text-primary, #dcddde);
+}
+
+.pinned-message-footer {
+  margin-left: 32px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, #72767d);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pinned-empty-state {
+  text-align: center;
+  color: var(--text-secondary, #72767d);
+  margin-top: 50px;
+}
+
+.pinned-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.pinned-toggle-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #72767d;
+  margin-right: 12px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.pinned-toggle-btn:hover {
+  color: #faa61a;
+  background: rgba(250, 166, 26, 0.1);
+}
+
+.pinned-toggle-btn.active {
+  color: #faa61a;
+}
