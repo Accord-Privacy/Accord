@@ -17,6 +17,10 @@ export interface WsEvents {
   channel_message: (data: any) => void;
   presence_update: (data: any) => void;
   pong: (data: any) => void;
+  voice_join: (data: any) => void;
+  voice_leave: (data: any) => void;
+  voice_packet: (data: any) => void;
+  voice_speaking: (data: any) => void;
 }
 
 type EventListener<T = any> = (data: T) => void;
@@ -179,7 +183,7 @@ export class AccordWebSocket {
   }
 
   // Message sending methods
-  private send(messageType: WsMessageType): void {
+  private sendMessage(messageType: WsMessageType): void {
     if (!this.isConnected || !this.ws) {
       console.warn('WebSocket not connected, cannot send message');
       return;
@@ -199,43 +203,58 @@ export class AccordWebSocket {
     }
   }
 
+  // Generic send method for custom messages
+  send(message: string): void {
+    if (!this.isConnected || !this.ws) {
+      console.warn('WebSocket not connected, cannot send message');
+      return;
+    }
+
+    try {
+      this.ws.send(message);
+    } catch (error) {
+      console.error('Error sending WebSocket message:', error);
+      this.emit('error', new Error('Failed to send message'));
+    }
+  }
+
   // Node operations
   createNode(name: string, description?: string): void {
-    this.send({ CreateNode: { name, description } });
+    this.sendMessage({ CreateNode: { name, description } });
   }
 
   joinNode(nodeId: string): void {
-    this.send({ JoinNode: { node_id: nodeId } });
+    this.sendMessage({ JoinNode: { node_id: nodeId } });
   }
 
   leaveNode(nodeId: string): void {
-    this.send({ LeaveNode: { node_id: nodeId } });
+    this.sendMessage({ LeaveNode: { node_id: nodeId } });
   }
 
   getNodeInfo(nodeId: string): void {
-    this.send({ GetNodeInfo: { node_id: nodeId } });
+    this.sendMessage({ GetNodeInfo: { node_id: nodeId } });
   }
 
   // Channel operations
   createChannel(nodeId: string, name: string): void {
-    this.send({ CreateChannel: { node_id: nodeId, name } });
+    this.sendMessage({ CreateChannel: { node_id: nodeId, name } });
   }
 
   joinChannel(channelId: string): void {
-    this.send({ JoinChannel: { channel_id: channelId } });
+    this.sendMessage({ JoinChannel: { channel_id: channelId } });
   }
 
   leaveChannel(channelId: string): void {
-    this.send({ LeaveChannel: { channel_id: channelId } });
+    this.sendMessage({ LeaveChannel: { channel_id: channelId } });
   }
 
   // Messaging
   sendDirectMessage(toUser: string, encryptedData: string): void {
-    this.send({ DirectMessage: { to_user: toUser, encrypted_data: encryptedData } });
+    this.sendMessage({ DirectMessage: { to_user: toUser, encrypted_data: encryptedData } });
   }
 
   sendChannelMessage(channelId: string, encryptedData: string): void {
-    this.send({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData } });
+    this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData } });
   }
 
   // Note: encryptedData should be base64-encoded encrypted content
@@ -243,11 +262,11 @@ export class AccordWebSocket {
 
   // Ping/Pong
   ping(): void {
-    this.send('Ping');
+    this.sendMessage('Ping');
   }
 
   pong(): void {
-    this.send('Pong');
+    this.sendMessage('Pong');
   }
 
   // Utility methods

@@ -75,6 +75,7 @@ export interface Channel {
   node_id: string;
   members: string[];
   created_at: number;
+  channel_type?: 'text' | 'voice';
 }
 
 export interface CreateChannelRequest {
@@ -195,4 +196,53 @@ export interface UploadProgress {
   loaded: number;
   total: number;
   percentage: number;
+}
+
+// Voice channel types
+export interface VoiceState {
+  channelId: string | null;
+  isConnected: boolean;
+  isMuted: boolean;
+  isDeafened: boolean;
+  outputVolume: number;
+  connectedUsers: VoiceUser[];
+  isCapturingAudio: boolean;
+  vadThreshold: number;
+  isSpeaking: boolean;
+}
+
+export interface VoiceUser {
+  userId: string;
+  username: string;
+  isSpeaking: boolean;
+  audioLevel: number;
+  isMuted?: boolean;
+}
+
+// Voice WebSocket messages (incoming from server)
+export interface VoiceJoinMessage {
+  type: 'voice_join';
+  channel_id: string;
+  user_id: string;
+  username?: string;
+}
+
+export interface VoiceLeaveMessage {
+  type: 'voice_leave';
+  channel_id: string;
+  user_id: string;
+}
+
+export interface VoicePacketMessage {
+  type: 'voice_packet';
+  channel_id: string;
+  user_id: string;
+  data: string; // base64 encoded audio data
+}
+
+export interface VoiceSpeakingMessage {
+  type: 'voice_speaking';
+  channel_id: string;
+  user_id: string;
+  speaking: boolean;
 }

@@ -14,6 +14,7 @@ import {
   isCryptoSupported 
 } from "./crypto";
 import { FileUploadButton, FileList } from "./FileManager";
+import { VoiceChat } from "./VoiceChat";
 
 // Mock data as fallback
 const MOCK_SERVERS = ["Accord Dev", "Gaming", "Music"];
@@ -75,6 +76,10 @@ function App() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [generatedInvite, setGeneratedInvite] = useState<string>("");
   const [error, setError] = useState<string>("");
+
+  // Voice state
+  const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null);
+  const [voiceChannelName, setVoiceChannelName] = useState<string>("");
 
   // Permission checking utilities
   const getCurrentUserRole = useCallback((nodeId: string) => {
@@ -1012,24 +1017,54 @@ function App() {
             const channel = channels.length > 0 ? channels[i] : null;
             const isActive = channel ? channel.id === selectedChannelId : ch === activeChannel;
             const canDeleteChannel = selectedNodeId && hasPermission(selectedNodeId, 'DeleteChannel');
+            const isVoiceChannel = channel?.channel_type === 'voice';
+            const isConnectedToVoice = isVoiceChannel && voiceChannelId === channel?.id;
             
             return (
               <div
                 key={channel?.id || ch}
                 className={`channel ${isActive ? "active" : ""}`}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'space-between',
+                  background: isConnectedToVoice ? 'rgba(67, 181, 129, 0.2)' : undefined
+                }}
               >
                 <div
                   onClick={() => {
                     if (channel) {
-                      handleChannelSelect(channel.id, ch);
+                      if (isVoiceChannel) {
+                        // Handle voice channel click
+                        if (isConnectedToVoice) {
+                          // Already connected, do nothing or show voice panel
+                        } else {
+                          // Connect to voice channel
+                          setVoiceChannelId(channel.id);
+                          setVoiceChannelName(channel.name);
+                        }
+                      } else {
+                        // Text channel
+                        handleChannelSelect(channel.id, ch);
+                      }
                     } else {
                       setActiveChannel(ch);
                     }
                   }}
-                  style={{ flex: 1, cursor: 'pointer' }}
+                  style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
                 >
-                  {ch}
+                  <span>
+                    {isVoiceChannel ? '🔊' : '#'} {channel?.name || ch.replace(/^# /, '')}
+                  </span>
+                  {isVoiceChannel && (
+                    <span style={{ fontSize: '11px', color: '#8e9297' }}>
+                      {/* TODO: Show connected user count */}
+                      (0)
+                    </span>
+                  )}
+                  {isConnectedToVoice && (
+                    <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
+                  )}
                 </div>
                 {canDeleteChannel && channel && (
                   <button
@@ -1237,7 +1272,7 @@ function App() {
           )}
         </div>
         <div 
-          className="messages" 
+          className={`messages ${voiceChannelId ? 'with-voice' : ''}`}
           ref={messagesContainerRef}
           onScroll={handleScroll}
         >
@@ -1323,6 +1358,20 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Voice Chat Component */}
+      {voiceChannelId && (
+        <VoiceChat
+          ws={ws}
+          currentUserId={localStorage.getItem('accord_user_id')}
+          channelId={voiceChannelId}
+          channelName={voiceChannelName}
+          onLeave={() => {
+            setVoiceChannelId(null);
+            setVoiceChannelName("");
+          }}
+        />
+      )}
 
       {/* Member sidebar */}
       <div className="member-sidebar">

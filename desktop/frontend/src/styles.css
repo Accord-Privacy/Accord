@@ -185,6 +185,10 @@ body {
   gap: 16px;
 }
 
+.messages.with-voice {
+  margin-bottom: 120px; /* Make room for voice chat component */
+}
+
 .message {
   display: flex;
   gap: 16px;
