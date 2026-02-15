@@ -28,6 +28,7 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "tokio",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -83,6 +84,10 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
 ]
+
+[[package]]
+name = "accord-standalone-demo"
+version = "0.1.0"
 
 [[package]]
 name = "adler2"

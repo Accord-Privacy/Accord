@@ -5,8 +5,21 @@
 
 use anyhow::{Result, Context};
 use ring::rand::{SystemRandom, SecureRandom};
-use ring::{aead, agreement, signature};
+use ring::{aead, agreement};
 use std::collections::HashMap;
+
+// Helper macro for array references (would normally use arrayref crate)
+macro_rules! array_ref {
+    ($arr:expr, $offset:expr, $len:expr) => {{
+        {
+            #[inline]
+            unsafe fn as_array<T>(slice: &[T]) -> &[T; $len] {
+                &*(slice.as_ptr() as *const [_; $len])
+            }
+            unsafe { as_array(&$arr[$offset..]) }
+        }
+    }};
+}
 
 /// Accord encryption version for protocol compatibility
 pub const ENCRYPTION_VERSION: u8 = 1;
@@ -26,7 +39,7 @@ pub struct IdentityKey {
 }
 
 /// Session key for encrypting messages between two users
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SessionKey {
     pub key_material: [u8; 32],
     pub chain_key: [u8; 32],
@@ -61,10 +74,10 @@ impl CryptoManager {
     /// Generate a new X25519 key pair for key agreement
     pub fn generate_key_pair(&self) -> Result<KeyPair> {
         let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &self.rng)
-            .context("Failed to generate private key")?;
+            .map_err(|_| anyhow::anyhow!("Failed to generate private key"))?;
         
         let public_key = private_key.compute_public_key()
-            .context("Failed to compute public key")?;
+            .map_err(|_| anyhow::anyhow!("Failed to compute public key"))?;
         
         Ok(KeyPair {
             private_key,
@@ -96,7 +109,6 @@ impl CryptoManager {
         let shared_secret = agreement::agree_ephemeral(
             our_key_pair.private_key,
             &their_public_key,
-            ring::error::Unspecified,
             |key_material| {
                 let mut session_key = [0u8; 32];
                 let mut chain_key = [0u8; 32];
@@ -106,9 +118,9 @@ impl CryptoManager {
                 session_key.copy_from_slice(&key_material[0..32]);
                 chain_key.copy_from_slice(&key_material[0..32]);
                 
-                Ok((session_key, chain_key))
+                (session_key, chain_key)
             },
-        ).context("Key agreement failed")?;
+        ).map_err(|_| anyhow::anyhow!("Key agreement failed"))?;
 
         let session = SessionKey {
             key_material: shared_secret.0,
@@ -126,17 +138,17 @@ impl CryptoManager {
             .context("No session key found for user")?;
 
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &session.key_material)
-            .context("Failed to create encryption key")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create encryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
         // Generate random nonce
         let mut nonce_bytes = [0u8; 12];
-        self.rng.fill(&mut nonce_bytes).context("Failed to generate nonce")?;
+        self.rng.fill(&mut nonce_bytes).map_err(|_| anyhow::anyhow!("Failed to generate nonce"))?;
         let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
 
         let mut ciphertext = plaintext.to_vec();
         key.seal_in_place_append_tag(nonce, aead::Aad::empty(), &mut ciphertext)
-            .context("Encryption failed")?;
+            .map_err(|_| anyhow::anyhow!("Encryption failed"))?;
 
         // Prepend nonce to ciphertext
         let mut result = nonce_bytes.to_vec();
@@ -158,7 +170,7 @@ impl CryptoManager {
             .context("No session key found for user")?;
 
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &session.key_material)
-            .context("Failed to create decryption key")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create decryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
         // Extract nonce and ciphertext
@@ -167,7 +179,7 @@ impl CryptoManager {
         
         let mut message = ciphertext[12..].to_vec();
         key.open_in_place(nonce, aead::Aad::empty(), &mut message)
-            .context("Decryption failed")?;
+            .map_err(|_| anyhow::anyhow!("Decryption failed"))?;
 
         Ok(message)
     }
@@ -177,8 +189,8 @@ impl CryptoManager {
         let mut aes_key = [0u8; 32];
         let mut nonce_prefix = [0u8; 4];
         
-        self.rng.fill(&mut aes_key).context("Failed to generate voice key")?;
-        self.rng.fill(&mut nonce_prefix).context("Failed to generate nonce prefix")?;
+        self.rng.fill(&mut aes_key).map_err(|_| anyhow::anyhow!("Failed to generate voice key"))?;
+        self.rng.fill(&mut nonce_prefix).map_err(|_| anyhow::anyhow!("Failed to generate nonce prefix"))?;
 
         Ok(VoiceKey {
             aes_key,
@@ -190,7 +202,7 @@ impl CryptoManager {
     /// Encrypt voice packet for real-time transmission
     pub fn encrypt_voice_packet(&self, voice_key: &mut VoiceKey, audio_data: &[u8]) -> Result<Vec<u8>> {
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &voice_key.aes_key)
-            .context("Failed to create voice encryption key")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create voice encryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
         // Create nonce from prefix + sequence number
@@ -201,7 +213,7 @@ impl CryptoManager {
 
         let mut ciphertext = audio_data.to_vec();
         key.seal_in_place_append_tag(nonce, aead::Aad::empty(), &mut ciphertext)
-            .context("Voice encryption failed")?;
+            .map_err(|_| anyhow::anyhow!("Voice encryption failed"))?;
 
         // Include sequence number in packet for decryption
         let mut result = voice_key.sequence.to_be_bytes().to_vec();
@@ -218,7 +230,7 @@ impl CryptoManager {
         }
 
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &voice_key.aes_key)
-            .context("Failed to create voice decryption key")?;
+            .map_err(|_| anyhow::anyhow!("Failed to create voice decryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
         // Extract sequence number
@@ -232,7 +244,7 @@ impl CryptoManager {
 
         let mut audio_data = encrypted_data[8..].to_vec();
         key.open_in_place(nonce, aead::Aad::empty(), &mut audio_data)
-            .context("Voice decryption failed")?;
+            .map_err(|_| anyhow::anyhow!("Voice decryption failed"))?;
 
         Ok(audio_data)
     }
@@ -241,19 +253,6 @@ impl CryptoManager {
     pub fn get_identity_key(&self) -> Option<&IdentityKey> {
         self.identity_key.as_ref()
     }
-}
-
-// Helper macro for array references (would normally use arrayref crate)
-macro_rules! array_ref {
-    ($arr:expr, $offset:expr, $len:expr) => {{
-        {
-            #[inline]
-            unsafe fn as_array<T>(slice: &[T]) -> &[T; $len] {
-                &*(slice.as_ptr() as *const [_; $len])
-            }
-            unsafe { as_array(&$arr[$offset..]) }
-        }
-    }};
 }
 
 #[cfg(test)]

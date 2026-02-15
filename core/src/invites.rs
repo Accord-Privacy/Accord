@@ -250,15 +250,15 @@ impl InviteManager {
         user_id: Uuid,
         user_info: UserInfo,
     ) -> Result<InviteUsage> {
-        let invite = self.invites.get_mut(invite_code)
-            .ok_or_else(|| anyhow::anyhow!("Invite not found"))?;
-
-        // Validate before using
+        // Validate before getting mutable reference
         let validation = self.validate_invite(invite_code, &user_info);
         match validation {
             InviteValidation::Valid => {},
             _ => return Err(anyhow::anyhow!("Invite validation failed")),
         }
+
+        let invite = self.invites.get_mut(invite_code)
+            .ok_or_else(|| anyhow::anyhow!("Invite not found"))?;
 
         invite.current_uses += 1;
 

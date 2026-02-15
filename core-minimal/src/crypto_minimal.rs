@@ -7,6 +7,7 @@ use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use uuid::Uuid;
+use base64::{Engine as _, engine::general_purpose};
 
 /// Simplified encryption key
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,12 +164,12 @@ impl SimpleCrypto {
         let invite_data = format!("{}:{}:{}", server_id, expires_at.timestamp(), self.user_id);
         
         // Simple encoding (production would use proper invite format)
-        base64::encode(&invite_data)
+        general_purpose::STANDARD.encode(&invite_data)
     }
 
     /// Validate and decode invite
     pub fn decode_invite(&self, invite_code: &str) -> Result<(Uuid, chrono::DateTime<chrono::Utc>, Uuid), String> {
-        let decoded = base64::decode(invite_code)
+        let decoded = general_purpose::STANDARD.decode(invite_code)
             .map_err(|_| "Invalid invite code format")?;
         let invite_data = String::from_utf8(decoded)
             .map_err(|_| "Invalid invite data")?;
@@ -186,8 +187,7 @@ impl SimpleCrypto {
             .map_err(|_| "Invalid creator ID")?;
         
         let expires_at = chrono::DateTime::from_timestamp(timestamp, 0)
-            .ok_or_else(|| "Invalid expiration time")?
-            .and_utc();
+            .ok_or_else(|| "Invalid expiration time")?;
 
         if chrono::Utc::now() > expires_at {
             return Err("Invite has expired".to_string());

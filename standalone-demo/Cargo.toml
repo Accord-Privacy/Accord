@@ -3,8 +3,7 @@ name = "accord-standalone-demo"
 version = "0.1.0"
 edition = "2021"
 
-# Empty workspace to exclude from parent workspace
-[workspace]
+# Part of parent workspace
 
 # Minimal dependencies that don't require build scripts
 [dependencies]
