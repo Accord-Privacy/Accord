@@ -75,14 +75,42 @@ impl SimpleCrypto {
     }
 
     /// Establish session with another user (simplified key exchange)
-    pub fn establish_session(&mut self, other_user_id: Uuid, _their_public_key: &str) -> String {
+    pub fn establish_session(&mut self, other_user_id: Uuid, their_public_key: &str) -> String {
         // In production: proper ECDH key exchange
-        // For demo: generate shared session key
-        let session_key = SimpleKey::generate();
+        // For demo: derive deterministic shared session key from both users' key material
+        let session_key = self.derive_shared_session_key(their_public_key);
         let fingerprint = session_key.fingerprint();
         
         self.session_keys.insert(other_user_id, session_key);
         fingerprint
+    }
+
+    /// Derive a shared session key deterministically from both users' key material
+    fn derive_shared_session_key(&self, their_public_key: &str) -> SimpleKey {
+        let my_fingerprint = self.public_key_fingerprint.as_str();
+        let their_fingerprint = their_public_key;
+        
+        // Create deterministic shared key by hashing both fingerprints in canonical order
+        let (first, second) = if my_fingerprint < their_fingerprint {
+            (my_fingerprint, their_fingerprint)
+        } else {
+            (their_fingerprint, my_fingerprint)
+        };
+        
+        let mut hasher = Sha256::new();
+        hasher.update(b"accord_shared_session_key:");  // Domain separation
+        hasher.update(first.as_bytes());
+        hasher.update(b":");
+        hasher.update(second.as_bytes());
+        let shared_hash = hasher.finalize();
+        
+        let mut key_material = [0u8; 32];
+        key_material.copy_from_slice(&shared_hash[..32]);
+        
+        SimpleKey {
+            key_material,
+            created_at: chrono::Utc::now(),
+        }
     }
 
     /// Encrypt a message (simplified XOR cipher for demo)
