@@ -65,6 +65,15 @@ pub enum WsMessageType {
         channel_id: Uuid,
         encrypted_data: String,
     },
+    /// Edit a message (author only)
+    EditMessage {
+        message_id: Uuid,
+        encrypted_data: String,
+    },
+    /// Delete a message (author or admin/mod)
+    DeleteMessage {
+        message_id: Uuid,
+    },
 
     // ── Voice operations ──
     /// Join a voice channel
@@ -172,6 +181,13 @@ pub struct UseInviteResponse {
     pub node_name: String,
 }
 
+/// Edit message request
+#[derive(Debug, Deserialize)]
+pub struct EditMessageRequest {
+    pub user_id: Uuid,
+    pub encrypted_data: String,
+}
+
 /// Generic error response
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
@@ -259,6 +275,7 @@ pub struct MessageMetadata {
     pub sender_username: String,
     pub encrypted_payload: String, // Base64 encoded encrypted content
     pub created_at: u64,
+    pub edited_at: Option<u64>,
 }
 
 /// File metadata for encrypted file sharing

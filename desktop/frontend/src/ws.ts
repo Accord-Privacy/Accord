@@ -15,6 +15,8 @@ export interface WsEvents {
   channel_created: (data: any) => void;
   direct_message: (data: any) => void;
   channel_message: (data: any) => void;
+  message_edit: (data: any) => void;
+  message_delete: (data: any) => void;
   presence_update: (data: any) => void;
   pong: (data: any) => void;
   voice_join: (data: any) => void;
@@ -255,6 +257,14 @@ export class AccordWebSocket {
 
   sendChannelMessage(channelId: string, encryptedData: string): void {
     this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData } });
+  }
+
+  sendEditMessage(messageId: string, encryptedData: string): void {
+    this.sendMessage({ EditMessage: { message_id: messageId, encrypted_data: encryptedData } });
+  }
+
+  sendDeleteMessage(messageId: string): void {
+    this.sendMessage({ DeleteMessage: { message_id: messageId } });
   }
 
   // Note: encryptedData should be base64-encoded encrypted content

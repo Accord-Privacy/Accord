@@ -2,9 +2,10 @@
 
 use crate::models::{
     AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest,
-    ErrorResponse, FileMetadata, HealthResponse, RegisterRequest, RegisterResponse,
+    EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse, RegisterRequest, RegisterResponse,
     UseInviteResponse, WsMessage, WsMessageType,
 };
+use base64::Engine;
 use crate::node::NodeInfo;
 use crate::permissions::{has_permission, Permission};
 use crate::state::SharedState;
@@ -1001,6 +1002,72 @@ async fn handle_ws_message(
             state.send_to_channel(channel_id, relay.to_string()).await?;
         }
 
+        WsMessageType::EditMessage {
+            message_id,
+            encrypted_data,
+        } => {
+            // Decode the encrypted payload
+            let encrypted_payload = base64::engine::general_purpose::STANDARD
+                .decode(&encrypted_data)
+                .map_err(|_| "Invalid base64 encoded data".to_string())?;
+
+            // Attempt to edit the message
+            match state.db.edit_message(message_id, sender_user_id, &encrypted_payload).await {
+                Ok(true) => {
+                    // Get the updated message details for broadcasting
+                    if let Ok(Some((channel_id, sender_id, created_at, edited_at))) = 
+                        state.db.get_message_details(message_id).await 
+                    {
+                        // Broadcast the message edit event to channel members
+                        let edit_event = serde_json::json!({
+                            "type": "message_edit",
+                            "message_id": message_id,
+                            "channel_id": channel_id,
+                            "sender_id": sender_id,
+                            "encrypted_data": encrypted_data,
+                            "created_at": created_at,
+                            "edited_at": edited_at,
+                            "timestamp": now_secs()
+                        });
+                        if let Err(e) = state.send_to_channel(channel_id, edit_event.to_string()).await {
+                            error!("Failed to broadcast message edit: {}", e);
+                        }
+                    }
+                }
+                Ok(false) => {
+                    error!("Message edit failed: permission denied or message not found");
+                }
+                Err(e) => {
+                    error!("Failed to edit message: {}", e);
+                }
+            }
+        }
+
+        WsMessageType::DeleteMessage { message_id } => {
+            // Attempt to delete the message
+            match state.db.delete_message(message_id, sender_user_id).await {
+                Ok(Some((channel_id, sender_id))) => {
+                    // Broadcast the message delete event to channel members
+                    let delete_event = serde_json::json!({
+                        "type": "message_delete",
+                        "message_id": message_id,
+                        "channel_id": channel_id,
+                        "sender_id": sender_id,
+                        "timestamp": now_secs()
+                    });
+                    if let Err(e) = state.send_to_channel(channel_id, delete_event.to_string()).await {
+                        error!("Failed to broadcast message delete: {}", e);
+                    }
+                }
+                Ok(None) => {
+                    error!("Message delete failed: permission denied or message not found");
+                }
+                Err(e) => {
+                    error!("Failed to delete message: {}", e);
+                }
+            }
+        }
+
         WsMessageType::Ping => {
             let pong = serde_json::json!({ "type": "pong", "timestamp": now_secs() });
             state.send_to_user(sender_user_id, pong.to_string()).await?;
@@ -1474,6 +1541,163 @@ pub async fn delete_file_handler(
     }
 }
 
+/// Edit message endpoint
+pub async fn edit_message_handler(
+    Path(message_id): Path<String>,
+    State(state): State<SharedState>,
+    Json(request): Json<EditMessageRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = request.user_id;
+
+    // Decode the encrypted payload
+    let encrypted_payload = base64::engine::general_purpose::STANDARD
+        .decode(&request.encrypted_data)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid base64 encoded data".into(),
+                    code: 400,
+                }),
+            )
+        })?;
+
+    // Attempt to edit the message
+    let success = match state.db.edit_message(message_id, user_id, &encrypted_payload).await {
+        Ok(success) => success,
+        Err(e) => {
+            error!("Failed to edit message: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to edit message".into(),
+                    code: 500,
+                }),
+            ));
+        }
+    };
+
+    if !success {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Message not found or you don't have permission to edit it".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Get the updated message details for broadcasting
+    if let Ok(Some((channel_id, sender_id, created_at, edited_at))) = 
+        state.db.get_message_details(message_id).await 
+    {
+        // Broadcast the message edit event to channel members
+        let edit_event = serde_json::json!({
+            "type": "message_edit",
+            "message_id": message_id,
+            "channel_id": channel_id,
+            "sender_id": sender_id,
+            "encrypted_data": request.encrypted_data,
+            "created_at": created_at,
+            "edited_at": edited_at,
+            "timestamp": now_secs()
+        });
+
+        if let Err(e) = state.send_to_channel(channel_id, edit_event.to_string()).await {
+            error!("Failed to broadcast message edit: {}", e);
+        }
+    }
+
+    Ok(Json(serde_json::json!({"success": true})))
+}
+
+/// Delete message endpoint
+pub async fn delete_message_handler(
+    Path(message_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let token = params.get("token").ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: "Missing token parameter".into(),
+            code: 400,
+        }),
+    ))?;
+
+    // Get user ID from token (simplified - in production use proper JWT validation)
+    let user_id = extract_user_id_from_token(token).map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid or expired token".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    // Attempt to delete the message
+    let result = match state.db.delete_message(message_id, user_id).await {
+        Ok(result) => result,
+        Err(e) => {
+            error!("Failed to delete message: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to delete message".into(),
+                    code: 500,
+                }),
+            ));
+        }
+    };
+
+    match result {
+        Some((channel_id, sender_id)) => {
+            // Broadcast the message delete event to channel members
+            let delete_event = serde_json::json!({
+                "type": "message_delete",
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "sender_id": sender_id,
+                "timestamp": now_secs()
+            });
+
+            if let Err(e) = state.send_to_channel(channel_id, delete_event.to_string()).await {
+                error!("Failed to broadcast message delete: {}", e);
+            }
+
+            Ok(Json(serde_json::json!({"success": true})))
+        }
+        None => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Message not found or you don't have permission to delete it".into(),
+                code: 403,
+            }),
+        )),
+    }
+}
+
 /// Extract user ID from request (placeholder - should be handled by auth middleware)
 async fn extract_user_from_request(_state: &SharedState) -> Result<Uuid, anyhow::Error> {
     // This is a placeholder implementation
@@ -1490,4 +1714,12 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+/// Extract user ID from token (simplified implementation for development)
+fn extract_user_id_from_token(token: &str) -> Result<Uuid, anyhow::Error> {
+    // This is a placeholder implementation
+    // In a real implementation, this would validate and decode a JWT token
+    // For now, we'll just try to parse it as a UUID directly
+    Uuid::parse_str(token).map_err(|e| anyhow::anyhow!("Invalid token format: {}", e))
 }

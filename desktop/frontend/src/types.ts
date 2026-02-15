@@ -94,6 +94,8 @@ export type WsMessageType =
   | { CreateChannel: { node_id: string; name: string } }
   | { DirectMessage: { to_user: string; encrypted_data: string } }
   | { ChannelMessage: { channel_id: string; encrypted_data: string } }
+  | { EditMessage: { message_id: string; encrypted_data: string } }
+  | { DeleteMessage: { message_id: string } }
   | 'Ping'
   | 'Pong';
 
@@ -173,6 +175,7 @@ export interface Message {
   time?: string;
   channel_id?: string;
   timestamp: number;
+  edited_at?: number;
   isEncrypted?: boolean;
 }
 

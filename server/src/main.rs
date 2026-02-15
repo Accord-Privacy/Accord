@@ -19,10 +19,11 @@ use axum::{
 use clap::Parser;
 use handlers::{
     auth_handler, create_invite_handler, create_node_handler, delete_channel_handler,
-    delete_file_handler, download_file_handler, get_channel_messages_handler, get_node_handler,
-    get_node_members_handler, get_user_profile_handler, health_handler, join_node_handler,
-    kick_user_handler, leave_node_handler, list_channel_files_handler, list_invites_handler,
-    register_handler, revoke_invite_handler, search_messages_handler, update_node_handler,
+    delete_file_handler, delete_message_handler, download_file_handler, edit_message_handler,
+    get_channel_messages_handler, get_node_handler, get_node_members_handler,
+    get_user_profile_handler, health_handler, join_node_handler, kick_user_handler,
+    leave_node_handler, list_channel_files_handler, list_invites_handler, register_handler,
+    revoke_invite_handler, search_messages_handler, update_node_handler,
     update_user_profile_handler, upload_file_handler, use_invite_handler, ws_handler,
 };
 use state::{AppState, SharedState};
@@ -96,6 +97,9 @@ async fn main() -> Result<()> {
         // Channel endpoints
         .route("/channels/:id", delete(delete_channel_handler))
         .route("/channels/:id/messages", get(get_channel_messages_handler))
+        // ── Message editing and deletion ──
+        .route("/messages/:id", axum::routing::patch(edit_message_handler))
+        .route("/messages/:id", delete(delete_message_handler))
         // File sharing endpoints
         .route("/channels/:id/files", post(upload_file_handler))
         .route("/channels/:id/files", get(list_channel_files_handler))

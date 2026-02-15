@@ -131,6 +131,7 @@ impl Database {
                 sender_id TEXT NOT NULL,
                 encrypted_payload BLOB NOT NULL,
                 created_at INTEGER NOT NULL,
+                edited_at INTEGER,
                 FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE,
                 FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE CASCADE
             )
@@ -139,6 +140,12 @@ impl Database {
         .execute(&self.pool)
         .await
         .context("Failed to create messages table")?;
+
+        // Add edited_at column to existing messages table if it doesn't exist
+        sqlx::query("ALTER TABLE messages ADD COLUMN edited_at INTEGER")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
 
         // Create node_invites table
         sqlx::query(
@@ -680,7 +687,7 @@ impl Database {
 
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, u.username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, u.username
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 WHERE m.channel_id = ? AND m.created_at < ?
@@ -694,7 +701,7 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, u.username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, u.username
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 WHERE m.channel_id = ?
@@ -720,6 +727,7 @@ impl Database {
                 let sender_username: String = row.get("username");
                 let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
                 let created_at = row.get::<i64, _>("created_at") as u64;
+                let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
 
                 crate::models::MessageMetadata {
                     id: message_id,
@@ -729,6 +737,7 @@ impl Database {
                     encrypted_payload: base64::engine::general_purpose::STANDARD
                         .encode(&encrypted_payload),
                     created_at,
+                    edited_at,
                 }
             })
             .collect();
@@ -855,6 +864,115 @@ impl Database {
 
     pub async fn cleanup_expired_tokens(&self, _current_time: u64) -> Result<u64> {
         Ok(0)
+    }
+
+    /// Edit a message (author only)
+    pub async fn edit_message(
+        &self,
+        message_id: Uuid,
+        sender_id: Uuid,
+        new_encrypted_payload: &[u8],
+    ) -> Result<bool> {
+        let edited_at = now();
+
+        let result = sqlx::query(
+            "UPDATE messages SET encrypted_payload = ?, edited_at = ? WHERE id = ? AND sender_id = ?"
+        )
+        .bind(new_encrypted_payload)
+        .bind(edited_at as i64)
+        .bind(message_id.to_string())
+        .bind(sender_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to edit message")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete a message (author or admin/mod)
+    pub async fn delete_message(
+        &self,
+        message_id: Uuid,
+        requester_id: Uuid,
+    ) -> Result<Option<(Uuid, Uuid)>> { // Returns (channel_id, sender_id) if successful
+        // First, get the message details to check permissions and return channel info
+        let message_info: Option<(String, String)> = sqlx::query_as(
+            "SELECT channel_id, sender_id FROM messages WHERE id = ?"
+        )
+        .bind(message_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query message")?;
+
+        if let Some((channel_id_str, sender_id_str)) = message_info {
+            let channel_id = Uuid::parse_str(&channel_id_str)
+                .context("Invalid channel_id format")?;
+            let sender_id = Uuid::parse_str(&sender_id_str)
+                .context("Invalid sender_id format")?;
+
+            // Check if requester is the author
+            let is_author = requester_id == sender_id;
+
+            // Check if requester is admin/mod of the node containing this channel
+            let is_admin_or_mod = sqlx::query_scalar::<_, bool>(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM node_members nm
+                    JOIN channels c ON c.node_id = nm.node_id
+                    WHERE c.id = ? AND nm.user_id = ? AND nm.role IN ('admin', 'moderator')
+                )
+                "#
+            )
+            .bind(channel_id.to_string())
+            .bind(requester_id.to_string())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(false);
+
+            if is_author || is_admin_or_mod {
+                let result = sqlx::query("DELETE FROM messages WHERE id = ?")
+                    .bind(message_id.to_string())
+                    .execute(&self.pool)
+                    .await
+                    .context("Failed to delete message")?;
+
+                if result.rows_affected() > 0 {
+                    return Ok(Some((channel_id, sender_id)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get message details for permission checking
+    pub async fn get_message_details(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Option<(Uuid, Uuid, u64, Option<u64>)>> { // (channel_id, sender_id, created_at, edited_at)
+        let result: Option<(String, String, i64, Option<i64>)> = sqlx::query_as(
+            "SELECT channel_id, sender_id, created_at, edited_at FROM messages WHERE id = ?"
+        )
+        .bind(message_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query message details")?;
+
+        if let Some((channel_id_str, sender_id_str, created_at, edited_at)) = result {
+            let channel_id = Uuid::parse_str(&channel_id_str)
+                .context("Invalid channel_id format")?;
+            let sender_id = Uuid::parse_str(&sender_id_str)
+                .context("Invalid sender_id format")?;
+
+            Ok(Some((
+                channel_id,
+                sender_id,
+                created_at as u64,
+                edited_at.map(|t| t as u64),
+            )))
+        } else {
+            Ok(None)
+        }
     }
 
     // ── Node invite operations ──

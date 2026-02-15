@@ -320,6 +320,60 @@ export class AccordApi {
     );
   }
 
+  // Search messages in a node
+  async searchMessages(nodeId: string, query: string, token: string, channelId?: string): Promise<{ 
+    results: Array<{
+      message_id: string;
+      channel_id: string; 
+      channel_name: string;
+      sender_id: string;
+      sender_username: string;
+      timestamp: number;
+    }>;
+    note?: string;
+  }> {
+    let url = `/nodes/${nodeId}/search?q=${encodeURIComponent(query)}&token=${encodeURIComponent(token)}`;
+    if (channelId) {
+      url += `&channel=${encodeURIComponent(channelId)}`;
+    }
+    return this.request<{ 
+      results: Array<{
+        message_id: string;
+        channel_id: string; 
+        channel_name: string;
+        sender_id: string;
+        sender_username: string;
+        timestamp: number;
+      }>;
+      note?: string;
+    }>(url);
+  }
+
+  // Edit a message
+  async editMessage(
+    messageId: string,
+    userId: string,
+    encryptedData: string
+  ): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/messages/${messageId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        user_id: userId,
+        encrypted_data: encryptedData,
+      }),
+    });
+  }
+
+  // Delete a message
+  async deleteMessage(messageId: string, token: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(
+      `/messages/${messageId}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {
@@ -355,3 +409,4 @@ export const getNodeInvites = api.getNodeInvites.bind(api);
 export const createInviteWithOptions = api.createInviteWithOptions.bind(api);
 export const revokeInvite = api.revokeInvite.bind(api);
 export const testConnection = api.testConnection.bind(api);
+export const searchMessages = api.searchMessages.bind(api);
