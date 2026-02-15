@@ -1,5 +1,5 @@
 //! # Accord Relay Server
-//! 
+//!
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
@@ -18,12 +18,12 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    auth_handler, create_invite_handler, create_node_handler, delete_channel_handler, 
-    get_channel_messages_handler, get_node_handler, get_node_members_handler, get_user_profile_handler, 
-    join_node_handler, kick_user_handler, leave_node_handler, list_invites_handler, revoke_invite_handler, 
-    search_messages_handler, update_node_handler, update_user_profile_handler, use_invite_handler, 
-    health_handler, register_handler, ws_handler,
-    upload_file_handler, download_file_handler, list_channel_files_handler, delete_file_handler,
+    auth_handler, create_invite_handler, create_node_handler, delete_channel_handler,
+    delete_file_handler, download_file_handler, get_channel_messages_handler, get_node_handler,
+    get_node_members_handler, get_user_profile_handler, health_handler, join_node_handler,
+    kick_user_handler, leave_node_handler, list_channel_files_handler, list_invites_handler,
+    register_handler, revoke_invite_handler, search_messages_handler, update_node_handler,
+    update_user_profile_handler, upload_file_handler, use_invite_handler, ws_handler,
 };
 use state::{AppState, SharedState};
 use std::sync::Arc;
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
-    
+
     info!("Starting Accord Relay Server");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
     info!("Bind address: {}:{}", args.host, args.port);
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     info!("Initializing database: {}", args.database);
     let app_state = AppState::new(&args.database).await?;
     let state: SharedState = Arc::new(app_state);
-    
+
     // Build the router with all endpoints
     let app = Router::new()
         // REST endpoints
@@ -105,7 +105,10 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/search", get(search_messages_handler))
         // User profile endpoints
         .route("/users/:id/profile", get(get_user_profile_handler))
-        .route("/users/me/profile", axum::routing::patch(update_user_profile_handler))
+        .route(
+            "/users/me/profile",
+            axum::routing::patch(update_user_profile_handler),
+        )
         .route("/nodes/:id/members", get(get_node_members_handler))
         // Node invite endpoints
         .route("/nodes/:id/invites", post(create_invite_handler))
@@ -124,7 +127,7 @@ async fn main() -> Result<()> {
                     CorsLayer::new()
                         .allow_methods(Any)
                         .allow_headers(Any)
-                        .allow_origin(Any)
+                        .allow_origin(Any),
                 ),
         );
 
@@ -145,7 +148,9 @@ async fn main() -> Result<()> {
     println!("  DELETE /nodes/:id/members/:user_id - Kick user (?token=) [Admin/Mod]");
     println!("  DELETE /channels/:id      - Delete channel (?token=) [Admin]");
     println!("  GET    /channels/:id/messages - Get channel message history (?token=&limit=50&before=msg_id)");
-    println!("  GET    /nodes/:id/search  - Search messages in Node (?token=&q=query&channel=ch_id)");
+    println!(
+        "  GET    /nodes/:id/search  - Search messages in Node (?token=&q=query&channel=ch_id)"
+    );
     println!("  GET    /users/:id/profile - Get user profile (?token=)");
     println!("  PATCH  /users/me/profile  - Update own profile (?token=)");
     println!("  GET    /nodes/:id/members - Get Node members with profiles (?token=)");
@@ -158,12 +163,11 @@ async fn main() -> Result<()> {
 
     // Create the server
     let listener = tokio::net::TcpListener::bind(&format!("{}:{}", args.host, args.port)).await?;
-    
+
     info!("Server successfully bound to {}:{}", args.host, args.port);
 
     // Start the server
-    axum::serve(listener, app)
-        .await?;
+    axum::serve(listener, app).await?;
 
     info!("Shutting down server...");
     Ok(())

@@ -1,14 +1,14 @@
 //! # Accord Core (Minimal Implementation)
-//! 
+//!
 //! Simplified implementation for testing and demonstration purposes.
 //! Production version will use proper cryptographic libraries.
 
-pub mod crypto_minimal;
 pub mod channel_types;
-pub mod network_protocol;
+pub mod crypto_minimal;
 pub mod demo;
+pub mod network_protocol;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Accord protocol version
@@ -82,7 +82,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
             encrypted_payload: b"test message".to_vec(),
         };
-        
+
         assert_eq!(msg.message_type, MessageType::TextMessage);
     }
 }

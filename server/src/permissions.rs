@@ -32,7 +32,7 @@ pub enum Permission {
 /// Get all permissions for a given role
 pub fn role_permissions(role: NodeRole) -> HashSet<Permission> {
     use Permission::*;
-    
+
     match role {
         NodeRole::Admin => {
             // Admins have all permissions
@@ -46,22 +46,19 @@ pub fn role_permissions(role: NodeRole) -> HashSet<Permission> {
                 SendMessages,
                 ManageNode,
                 ViewAuditLog,
-            ].into_iter().collect()
+            ]
+            .into_iter()
+            .collect()
         }
         NodeRole::Moderator => {
             // Moderators have limited management permissions
-            vec![
-                KickMembers,
-                ManageInvites,
-                SendMessages,
-                ViewAuditLog,
-            ].into_iter().collect()
+            vec![KickMembers, ManageInvites, SendMessages, ViewAuditLog]
+                .into_iter()
+                .collect()
         }
         NodeRole::Member => {
             // Members can only participate
-            vec![
-                SendMessages,
-            ].into_iter().collect()
+            vec![SendMessages].into_iter().collect()
         }
     }
 }
@@ -78,7 +75,7 @@ mod tests {
     #[test]
     fn admin_has_all_permissions() {
         let admin_perms = role_permissions(NodeRole::Admin);
-        
+
         // Admin should have all permissions
         assert!(admin_perms.contains(&Permission::CreateChannel));
         assert!(admin_perms.contains(&Permission::DeleteChannel));
@@ -94,13 +91,13 @@ mod tests {
     #[test]
     fn moderator_has_limited_permissions() {
         let mod_perms = role_permissions(NodeRole::Moderator);
-        
+
         // Moderator should have these permissions
         assert!(mod_perms.contains(&Permission::KickMembers));
         assert!(mod_perms.contains(&Permission::ManageInvites));
         assert!(mod_perms.contains(&Permission::SendMessages));
         assert!(mod_perms.contains(&Permission::ViewAuditLog));
-        
+
         // But not these
         assert!(!mod_perms.contains(&Permission::CreateChannel));
         assert!(!mod_perms.contains(&Permission::DeleteChannel));
@@ -112,10 +109,10 @@ mod tests {
     #[test]
     fn member_has_minimal_permissions() {
         let member_perms = role_permissions(NodeRole::Member);
-        
+
         // Member should only have this permission
         assert!(member_perms.contains(&Permission::SendMessages));
-        
+
         // But not any management permissions
         assert!(!member_perms.contains(&Permission::CreateChannel));
         assert!(!member_perms.contains(&Permission::DeleteChannel));
@@ -132,11 +129,14 @@ mod tests {
         // Admin should have all permissions
         assert!(has_permission(NodeRole::Admin, Permission::CreateChannel));
         assert!(has_permission(NodeRole::Admin, Permission::ManageNode));
-        
+
         // Moderator should have some permissions but not others
         assert!(has_permission(NodeRole::Moderator, Permission::KickMembers));
-        assert!(!has_permission(NodeRole::Moderator, Permission::CreateChannel));
-        
+        assert!(!has_permission(
+            NodeRole::Moderator,
+            Permission::CreateChannel
+        ));
+
         // Member should only send messages
         assert!(has_permission(NodeRole::Member, Permission::SendMessages));
         assert!(!has_permission(NodeRole::Member, Permission::KickMembers));

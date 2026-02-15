@@ -4,11 +4,11 @@
 //! Files are encrypted client-side before upload, so the server only
 //! stores opaque encrypted blobs and cannot read the actual content or filenames.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
-use sha2::{Sha256, Digest};
 
 /// Configuration for file storage
 #[derive(Debug, Clone)]
@@ -48,15 +48,27 @@ impl FileHandler {
     pub async fn init(&self) -> Result<()> {
         fs::create_dir_all(&self.config.storage_dir)
             .await
-            .with_context(|| format!("Failed to create storage directory: {:?}", self.config.storage_dir))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create storage directory: {:?}",
+                    self.config.storage_dir
+                )
+            })?;
         Ok(())
     }
 
     /// Store an encrypted file to disk
-    pub async fn store_file(&self, file_id: Uuid, encrypted_data: &[u8]) -> Result<(String, String)> {
+    pub async fn store_file(
+        &self,
+        file_id: Uuid,
+        encrypted_data: &[u8],
+    ) -> Result<(String, String)> {
         // Check file size
         if encrypted_data.len() as u64 > self.config.max_file_size {
-            return Err(anyhow!("File size exceeds maximum allowed size of {} bytes", self.config.max_file_size));
+            return Err(anyhow!(
+                "File size exceeds maximum allowed size of {} bytes",
+                self.config.max_file_size
+            ));
         }
 
         // Generate storage path
@@ -79,7 +91,7 @@ impl FileHandler {
     /// Read an encrypted file from disk
     pub async fn read_file(&self, storage_path: &str) -> Result<Vec<u8>> {
         let file_path = Path::new(storage_path);
-        
+
         // Security check: ensure the path is within our storage directory
         if !file_path.starts_with(&self.config.storage_dir) {
             return Err(anyhow!("Invalid file path: path traversal detected"));
@@ -93,7 +105,7 @@ impl FileHandler {
     /// Delete a file from disk
     pub async fn delete_file(&self, storage_path: &str) -> Result<()> {
         let file_path = Path::new(storage_path);
-        
+
         // Security check: ensure the path is within our storage directory
         if !file_path.starts_with(&self.config.storage_dir) {
             return Err(anyhow!("Invalid file path: path traversal detected"));
@@ -111,7 +123,7 @@ impl FileHandler {
     /// Get file size from disk
     pub async fn get_file_size(&self, storage_path: &str) -> Result<u64> {
         let file_path = Path::new(storage_path);
-        
+
         // Security check: ensure the path is within our storage directory
         if !file_path.starts_with(&self.config.storage_dir) {
             return Err(anyhow!("Invalid file path: path traversal detected"));
@@ -127,7 +139,7 @@ impl FileHandler {
     /// Check if a file exists on disk
     pub async fn file_exists(&self, storage_path: &str) -> bool {
         let file_path = Path::new(storage_path);
-        
+
         // Security check: ensure the path is within our storage directory
         if !file_path.starts_with(&self.config.storage_dir) {
             return false;
@@ -137,9 +149,13 @@ impl FileHandler {
     }
 
     /// Verify content hash of a stored file
-    pub async fn verify_content_hash(&self, storage_path: &str, expected_hash: &str) -> Result<bool> {
+    pub async fn verify_content_hash(
+        &self,
+        storage_path: &str,
+        expected_hash: &str,
+    ) -> Result<bool> {
         let file_data = self.read_file(storage_path).await?;
-        
+
         let mut hasher = Sha256::new();
         hasher.update(&file_data);
         let actual_hash = format!("{:x}", hasher.finalize());
@@ -160,7 +176,7 @@ mod tests {
             storage_dir: temp_dir.path().to_path_buf(),
             max_file_size: 1024,
         };
-        
+
         let handler = FileHandler::new(config);
         handler.init().await.unwrap();
 
@@ -169,16 +185,19 @@ mod tests {
 
         // Store file
         let (storage_path, content_hash) = handler.store_file(file_id, test_data).await.unwrap();
-        
+
         // Verify file exists
         assert!(handler.file_exists(&storage_path).await);
-        
+
         // Read file back
         let read_data = handler.read_file(&storage_path).await.unwrap();
         assert_eq!(read_data, test_data);
 
         // Verify content hash
-        assert!(handler.verify_content_hash(&storage_path, &content_hash).await.unwrap());
+        assert!(handler
+            .verify_content_hash(&storage_path, &content_hash)
+            .await
+            .unwrap());
 
         // Delete file
         handler.delete_file(&storage_path).await.unwrap();
@@ -192,7 +211,7 @@ mod tests {
             storage_dir: temp_dir.path().to_path_buf(),
             max_file_size: 10, // Very small limit
         };
-        
+
         let handler = FileHandler::new(config);
         handler.init().await.unwrap();
 
@@ -211,13 +230,13 @@ mod tests {
             storage_dir: temp_dir.path().to_path_buf(),
             max_file_size: 1024,
         };
-        
+
         let handler = FileHandler::new(config);
-        
+
         // Try to read a file outside the storage directory
         let result = handler.read_file("../../../etc/passwd").await;
         assert!(result.is_err());
-        
+
         // Try to delete a file outside the storage directory
         let result = handler.delete_file("../../../important_file").await;
         assert!(result.is_err());

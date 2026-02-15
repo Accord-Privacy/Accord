@@ -1,5 +1,5 @@
 //! # Accord Standalone Demo
-//! 
+//!
 //! Completely self-contained demonstration of Accord concepts
 //! Uses only Rust standard library - no external dependencies
 
@@ -12,7 +12,10 @@ type Id = u64;
 /// Generate simple ID
 fn generate_id() -> Id {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
 }
 
 /// Simple encryption (XOR cipher for demo - NOT production ready)
@@ -55,11 +58,19 @@ struct Permissions {
 
 impl Permissions {
     fn member() -> Self {
-        Self { can_speak: true, can_approve: false, can_invite: false }
+        Self {
+            can_speak: true,
+            can_approve: false,
+            can_invite: false,
+        }
     }
-    
+
     fn admin() -> Self {
-        Self { can_speak: true, can_approve: true, can_invite: true }
+        Self {
+            can_speak: true,
+            can_approve: true,
+            can_invite: true,
+        }
     }
 }
 
@@ -159,13 +170,16 @@ impl AccordDemo {
         creator: Id,
     ) -> Result<Id, String> {
         let server = self.servers.get_mut(&server_id).ok_or("Server not found")?;
-        
+
         let id = generate_id();
         let mut members = HashMap::new();
-        members.insert(creator, Member {
-            user_id: creator,
-            permissions: Permissions::admin(),
-        });
+        members.insert(
+            creator,
+            Member {
+                user_id: creator,
+                permissions: Permissions::admin(),
+            },
+        );
 
         let channel = Channel {
             id,
@@ -177,24 +191,38 @@ impl AccordDemo {
         };
 
         server.channels.insert(id, channel);
-        println!("📺 Created channel: {} ({:?}) in server {}", name, channel_type, server_id);
+        println!(
+            "📺 Created channel: {} ({:?}) in server {}",
+            name, channel_type, server_id
+        );
         Ok(id)
     }
 
-    fn join_lobby_channel(&mut self, server_id: Id, channel_id: Id, user_id: Id) -> Result<(), String> {
+    fn join_lobby_channel(
+        &mut self,
+        server_id: Id,
+        channel_id: Id,
+        user_id: Id,
+    ) -> Result<(), String> {
         let server = self.servers.get_mut(&server_id).ok_or("Server not found")?;
-        let channel = server.channels.get_mut(&channel_id).ok_or("Channel not found")?;
-        
+        let channel = server
+            .channels
+            .get_mut(&channel_id)
+            .ok_or("Channel not found")?;
+
         match channel.channel_type {
             ChannelType::Lobby | ChannelType::Voice => {
                 if channel.members.contains_key(&user_id) {
                     return Err("Already a member".to_string());
                 }
 
-                channel.members.insert(user_id, Member {
+                channel.members.insert(
                     user_id,
-                    permissions: Permissions::member(),
-                });
+                    Member {
+                        user_id,
+                        permissions: Permissions::member(),
+                    },
+                );
 
                 let username = &self.users[&user_id].username;
                 println!("✅ {} joined lobby channel {}", username, channel.name);
@@ -212,7 +240,10 @@ impl AccordDemo {
         message: String,
     ) -> Result<Id, String> {
         let server = self.servers.get_mut(&server_id).ok_or("Server not found")?;
-        let channel = server.channels.get_mut(&channel_id).ok_or("Channel not found")?;
+        let channel = server
+            .channels
+            .get_mut(&channel_id)
+            .ok_or("Channel not found")?;
 
         match channel.channel_type {
             ChannelType::Private { .. } => {
@@ -230,7 +261,10 @@ impl AccordDemo {
 
                 channel.pending_requests.push(request);
                 let username = &self.users[&user_id].username;
-                println!("📝 {} requested entry to private channel {}", username, channel.name);
+                println!(
+                    "📝 {} requested entry to private channel {}",
+                    username, channel.name
+                );
                 Ok(request_id)
             }
             _ => Err("Can only request entry to private channels".to_string()),
@@ -239,9 +273,13 @@ impl AccordDemo {
 
     fn approve_entry(&mut self, server_id: Id, request_id: Id, approver: Id) -> Result<(), String> {
         let server = self.servers.get_mut(&server_id).ok_or("Server not found")?;
-        
+
         for channel in server.channels.values_mut() {
-            if let Some(pos) = channel.pending_requests.iter().position(|r| r.id == request_id) {
+            if let Some(pos) = channel
+                .pending_requests
+                .iter()
+                .position(|r| r.id == request_id)
+            {
                 // Check permissions
                 let approver_member = channel.members.get(&approver).ok_or("Not a member")?;
                 if !approver_member.permissions.can_approve {
@@ -249,14 +287,20 @@ impl AccordDemo {
                 }
 
                 let request = channel.pending_requests.remove(pos);
-                channel.members.insert(request.user_id, Member {
-                    user_id: request.user_id,
-                    permissions: Permissions::member(),
-                });
+                channel.members.insert(
+                    request.user_id,
+                    Member {
+                        user_id: request.user_id,
+                        permissions: Permissions::member(),
+                    },
+                );
 
                 let username = &self.users[&request.user_id].username;
                 let approver_name = &self.users[&approver].username;
-                println!("✅ {} approved {}'s entry to {}", approver_name, username, channel.name);
+                println!(
+                    "✅ {} approved {}'s entry to {}",
+                    approver_name, username, channel.name
+                );
                 return Ok(());
             }
         }
@@ -275,17 +319,28 @@ impl AccordDemo {
 
         let name1 = &self.users[&user1].username;
         let name2 = &self.users[&user2].username;
-        println!("🔐 Established encrypted session between {} and {}", name1, name2);
+        println!(
+            "🔐 Established encrypted session between {} and {}",
+            name1, name2
+        );
     }
 
-    fn send_message(&self, sender: Id, recipient: Id, channel: Id, content: &str) -> Result<Message, String> {
-        let shared_key = self.session_keys.get(&(sender, recipient))
+    fn send_message(
+        &self,
+        sender: Id,
+        recipient: Id,
+        channel: Id,
+        content: &str,
+    ) -> Result<Message, String> {
+        let shared_key = self
+            .session_keys
+            .get(&(sender, recipient))
             .ok_or("No session established")?;
 
         let encrypted_content = simple_encrypt(content.as_bytes(), *shared_key);
-        
+
         let content_len = encrypted_content.len();
-        
+
         let message = Message {
             id: generate_id(),
             sender,
@@ -294,12 +349,17 @@ impl AccordDemo {
         };
 
         let sender_name = &self.users[&sender].username;
-        println!("📨 {} sent encrypted message (length: {} bytes)", sender_name, content_len);
+        println!(
+            "📨 {} sent encrypted message (length: {} bytes)",
+            sender_name, content_len
+        );
         Ok(message)
     }
 
     fn receive_message(&self, recipient: Id, message: &Message) -> Result<String, String> {
-        let shared_key = self.session_keys.get(&(message.sender, recipient))
+        let shared_key = self
+            .session_keys
+            .get(&(message.sender, recipient))
             .ok_or("No session established")?;
 
         let decrypted = simple_decrypt(&message.encrypted_content, *shared_key);
@@ -307,7 +367,10 @@ impl AccordDemo {
 
         let sender_name = &self.users[&message.sender].username;
         let recipient_name = &self.users[&recipient].username;
-        println!("📥 {} received message from {}: \"{}\"", recipient_name, sender_name, content);
+        println!(
+            "📥 {} received message from {}: \"{}\"",
+            recipient_name, sender_name, content
+        );
         Ok(content)
     }
 
@@ -318,11 +381,14 @@ impl AccordDemo {
             .unwrap()
             .as_secs();
         let expires = now + (hours as u64 * 3600);
-        
+
         let invite = format!("{}:{}:{}", server_id, creator, expires);
         let creator_name = &self.users[&creator].username;
         let server_name = &self.servers[&server_id].name;
-        println!("🎫 {} created invite for '{}': {}", creator_name, server_name, invite);
+        println!(
+            "🎫 {} created invite for '{}': {}",
+            creator_name, server_name, invite
+        );
         invite
     }
 
@@ -355,11 +421,15 @@ impl AccordDemo {
         println!("\n=== Accord System Status ===");
         println!("👥 Users: {}", self.users.len());
         println!("🏰 Servers: {}", self.servers.len());
-        
+
         for server in self.servers.values() {
-            println!("📺 Server '{}': {} channels", server.name, server.channels.len());
+            println!(
+                "📺 Server '{}': {} channels",
+                server.name,
+                server.channels.len()
+            );
         }
-        
+
         println!("🔐 Active sessions: {}", self.session_keys.len() / 2);
     }
 
@@ -373,18 +443,26 @@ impl AccordDemo {
         println!();
 
         // Create server
-        let server = self.create_server("Demo Server".to_string(), alice).unwrap();
+        let server = self
+            .create_server("Demo Server".to_string(), alice)
+            .unwrap();
         println!();
 
         // Create channels
-        let lobby = self.create_channel(server, "General".to_string(), ChannelType::Lobby, alice).unwrap();
-        let voice = self.create_channel(server, "Voice Chat".to_string(), ChannelType::Voice, alice).unwrap();
-        let private = self.create_channel(
-            server, 
-            "Staff Only".to_string(), 
-            ChannelType::Private { visible: true }, 
-            alice
-        ).unwrap();
+        let lobby = self
+            .create_channel(server, "General".to_string(), ChannelType::Lobby, alice)
+            .unwrap();
+        let voice = self
+            .create_channel(server, "Voice Chat".to_string(), ChannelType::Voice, alice)
+            .unwrap();
+        let private = self
+            .create_channel(
+                server,
+                "Staff Only".to_string(),
+                ChannelType::Private { visible: true },
+                alice,
+            )
+            .unwrap();
         println!();
 
         // Bob joins public channels
@@ -393,13 +471,15 @@ impl AccordDemo {
         println!();
 
         // Charlie requests private access
-        let request = self.request_entry(
-            server, 
-            private, 
-            charlie, 
-            "Please let me join the staff channel!".to_string()
-        ).unwrap();
-        
+        let request = self
+            .request_entry(
+                server,
+                private,
+                charlie,
+                "Please let me join the staff channel!".to_string(),
+            )
+            .unwrap();
+
         // Alice approves
         self.approve_entry(server, request, alice).unwrap();
         println!();
@@ -410,10 +490,14 @@ impl AccordDemo {
         println!();
 
         // Send encrypted messages
-        let msg1 = self.send_message(alice, bob, lobby, "Welcome to Accord, Bob!").unwrap();
+        let msg1 = self
+            .send_message(alice, bob, lobby, "Welcome to Accord, Bob!")
+            .unwrap();
         self.receive_message(bob, &msg1).unwrap();
 
-        let msg2 = self.send_message(alice, charlie, private, "Thanks for joining staff!").unwrap();
+        let msg2 = self
+            .send_message(alice, charlie, private, "Thanks for joining staff!")
+            .unwrap();
         self.receive_message(charlie, &msg2).unwrap();
         println!();
 
@@ -440,13 +524,13 @@ fn main() {
         println!("2. Interactive demo");
         println!("3. Show architecture info");
         println!("4. Quit");
-        
+
         print!("\nChoice: ");
         io::stdout().flush().unwrap();
-        
+
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
-        
+
         match input.trim() {
             "1" => {
                 println!();
@@ -460,14 +544,16 @@ fn main() {
                 println!("\n🎯 Interactive Demo");
                 println!("(Simplified for standalone version)");
                 let mut demo = AccordDemo::new();
-                
+
                 let alice = demo.create_user("Alice".to_string());
                 let server = demo.create_server("My Server".to_string(), alice).unwrap();
-                let _channel = demo.create_channel(server, "General".to_string(), ChannelType::Lobby, alice).unwrap();
-                
+                let _channel = demo
+                    .create_channel(server, "General".to_string(), ChannelType::Lobby, alice)
+                    .unwrap();
+
                 println!("✅ Created basic server structure");
                 demo.print_status();
-                
+
                 println!("\nPress Enter to continue...");
                 let mut _input = String::new();
                 io::stdin().read_line(&mut _input).unwrap();
@@ -481,20 +567,20 @@ fn main() {
                 println!("• Privacy-preserving bots");
                 println!("• Real-time encrypted voice");
                 println!("• Open source & self-hostable");
-                
+
                 println!("\n🔒 This demo shows:");
                 println!("• Channel access control");
                 println!("• Entry request/approval");
                 println!("• Encrypted messaging");
                 println!("• Invite generation/usage");
                 println!("• Session establishment");
-                
+
                 println!("\n⚠️ Production differences:");
                 println!("• Uses audited crypto libraries");
                 println!("• Proper key exchange protocols");
                 println!("• Forward secrecy");
                 println!("• Network protocol implementation");
-                
+
                 println!("\nPress Enter to continue...");
                 let mut _input = String::new();
                 io::stdin().read_line(&mut _input).unwrap();

@@ -3,10 +3,10 @@
 //! Provides persistent storage for users, nodes, channels, and messages while maintaining
 //! zero-knowledge properties for encrypted content.
 
-use crate::models::{Channel, User, NodeInvite, FileMetadata};
-use base64::Engine;
+use crate::models::{Channel, FileMetadata, NodeInvite, User};
 use crate::node::{Node, NodeMember, NodeRole};
 use anyhow::{Context, Result};
+use base64::Engine;
 use sqlx::{sqlite::SqlitePool, Row, SqlitePool as Pool};
 use std::path::Path;
 use uuid::Uuid;
@@ -220,24 +220,34 @@ impl Database {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_channel_members_channel ON channel_members (channel_id)")
             .execute(&self.pool)
             .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members (user_id)")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages (channel_id, created_at)")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_invites_code ON node_invites (invite_code)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members (user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages (channel_id, created_at)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_node_invites_code ON node_invites (invite_code)",
+        )
+        .execute(&self.pool)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_invites_node ON node_invites (node_id)")
             .execute(&self.pool)
             .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_user_profiles_status ON user_profiles (status)")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_channel ON files (channel_id, created_at)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_user_profiles_status ON user_profiles (status)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_files_channel ON files (channel_id, created_at)",
+        )
+        .execute(&self.pool)
+        .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_uploader ON files (uploader_id)")
             .execute(&self.pool)
             .await?;
@@ -249,9 +259,11 @@ impl Database {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id)")
             .execute(&self.pool)
             .await?;
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (created_at DESC)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -274,25 +286,33 @@ impl Database {
         // Create default user profile
         self.create_user_profile(user_id, username).await?;
 
-        Ok(User { id: user_id, username: username.to_string(), public_key: public_key.to_string(), created_at })
+        Ok(User {
+            id: user_id,
+            username: username.to_string(),
+            public_key: public_key.to_string(),
+            created_at,
+        })
     }
 
     pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<User>> {
-        let row = sqlx::query("SELECT id, username, public_key, created_at FROM users WHERE id = ?")
-            .bind(user_id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to query user by ID")?;
+        let row =
+            sqlx::query("SELECT id, username, public_key, created_at FROM users WHERE id = ?")
+                .bind(user_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to query user by ID")?;
 
         row.map(|r| parse_user(&r)).transpose()
     }
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
-        let row = sqlx::query("SELECT id, username, public_key, created_at FROM users WHERE username = ?")
-            .bind(username)
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to query user by username")?;
+        let row = sqlx::query(
+            "SELECT id, username, public_key, created_at FROM users WHERE username = ?",
+        )
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query user by username")?;
 
         row.map(|r| parse_user(&r)).transpose()
     }
@@ -307,7 +327,12 @@ impl Database {
 
     // ── Node operations ──
 
-    pub async fn create_node(&self, name: &str, owner_id: Uuid, description: Option<&str>) -> Result<Node> {
+    pub async fn create_node(
+        &self,
+        name: &str,
+        owner_id: Uuid,
+        description: Option<&str>,
+    ) -> Result<Node> {
         let node_id = Uuid::new_v4();
         let created_at = now();
 
@@ -322,7 +347,8 @@ impl Database {
             .context("Failed to insert node")?;
 
         // Add owner as admin member
-        self.add_node_member(node_id, owner_id, NodeRole::Admin).await?;
+        self.add_node_member(node_id, owner_id, NodeRole::Admin)
+            .await?;
 
         // Create a default "general" channel
         self.create_channel("general", node_id, owner_id).await?;
@@ -337,11 +363,13 @@ impl Database {
     }
 
     pub async fn get_node(&self, node_id: Uuid) -> Result<Option<Node>> {
-        let row = sqlx::query("SELECT id, name, owner_id, description, created_at FROM nodes WHERE id = ?")
-            .bind(node_id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to query node")?;
+        let row = sqlx::query(
+            "SELECT id, name, owner_id, description, created_at FROM nodes WHERE id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query node")?;
 
         row.map(|r| parse_node(&r)).transpose()
     }
@@ -355,7 +383,12 @@ impl Database {
         Ok(())
     }
 
-    pub async fn add_node_member(&self, node_id: Uuid, user_id: Uuid, role: NodeRole) -> Result<()> {
+    pub async fn add_node_member(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+        role: NodeRole,
+    ) -> Result<()> {
         let joined_at = now();
         sqlx::query("INSERT OR IGNORE INTO node_members (node_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)")
             .bind(node_id.to_string())
@@ -379,16 +412,22 @@ impl Database {
     }
 
     pub async fn get_node_members(&self, node_id: Uuid) -> Result<Vec<NodeMember>> {
-        let rows = sqlx::query("SELECT node_id, user_id, role, joined_at FROM node_members WHERE node_id = ?")
-            .bind(node_id.to_string())
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to query node members")?;
+        let rows = sqlx::query(
+            "SELECT node_id, user_id, role, joined_at FROM node_members WHERE node_id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query node members")?;
 
         rows.iter().map(|r| parse_node_member(r)).collect()
     }
 
-    pub async fn get_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<Option<NodeMember>> {
+    pub async fn get_node_member(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<NodeMember>> {
         let row = sqlx::query("SELECT node_id, user_id, role, joined_at FROM node_members WHERE node_id = ? AND user_id = ?")
             .bind(node_id.to_string())
             .bind(user_id.to_string())
@@ -400,11 +439,13 @@ impl Database {
     }
 
     pub async fn is_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<bool> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM node_members WHERE node_id = ? AND user_id = ?")
-            .bind(node_id.to_string())
-            .bind(user_id.to_string())
-            .fetch_one(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_members WHERE node_id = ? AND user_id = ?",
+        )
+        .bind(node_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
         Ok(row.get::<i64, _>("count") > 0)
     }
 
@@ -430,12 +471,24 @@ impl Database {
 
     // ── Channel operations (now scoped to nodes) ──
 
-    pub async fn create_channel(&self, name: &str, node_id: Uuid, created_by: Uuid) -> Result<Channel> {
+    pub async fn create_channel(
+        &self,
+        name: &str,
+        node_id: Uuid,
+        created_by: Uuid,
+    ) -> Result<Channel> {
         let channel_id = Uuid::new_v4();
-        self.create_channel_with_id(channel_id, name, node_id, created_by).await
+        self.create_channel_with_id(channel_id, name, node_id, created_by)
+            .await
     }
 
-    pub async fn create_channel_with_id(&self, channel_id: Uuid, name: &str, node_id: Uuid, created_by: Uuid) -> Result<Channel> {
+    pub async fn create_channel_with_id(
+        &self,
+        channel_id: Uuid,
+        name: &str,
+        node_id: Uuid,
+        created_by: Uuid,
+    ) -> Result<Channel> {
         let created_at = now();
 
         sqlx::query("INSERT INTO channels (id, name, node_id, created_by, created_at) VALUES (?, ?, ?, ?, ?)")
@@ -463,11 +516,13 @@ impl Database {
     }
 
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>> {
-        let row = sqlx::query("SELECT id, name, node_id, created_by, created_at FROM channels WHERE id = ?")
-            .bind(channel_id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to query channel")?;
+        let row = sqlx::query(
+            "SELECT id, name, node_id, created_by, created_at FROM channels WHERE id = ?",
+        )
+        .bind(channel_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query channel")?;
 
         if let Some(row) = row {
             let members = self.get_channel_members(channel_id).await?;
@@ -484,11 +539,13 @@ impl Database {
     }
 
     pub async fn get_node_channels(&self, node_id: Uuid) -> Result<Vec<Channel>> {
-        let rows = sqlx::query("SELECT id, name, node_id, created_by, created_at FROM channels WHERE node_id = ?")
-            .bind(node_id.to_string())
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to query node channels")?;
+        let rows = sqlx::query(
+            "SELECT id, name, node_id, created_by, created_at FROM channels WHERE node_id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query node channels")?;
 
         let mut channels = Vec::new();
         for row in rows {
@@ -541,7 +598,12 @@ impl Database {
 
     // ── Message operations ──
 
-    pub async fn store_message(&self, channel_id: Uuid, sender_id: Uuid, encrypted_payload: &[u8]) -> Result<Uuid> {
+    pub async fn store_message(
+        &self,
+        channel_id: Uuid,
+        sender_id: Uuid,
+        encrypted_payload: &[u8],
+    ) -> Result<Uuid> {
         let message_id = Uuid::new_v4();
         let created_at = now();
 
@@ -558,7 +620,12 @@ impl Database {
         Ok(message_id)
     }
 
-    pub async fn get_channel_messages(&self, channel_id: Uuid, limit: u32, before: Option<u64>) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
+    pub async fn get_channel_messages(
+        &self,
+        channel_id: Uuid,
+        limit: u32,
+        before: Option<u64>,
+    ) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
         let query = if let Some(before_timestamp) = before {
             sqlx::query(
                 "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
@@ -574,15 +641,21 @@ impl Database {
             .bind(limit as i64)
         };
 
-        let rows = query.fetch_all(&self.pool).await.context("Failed to query channel messages")?;
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query channel messages")?;
 
-        let mut messages: Vec<_> = rows.iter().map(|row| {
-            let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
-            let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
-            let created_at = row.get::<i64, _>("created_at") as u64;
-            (message_id, sender_id, encrypted_payload, created_at)
-        }).collect();
+        let mut messages: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+                let created_at = row.get::<i64, _>("created_at") as u64;
+                (message_id, sender_id, encrypted_payload, created_at)
+            })
+            .collect();
 
         messages.reverse(); // chronological order
         Ok(messages)
@@ -597,14 +670,13 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let query = if let Some(before_message_id) = before_id {
             // Get the timestamp of the before_id message for cursor pagination
-            let before_timestamp: i64 = sqlx::query_scalar(
-                "SELECT created_at FROM messages WHERE id = ?"
-            )
-            .bind(before_message_id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to get before message timestamp")?
-            .unwrap_or(0);
+            let before_timestamp: i64 =
+                sqlx::query_scalar("SELECT created_at FROM messages WHERE id = ?")
+                    .bind(before_message_id.to_string())
+                    .fetch_optional(&self.pool)
+                    .await
+                    .context("Failed to get before message timestamp")?
+                    .unwrap_or(0);
 
             sqlx::query(
                 r#"
@@ -634,25 +706,32 @@ impl Database {
             .bind(limit as i64)
         };
 
-        let rows = query.fetch_all(&self.pool).await.context("Failed to query channel messages")?;
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query channel messages")?;
 
-        let messages: Vec<_> = rows.iter().map(|row| {
-            let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-            let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
-            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
-            let sender_username: String = row.get("username");
-            let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
-            let created_at = row.get::<i64, _>("created_at") as u64;
-            
-            crate::models::MessageMetadata {
-                id: message_id,
-                channel_id,
-                sender_id,
-                sender_username,
-                encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
-                created_at,
-            }
-        }).collect();
+        let messages: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+                let sender_username: String = row.get("username");
+                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+                let created_at = row.get::<i64, _>("created_at") as u64;
+
+                crate::models::MessageMetadata {
+                    id: message_id,
+                    channel_id,
+                    sender_id,
+                    sender_username,
+                    encrypted_payload: base64::engine::general_purpose::STANDARD
+                        .encode(&encrypted_payload),
+                    created_at,
+                }
+            })
+            .collect();
 
         Ok(messages)
     }
@@ -670,7 +749,7 @@ impl Database {
         // - sender username
         // - channel name
         // - timestamp (not implemented in query param, but could be)
-        
+
         let base_query = if let Some(channel_filter) = channel_id_filter {
             format!(
                 r#"
@@ -702,7 +781,7 @@ impl Database {
         };
 
         let search_pattern = format!("%{}%", query.to_lowercase());
-        
+
         let query_builder = if channel_id_filter.is_some() {
             sqlx::query(&base_query)
                 .bind(node_id.to_string())
@@ -718,27 +797,34 @@ impl Database {
                 .bind(limit as i64)
         };
 
-        let rows = query_builder.fetch_all(&self.pool).await.context("Failed to search messages")?;
+        let rows = query_builder
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to search messages")?;
 
-        let results: Vec<_> = rows.iter().map(|row| {
-            let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-            let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
-            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
-            let sender_username: String = row.get("sender_username");
-            let channel_name: String = row.get("channel_name");
-            let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
-            let created_at = row.get::<i64, _>("created_at") as u64;
-            
-            crate::models::SearchResult {
-                message_id,
-                channel_id,
-                channel_name,
-                sender_id,
-                sender_username,
-                created_at,
-                encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
-            }
-        }).collect();
+        let results: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+                let sender_username: String = row.get("sender_username");
+                let channel_name: String = row.get("channel_name");
+                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+                let created_at = row.get::<i64, _>("created_at") as u64;
+
+                crate::models::SearchResult {
+                    message_id,
+                    channel_id,
+                    channel_name,
+                    sender_id,
+                    sender_username,
+                    created_at,
+                    encrypted_payload: base64::engine::general_purpose::STANDARD
+                        .encode(&encrypted_payload),
+                }
+            })
+            .collect();
 
         Ok(results)
     }
@@ -773,7 +859,14 @@ impl Database {
 
     // ── Node invite operations ──
 
-    pub async fn create_node_invite(&self, node_id: Uuid, created_by: Uuid, invite_code: &str, max_uses: Option<u32>, expires_at: Option<u64>) -> Result<Uuid> {
+    pub async fn create_node_invite(
+        &self,
+        node_id: Uuid,
+        created_by: Uuid,
+        invite_code: &str,
+        max_uses: Option<u32>,
+        expires_at: Option<u64>,
+    ) -> Result<Uuid> {
         let invite_id = Uuid::new_v4();
         let created_at = now();
 
@@ -813,11 +906,13 @@ impl Database {
     }
 
     pub async fn increment_invite_usage(&self, invite_code: &str) -> Result<()> {
-        sqlx::query("UPDATE node_invites SET current_uses = current_uses + 1 WHERE invite_code = ?")
-            .bind(invite_code)
-            .execute(&self.pool)
-            .await
-            .context("Failed to increment invite usage")?;
+        sqlx::query(
+            "UPDATE node_invites SET current_uses = current_uses + 1 WHERE invite_code = ?",
+        )
+        .bind(invite_code)
+        .execute(&self.pool)
+        .await
+        .context("Failed to increment invite usage")?;
         Ok(())
     }
 
@@ -844,17 +939,22 @@ impl Database {
 
     pub async fn create_user_profile(&self, user_id: Uuid, display_name: &str) -> Result<()> {
         let updated_at = now();
-        sqlx::query("INSERT INTO user_profiles (user_id, display_name, updated_at) VALUES (?, ?, ?)")
-            .bind(user_id.to_string())
-            .bind(display_name)
-            .bind(updated_at as i64)
-            .execute(&self.pool)
-            .await
-            .context("Failed to create user profile")?;
+        sqlx::query(
+            "INSERT INTO user_profiles (user_id, display_name, updated_at) VALUES (?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(display_name)
+        .bind(updated_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create user profile")?;
         Ok(())
     }
 
-    pub async fn get_user_profile(&self, user_id: Uuid) -> Result<Option<crate::models::UserProfile>> {
+    pub async fn get_user_profile(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<crate::models::UserProfile>> {
         let row = sqlx::query("SELECT user_id, display_name, avatar_url, bio, status, custom_status, updated_at FROM user_profiles WHERE user_id = ?")
             .bind(user_id.to_string())
             .fetch_optional(&self.pool)
@@ -912,7 +1012,8 @@ impl Database {
         }
         query = query.bind(user_id.to_string());
 
-        query.execute(&self.pool)
+        query
+            .execute(&self.pool)
             .await
             .context("Failed to update user profile")?;
         Ok(())
@@ -930,7 +1031,10 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_node_members_with_profiles(&self, node_id: Uuid) -> Result<Vec<crate::models::MemberWithProfile>> {
+    pub async fn get_node_members_with_profiles(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::MemberWithProfile>> {
         let rows = sqlx::query(
             r#"
             SELECT 
@@ -941,7 +1045,7 @@ impl Database {
             JOIN users u ON nm.user_id = u.id
             LEFT JOIN user_profiles up ON nm.user_id = up.user_id
             WHERE nm.node_id = ?
-            "#
+            "#,
         )
         .bind(node_id.to_string())
         .fetch_all(&self.pool)
@@ -1098,9 +1202,11 @@ fn parse_user_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::Us
     })
 }
 
-fn parse_member_with_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::MemberWithProfile> {
+fn parse_member_with_profile(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<crate::models::MemberWithProfile> {
     use crate::node::NodeRole;
-    
+
     let role_str: String = row.get("role");
     Ok(crate::models::MemberWithProfile {
         user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
@@ -1109,10 +1215,14 @@ fn parse_member_with_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::mod
         joined_at: row.get::<i64, _>("joined_at") as u64,
         profile: crate::models::UserProfile {
             user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
-            display_name: row.get::<Option<String>, _>("display_name").unwrap_or_else(|| row.get::<String, _>("username")),
+            display_name: row
+                .get::<Option<String>, _>("display_name")
+                .unwrap_or_else(|| row.get::<String, _>("username")),
             avatar_url: row.get("avatar_url"),
             bio: row.get("bio"),
-            status: row.get::<Option<String>, _>("status").unwrap_or_else(|| "offline".to_string()),
+            status: row
+                .get::<Option<String>, _>("status")
+                .unwrap_or_else(|| "offline".to_string()),
             custom_status: row.get("custom_status"),
             updated_at: 0, // Will be set properly when profile exists
         },
@@ -1138,14 +1248,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_initialization() {
-        let _db = Database::new(":memory:").await.expect("Failed to create in-memory database");
+        let _db = Database::new(":memory:")
+            .await
+            .expect("Failed to create in-memory database");
     }
 
     #[tokio::test]
     async fn test_user_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("test_user", "test_public_key").await.unwrap();
+        let user = db
+            .create_user("test_user", "test_public_key")
+            .await
+            .unwrap();
         assert_eq!(user.username, "test_user");
 
         let found = db.get_user_by_id(user.id).await.unwrap().unwrap();
@@ -1163,7 +1278,10 @@ mod tests {
         let db = Database::new(":memory:").await.unwrap();
 
         let user = db.create_user("node_owner", "key").await.unwrap();
-        let node = db.create_node("Test Node", user.id, Some("A test node")).await.unwrap();
+        let node = db
+            .create_node("Test Node", user.id, Some("A test node"))
+            .await
+            .unwrap();
         assert_eq!(node.name, "Test Node");
         assert_eq!(node.owner_id, user.id);
 
@@ -1179,7 +1297,9 @@ mod tests {
 
         // Add another member
         let user2 = db.create_user("member", "key2").await.unwrap();
-        db.add_node_member(node.id, user2.id, NodeRole::Member).await.unwrap();
+        db.add_node_member(node.id, user2.id, NodeRole::Member)
+            .await
+            .unwrap();
         assert!(db.is_node_member(node.id, user2.id).await.unwrap());
 
         // Remove member
@@ -1194,7 +1314,10 @@ mod tests {
         let user = db.create_user("test_user", "test_key").await.unwrap();
         let node = db.create_node("Test Node", user.id, None).await.unwrap();
 
-        let channel = db.create_channel("test_channel", node.id, user.id).await.unwrap();
+        let channel = db
+            .create_channel("test_channel", node.id, user.id)
+            .await
+            .unwrap();
         assert_eq!(channel.name, "test_channel");
         assert_eq!(channel.node_id, node.id);
         assert_eq!(channel.members.len(), 1);
@@ -1207,7 +1330,9 @@ mod tests {
         let members = db.get_channel_members(channel.id).await.unwrap();
         assert_eq!(members.len(), 2);
 
-        db.remove_user_from_channel(channel.id, user2.id).await.unwrap();
+        db.remove_user_from_channel(channel.id, user2.id)
+            .await
+            .unwrap();
         let members = db.get_channel_members(channel.id).await.unwrap();
         assert_eq!(members.len(), 1);
     }
@@ -1218,10 +1343,16 @@ mod tests {
 
         let user = db.create_user("test_user", "test_key").await.unwrap();
         let node = db.create_node("Test Node", user.id, None).await.unwrap();
-        let channel = db.create_channel("test_channel", node.id, user.id).await.unwrap();
+        let channel = db
+            .create_channel("test_channel", node.id, user.id)
+            .await
+            .unwrap();
 
         let encrypted_data = b"encrypted_message_data";
-        let message_id = db.store_message(channel.id, user.id, encrypted_data).await.unwrap();
+        let message_id = db
+            .store_message(channel.id, user.id, encrypted_data)
+            .await
+            .unwrap();
 
         let messages = db.get_channel_messages(channel.id, 10, None).await.unwrap();
         assert_eq!(messages.len(), 1);

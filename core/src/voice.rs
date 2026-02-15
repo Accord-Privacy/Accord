@@ -1,5 +1,5 @@
 //! # Accord Voice System
-//! 
+//!
 //! Real-time encrypted voice communication with low latency.
 //! Supports both P2P and server-relayed voice channels.
 
@@ -49,7 +49,7 @@ pub struct VoiceParticipant {
     pub is_speaking: bool,
     pub is_muted: bool,
     pub is_deafened: bool,
-    pub volume: f32, // 0.0 to 1.0
+    pub volume: f32,                // 0.0 to 1.0
     pub voice_key: Option<Vec<u8>>, // Encrypted voice key for this participant
 }
 
@@ -139,14 +139,15 @@ impl AudioQuality {
 
     /// Get frame size in bytes
     pub fn frame_size_bytes(&self) -> usize {
-        (self.sample_rate as usize * self.channels as usize * self.frame_duration as usize) / 1000 * 2 // 16-bit samples
+        (self.sample_rate as usize * self.channels as usize * self.frame_duration as usize) / 1000
+            * 2 // 16-bit samples
     }
 }
 
 impl VoiceActivityDetector {
     pub fn new() -> Self {
         Self {
-            threshold: 0.01, // Adjust based on testing
+            threshold: 0.01,     // Adjust based on testing
             hangover_frames: 20, // ~400ms at 20ms frames
             current_hangover: 0,
             is_speaking: false,
@@ -156,7 +157,7 @@ impl VoiceActivityDetector {
     /// Analyze audio frame and determine if user is speaking
     pub fn detect_activity(&mut self, audio_samples: &[i16]) -> bool {
         let energy = self.calculate_energy(audio_samples);
-        
+
         if energy > self.threshold {
             self.is_speaking = true;
             self.current_hangover = self.hangover_frames;
@@ -170,10 +171,8 @@ impl VoiceActivityDetector {
     }
 
     fn calculate_energy(&self, samples: &[i16]) -> f32 {
-        let sum_squares: f64 = samples.iter()
-            .map(|&sample| (sample as f64).powi(2))
-            .sum();
-        
+        let sum_squares: f64 = samples.iter().map(|&sample| (sample as f64).powi(2)).sum();
+
         (sum_squares / samples.len() as f64).sqrt() as f32 / i16::MAX as f32
     }
 }
@@ -191,7 +190,9 @@ impl VoiceProcessor {
 
     /// Join a voice channel
     pub fn join_channel(&mut self, channel_id: Uuid) -> Result<()> {
-        let channel = self.channels.get_mut(&channel_id)
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or_else(|| anyhow::anyhow!("Voice channel not found"))?;
 
         // Check max participants
@@ -203,18 +204,22 @@ impl VoiceProcessor {
 
         // Generate voice key for this user in this channel
         let voice_key = self.crypto.generate_voice_key()?;
-        self.voice_keys.insert((channel_id, self.local_user_id), voice_key);
+        self.voice_keys
+            .insert((channel_id, self.local_user_id), voice_key);
 
         // Add participant
-        channel.participants.insert(self.local_user_id, VoiceParticipant {
-            user_id: self.local_user_id,
-            joined_at: chrono::Utc::now(),
-            is_speaking: false,
-            is_muted: false,
-            is_deafened: false,
-            volume: 1.0,
-            voice_key: None, // Would be exchanged securely
-        });
+        channel.participants.insert(
+            self.local_user_id,
+            VoiceParticipant {
+                user_id: self.local_user_id,
+                joined_at: chrono::Utc::now(),
+                is_speaking: false,
+                is_muted: false,
+                is_deafened: false,
+                volume: 1.0,
+                voice_key: None, // Would be exchanged securely
+            },
+        );
 
         Ok(())
     }
@@ -235,9 +240,11 @@ impl VoiceProcessor {
         audio_samples: &[i16],
     ) -> Result<VoicePacket> {
         let is_speaking = self.vad.detect_activity(audio_samples);
-        
+
         // Get voice key
-        let voice_key = self.voice_keys.get_mut(&(channel_id, self.local_user_id))
+        let voice_key = self
+            .voice_keys
+            .get_mut(&(channel_id, self.local_user_id))
             .ok_or_else(|| anyhow::anyhow!("No voice key for channel"))?;
 
         // Convert samples to bytes
@@ -271,19 +278,20 @@ impl VoiceProcessor {
     }
 
     /// Process incoming encrypted voice packet
-    pub fn process_incoming_packet(
-        &mut self,
-        packet: VoicePacket,
-    ) -> Result<Option<Vec<i16>>> {
+    pub fn process_incoming_packet(&mut self, packet: VoicePacket) -> Result<Option<Vec<i16>>> {
         // Get the voice key for the sender
-        let voice_key = self.voice_keys.get(&(packet.channel_id, packet.user_id))
+        let voice_key = self
+            .voice_keys
+            .get(&(packet.channel_id, packet.user_id))
             .ok_or_else(|| anyhow::anyhow!("No voice key for sender"))?;
 
         match packet.packet_type {
             VoicePacketType::Audio => {
                 // Decrypt audio data
-                let audio_bytes = self.crypto.decrypt_voice_packet(voice_key, &packet.encrypted_audio)?;
-                
+                let audio_bytes = self
+                    .crypto
+                    .decrypt_voice_packet(voice_key, &packet.encrypted_audio)?;
+
                 // Convert bytes back to samples
                 let samples: Vec<i16> = audio_bytes
                     .chunks_exact(2)
@@ -331,7 +339,8 @@ impl VoiceProcessor {
         }
 
         // Apply soft clipping and convert back to i16
-        mixed.into_iter()
+        mixed
+            .into_iter()
             .map(|sample| {
                 let clamped = sample.clamp(i16::MIN as i32, i16::MAX as i32);
                 clamped as i16
@@ -347,7 +356,7 @@ impl VoiceProcessor {
         quality: AudioQuality,
     ) -> Uuid {
         let channel_id = Uuid::new_v4();
-        
+
         let channel = VoiceChannel {
             channel_id,
             name,
@@ -369,7 +378,9 @@ impl VoiceProcessor {
 
     /// Mute/unmute local microphone
     pub fn set_muted(&mut self, channel_id: Uuid, muted: bool) -> Result<()> {
-        let channel = self.channels.get_mut(&channel_id)
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or_else(|| anyhow::anyhow!("Voice channel not found"))?;
 
         if let Some(participant) = channel.participants.get_mut(&self.local_user_id) {
@@ -381,7 +392,9 @@ impl VoiceProcessor {
 
     /// Deafen (mute all incoming audio)
     pub fn set_deafened(&mut self, channel_id: Uuid, deafened: bool) -> Result<()> {
-        let channel = self.channels.get_mut(&channel_id)
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or_else(|| anyhow::anyhow!("Voice channel not found"))?;
 
         if let Some(participant) = channel.participants.get_mut(&self.local_user_id) {
@@ -394,8 +407,10 @@ impl VoiceProcessor {
     /// Set volume for specific user
     pub fn set_user_volume(&mut self, channel_id: Uuid, user_id: Uuid, volume: f32) -> Result<()> {
         let volume = volume.clamp(0.0, 2.0); // Allow up to 200% volume
-        
-        let channel = self.channels.get_mut(&channel_id)
+
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or_else(|| anyhow::anyhow!("Voice channel not found"))?;
 
         if let Some(participant) = channel.participants.get_mut(&user_id) {
@@ -414,7 +429,7 @@ mod tests {
     fn test_audio_quality_frame_size() {
         let quality = AudioQuality::standard();
         let frame_size = quality.frame_size_bytes();
-        
+
         // Standard: 48kHz, mono, 20ms = 48000 * 1 * 0.02 * 2 = 1920 bytes
         assert_eq!(frame_size, 1920);
     }
@@ -422,11 +437,11 @@ mod tests {
     #[test]
     fn test_voice_activity_detection() {
         let mut vad = VoiceActivityDetector::new();
-        
+
         // Silent audio (should not trigger)
         let silence = vec![0i16; 960]; // 20ms at 48kHz mono
         assert!(!vad.detect_activity(&silence));
-        
+
         // Loud audio (should trigger)
         let loud = vec![1000i16; 960];
         assert!(vad.detect_activity(&loud));
@@ -435,7 +450,7 @@ mod tests {
     #[test]
     fn test_voice_channel_creation() {
         let mut processor = VoiceProcessor::new(Uuid::new_v4());
-        
+
         let channel_id = processor.create_voice_channel(
             "Test Channel".to_string(),
             VoiceChannelType::Lobby,
@@ -450,10 +465,10 @@ mod tests {
     #[test]
     fn test_audio_mixing() {
         let processor = VoiceProcessor::new(Uuid::new_v4());
-        
+
         let stream1 = vec![100i16, 200i16, 300i16];
         let stream2 = vec![50i16, 100i16, 150i16];
-        
+
         let mixed = processor.mix_audio_streams(vec![stream1, stream2]);
         assert_eq!(mixed, vec![150i16, 300i16, 450i16]);
     }

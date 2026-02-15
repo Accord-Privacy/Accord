@@ -1,13 +1,13 @@
 //! # Accord Invite System
-//! 
+//!
 //! Private invite-only system with expiration controls and quality gates.
 //! No public server discovery - all access through direct invites.
 
 use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc, Duration};
 
 /// Invite configuration with expiration and access controls
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -161,8 +161,9 @@ impl InviteManager {
         invite_config: InviteConfig,
     ) -> Result<String> {
         let invite_code = self.generate_invite_code();
-        
-        let expires_at = invite_config.expiry_duration
+
+        let expires_at = invite_config
+            .expiry_duration
             .map(|duration| Utc::now() + duration);
 
         let invite = Invite {
@@ -229,14 +230,16 @@ impl InviteManager {
         }
 
         if !failed_reasons.is_empty() {
-            return InviteValidation::QualityGatesFailed { reasons: failed_reasons };
+            return InviteValidation::QualityGatesFailed {
+                reasons: failed_reasons,
+            };
         }
 
         // Check if approval is required
         if invite.quality_gates.require_approval {
             // Would create pending join request
-            return InviteValidation::RequiresApproval { 
-                pending_id: Uuid::new_v4() 
+            return InviteValidation::RequiresApproval {
+                pending_id: Uuid::new_v4(),
             };
         }
 
@@ -264,12 +267,14 @@ impl InviteManager {
         // Validate before getting mutable reference, but allow bypassing approval requirement
         let validation = self.validate_invite(invite_code, &user_info);
         match validation {
-            InviteValidation::Valid => {},
-            InviteValidation::RequiresApproval { .. } if bypass_approval => {},
+            InviteValidation::Valid => {}
+            InviteValidation::RequiresApproval { .. } if bypass_approval => {}
             _ => return Err(anyhow::anyhow!("Invite validation failed")),
         }
 
-        let invite = self.invites.get_mut(invite_code)
+        let invite = self
+            .invites
+            .get_mut(invite_code)
             .ok_or_else(|| anyhow::anyhow!("Invite not found"))?;
 
         invite.current_uses += 1;
@@ -280,7 +285,11 @@ impl InviteManager {
             user_id,
             used_at: Utc::now(),
             user_info,
-            approval_status: if bypass_approval { ApprovalStatus::Approved } else { ApprovalStatus::AutoApproved },
+            approval_status: if bypass_approval {
+                ApprovalStatus::Approved
+            } else {
+                ApprovalStatus::AutoApproved
+            },
         };
 
         self.usage_history.push(usage.clone());
@@ -301,7 +310,9 @@ impl InviteManager {
         user_info: UserInfo,
         verification_answers: HashMap<String, String>,
     ) -> Result<Uuid> {
-        let invite = self.invites.get(invite_code)
+        let invite = self
+            .invites
+            .get(invite_code)
             .ok_or_else(|| anyhow::anyhow!("Invite not found"))?;
 
         if !invite.quality_gates.require_approval {
@@ -323,11 +334,19 @@ impl InviteManager {
     }
 
     /// Approve a pending join request
-    pub fn approve_pending_join(&mut self, request_id: Uuid, approver_id: Uuid) -> Result<InviteUsage> {
-        let pending_join = self.pending_joins.remove(&request_id)
+    pub fn approve_pending_join(
+        &mut self,
+        request_id: Uuid,
+        approver_id: Uuid,
+    ) -> Result<InviteUsage> {
+        let pending_join = self
+            .pending_joins
+            .remove(&request_id)
             .ok_or_else(|| anyhow::anyhow!("Pending join request not found"))?;
 
-        let invite = self.invites.get(&pending_join.invite_code)
+        let invite = self
+            .invites
+            .get(&pending_join.invite_code)
             .ok_or_else(|| anyhow::anyhow!("Associated invite not found"))?;
 
         // Verify approver has permission (invite creator or admin)
@@ -349,7 +368,9 @@ impl InviteManager {
 
     /// Reject a pending join request
     pub fn reject_pending_join(&mut self, request_id: Uuid, reason: String) -> Result<()> {
-        let pending_join = self.pending_joins.remove(&request_id)
+        let pending_join = self
+            .pending_joins
+            .remove(&request_id)
             .ok_or_else(|| anyhow::anyhow!("Pending join request not found"))?;
 
         // Record the rejection
@@ -368,7 +389,8 @@ impl InviteManager {
 
     /// Revoke an invite (prevent further usage)
     pub fn revoke_invite(&mut self, invite_code: &str) -> Result<()> {
-        self.invites.remove(invite_code)
+        self.invites
+            .remove(invite_code)
             .ok_or_else(|| anyhow::anyhow!("Invite not found"))?;
         Ok(())
     }
@@ -376,7 +398,7 @@ impl InviteManager {
     /// Get invite information (for display to potential users)
     pub fn get_invite_info(&self, invite_code: &str) -> Option<InviteInfo> {
         let invite = self.invites.get(invite_code)?;
-        
+
         Some(InviteInfo {
             server_id: invite.server_id,
             expires_at: invite.expires_at,
@@ -411,7 +433,7 @@ impl InviteManager {
     fn generate_invite_code(&self) -> String {
         use rand::{thread_rng, Rng};
         const CHARSET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-        
+
         loop {
             let mut rng = thread_rng();
             let code: String = (0..8)
@@ -420,7 +442,7 @@ impl InviteManager {
                     CHARSET[idx] as char
                 })
                 .collect();
-            
+
             if !self.invites.contains_key(&code) {
                 return code;
             }
@@ -430,15 +452,15 @@ impl InviteManager {
     /// Clean up expired invites and old usage records
     pub fn cleanup_expired(&mut self) {
         let now = Utc::now();
-        
+
         // Remove expired invites
-        self.invites.retain(|_, invite| {
-            invite.expires_at.map_or(true, |expires| expires > now)
-        });
+        self.invites
+            .retain(|_, invite| invite.expires_at.map_or(true, |expires| expires > now));
 
         // Remove old pending joins (older than 7 days)
         let week_ago = now - Duration::days(7);
-        self.pending_joins.retain(|_, pending| pending.requested_at > week_ago);
+        self.pending_joins
+            .retain(|_, pending| pending.requested_at > week_ago);
     }
 }
 
@@ -483,7 +505,7 @@ mod tests {
     #[test]
     fn test_invite_creation() {
         let mut manager = InviteManager::new();
-        
+
         let config = InviteConfig {
             expiry_duration: Some(Duration::days(7)),
             max_uses: Some(10),
@@ -493,11 +515,9 @@ mod tests {
             custom_message: Some("Welcome to our server!".to_string()),
         };
 
-        let invite_code = manager.create_invite(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            config,
-        ).unwrap();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
 
         assert_eq!(invite_code.len(), 8);
         assert!(manager.invites.contains_key(&invite_code));
@@ -506,10 +526,10 @@ mod tests {
     #[test]
     fn test_invite_validation() {
         let mut manager = InviteManager::new();
-        
+
         let mut quality_gates = QualityGates::default();
         quality_gates.min_account_age_days = Some(30);
-        
+
         let config = InviteConfig {
             expiry_duration: Some(Duration::days(1)),
             max_uses: Some(1),
@@ -519,11 +539,9 @@ mod tests {
             custom_message: None,
         };
 
-        let invite_code = manager.create_invite(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            config,
-        ).unwrap();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
 
         // Test with new account (should fail age requirement)
         let new_user = UserInfo {
@@ -533,7 +551,10 @@ mod tests {
         };
 
         let validation = manager.validate_invite(&invite_code, &new_user);
-        assert!(matches!(validation, InviteValidation::QualityGatesFailed { .. }));
+        assert!(matches!(
+            validation,
+            InviteValidation::QualityGatesFailed { .. }
+        ));
 
         // Test with old account (should pass)
         let old_user = UserInfo {
@@ -549,10 +570,10 @@ mod tests {
     #[test]
     fn test_approval_workflow() {
         let mut manager = InviteManager::new();
-        
+
         let mut quality_gates = QualityGates::default();
         quality_gates.require_approval = true;
-        
+
         let config = InviteConfig {
             expiry_duration: None,
             max_uses: None,
@@ -563,11 +584,9 @@ mod tests {
         };
 
         let creator_id = Uuid::new_v4();
-        let invite_code = manager.create_invite(
-            Uuid::new_v4(),
-            creator_id,
-            config,
-        ).unwrap();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), creator_id, config)
+            .unwrap();
 
         let user_info = UserInfo {
             username: "testuser".to_string(),
@@ -577,18 +596,25 @@ mod tests {
 
         // Should require approval
         let validation = manager.validate_invite(&invite_code, &user_info);
-        assert!(matches!(validation, InviteValidation::RequiresApproval { .. }));
+        assert!(matches!(
+            validation,
+            InviteValidation::RequiresApproval { .. }
+        ));
 
         // Create pending join
-        let request_id = manager.create_pending_join(
-            &invite_code,
-            Uuid::new_v4(),
-            user_info.clone(),
-            HashMap::new(),
-        ).unwrap();
+        let request_id = manager
+            .create_pending_join(
+                &invite_code,
+                Uuid::new_v4(),
+                user_info.clone(),
+                HashMap::new(),
+            )
+            .unwrap();
 
         // Approve the request
-        let usage = manager.approve_pending_join(request_id, creator_id).unwrap();
+        let usage = manager
+            .approve_pending_join(request_id, creator_id)
+            .unwrap();
         assert!(matches!(usage.approval_status, ApprovalStatus::Approved));
     }
 }

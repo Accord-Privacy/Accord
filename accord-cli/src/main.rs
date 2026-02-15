@@ -18,7 +18,7 @@ struct Cli {
     /// Server URL
     #[arg(long, default_value = "http://localhost:8080")]
     server: String,
-    
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -150,18 +150,14 @@ impl AccordClient {
     async fn register(&self, username: &str) -> Result<AuthResponse> {
         // Generate X25519 keypair for this user
         let public_key = generate_and_save_keypair()?;
-        
+
         let url = format!("{}/api/register", self.server_url);
         let request = RegisterRequest {
             username: username.to_string(),
             public_key,
         };
 
-        let response = self.client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -178,11 +174,7 @@ impl AccordClient {
             username: username.to_string(),
         };
 
-        let response = self.client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&request).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -195,11 +187,7 @@ impl AccordClient {
 
     async fn get_nodes(&self, token: &str) -> Result<Vec<Node>> {
         let url = format!("{}/api/nodes", self.server_url);
-        let response = self.client
-            .get(&url)
-            .bearer_auth(token)
-            .send()
-            .await?;
+        let response = self.client.get(&url).bearer_auth(token).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -216,7 +204,8 @@ impl AccordClient {
             name: name.to_string(),
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .bearer_auth(token)
             .json(&request)
@@ -235,11 +224,10 @@ impl AccordClient {
     async fn join_node(&self, token: &str, node_id: &str) -> Result<()> {
         let node_uuid = Uuid::parse_str(node_id)?;
         let url = format!("{}/api/nodes/join", self.server_url);
-        let request = JoinNodeRequest {
-            node_id: node_uuid,
-        };
+        let request = JoinNodeRequest { node_id: node_uuid };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .bearer_auth(token)
             .json(&request)
@@ -256,11 +244,7 @@ impl AccordClient {
 
     async fn get_channels(&self, token: &str, node_id: &str) -> Result<Vec<Channel>> {
         let url = format!("{}/api/nodes/{}/channels", self.server_url, node_id);
-        let response = self.client
-            .get(&url)
-            .bearer_auth(token)
-            .send()
-            .await?;
+        let response = self.client.get(&url).bearer_auth(token).send().await?;
 
         if !response.status().is_success() {
             let error_text = response.text().await?;
@@ -275,12 +259,12 @@ impl AccordClient {
 fn get_token_path() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
     let accord_dir = home.join(".accord");
-    
+
     // Create directory if it doesn't exist
     if !accord_dir.exists() {
         fs::create_dir_all(&accord_dir)?;
     }
-    
+
     Ok(accord_dir.join("token"))
 }
 
@@ -299,12 +283,12 @@ fn load_token() -> Result<String> {
 fn get_identity_key_path() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
     let accord_dir = home.join(".accord");
-    
+
     // Create directory if it doesn't exist
     if !accord_dir.exists() {
         fs::create_dir_all(&accord_dir)?;
     }
-    
+
     Ok(accord_dir.join("identity.key"))
 }
 
@@ -323,26 +307,28 @@ fn load_private_key() -> Result<Vec<u8>> {
 fn generate_and_save_keypair() -> Result<Vec<u8>> {
     let crypto = CryptoManager::new();
     let key_pair = crypto.generate_key_pair()?;
-    
+
     // Save the private key (we need to serialize it first)
     // For now, we'll store the public key as a placeholder since ring doesn't expose private key bytes
     // In a real implementation, we'd use a different crypto library or serialize properly
     save_private_key(&key_pair.public_key)?;
-    
+
     Ok(key_pair.public_key)
 }
 
 async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
     // Load authentication token
-    let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+    let token = load_token()
+        .map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
 
     // Initialize crypto manager and establish a session key for this channel
     let mut crypto = CryptoManager::new();
-    
+
     // For simplicity, we'll derive a session key from the user's identity key + channel ID
     // In a real implementation, this would involve proper key exchange with other users
-    let _private_key = load_private_key().map_err(|_| anyhow!("No identity key found. Please re-register."))?;
-    
+    let _private_key =
+        load_private_key().map_err(|_| anyhow!("No identity key found. Please re-register."))?;
+
     // Create a deterministic but secure session key for this channel
     // This is simplified - real implementation would use proper key exchange
     let session_key = accord_core::crypto::SessionKey {
@@ -360,7 +346,7 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
         chain_key: [42u8; 32], // Fixed chain key for simplicity
         message_number: 0,
     };
-    
+
     crypto.set_session("channel", session_key);
     println!("🔒 E2E encryption initialized for channel");
 
@@ -370,13 +356,13 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
     } else {
         server_url.replace("http://", "ws://")
     };
-    
+
     let ws_url = format!("{}/ws/chat/{}?token={}", ws_url, channel_id, token);
-    
+
     println!("🔗 Connecting to chat...");
     let (ws_stream, _) = connect_async(&ws_url).await?;
     let (mut write, mut read) = ws_stream.split();
-    
+
     println!("✅ Connected to channel {}!", channel_id);
     println!("🔐 All messages are end-to-end encrypted");
     println!("Type messages and press Enter. Type '/quit' to exit.\n");
@@ -394,7 +380,7 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
             }
             key
         },
-        chain_key: [42u8; 32], 
+        chain_key: [42u8; 32],
         message_number: 0,
     };
     read_crypto.set_session("channel", read_session_key);
@@ -406,10 +392,13 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
                 Ok(Message::Text(text)) => {
                     // Try to parse as encrypted message first
                     if let Ok(encrypted_msg) = serde_json::from_str::<EncryptedChatMessage>(&text) {
-                        match read_crypto.decrypt_message("channel", &encrypted_msg.encrypted_content) {
+                        match read_crypto
+                            .decrypt_message("channel", &encrypted_msg.encrypted_content)
+                        {
                             Ok(decrypted_bytes) => {
                                 if let Ok(content) = String::from_utf8(decrypted_bytes) {
-                                    println!("[{}] {}: {}", 
+                                    println!(
+                                        "[{}] {}: {}",
                                         encrypted_msg.timestamp.format("%H:%M:%S"),
                                         encrypted_msg.username,
                                         content
@@ -425,7 +414,8 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
                     }
                     // Fallback to plaintext for server messages/notifications
                     else if let Ok(chat_msg) = serde_json::from_str::<ChatMessage>(&text) {
-                        println!("[{}] {}: {} (plaintext)", 
+                        println!(
+                            "[{}] {}: {} (plaintext)",
                             chat_msg.timestamp.format("%H:%M:%S"),
                             chat_msg.username,
                             chat_msg.content
@@ -451,24 +441,22 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
     loop {
         print!("> ");
         io::stdout().flush()?;
-        
+
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         let input = input.trim();
-        
+
         if input == "/quit" {
             println!("👋 Leaving chat...");
             break;
         }
-        
+
         if !input.is_empty() {
             // Encrypt the message before sending
             match crypto.encrypt_message("channel", input.as_bytes()) {
                 Ok(encrypted_content) => {
-                    let message = serde_json::to_string(&SendMessageRequest {
-                        encrypted_content,
-                    })?;
-                    
+                    let message = serde_json::to_string(&SendMessageRequest { encrypted_content })?;
+
                     if let Err(e) = write.send(Message::Text(message)).await {
                         println!("❌ Failed to send message: {}", e);
                         break;
@@ -484,7 +472,7 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
     // Clean shutdown
     let _ = write.send(Message::Close(None)).await;
     read_handle.abort();
-    
+
     Ok(())
 }
 
@@ -497,13 +485,13 @@ async fn main() -> Result<()> {
         Commands::Register { username } => {
             println!("🔐 Registering user '{}'...", username);
             println!("🔑 Generating X25519 keypair for E2E encryption...");
-            
+
             match client.register(&username).await {
                 Ok(auth_response) => {
                     println!("✅ Registration successful!");
                     println!("   User ID: {}", auth_response.user.id);
                     println!("   Username: {}", auth_response.user.username);
-                    
+
                     // Save token for future use
                     save_token(&auth_response.token)?;
                     println!("💾 Authentication token saved to ~/.accord/token");
@@ -515,16 +503,16 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::Login { username } => {
             println!("🔑 Logging in user '{}'...", username);
-            
+
             match client.login(&username).await {
                 Ok(auth_response) => {
                     println!("✅ Login successful!");
                     println!("   User ID: {}", auth_response.user.id);
                     println!("   Username: {}", auth_response.user.username);
-                    
+
                     // Save token for future use
                     save_token(&auth_response.token)?;
                     println!("💾 Authentication token saved to ~/.accord/token");
@@ -535,12 +523,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::Nodes => {
-            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
-            
+            let token = load_token().map_err(|_| {
+                anyhow!("Not authenticated. Please run 'accord login <username>' first")
+            })?;
+
             println!("📋 Fetching your Nodes...");
-            
+
             match client.get_nodes(&token).await {
                 Ok(nodes) => {
                     if nodes.is_empty() {
@@ -560,12 +550,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::CreateNode { name } => {
-            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
-            
+            let token = load_token().map_err(|_| {
+                anyhow!("Not authenticated. Please run 'accord login <username>' first")
+            })?;
+
             println!("🏗️ Creating Node '{}'...", name);
-            
+
             match client.create_node(&token, &name).await {
                 Ok(node) => {
                     println!("✅ Node created successfully!");
@@ -579,12 +571,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::Join { node_id } => {
-            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
-            
+            let token = load_token().map_err(|_| {
+                anyhow!("Not authenticated. Please run 'accord login <username>' first")
+            })?;
+
             println!("🚪 Joining Node {}...", node_id);
-            
+
             match client.join_node(&token, &node_id).await {
                 Ok(()) => {
                     println!("✅ Successfully joined Node!");
@@ -595,12 +589,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::Channels { node_id } => {
-            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
-            
+            let token = load_token().map_err(|_| {
+                anyhow!("Not authenticated. Please run 'accord login <username>' first")
+            })?;
+
             println!("📺 Fetching channels for Node {}...", node_id);
-            
+
             match client.get_channels(&token, &node_id).await {
                 Ok(channels) => {
                     if channels.is_empty() {
@@ -618,7 +614,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::Chat { channel_id } => {
             if let Err(e) = enter_chat_mode(&client.server_url, &channel_id).await {
                 println!("❌ Chat failed: {}", e);

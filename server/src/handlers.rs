@@ -1,23 +1,23 @@
 //! HTTP and WebSocket handlers for the Accord relay server
 
 use crate::models::{
-    AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest, 
-    ErrorResponse, HealthResponse, RegisterRequest, RegisterResponse, UseInviteResponse, 
-    WsMessage, WsMessageType, FileMetadata,
+    AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest,
+    ErrorResponse, FileMetadata, HealthResponse, RegisterRequest, RegisterResponse,
+    UseInviteResponse, WsMessage, WsMessageType,
 };
 use crate::node::NodeInfo;
-use crate::permissions::{Permission, has_permission};
+use crate::permissions::{has_permission, Permission};
 use crate::state::SharedState;
+use axum::body::Body;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Multipart, Path, Query, State,
     },
-    http::{HeaderMap, StatusCode, header},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use axum::body::Body;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
@@ -39,18 +39,42 @@ pub async fn register_handler(
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, (StatusCode, Json<ErrorResponse>)> {
     if request.username.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Username cannot be empty".into(), code: 400 })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Username cannot be empty".into(),
+                code: 400,
+            }),
+        ));
     }
     if request.public_key.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Public key cannot be empty".into(), code: 400 })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Public key cannot be empty".into(),
+                code: 400,
+            }),
+        ));
     }
 
-    match state.register_user(request.username, request.public_key).await {
+    match state
+        .register_user(request.username, request.public_key)
+        .await
+    {
         Ok(user_id) => {
             info!("Registered new user: {}", user_id);
-            Ok(Json(RegisterResponse { user_id, message: "User registered successfully".into() }))
+            Ok(Json(RegisterResponse {
+                user_id,
+                message: "User registered successfully".into(),
+            }))
         }
-        Err(err) => Err((StatusCode::CONFLICT, Json(ErrorResponse { error: err, code: 409 }))),
+        Err(err) => Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: err,
+                code: 409,
+            }),
+        )),
     }
 }
 
@@ -59,12 +83,25 @@ pub async fn auth_handler(
     State(state): State<SharedState>,
     Json(request): Json<AuthRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
-    match state.authenticate_user(request.username, request.password).await {
+    match state
+        .authenticate_user(request.username, request.password)
+        .await
+    {
         Ok(auth_token) => {
             info!("User authenticated: {}", auth_token.user_id);
-            Ok(Json(AuthResponse { token: auth_token.token, user_id: auth_token.user_id, expires_at: auth_token.expires_at }))
+            Ok(Json(AuthResponse {
+                token: auth_token.token,
+                user_id: auth_token.user_id,
+                expires_at: auth_token.expires_at,
+            }))
         }
-        Err(err) => Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: err, code: 401 }))),
+        Err(err) => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: err,
+                code: 401,
+            }),
+        )),
     }
 }
 
@@ -78,7 +115,10 @@ pub async fn create_node_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
 
-    match state.create_node(request.name, user_id, request.description).await {
+    match state
+        .create_node(request.name, user_id, request.description)
+        .await
+    {
         Ok(node) => {
             info!("Node created: {} by {}", node.id, user_id);
             Ok(Json(serde_json::json!({
@@ -89,7 +129,13 @@ pub async fn create_node_handler(
                 "created_at": node.created_at,
             })))
         }
-        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
     }
 }
 
@@ -100,7 +146,13 @@ pub async fn get_node_handler(
 ) -> Result<Json<NodeInfo>, (StatusCode, Json<ErrorResponse>)> {
     match state.get_node_info(node_id).await {
         Ok(info) => Ok(Json(info)),
-        Err(err) => Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: err, code: 404 }))),
+        Err(err) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: err,
+                code: 404,
+            }),
+        )),
     }
 }
 
@@ -113,8 +165,16 @@ pub async fn join_node_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     match state.join_node(user_id, node_id).await {
-        Ok(()) => Ok(Json(serde_json::json!({ "status": "joined", "node_id": node_id }))),
-        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+        Ok(()) => Ok(Json(
+            serde_json::json!({ "status": "joined", "node_id": node_id }),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
     }
 }
 
@@ -127,8 +187,16 @@ pub async fn leave_node_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     match state.leave_node(user_id, node_id).await {
-        Ok(()) => Ok(Json(serde_json::json!({ "status": "left", "node_id": node_id }))),
-        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+        Ok(()) => Ok(Json(
+            serde_json::json!({ "status": "left", "node_id": node_id }),
+        )),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
     }
 }
 
@@ -141,16 +209,36 @@ pub async fn update_node_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
 
-    let name = request.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let description = request.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let name = request
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let description = request
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     match state.update_node(node_id, user_id, name, description).await {
-        Ok(()) => Ok(Json(serde_json::json!({ "status": "updated", "node_id": node_id }))),
+        Ok(()) => Ok(Json(
+            serde_json::json!({ "status": "updated", "node_id": node_id }),
+        )),
         Err(err) => {
             if err.contains("Insufficient permissions") {
-                Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 })))
+                Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 403,
+                    }),
+                ))
             } else {
-                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 })))
+                Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 400,
+                    }),
+                ))
             }
         }
     }
@@ -164,16 +252,36 @@ pub async fn kick_user_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let admin_user_id = extract_user_from_token(&state, &params).await?;
 
-    match state.kick_from_node(admin_user_id, target_user_id, node_id).await {
+    match state
+        .kick_from_node(admin_user_id, target_user_id, node_id)
+        .await
+    {
         Ok(()) => {
-            info!("User {} kicked from node {} by {}", target_user_id, node_id, admin_user_id);
-            Ok(Json(serde_json::json!({ "status": "kicked", "node_id": node_id, "user_id": target_user_id })))
+            info!(
+                "User {} kicked from node {} by {}",
+                target_user_id, node_id, admin_user_id
+            );
+            Ok(Json(
+                serde_json::json!({ "status": "kicked", "node_id": node_id, "user_id": target_user_id }),
+            ))
         }
         Err(err) => {
             if err.contains("Insufficient permissions") {
-                Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 })))
+                Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 403,
+                    }),
+                ))
             } else {
-                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 })))
+                Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 400,
+                    }),
+                ))
             }
         }
     }
@@ -190,16 +298,23 @@ pub async fn create_invite_handler(
 ) -> Result<Json<CreateInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
 
-    match state.create_invite(node_id, user_id, request.max_uses, request.expires_in_hours).await {
+    match state
+        .create_invite(node_id, user_id, request.max_uses, request.expires_in_hours)
+        .await
+    {
         Ok((invite_id, invite_code)) => {
-            info!("Invite created: {} for node {} by {}", invite_code, node_id, user_id);
-            
+            info!(
+                "Invite created: {} for node {} by {}",
+                invite_code, node_id, user_id
+            );
+
             // Calculate expires_at for response
             let expires_at = request.expires_in_hours.map(|hours| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() + (hours as u64 * 3600)
+                    .as_secs()
+                    + (hours as u64 * 3600)
             });
 
             Ok(Json(CreateInviteResponse {
@@ -213,7 +328,13 @@ pub async fn create_invite_handler(
                     .as_secs(),
             }))
         }
-        Err(err) => Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 }))),
+        Err(err) => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: err,
+                code: 403,
+            }),
+        )),
     }
 }
 
@@ -227,7 +348,13 @@ pub async fn list_invites_handler(
 
     match state.list_invites(node_id, user_id).await {
         Ok(invites) => Ok(Json(serde_json::json!({ "invites": invites }))),
-        Err(err) => Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 }))),
+        Err(err) => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: err,
+                code: 403,
+            }),
+        )),
     }
 }
 
@@ -242,9 +369,17 @@ pub async fn revoke_invite_handler(
     match state.revoke_invite(invite_id, user_id).await {
         Ok(()) => {
             info!("Invite revoked: {} by {}", invite_id, user_id);
-            Ok(Json(serde_json::json!({ "status": "revoked", "invite_id": invite_id })))
+            Ok(Json(
+                serde_json::json!({ "status": "revoked", "invite_id": invite_id }),
+            ))
         }
-        Err(err) => Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 }))),
+        Err(err) => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: err,
+                code: 403,
+            }),
+        )),
     }
 }
 
@@ -258,14 +393,23 @@ pub async fn use_invite_handler(
 
     match state.use_invite(&invite_code, user_id).await {
         Ok((node_id, node_name)) => {
-            info!("Invite used: {} by {} to join node {}", invite_code, user_id, node_id);
+            info!(
+                "Invite used: {} by {} to join node {}",
+                invite_code, user_id, node_id
+            );
             Ok(Json(UseInviteResponse {
                 status: "joined".to_string(),
                 node_id,
                 node_name,
             }))
         }
-        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
     }
 }
 
@@ -282,15 +426,35 @@ pub async fn delete_channel_handler(
     match state.delete_channel(channel_id, user_id).await {
         Ok(()) => {
             info!("Channel {} deleted by {}", channel_id, user_id);
-            Ok(Json(serde_json::json!({ "status": "deleted", "channel_id": channel_id })))
+            Ok(Json(
+                serde_json::json!({ "status": "deleted", "channel_id": channel_id }),
+            ))
         }
         Err(err) => {
             if err.contains("Insufficient permissions") {
-                Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 })))
+                Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 403,
+                    }),
+                ))
             } else if err.contains("not yet implemented") {
-                Err((StatusCode::NOT_IMPLEMENTED, Json(ErrorResponse { error: err, code: 501 })))
+                Err((
+                    StatusCode::NOT_IMPLEMENTED,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 501,
+                    }),
+                ))
             } else {
-                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 })))
+                Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: err,
+                        code: 400,
+                    }),
+                ))
             }
         }
     }
@@ -307,38 +471,58 @@ pub async fn get_channel_messages_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     // Check if user has access to this channel
-    let can_access = state.user_can_access_channel(user_id, channel_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-            error: format!("Access check failed: {}", e), 
-            code: 500 
-        })))?;
-        
+    let can_access = state
+        .user_can_access_channel(user_id, channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Access check failed: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
     if !can_access {
-        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-            error: "Access denied to this channel".into(), 
-            code: 403 
-        })));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Access denied to this channel".into(),
+                code: 403,
+            }),
+        ));
     }
 
     // Parse query parameters
-    let limit = params.get("limit")
+    let limit = params
+        .get("limit")
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(50)
         .min(100); // Cap at 100 messages per request
 
-    let before_id = params.get("before")
-        .and_then(|s| Uuid::parse_str(s).ok());
+    let before_id = params.get("before").and_then(|s| Uuid::parse_str(s).ok());
 
-    match state.get_channel_messages_paginated(channel_id, limit, before_id).await {
+    match state
+        .get_channel_messages_paginated(channel_id, limit, before_id)
+        .await
+    {
         Ok(messages) => {
             // Check if there are more messages (look ahead by 1)
             let has_more = if messages.len() as u32 == limit {
                 if let Some(last_msg) = messages.last() {
-                    let check_more = state.get_channel_messages_paginated(channel_id, 1, Some(last_msg.id)).await
-                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                            error: format!("Failed to check for more messages: {}", e), 
-                            code: 500 
-                        })))?;
+                    let check_more = state
+                        .get_channel_messages_paginated(channel_id, 1, Some(last_msg.id))
+                        .await
+                        .map_err(|e| {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(ErrorResponse {
+                                    error: format!("Failed to check for more messages: {}", e),
+                                    code: 500,
+                                }),
+                            )
+                        })?;
                     !check_more.is_empty()
                 } else {
                     false
@@ -359,10 +543,13 @@ pub async fn get_channel_messages_handler(
                 next_cursor,
             }))
         }
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-            error: format!("Failed to get messages: {}", err), 
-            code: 500 
-        }))),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get messages: {}", err),
+                code: 500,
+            }),
+        )),
     }
 }
 
@@ -375,38 +562,51 @@ pub async fn search_messages_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     // Check if user is member of this node
-    let is_member = state.is_node_member(user_id, node_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-            error: format!("Membership check failed: {}", e), 
-            code: 500 
-        })))?;
-        
+    let is_member = state.is_node_member(user_id, node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Membership check failed: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
     if !is_member {
-        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-            error: "Access denied to this node".into(), 
-            code: 403 
-        })));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Access denied to this node".into(),
+                code: 403,
+            }),
+        ));
     }
 
     // Parse query parameters
     let query = params.get("q").ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse { 
-            error: "Query parameter 'q' is required".into(), 
-            code: 400 
-        }))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Query parameter 'q' is required".into(),
+                code: 400,
+            }),
+        )
     })?;
 
     if query.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { 
-            error: "Search query cannot be empty".into(), 
-            code: 400 
-        })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Search query cannot be empty".into(),
+                code: 400,
+            }),
+        ));
     }
 
-    let channel_id_filter = params.get("channel")
-        .and_then(|s| Uuid::parse_str(s).ok());
+    let channel_id_filter = params.get("channel").and_then(|s| Uuid::parse_str(s).ok());
 
-    let limit = params.get("limit")
+    let limit = params
+        .get("limit")
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(50)
         .min(200); // Cap at 200 search results
@@ -420,9 +620,9 @@ pub async fn search_messages_handler(
                 note: "Search results include metadata only. Message content is end-to-end encrypted and must be searched client-side after decryption.".to_string(),
             }))
         }
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-            error: format!("Search failed: {}", err), 
-            code: 500 
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+            error: format!("Search failed: {}", err),
+            code: 500
         }))),
     }
 }
@@ -439,8 +639,20 @@ pub async fn get_user_profile_handler(
 
     match state.get_user_profile(user_id).await {
         Ok(Some(profile)) => Ok(Json(profile)),
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "User profile not found".into(), code: 404 }))),
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: err, code: 500 }))),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "User profile not found".into(),
+                code: 404,
+            }),
+        )),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: err,
+                code: 500,
+            }),
+        )),
     }
 }
 
@@ -455,35 +667,52 @@ pub async fn update_user_profile_handler(
     // Validate bio length if provided
     if let Some(ref bio) = request.bio {
         if bio.len() > 500 {
-            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { 
-                error: "Bio cannot exceed 500 characters".into(), 
-                code: 400 
-            })));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Bio cannot exceed 500 characters".into(),
+                    code: 400,
+                }),
+            ));
         }
     }
 
     // Validate status if provided
     if let Some(ref status) = request.status {
         if !matches!(status.as_str(), "online" | "idle" | "dnd" | "offline") {
-            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { 
-                error: "Invalid status. Must be one of: online, idle, dnd, offline".into(), 
-                code: 400 
-            })));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid status. Must be one of: online, idle, dnd, offline".into(),
+                    code: 400,
+                }),
+            ));
         }
     }
 
-    match state.update_user_profile(
-        user_id,
-        request.display_name.as_deref(),
-        request.bio.as_deref(),
-        request.status.as_deref(),
-        request.custom_status.as_deref(),
-    ).await {
+    match state
+        .update_user_profile(
+            user_id,
+            request.display_name.as_deref(),
+            request.bio.as_deref(),
+            request.status.as_deref(),
+            request.custom_status.as_deref(),
+        )
+        .await
+    {
         Ok(()) => {
             info!("User profile updated: {}", user_id);
-            Ok(Json(serde_json::json!({ "status": "updated", "user_id": user_id })))
+            Ok(Json(
+                serde_json::json!({ "status": "updated", "user_id": user_id }),
+            ))
         }
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: err, code: 500 }))),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: err,
+                code: 500,
+            }),
+        )),
     }
 }
 
@@ -497,24 +726,36 @@ pub async fn get_node_members_handler(
 
     // Check if user is a member of the node
     match state.get_node_member(node_id, user_id).await {
-        Ok(Some(_)) => {}, // User is a member, proceed
+        Ok(Some(_)) => {} // User is a member, proceed
         Ok(None) => {
-            return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-                error: "You must be a member of this node to view its members".into(), 
-                code: 403 
-            })));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "You must be a member of this node to view its members".into(),
+                    code: 403,
+                }),
+            ));
         }
         Err(err) => {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: err, 
-                code: 500 
-            })));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: err,
+                    code: 500,
+                }),
+            ));
         }
     }
 
     match state.get_node_members_with_profiles(node_id).await {
         Ok(members) => Ok(Json(serde_json::json!({ "members": members }))),
-        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: err, code: 500 }))),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: err,
+                code: 500,
+            }),
+        )),
     }
 }
 
@@ -524,10 +765,22 @@ async fn extract_user_from_token(
     params: &HashMap<String, String>,
 ) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
     let token = params.get("token").ok_or_else(|| {
-        (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Missing token".into(), code: 401 }))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Missing token".into(),
+                code: 401,
+            }),
+        )
     })?;
     state.validate_token(token).await.ok_or_else(|| {
-        (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Invalid or expired token".into(), code: 401 }))
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid or expired token".into(),
+                code: 401,
+            }),
+        )
     })
 }
 
@@ -539,8 +792,15 @@ async fn check_node_permission(
     required_permission: Permission,
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     // Get user's role in the Node
-    let member = state.get_node_member(node_id, user_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e, code: 500 })))?;
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
 
     match member {
         Some(member_info) => {
@@ -551,17 +811,23 @@ async fn check_node_permission(
                 let role_name = member_info.role.as_str();
                 Err((
                     StatusCode::FORBIDDEN,
-                    Json(ErrorResponse { 
-                        error: format!("Permission denied. Required: {}, Your role: {}", permission_name, role_name),
-                        code: 403 
-                    })
+                    Json(ErrorResponse {
+                        error: format!(
+                            "Permission denied. Required: {}, Your role: {}",
+                            permission_name, role_name
+                        ),
+                        code: 403,
+                    }),
                 ))
             }
         }
         None => Err((
             StatusCode::FORBIDDEN,
-            Json(ErrorResponse { error: "You are not a member of this Node".into(), code: 403 })
-        ))
+            Json(ErrorResponse {
+                error: "You are not a member of this Node".into(),
+                code: 403,
+            }),
+        )),
     }
 }
 
@@ -575,12 +841,30 @@ pub async fn ws_handler(
 ) -> Response {
     let token = match params.get("token") {
         Some(token) => token.clone(),
-        None => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Missing authentication token".into(), code: 401 })).into_response(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Missing authentication token".into(),
+                    code: 401,
+                }),
+            )
+                .into_response()
+        }
     };
 
     let user_id = match state.validate_token(&token).await {
         Some(uid) => uid,
-        None => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Invalid or expired token".into(), code: 401 })).into_response(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Invalid or expired token".into(),
+                    code: 401,
+                }),
+            )
+                .into_response()
+        }
     };
 
     info!("WebSocket connection established for user: {}", user_id);
@@ -592,7 +876,7 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
     let (tx, mut rx) = broadcast::channel::<String>(100);
 
     state.add_connection(user_id, tx.clone()).await;
-    
+
     // Set user online when they connect
     if let Err(err) = state.set_user_online(user_id).await {
         error!("Failed to set user online: {}", err);
@@ -621,7 +905,9 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
             }
             Ok(Message::Ping(_)) => {
                 let pong = serde_json::json!({ "type": "pong", "timestamp": now_secs() });
-                if tx.send(pong.to_string()).is_err() { break; }
+                if tx.send(pong.to_string()).is_err() {
+                    break;
+                }
             }
             Ok(_) => {}
             Err(err) => {
@@ -632,18 +918,23 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
     }
 
     state.remove_connection(user_id).await;
-    
+
     // Set user offline when they disconnect
     if let Err(err) = state.set_user_offline(user_id).await {
         error!("Failed to set user offline: {}", err);
     }
-    
+
     outgoing_task.abort();
     info!("WebSocket handler terminated for user: {}", user_id);
 }
 
-async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedState) -> Result<(), String> {
-    let ws_message: WsMessage = serde_json::from_str(message).map_err(|e| format!("Invalid message format: {}", e))?;
+async fn handle_ws_message(
+    message: &str,
+    sender_user_id: Uuid,
+    state: &SharedState,
+) -> Result<(), String> {
+    let ws_message: WsMessage =
+        serde_json::from_str(message).map_err(|e| format!("Invalid message format: {}", e))?;
 
     match ws_message.message_type {
         WsMessageType::CreateNode { name, description } => {
@@ -686,7 +977,10 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
             info!("User {} left channel {}", sender_user_id, channel_id);
         }
 
-        WsMessageType::DirectMessage { to_user, encrypted_data } => {
+        WsMessageType::DirectMessage {
+            to_user,
+            encrypted_data,
+        } => {
             let relay = serde_json::json!({
                 "type": "direct_message", "from": sender_user_id,
                 "encrypted_data": encrypted_data, "message_id": ws_message.message_id,
@@ -695,7 +989,10 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
             state.send_to_user(to_user, relay.to_string()).await?;
         }
 
-        WsMessageType::ChannelMessage { channel_id, encrypted_data } => {
+        WsMessageType::ChannelMessage {
+            channel_id,
+            encrypted_data,
+        } => {
             let relay = serde_json::json!({
                 "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
                 "encrypted_data": encrypted_data, "message_id": ws_message.message_id,
@@ -716,19 +1013,24 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
         // ── Voice operations ──
         WsMessageType::JoinVoiceChannel { channel_id } => {
             state.join_voice_channel(sender_user_id, channel_id).await?;
-            let resp = serde_json::json!({ 
-                "type": "voice_channel_joined", 
+            let resp = serde_json::json!({
+                "type": "voice_channel_joined",
                 "channel_id": channel_id,
                 "user_id": sender_user_id
             });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
-            info!("User {} joined voice channel {}", sender_user_id, channel_id);
+            info!(
+                "User {} joined voice channel {}",
+                sender_user_id, channel_id
+            );
         }
 
         WsMessageType::LeaveVoiceChannel { channel_id } => {
-            state.leave_voice_channel(sender_user_id, channel_id).await?;
-            let resp = serde_json::json!({ 
-                "type": "voice_channel_left", 
+            state
+                .leave_voice_channel(sender_user_id, channel_id)
+                .await?;
+            let resp = serde_json::json!({
+                "type": "voice_channel_left",
                 "channel_id": channel_id,
                 "user_id": sender_user_id
             });
@@ -736,7 +1038,11 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
             info!("User {} left voice channel {}", sender_user_id, channel_id);
         }
 
-        WsMessageType::VoicePacket { channel_id, encrypted_audio, sequence } => {
+        WsMessageType::VoicePacket {
+            channel_id,
+            encrypted_audio,
+            sequence,
+        } => {
             // Relay encrypted voice packet to all other participants in the channel
             let relay = serde_json::json!({
                 "type": "voice_packet",
@@ -746,10 +1052,16 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
                 "sequence": sequence,
                 "timestamp": ws_message.timestamp
             });
-            state.send_to_voice_channel(channel_id, sender_user_id, relay.to_string()).await?;
+            state
+                .send_to_voice_channel(channel_id, sender_user_id, relay.to_string())
+                .await?;
         }
 
-        WsMessageType::VoiceSpeakingState { channel_id, user_id, speaking } => {
+        WsMessageType::VoiceSpeakingState {
+            channel_id,
+            user_id,
+            speaking,
+        } => {
             // Broadcast speaking state change to all participants
             let broadcast = serde_json::json!({
                 "type": "voice_speaking_state",
@@ -758,7 +1070,9 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
                 "speaking": speaking,
                 "timestamp": ws_message.timestamp
             });
-            state.send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string()).await?;
+            state
+                .send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string())
+                .await?;
         }
     }
 
@@ -778,23 +1092,38 @@ pub async fn upload_file_handler(
     // this would be handled by auth middleware
     let user_id = match extract_user_from_request(&state).await {
         Ok(user_id) => user_id,
-        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
-            error: "Authentication required".into(), 
-            code: 401 
-        })))
+        Err(_) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Authentication required".into(),
+                    code: 401,
+                }),
+            ))
+        }
     };
 
     // Check if user is member of the channel
     match state.db.get_channel_members(channel_id).await {
-        Ok(members) if members.contains(&user_id) => {},
-        Ok(_) => return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-            error: "Not a member of this channel".into(), 
-            code: 403 
-        }))),
-        Err(_) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
-            error: "Channel not found".into(), 
-            code: 404 
-        })))
+        Ok(members) if members.contains(&user_id) => {}
+        Ok(_) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Not a member of this channel".into(),
+                    code: 403,
+                }),
+            ))
+        }
+        Err(_) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            ))
+        }
     }
 
     // Extract file data from multipart
@@ -819,17 +1148,23 @@ pub async fn upload_file_handler(
     }
 
     let encrypted_filename = encrypted_filename.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse { 
-            error: "Missing encrypted filename".into(), 
-            code: 400 
-        }))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing encrypted filename".into(),
+                code: 400,
+            }),
+        )
     })?;
 
     let file_data = file_data.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse { 
-            error: "Missing file data".into(), 
-            code: 400 
-        }))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing file data".into(),
+                code: 400,
+            }),
+        )
     })?;
 
     // Store file and metadata
@@ -837,22 +1172,29 @@ pub async fn upload_file_handler(
     match state.file_handler.store_file(file_id, &file_data).await {
         Ok((storage_path, content_hash)) => {
             // Store metadata in database
-            if let Err(e) = state.db.store_file_metadata(
-                file_id,
-                channel_id,
-                user_id,
-                &encrypted_filename,
-                file_data.len() as i64,
-                &content_hash,
-                &storage_path,
-            ).await {
+            if let Err(e) = state
+                .db
+                .store_file_metadata(
+                    file_id,
+                    channel_id,
+                    user_id,
+                    &encrypted_filename,
+                    file_data.len() as i64,
+                    &content_hash,
+                    &storage_path,
+                )
+                .await
+            {
                 // Clean up stored file if database insertion fails
                 let _ = state.file_handler.delete_file(&storage_path).await;
                 error!("Failed to store file metadata: {}", e);
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                    error: "Failed to store file metadata".into(), 
-                    code: 500 
-                })));
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Failed to store file metadata".into(),
+                        code: 500,
+                    }),
+                ));
             }
 
             info!("File uploaded: {} to channel {}", file_id, channel_id);
@@ -863,10 +1205,13 @@ pub async fn upload_file_handler(
         }
         Err(e) => {
             error!("Failed to store file: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: format!("Failed to store file: {}", e), 
-                code: 500 
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to store file: {}", e),
+                    code: 500,
+                }),
+            ))
         }
     }
 }
@@ -879,60 +1224,98 @@ pub async fn download_file_handler(
     // Get user from auth token
     let user_id = match extract_user_from_request(&state).await {
         Ok(user_id) => user_id,
-        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
-            error: "Authentication required".into(), 
-            code: 401 
-        })))
+        Err(_) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Authentication required".into(),
+                    code: 401,
+                }),
+            ))
+        }
     };
 
     // Get file metadata
     let file_metadata = match state.db.get_file_metadata(file_id).await {
         Ok(Some(metadata)) => metadata,
-        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
-            error: "File not found".into(), 
-            code: 404 
-        }))),
+        Ok(None) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "File not found".into(),
+                    code: 404,
+                }),
+            ))
+        }
         Err(e) => {
             error!("Failed to get file metadata: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: "Failed to get file metadata".into(), 
-                code: 500 
-            })));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get file metadata".into(),
+                    code: 500,
+                }),
+            ));
         }
     };
 
     // Check if user is member of the channel
     match state.db.get_channel_members(file_metadata.channel_id).await {
-        Ok(members) if members.contains(&user_id) => {},
-        Ok(_) => return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-            error: "Not a member of this channel".into(), 
-            code: 403 
-        }))),
-        Err(_) => return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-            error: "Failed to check channel membership".into(), 
-            code: 500 
-        })))
+        Ok(members) if members.contains(&user_id) => {}
+        Ok(_) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Not a member of this channel".into(),
+                    code: 403,
+                }),
+            ))
+        }
+        Err(_) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel membership".into(),
+                    code: 500,
+                }),
+            ))
+        }
     }
 
     // Read file data
-    match state.file_handler.read_file(&file_metadata.storage_path).await {
+    match state
+        .file_handler
+        .read_file(&file_metadata.storage_path)
+        .await
+    {
         Ok(file_data) => {
             let mut headers = HeaderMap::new();
-            headers.insert(header::CONTENT_TYPE, "application/octet-stream".parse().unwrap());
-            headers.insert(header::CONTENT_LENGTH, file_data.len().to_string().parse().unwrap());
+            headers.insert(
+                header::CONTENT_TYPE,
+                "application/octet-stream".parse().unwrap(),
+            );
+            headers.insert(
+                header::CONTENT_LENGTH,
+                file_data.len().to_string().parse().unwrap(),
+            );
             headers.insert(
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", file_id).parse().unwrap()
+                format!("attachment; filename=\"{}\"", file_id)
+                    .parse()
+                    .unwrap(),
             );
 
             Ok((headers, file_data).into_response())
         }
         Err(e) => {
             error!("Failed to read file: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: "Failed to read file".into(), 
-                code: 500 
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to read file".into(),
+                    code: 500,
+                }),
+            ))
         }
     }
 }
@@ -945,23 +1328,38 @@ pub async fn list_channel_files_handler(
     // Get user from auth token
     let user_id = match extract_user_from_request(&state).await {
         Ok(user_id) => user_id,
-        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
-            error: "Authentication required".into(), 
-            code: 401 
-        })))
+        Err(_) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Authentication required".into(),
+                    code: 401,
+                }),
+            ))
+        }
     };
 
     // Check if user is member of the channel
     match state.db.get_channel_members(channel_id).await {
-        Ok(members) if members.contains(&user_id) => {},
-        Ok(_) => return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-            error: "Not a member of this channel".into(), 
-            code: 403 
-        }))),
-        Err(_) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
-            error: "Channel not found".into(), 
-            code: 404 
-        })))
+        Ok(members) if members.contains(&user_id) => {}
+        Ok(_) => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Not a member of this channel".into(),
+                    code: 403,
+                }),
+            ))
+        }
+        Err(_) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            ))
+        }
     }
 
     // Get file list
@@ -969,10 +1367,13 @@ pub async fn list_channel_files_handler(
         Ok(files) => Ok(Json(files)),
         Err(e) => {
             error!("Failed to list channel files: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: "Failed to list channel files".into(), 
-                code: 500 
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to list channel files".into(),
+                    code: 500,
+                }),
+            ))
         }
     }
 }
@@ -985,51 +1386,69 @@ pub async fn delete_file_handler(
     // Get user from auth token
     let user_id = match extract_user_from_request(&state).await {
         Ok(user_id) => user_id,
-        Err(_) => return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { 
-            error: "Authentication required".into(), 
-            code: 401 
-        })))
+        Err(_) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Authentication required".into(),
+                    code: 401,
+                }),
+            ))
+        }
     };
 
     // Get file metadata
     let file_metadata = match state.db.get_file_metadata(file_id).await {
         Ok(Some(metadata)) => metadata,
-        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { 
-            error: "File not found".into(), 
-            code: 404 
-        }))),
+        Ok(None) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "File not found".into(),
+                    code: 404,
+                }),
+            ))
+        }
         Err(e) => {
             error!("Failed to get file metadata: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: "Failed to get file metadata".into(), 
-                code: 500 
-            })));
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get file metadata".into(),
+                    code: 500,
+                }),
+            ));
         }
     };
 
     // Check permissions - only uploader or admin can delete
     let is_uploader = file_metadata.uploader_id == user_id;
-    
+
     // Check if user is admin of the node containing this channel
     let is_admin = match state.db.get_channel(file_metadata.channel_id).await {
-        Ok(Some(channel)) => {
-            match state.db.get_node_member(channel.node_id, user_id).await {
-                Ok(Some(member)) => matches!(member.role, crate::node::NodeRole::Admin),
-                _ => false,
-            }
-        }
+        Ok(Some(channel)) => match state.db.get_node_member(channel.node_id, user_id).await {
+            Ok(Some(member)) => matches!(member.role, crate::node::NodeRole::Admin),
+            _ => false,
+        },
         _ => false,
     };
 
     if !is_uploader && !is_admin {
-        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
-            error: "Only the uploader or admins can delete files".into(), 
-            code: 403 
-        })));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Only the uploader or admins can delete files".into(),
+                code: 403,
+            }),
+        ));
     }
 
     // Delete from filesystem
-    if let Err(e) = state.file_handler.delete_file(&file_metadata.storage_path).await {
+    if let Err(e) = state
+        .file_handler
+        .delete_file(&file_metadata.storage_path)
+        .await
+    {
         error!("Failed to delete file from disk: {}", e);
         // Continue with database deletion even if file deletion fails
     }
@@ -1044,10 +1463,13 @@ pub async fn delete_file_handler(
         }
         Err(e) => {
             error!("Failed to delete file metadata: {}", e);
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
-                error: "Failed to delete file metadata".into(), 
-                code: 500 
-            })))
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to delete file metadata".into(),
+                    code: 500,
+                }),
+            ))
         }
     }
 }
@@ -1057,12 +1479,15 @@ async fn extract_user_from_request(_state: &SharedState) -> Result<Uuid, anyhow:
     // This is a placeholder implementation
     // In a real implementation, this would extract the user ID from a JWT token
     // or session stored in headers/cookies, validated by auth middleware
-    
+
     // For development/testing, we'll use a hardcoded user ID
     // TODO: Replace with proper authentication
     Ok(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000")?)
 }
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }

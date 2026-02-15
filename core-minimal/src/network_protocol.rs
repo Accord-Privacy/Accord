@@ -1,10 +1,10 @@
 //! # Network Protocol (Minimal)
-//! 
+//!
 //! Simplified network protocol for demonstration
 
-use serde::{Serialize, Deserialize};
-use uuid::Uuid;
 use crate::{AccordMessage, MessageType};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Protocol message envelope for network transmission
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,7 +60,11 @@ impl ProtocolHandler {
     }
 
     /// Create handshake message
-    pub fn create_handshake(&self, username: String, public_key_fingerprint: String) -> HandshakeMessage {
+    pub fn create_handshake(
+        &self,
+        username: String,
+        public_key_fingerprint: String,
+    ) -> HandshakeMessage {
         HandshakeMessage {
             user_id: self.user_id,
             username,
@@ -87,24 +91,25 @@ impl ProtocolHandler {
     /// Extract message from network envelope
     pub fn unwrap_message(&self, envelope: NetworkEnvelope) -> Result<AccordMessage, String> {
         if envelope.protocol_version != crate::PROTOCOL_VERSION {
-            return Err(format!("Unsupported protocol version: {}", envelope.protocol_version));
+            return Err(format!(
+                "Unsupported protocol version: {}",
+                envelope.protocol_version
+            ));
         }
 
         // In production: verify signature here
-        
+
         Ok(envelope.message)
     }
 
     /// Serialize envelope for network transmission
     pub fn serialize_envelope(&self, envelope: &NetworkEnvelope) -> Result<Vec<u8>, String> {
-        serde_json::to_vec(envelope)
-            .map_err(|e| format!("Serialization error: {}", e))
+        serde_json::to_vec(envelope).map_err(|e| format!("Serialization error: {}", e))
     }
 
     /// Deserialize envelope from network data
     pub fn deserialize_envelope(&self, data: &[u8]) -> Result<NetworkEnvelope, String> {
-        serde_json::from_slice(data)
-            .map_err(|e| format!("Deserialization error: {}", e))
+        serde_json::from_slice(data).map_err(|e| format!("Deserialization error: {}", e))
     }
 
     /// Set session token from server
@@ -145,7 +150,7 @@ impl MessageRouter {
     /// Route message to target user
     pub fn route_message(&self, envelope: &NetworkEnvelope) -> Result<Vec<Uuid>, String> {
         let mut targets = Vec::new();
-        
+
         match envelope.message.message_type {
             MessageType::TextMessage => {
                 // Route to channel members (simplified - would query actual channel membership)
@@ -180,7 +185,7 @@ impl MessageRouter {
                 }
             }
         }
-        
+
         Ok(targets)
     }
 
@@ -199,22 +204,21 @@ mod tests {
     fn test_handshake_creation() {
         let user_id = Uuid::new_v4();
         let handler = ProtocolHandler::new(user_id);
-        
-        let handshake = handler.create_handshake(
-            "TestUser".to_string(),
-            "abcd1234".to_string(),
-        );
-        
+
+        let handshake = handler.create_handshake("TestUser".to_string(), "abcd1234".to_string());
+
         assert_eq!(handshake.user_id, user_id);
         assert_eq!(handshake.username, "TestUser");
-        assert!(handshake.supported_features.contains(&"end-to-end-encryption".to_string()));
+        assert!(handshake
+            .supported_features
+            .contains(&"end-to-end-encryption".to_string()));
     }
 
     #[test]
     fn test_message_wrapping() {
         let user_id = Uuid::new_v4();
         let handler = ProtocolHandler::new(user_id);
-        
+
         let message = AccordMessage {
             id: Uuid::new_v4(),
             message_type: MessageType::TextMessage,
@@ -223,7 +227,7 @@ mod tests {
             timestamp: chrono::Utc::now(),
             encrypted_payload: b"test".to_vec(),
         };
-        
+
         let envelope = handler.wrap_message(message.clone());
         assert_eq!(envelope.protocol_version, crate::PROTOCOL_VERSION);
         assert_eq!(envelope.message.id, message.id);
@@ -233,7 +237,7 @@ mod tests {
     fn test_envelope_serialization() {
         let user_id = Uuid::new_v4();
         let handler = ProtocolHandler::new(user_id);
-        
+
         let message = AccordMessage {
             id: Uuid::new_v4(),
             message_type: MessageType::Heartbeat,
@@ -242,11 +246,11 @@ mod tests {
             timestamp: chrono::Utc::now(),
             encrypted_payload: Vec::new(),
         };
-        
+
         let envelope = handler.wrap_message(message);
         let serialized = handler.serialize_envelope(&envelope).unwrap();
         let deserialized = handler.deserialize_envelope(&serialized).unwrap();
-        
+
         assert_eq!(envelope.envelope_id, deserialized.envelope_id);
         assert_eq!(envelope.protocol_version, deserialized.protocol_version);
     }
@@ -255,10 +259,10 @@ mod tests {
     fn test_message_router() {
         let mut router = MessageRouter::new();
         let user_id = Uuid::new_v4();
-        
+
         router.register_connection(user_id, "test_connection".to_string());
         assert_eq!(router.get_connection_count(), 1);
-        
+
         router.unregister_connection(user_id);
         assert_eq!(router.get_connection_count(), 0);
     }

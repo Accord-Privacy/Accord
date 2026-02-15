@@ -1,10 +1,10 @@
 //! # Accord Cryptography Module
-//! 
+//!
 //! Core encryption primitives for Accord's end-to-end encryption system.
 //! Uses Signal Protocol for text messages and custom protocols for voice.
 
-use anyhow::{Result, Context};
-use ring::rand::{SystemRandom, SecureRandom};
+use anyhow::{Context, Result};
+use ring::rand::{SecureRandom, SystemRandom};
 use ring::{aead, agreement};
 use std::collections::HashMap;
 
@@ -75,10 +75,11 @@ impl CryptoManager {
     pub fn generate_key_pair(&self) -> Result<KeyPair> {
         let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &self.rng)
             .map_err(|_| anyhow::anyhow!("Failed to generate private key"))?;
-        
-        let public_key = private_key.compute_public_key()
+
+        let public_key = private_key
+            .compute_public_key()
             .map_err(|_| anyhow::anyhow!("Failed to compute public key"))?;
-        
+
         Ok(KeyPair {
             private_key,
             public_key: public_key.as_ref().to_vec(),
@@ -88,39 +89,45 @@ impl CryptoManager {
     /// Generate long-term identity key for user
     pub fn generate_identity_key(&mut self) -> Result<IdentityKey> {
         let key_pair = self.generate_key_pair()?;
-        
+
         // For now, use the X25519 public key as both identity and signature key
         // In production, we'd use Ed25519 for signatures
         let identity = IdentityKey {
             public_key: key_pair.public_key.clone(),
             signature_key: key_pair.public_key.clone(),
         };
-        
+
         self.identity_key = Some(identity.clone());
         Ok(identity)
     }
 
     /// Perform X3DH key agreement to establish session key
-    pub fn establish_session(&mut self, user_id: &str, their_public_key: &[u8]) -> Result<SessionKey> {
+    pub fn establish_session(
+        &mut self,
+        user_id: &str,
+        their_public_key: &[u8],
+    ) -> Result<SessionKey> {
         let our_key_pair = self.generate_key_pair()?;
-        
-        let their_public_key = agreement::UnparsedPublicKey::new(&agreement::X25519, their_public_key);
-        
+
+        let their_public_key =
+            agreement::UnparsedPublicKey::new(&agreement::X25519, their_public_key);
+
         let shared_secret = agreement::agree_ephemeral(
             our_key_pair.private_key,
             &their_public_key,
             |key_material| {
                 let mut session_key = [0u8; 32];
                 let mut chain_key = [0u8; 32];
-                
+
                 // Derive session key and chain key from shared secret
                 // In production, use HKDF for proper key derivation
                 session_key.copy_from_slice(&key_material[0..32]);
                 chain_key.copy_from_slice(&key_material[0..32]);
-                
+
                 (session_key, chain_key)
             },
-        ).map_err(|_| anyhow::anyhow!("Key agreement failed"))?;
+        )
+        .map_err(|_| anyhow::anyhow!("Key agreement failed"))?;
 
         let session = SessionKey {
             key_material: shared_secret.0,
@@ -139,7 +146,9 @@ impl CryptoManager {
 
     /// Encrypt a text message using AES-GCM
     pub fn encrypt_message(&mut self, user_id: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let session = self.session_keys.get_mut(user_id)
+        let session = self
+            .session_keys
+            .get_mut(user_id)
             .context("No session key found for user")?;
 
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &session.key_material)
@@ -148,7 +157,9 @@ impl CryptoManager {
 
         // Generate random nonce
         let mut nonce_bytes = [0u8; 12];
-        self.rng.fill(&mut nonce_bytes).map_err(|_| anyhow::anyhow!("Failed to generate nonce"))?;
+        self.rng
+            .fill(&mut nonce_bytes)
+            .map_err(|_| anyhow::anyhow!("Failed to generate nonce"))?;
         let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
 
         let mut ciphertext = plaintext.to_vec();
@@ -161,7 +172,7 @@ impl CryptoManager {
 
         // Advance message number for forward secrecy
         session.message_number += 1;
-        
+
         Ok(result)
     }
 
@@ -171,7 +182,9 @@ impl CryptoManager {
             return Err(anyhow::anyhow!("Ciphertext too short"));
         }
 
-        let session = self.session_keys.get(user_id)
+        let session = self
+            .session_keys
+            .get(user_id)
             .context("No session key found for user")?;
 
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &session.key_material)
@@ -181,9 +194,10 @@ impl CryptoManager {
         // Extract nonce and ciphertext
         let nonce_bytes = &ciphertext[0..12];
         let nonce = aead::Nonce::assume_unique_for_key(*array_ref!(nonce_bytes, 0, 12));
-        
+
         let mut message = ciphertext[12..].to_vec();
-        let plaintext = key.open_in_place(nonce, aead::Aad::empty(), &mut message)
+        let plaintext = key
+            .open_in_place(nonce, aead::Aad::empty(), &mut message)
             .map_err(|_| anyhow::anyhow!("Decryption failed"))?;
 
         Ok(plaintext.to_vec())
@@ -193,9 +207,13 @@ impl CryptoManager {
     pub fn generate_voice_key(&self) -> Result<VoiceKey> {
         let mut aes_key = [0u8; 32];
         let mut nonce_prefix = [0u8; 4];
-        
-        self.rng.fill(&mut aes_key).map_err(|_| anyhow::anyhow!("Failed to generate voice key"))?;
-        self.rng.fill(&mut nonce_prefix).map_err(|_| anyhow::anyhow!("Failed to generate nonce prefix"))?;
+
+        self.rng
+            .fill(&mut aes_key)
+            .map_err(|_| anyhow::anyhow!("Failed to generate voice key"))?;
+        self.rng
+            .fill(&mut nonce_prefix)
+            .map_err(|_| anyhow::anyhow!("Failed to generate nonce prefix"))?;
 
         Ok(VoiceKey {
             aes_key,
@@ -205,7 +223,11 @@ impl CryptoManager {
     }
 
     /// Encrypt voice packet for real-time transmission
-    pub fn encrypt_voice_packet(&self, voice_key: &mut VoiceKey, audio_data: &[u8]) -> Result<Vec<u8>> {
+    pub fn encrypt_voice_packet(
+        &self,
+        voice_key: &mut VoiceKey,
+        audio_data: &[u8],
+    ) -> Result<Vec<u8>> {
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &voice_key.aes_key)
             .map_err(|_| anyhow::anyhow!("Failed to create voice encryption key"))?;
         let key = aead::LessSafeKey::new(key);
@@ -229,7 +251,11 @@ impl CryptoManager {
     }
 
     /// Decrypt voice packet
-    pub fn decrypt_voice_packet(&self, voice_key: &VoiceKey, encrypted_data: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt_voice_packet(
+        &self,
+        voice_key: &VoiceKey,
+        encrypted_data: &[u8],
+    ) -> Result<Vec<u8>> {
         if encrypted_data.len() < 8 {
             return Err(anyhow::anyhow!("Voice packet too short"));
         }
@@ -240,7 +266,7 @@ impl CryptoManager {
 
         // Extract sequence number
         let sequence = u64::from_be_bytes(*array_ref!(encrypted_data, 0, 8));
-        
+
         // Reconstruct nonce
         let mut nonce_bytes = [0u8; 12];
         nonce_bytes[0..4].copy_from_slice(&voice_key.nonce_prefix);
@@ -248,7 +274,8 @@ impl CryptoManager {
         let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
 
         let mut audio_data = encrypted_data[8..].to_vec();
-        let plaintext = key.open_in_place(nonce, aead::Aad::empty(), &mut audio_data)
+        let plaintext = key
+            .open_in_place(nonce, aead::Aad::empty(), &mut audio_data)
             .map_err(|_| anyhow::anyhow!("Voice decryption failed"))?;
 
         Ok(plaintext.to_vec())
@@ -275,33 +302,35 @@ mod tests {
     fn test_message_encryption() {
         let mut crypto1 = CryptoManager::new();
         let mut crypto2 = CryptoManager::new();
-        
+
         // Create a shared session key for testing
         let shared_session = SessionKey {
             key_material: [42u8; 32], // Fixed key for testing
             chain_key: [24u8; 32],
             message_number: 0,
         };
-        
+
         crypto1.set_session("user2", shared_session.clone());
         crypto2.set_session("user1", shared_session);
-        
+
         let message = b"Hello, secure world!";
         let encrypted = crypto1.encrypt_message("user2", message).unwrap();
         let decrypted = crypto2.decrypt_message("user1", &encrypted).unwrap();
-        
+
         assert_eq!(message.to_vec(), decrypted);
     }
 
-    #[test] 
+    #[test]
     fn test_voice_encryption() {
         let crypto = CryptoManager::new();
         let mut voice_key = crypto.generate_voice_key().unwrap();
-        
+
         let audio_data = b"fake audio data";
-        let encrypted = crypto.encrypt_voice_packet(&mut voice_key, audio_data).unwrap();
+        let encrypted = crypto
+            .encrypt_voice_packet(&mut voice_key, audio_data)
+            .unwrap();
         let decrypted = crypto.decrypt_voice_packet(&voice_key, &encrypted).unwrap();
-        
+
         assert_eq!(audio_data.to_vec(), decrypted);
     }
 }

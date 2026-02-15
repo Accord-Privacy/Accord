@@ -1,5 +1,5 @@
 //! # Accord Bot Integration
-//! 
+//!
 //! Privacy-preserving bot system where bots cannot read channel content
 //! but can respond to direct commands and provide embedded functions.
 
@@ -15,7 +15,7 @@ pub struct BotCommand {
     pub bot_id: Uuid,
     pub channel_id: Uuid,
     pub user_id: Uuid,
-    pub command_prefix: String, // e.g., "/weather", "/music"
+    pub command_prefix: String,       // e.g., "/weather", "/music"
     pub encrypted_arguments: Vec<u8>, // Encrypted for bot's eyes only
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
@@ -103,7 +103,10 @@ pub enum EmbeddedAction {
     /// Update the original message
     UpdateMessage { new_content: String },
     /// Open a modal dialog
-    OpenModal { title: String, fields: Vec<EmbeddedElement> },
+    OpenModal {
+        title: String,
+        fields: Vec<EmbeddedElement>,
+    },
     /// No action (display only)
     None,
 }
@@ -154,7 +157,7 @@ pub struct BotPermissions {
     pub can_send_messages: bool,
     pub can_send_embeds: bool,
     pub can_use_external_resources: bool, // HTTP requests, file uploads
-    pub can_manage_messages: bool, // Edit/delete its own messages
+    pub can_manage_messages: bool,        // Edit/delete its own messages
     pub allowed_channels: Option<Vec<Uuid>>, // Restrict to specific channels
 }
 
@@ -201,7 +204,10 @@ impl BotManager {
         for cmd_def in &bot.commands {
             let command_key = format!("/{}", cmd_def.command);
             if self.command_mappings.contains_key(&command_key) {
-                return Err(anyhow::anyhow!("Command '{}' already registered", command_key));
+                return Err(anyhow::anyhow!(
+                    "Command '{}' already registered",
+                    command_key
+                ));
             }
             self.command_mappings.insert(command_key, bot.bot_id);
         }
@@ -223,7 +229,7 @@ impl BotManager {
             if message_preview.starts_with(command_prefix) {
                 // Extract the command arguments (everything after the prefix)
                 let command_id = Uuid::new_v4();
-                
+
                 return Some(BotCommand {
                     command_id,
                     bot_id,
@@ -240,7 +246,9 @@ impl BotManager {
 
     /// Route command to appropriate bot (bot receives only the command, not channel history)
     pub fn route_command(&mut self, command: BotCommand) -> Result<()> {
-        let bot = self.bots.get(&command.bot_id)
+        let bot = self
+            .bots
+            .get(&command.bot_id)
             .ok_or_else(|| anyhow::anyhow!("Bot not found"))?;
 
         // Verify bot has permission in this channel
@@ -251,7 +259,8 @@ impl BotManager {
         }
 
         // Store command for processing
-        self.pending_commands.insert(command.command_id, command.clone());
+        self.pending_commands
+            .insert(command.command_id, command.clone());
 
         // Record interaction
         self.interactions.push(BotInteraction {
@@ -264,15 +273,20 @@ impl BotManager {
         });
 
         // In a real implementation, this would send the command to the bot process
-        println!("Routing command {} to bot {}", command.command_prefix, bot.name);
-        
+        println!(
+            "Routing command {} to bot {}",
+            command.command_prefix, bot.name
+        );
+
         Ok(())
     }
 
     /// Handle bot response with embedded elements
     pub fn handle_bot_response(&mut self, response: BotResponse) -> Result<()> {
         // Verify the command exists
-        let _command = self.pending_commands.get(&response.command_id)
+        let _command = self
+            .pending_commands
+            .get(&response.command_id)
             .ok_or_else(|| anyhow::anyhow!("Original command not found"))?;
 
         // Process embedded elements (validate they're safe)
@@ -281,8 +295,11 @@ impl BotManager {
         }
 
         // In a real implementation, this would send the response to the channel
-        println!("Bot response with {} embedded elements", response.embedded_elements.len());
-        
+        println!(
+            "Bot response with {} embedded elements",
+            response.embedded_elements.len()
+        );
+
         Ok(())
     }
 
@@ -296,7 +313,7 @@ impl BotManager {
     ) -> Result<()> {
         // Find which bot owns this embedded element
         // In practice, element IDs would include bot ID prefix
-        
+
         self.interactions.push(BotInteraction {
             interaction_id: Uuid::new_v4(),
             bot_id: Uuid::new_v4(), // Would be determined from element_id
@@ -306,16 +323,19 @@ impl BotManager {
             timestamp: chrono::Utc::now(),
         });
 
-        println!("Handling embedded interaction: {} = {}", element_id, interaction_data);
+        println!(
+            "Handling embedded interaction: {} = {}",
+            element_id, interaction_data
+        );
         Ok(())
     }
 
     /// Validate embedded element is safe and doesn't violate privacy
     fn validate_embedded_element(&self, element: &EmbeddedElement) -> Result<()> {
         match element {
-            EmbeddedElement::Button { action, .. } |
-            EmbeddedElement::SelectMenu { action, .. } |
-            EmbeddedElement::TextInput { action, .. } => {
+            EmbeddedElement::Button { action, .. }
+            | EmbeddedElement::SelectMenu { action, .. }
+            | EmbeddedElement::TextInput { action, .. } => {
                 match action {
                     EmbeddedAction::Command { command } => {
                         // Verify the command is valid for this bot
@@ -344,7 +364,7 @@ impl BotManager {
     /// Get list of available commands for autocomplete
     pub fn get_available_commands(&self, channel_id: Uuid) -> Vec<BotCommandDefinition> {
         let mut commands = Vec::new();
-        
+
         for bot in self.bots.values() {
             // Check if bot is allowed in this channel
             if let Some(ref allowed_channels) = bot.permissions.allowed_channels {
@@ -352,10 +372,10 @@ impl BotManager {
                     continue;
                 }
             }
-            
+
             commands.extend(bot.commands.clone());
         }
-        
+
         commands
     }
 
@@ -368,19 +388,20 @@ impl BotManager {
     pub fn remove_bot(&mut self, bot_id: Uuid) -> Result<()> {
         if let Some(bot) = self.bots.remove(&bot_id) {
             // Remove all command mappings for this bot
-            let commands_to_remove: Vec<String> = self.command_mappings
+            let commands_to_remove: Vec<String> = self
+                .command_mappings
                 .iter()
                 .filter(|(_, &id)| id == bot_id)
                 .map(|(cmd, _)| cmd.clone())
                 .collect();
-            
+
             for cmd in commands_to_remove {
                 self.command_mappings.remove(&cmd);
             }
-            
+
             println!("Removed bot: {}", bot.name);
         }
-        
+
         Ok(())
     }
 }
@@ -392,26 +413,22 @@ mod tests {
     #[test]
     fn test_bot_registration() {
         let mut manager = BotManager::new();
-        
+
         let bot = Bot {
             bot_id: Uuid::new_v4(),
             name: "Weather Bot".to_string(),
             description: "Provides weather information".to_string(),
-            commands: vec![
-                BotCommandDefinition {
-                    command: "weather".to_string(),
-                    description: "Get weather for a location".to_string(),
-                    parameters: vec![
-                        CommandParameter {
-                            name: "location".to_string(),
-                            parameter_type: ParameterType::String,
-                            required: true,
-                            description: "City or address".to_string(),
-                        }
-                    ],
-                    requires_permissions: vec![],
-                }
-            ],
+            commands: vec![BotCommandDefinition {
+                command: "weather".to_string(),
+                description: "Get weather for a location".to_string(),
+                parameters: vec![CommandParameter {
+                    name: "location".to_string(),
+                    parameter_type: ParameterType::String,
+                    required: true,
+                    description: "City or address".to_string(),
+                }],
+                requires_permissions: vec![],
+            }],
             permissions: BotPermissions {
                 can_send_messages: true,
                 can_send_embeds: true,
@@ -431,21 +448,19 @@ mod tests {
     #[test]
     fn test_command_extraction() {
         let mut manager = BotManager::new();
-        
+
         // Register a bot with a command
         let bot_id = Uuid::new_v4();
         let bot = Bot {
             bot_id,
             name: "Test Bot".to_string(),
             description: "Test".to_string(),
-            commands: vec![
-                BotCommandDefinition {
-                    command: "test".to_string(),
-                    description: "Test command".to_string(),
-                    parameters: vec![],
-                    requires_permissions: vec![],
-                }
-            ],
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
             permissions: BotPermissions {
                 can_send_messages: true,
                 can_send_embeds: false,

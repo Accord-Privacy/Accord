@@ -1,8 +1,8 @@
 //! # Channel System Implementation
-//! 
+//!
 //! Demonstrates the hybrid lobby/private channel system with entry requests.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -130,15 +130,18 @@ impl ChannelManager {
         description: Option<String>,
     ) -> Uuid {
         let channel_id = Uuid::new_v4();
-        
+
         let mut members = HashMap::new();
-        members.insert(creator_id, ChannelMember {
-            user_id: creator_id,
-            username: creator_username,
-            permissions: UserPermissions::admin(), // Creator gets admin permissions
-            joined_at: chrono::Utc::now(),
-            is_online: true,
-        });
+        members.insert(
+            creator_id,
+            ChannelMember {
+                user_id: creator_id,
+                username: creator_username,
+                permissions: UserPermissions::admin(), // Creator gets admin permissions
+                joined_at: chrono::Utc::now(),
+                is_online: true,
+            },
+        );
 
         let channel = Channel {
             id: channel_id,
@@ -153,7 +156,7 @@ impl ChannelManager {
         };
 
         self.channels.insert(channel_id, channel);
-        
+
         // Add to user memberships
         self.user_memberships
             .entry(creator_id)
@@ -170,12 +173,18 @@ impl ChannelManager {
         user_id: Uuid,
         username: String,
     ) -> Result<(), String> {
-        let channel = self.channels.get_mut(&channel_id)
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or("Channel not found")?;
 
         // Check if it's a lobby channel
         match channel.channel_type {
-            ChannelType::Lobby | ChannelType::Voice { access_type: VoiceAccessType::Lobby } | ChannelType::Text => {
+            ChannelType::Lobby
+            | ChannelType::Voice {
+                access_type: VoiceAccessType::Lobby,
+            }
+            | ChannelType::Text => {
                 // Check max members
                 if let Some(max) = channel.max_members {
                     if channel.members.len() >= max as usize {
@@ -189,13 +198,16 @@ impl ChannelManager {
                 }
 
                 // Add user with default member permissions
-                channel.members.insert(user_id, ChannelMember {
+                channel.members.insert(
                     user_id,
-                    username,
-                    permissions: UserPermissions::member(),
-                    joined_at: chrono::Utc::now(),
-                    is_online: true,
-                });
+                    ChannelMember {
+                        user_id,
+                        username,
+                        permissions: UserPermissions::member(),
+                        joined_at: chrono::Utc::now(),
+                        is_online: true,
+                    },
+                );
 
                 // Add to user memberships
                 self.user_memberships
@@ -205,7 +217,7 @@ impl ChannelManager {
 
                 Ok(())
             }
-            _ => Err("Cannot directly join private channel".to_string())
+            _ => Err("Cannot directly join private channel".to_string()),
         }
     }
 
@@ -217,19 +229,28 @@ impl ChannelManager {
         username: String,
         message: Option<String>,
     ) -> Result<Uuid, String> {
-        let channel = self.channels.get_mut(&channel_id)
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or("Channel not found")?;
 
         // Check if it's a private channel
         match channel.channel_type {
-            ChannelType::Private { .. } | ChannelType::Voice { access_type: VoiceAccessType::Private { .. } } => {
+            ChannelType::Private { .. }
+            | ChannelType::Voice {
+                access_type: VoiceAccessType::Private { .. },
+            } => {
                 // Check if already a member
                 if channel.members.contains_key(&user_id) {
                     return Err("Already a member of this channel".to_string());
                 }
 
                 // Check if request already exists
-                if channel.pending_requests.iter().any(|req| req.user_id == user_id) {
+                if channel
+                    .pending_requests
+                    .iter()
+                    .any(|req| req.user_id == user_id)
+                {
                     return Err("Entry request already pending".to_string());
                 }
 
@@ -246,22 +267,22 @@ impl ChannelManager {
                 channel.pending_requests.push(request);
                 Ok(request_id)
             }
-            _ => Err("Cannot request entry to lobby channel - just join directly".to_string())
+            _ => Err("Cannot request entry to lobby channel - just join directly".to_string()),
         }
     }
 
     /// Approve an entry request
-    pub fn approve_entry(
-        &mut self,
-        request_id: Uuid,
-        approver_id: Uuid,
-    ) -> Result<(), String> {
+    pub fn approve_entry(&mut self, request_id: Uuid, approver_id: Uuid) -> Result<(), String> {
         // Find the channel and request
         let mut found_channel_id = None;
         let mut user_to_add = None;
 
         for (channel_id, channel) in &mut self.channels {
-            if let Some(pos) = channel.pending_requests.iter().position(|req| req.request_id == request_id) {
+            if let Some(pos) = channel
+                .pending_requests
+                .iter()
+                .position(|req| req.request_id == request_id)
+            {
                 // Check if approver has permission
                 if let Some(approver) = channel.members.get(&approver_id) {
                     if !approver.permissions.can_approve_entry {
@@ -280,15 +301,18 @@ impl ChannelManager {
 
         if let (Some(channel_id), Some((user_id, username))) = (found_channel_id, user_to_add) {
             let channel = self.channels.get_mut(&channel_id).unwrap();
-            
+
             // Add user as member
-            channel.members.insert(user_id, ChannelMember {
+            channel.members.insert(
                 user_id,
-                username,
-                permissions: UserPermissions::member(),
-                joined_at: chrono::Utc::now(),
-                is_online: true,
-            });
+                ChannelMember {
+                    user_id,
+                    username,
+                    permissions: UserPermissions::member(),
+                    joined_at: chrono::Utc::now(),
+                    is_online: true,
+                },
+            );
 
             // Add to user memberships
             self.user_memberships
@@ -305,7 +329,11 @@ impl ChannelManager {
     /// Deny an entry request
     pub fn deny_entry(&mut self, request_id: Uuid, denier_id: Uuid) -> Result<(), String> {
         for channel in self.channels.values_mut() {
-            if let Some(pos) = channel.pending_requests.iter().position(|req| req.request_id == request_id) {
+            if let Some(pos) = channel
+                .pending_requests
+                .iter()
+                .position(|req| req.request_id == request_id)
+            {
                 // Check if denier has permission
                 if let Some(denier) = channel.members.get(&denier_id) {
                     if !denier.permissions.can_approve_entry {
@@ -331,15 +359,17 @@ impl ChannelManager {
                 match &channel.channel_type {
                     // Lobby channels are always visible
                     ChannelType::Lobby | ChannelType::Text => true,
-                    ChannelType::Voice { access_type: VoiceAccessType::Lobby } => true,
-                    
+                    ChannelType::Voice {
+                        access_type: VoiceAccessType::Lobby,
+                    } => true,
+
                     // Private channels - visible if user is member OR visibility is enabled
                     ChannelType::Private { visible_in_list } => {
                         *visible_in_list || channel.members.contains_key(&user_id)
                     }
-                    ChannelType::Voice { access_type: VoiceAccessType::Private { visible_in_list } } => {
-                        *visible_in_list || channel.members.contains_key(&user_id)
-                    }
+                    ChannelType::Voice {
+                        access_type: VoiceAccessType::Private { visible_in_list },
+                    } => *visible_in_list || channel.members.contains_key(&user_id),
                 }
             })
             .collect()
@@ -348,7 +378,7 @@ impl ChannelManager {
     /// Get pending requests for channels where user can approve
     pub fn get_pending_requests(&self, user_id: Uuid) -> Vec<&EntryRequest> {
         let mut requests = Vec::new();
-        
+
         for channel in self.channels.values() {
             if let Some(member) = channel.members.get(&user_id) {
                 if member.permissions.can_approve_entry {
@@ -356,13 +386,15 @@ impl ChannelManager {
                 }
             }
         }
-        
+
         requests
     }
 
     /// Leave a channel
     pub fn leave_channel(&mut self, channel_id: Uuid, user_id: Uuid) -> Result<(), String> {
-        let channel = self.channels.get_mut(&channel_id)
+        let channel = self
+            .channels
+            .get_mut(&channel_id)
             .ok_or("Channel not found")?;
 
         if !channel.members.contains_key(&user_id) {
@@ -370,7 +402,7 @@ impl ChannelManager {
         }
 
         channel.members.remove(&user_id);
-        
+
         if let Some(memberships) = self.user_memberships.get_mut(&user_id) {
             memberships.remove(&channel_id);
         }
@@ -401,7 +433,7 @@ mod tests {
     fn test_channel_creation() {
         let mut manager = ChannelManager::new();
         let creator_id = Uuid::new_v4();
-        
+
         let channel_id = manager.create_channel(
             "General".to_string(),
             ChannelType::Lobby,
@@ -421,7 +453,7 @@ mod tests {
         let mut manager = ChannelManager::new();
         let creator_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
-        
+
         let channel_id = manager.create_channel(
             "Lobby".to_string(),
             ChannelType::Lobby,
@@ -433,7 +465,7 @@ mod tests {
         // User should be able to join directly
         let result = manager.join_lobby_channel(channel_id, user_id, "TestUser".to_string());
         assert!(result.is_ok());
-        
+
         let channel = manager.get_channel(channel_id).unwrap();
         assert!(channel.members.contains_key(&user_id));
     }
@@ -443,27 +475,31 @@ mod tests {
         let mut manager = ChannelManager::new();
         let creator_id = Uuid::new_v4();
         let user_id = Uuid::new_v4();
-        
+
         let channel_id = manager.create_channel(
             "Private".to_string(),
-            ChannelType::Private { visible_in_list: true },
+            ChannelType::Private {
+                visible_in_list: true,
+            },
             creator_id,
             "Creator".to_string(),
             None,
         );
 
         // User should need to request entry
-        let request_id = manager.request_entry(
-            channel_id,
-            user_id,
-            "TestUser".to_string(),
-            Some("Please let me join!".to_string()),
-        ).unwrap();
+        let request_id = manager
+            .request_entry(
+                channel_id,
+                user_id,
+                "TestUser".to_string(),
+                Some("Please let me join!".to_string()),
+            )
+            .unwrap();
 
         // Creator should be able to approve
         let result = manager.approve_entry(request_id, creator_id);
         assert!(result.is_ok());
-        
+
         let channel = manager.get_channel(channel_id).unwrap();
         assert!(channel.members.contains_key(&user_id));
         assert!(channel.pending_requests.is_empty());
@@ -478,7 +514,9 @@ mod tests {
         // Create visible private channel
         let _visible_private = manager.create_channel(
             "Visible Private".to_string(),
-            ChannelType::Private { visible_in_list: true },
+            ChannelType::Private {
+                visible_in_list: true,
+            },
             creator_id,
             "Creator".to_string(),
             None,
@@ -487,7 +525,9 @@ mod tests {
         // Create hidden private channel
         let _hidden_private = manager.create_channel(
             "Hidden Private".to_string(),
-            ChannelType::Private { visible_in_list: false },
+            ChannelType::Private {
+                visible_in_list: false,
+            },
             creator_id,
             "Creator".to_string(),
             None,

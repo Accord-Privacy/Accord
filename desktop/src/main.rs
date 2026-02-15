@@ -1,5 +1,5 @@
 //! # Accord Desktop Application
-//! 
+//!
 //! Cross-platform desktop client built with Tauri.
 //! Provides Discord-like interface with Signal-level security.
 
@@ -12,9 +12,11 @@ use accord_core::{init, PROTOCOL_VERSION};
 
 #[tauri::command]
 fn get_version() -> String {
-    format!("Accord Desktop v{} (Protocol v{})", 
-            env!("CARGO_PKG_VERSION"), 
-            PROTOCOL_VERSION)
+    format!(
+        "Accord Desktop v{} (Protocol v{})",
+        env!("CARGO_PKG_VERSION"),
+        PROTOCOL_VERSION
+    )
 }
 
 #[tauri::command]
@@ -28,17 +30,14 @@ fn main() {
         .setup(|_app| {
             // Initialize Accord core
             init().expect("Failed to initialize Accord core");
-            
+
             println!("🚀 Accord Desktop starting...");
             println!("🔒 End-to-end encryption enabled");
             println!("📱 Cross-platform desktop client");
-            
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            get_version,
-            initialize_crypto
-        ])
+        .invoke_handler(tauri::generate_handler![get_version, initialize_crypto])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

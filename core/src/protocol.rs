@@ -1,5 +1,5 @@
 //! # Accord Network Protocol
-//! 
+//!
 //! Message formats and network protocol for secure communication
 //! between clients and relay servers.
 
@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::voice::VoicePacket;
 use crate::bots::{BotCommand, BotResponse};
+use crate::voice::VoicePacket;
 
 /// Protocol version for compatibility checking
 pub const PROTOCOL_VERSION: u8 = 1;
@@ -38,40 +38,40 @@ pub enum MessageType {
     Authentication,
     Heartbeat,
     Disconnect,
-    
+
     // Text Messaging
     TextMessage,
     TypingIndicator,
     MessageAck,
     MessageEdit,
     MessageDelete,
-    
+
     // Voice Communication
     VoiceJoin,
     VoiceLeave,
     VoicePacket,
     VoiceSpeaking,
-    
+
     // Channel Management
     ChannelJoin,
     ChannelLeave,
     ChannelUpdate,
     ChannelInvite,
-    
+
     // Bot Integration
     BotCommand,
     BotResponse,
-    
+
     // File Sharing
     FileUpload,
     FileDownload,
     FileChunk,
-    
+
     // Server Management
     ServerInfo,
     UserList,
     PermissionUpdate,
-    
+
     // Error Handling
     Error,
 }
@@ -83,39 +83,39 @@ pub enum MessagePayload {
     Handshake(HandshakePayload),
     Authentication(AuthPayload),
     Heartbeat(HeartbeatPayload),
-    
+
     // Text Messages
     TextMessage(TextMessagePayload),
     TypingIndicator(TypingPayload),
     MessageEdit(EditPayload),
     MessageDelete(DeletePayload),
-    
+
     // Voice Messages
     VoiceJoin(VoiceJoinPayload),
     VoiceLeave(VoiceLeavePayload),
     VoicePacket(VoicePacketPayload),
     VoiceSpeaking(VoiceSpeakingPayload),
-    
+
     // Channel Messages
     ChannelJoin(ChannelJoinPayload),
     ChannelLeave(ChannelLeavePayload),
     ChannelUpdate(ChannelUpdatePayload),
-    
+
     // Bot Messages
     BotCommand(BotCommandPayload),
     BotResponse(BotResponsePayload),
-    
+
     // File Messages
     FileUpload(FileUploadPayload),
     FileChunk(FileChunkPayload),
-    
+
     // Server Messages
     ServerInfo(ServerInfoPayload),
     UserList(UserListPayload),
-    
+
     // Error Messages
     Error(ErrorPayload),
-    
+
     // Generic encrypted payload
     Encrypted(EncryptedPayload),
 }
@@ -311,31 +311,31 @@ pub enum ErrorCode {
     InvalidCredentials,
     TokenExpired,
     Unauthorized,
-    
+
     // Channel Errors
     ChannelNotFound,
     ChannelFull,
     InsufficientPermissions,
-    
+
     // Message Errors
     MessageTooLarge,
     MessageNotFound,
     DecryptionFailed,
-    
+
     // Voice Errors
     VoiceChannelFull,
     CodecNotSupported,
-    
+
     // File Errors
     FileTooLarge,
     UnsupportedFileType,
     UploadFailed,
-    
+
     // Server Errors
     ServerOverloaded,
     RateLimited,
     InternalError,
-    
+
     // Protocol Errors
     InvalidMessage,
     UnsupportedVersion,
@@ -462,7 +462,7 @@ impl MessageValidator {
         // Check message size
         let serialized = bincode::serialize(message)
             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
-        
+
         if serialized.len() > MAX_MESSAGE_SIZE {
             return Err(anyhow::anyhow!(
                 "Message too large: {} bytes (max: {})",
@@ -510,27 +510,28 @@ pub struct MessageSerializer;
 impl MessageSerializer {
     /// Serialize message to bytes for network transmission
     pub fn serialize(message: &NetworkMessage) -> Result<Vec<u8>> {
-        bincode::serialize(message)
-            .map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))
+        bincode::serialize(message).map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))
     }
 
     /// Deserialize bytes to network message
     pub fn deserialize(data: &[u8]) -> Result<NetworkMessage> {
-        bincode::deserialize(data)
-            .map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
+        bincode::deserialize(data).map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
     }
 
     /// Serialize with compression for large messages
     pub fn serialize_compressed(message: &NetworkMessage) -> Result<Vec<u8>> {
         let serialized = Self::serialize(message)?;
-        
+
         // Only compress if message is large enough to benefit
         if serialized.len() > 1024 {
             use std::io::Write;
-            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-            encoder.write_all(&serialized)
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder
+                .write_all(&serialized)
                 .map_err(|e| anyhow::anyhow!("Compression failed: {}", e))?;
-            encoder.finish()
+            encoder
+                .finish()
                 .map_err(|e| anyhow::anyhow!("Compression finalization failed: {}", e))
         } else {
             Ok(serialized)
@@ -545,13 +546,10 @@ mod tests {
     #[test]
     fn test_message_building() {
         let builder = MessageBuilder::new().with_sender(Uuid::new_v4());
-        
-        let message = builder.build_text_message(
-            Uuid::new_v4(),
-            b"encrypted content".to_vec(),
-            None,
-        );
-        
+
+        let message =
+            builder.build_text_message(Uuid::new_v4(), b"encrypted content".to_vec(), None);
+
         assert_eq!(message.message_type, MessageType::TextMessage);
         assert!(message.sender_id.is_some());
     }
@@ -560,7 +558,7 @@ mod tests {
     fn test_message_validation() {
         let builder = MessageBuilder::new();
         let message = builder.build_heartbeat();
-        
+
         assert!(MessageValidator::validate_message(&message).is_ok());
     }
 
@@ -568,10 +566,10 @@ mod tests {
     fn test_message_serialization() {
         let builder = MessageBuilder::new();
         let message = builder.build_heartbeat();
-        
+
         let serialized = MessageSerializer::serialize(&message).unwrap();
         let deserialized = MessageSerializer::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(message.message_id, deserialized.message_id);
         assert_eq!(message.message_type, deserialized.message_type);
     }
@@ -583,9 +581,9 @@ mod tests {
             ErrorCode::ChannelNotFound,
             "The requested channel does not exist".to_string(),
         );
-        
+
         assert_eq!(error_msg.message_type, MessageType::Error);
-        
+
         if let MessagePayload::Error(error) = error_msg.payload {
             assert_eq!(error.error_code, ErrorCode::ChannelNotFound);
         } else {

@@ -1,5 +1,5 @@
 //! Accord server library
-//! 
+//!
 //! Exposes modules for testing and reuse
 
 pub mod db;

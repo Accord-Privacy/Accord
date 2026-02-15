@@ -1,13 +1,13 @@
 //! # Minimal Cryptography Implementation
-//! 
+//!
 //! Simplified crypto for demonstration. Production uses proper libraries.
 //! This shows the concepts without requiring system-level crypto dependencies.
 
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
+use base64::{engine::general_purpose, Engine as _};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
-use base64::{Engine as _, engine::general_purpose};
 
 /// Simplified encryption key
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,10 +39,10 @@ impl SimpleKey {
         let mut hasher = Sha256::new();
         hasher.update(&random_data);
         let hash = hasher.finalize();
-        
+
         let mut key_material = [0u8; 32];
         key_material.copy_from_slice(&hash[..32]);
-        
+
         Self {
             key_material,
             created_at: chrono::Utc::now(),
@@ -60,7 +60,7 @@ impl SimpleCrypto {
     pub fn new(user_id: Uuid) -> Self {
         let private_key = SimpleKey::generate();
         let public_key_fingerprint = private_key.fingerprint();
-        
+
         Self {
             user_id,
             private_key,
@@ -80,7 +80,7 @@ impl SimpleCrypto {
         // For demo: derive deterministic shared session key from both users' key material
         let session_key = self.derive_shared_session_key(their_public_key);
         let fingerprint = session_key.fingerprint();
-        
+
         self.session_keys.insert(other_user_id, session_key);
         fingerprint
     }
@@ -89,24 +89,24 @@ impl SimpleCrypto {
     fn derive_shared_session_key(&self, their_public_key: &str) -> SimpleKey {
         let my_fingerprint = self.public_key_fingerprint.as_str();
         let their_fingerprint = their_public_key;
-        
+
         // Create deterministic shared key by hashing both fingerprints in canonical order
         let (first, second) = if my_fingerprint < their_fingerprint {
             (my_fingerprint, their_fingerprint)
         } else {
             (their_fingerprint, my_fingerprint)
         };
-        
+
         let mut hasher = Sha256::new();
-        hasher.update(b"accord_shared_session_key:");  // Domain separation
+        hasher.update(b"accord_shared_session_key:"); // Domain separation
         hasher.update(first.as_bytes());
         hasher.update(b":");
         hasher.update(second.as_bytes());
         let shared_hash = hasher.finalize();
-        
+
         let mut key_material = [0u8; 32];
         key_material.copy_from_slice(&shared_hash[..32]);
-        
+
         SimpleKey {
             key_material,
             created_at: chrono::Utc::now(),
@@ -114,19 +114,25 @@ impl SimpleCrypto {
     }
 
     /// Encrypt a message (simplified XOR cipher for demo)
-    pub fn encrypt_message(&self, recipient_id: Uuid, plaintext: &[u8]) -> Result<EncryptedEnvelope, String> {
-        let session_key = self.session_keys.get(&recipient_id)
+    pub fn encrypt_message(
+        &self,
+        recipient_id: Uuid,
+        plaintext: &[u8],
+    ) -> Result<EncryptedEnvelope, String> {
+        let session_key = self
+            .session_keys
+            .get(&recipient_id)
             .ok_or_else(|| "No session key found".to_string())?;
 
         // Generate nonce (random bytes)
         let nonce: Vec<u8> = (0..16).map(|_| rand::random::<u8>()).collect();
-        
+
         // Simplified encryption (XOR with key + nonce hash)
         let mut hasher = Sha256::new();
         hasher.update(&session_key.key_material);
         hasher.update(&nonce);
         let key_stream = hasher.finalize();
-        
+
         let ciphertext: Vec<u8> = plaintext
             .iter()
             .enumerate()
@@ -141,8 +147,14 @@ impl SimpleCrypto {
     }
 
     /// Decrypt a message
-    pub fn decrypt_message(&self, sender_id: Uuid, envelope: &EncryptedEnvelope) -> Result<Vec<u8>, String> {
-        let session_key = self.session_keys.get(&sender_id)
+    pub fn decrypt_message(
+        &self,
+        sender_id: Uuid,
+        envelope: &EncryptedEnvelope,
+    ) -> Result<Vec<u8>, String> {
+        let session_key = self
+            .session_keys
+            .get(&sender_id)
             .ok_or_else(|| "No session key found".to_string())?;
 
         // Reconstruct key stream
@@ -150,9 +162,10 @@ impl SimpleCrypto {
         hasher.update(&session_key.key_material);
         hasher.update(&envelope.nonce);
         let key_stream = hasher.finalize();
-        
+
         // Decrypt (XOR again)
-        let plaintext: Vec<u8> = envelope.ciphertext
+        let plaintext: Vec<u8> = envelope
+            .ciphertext
             .iter()
             .enumerate()
             .map(|(i, &byte)| byte ^ key_stream[i % 32])
@@ -164,7 +177,9 @@ impl SimpleCrypto {
     /// Encrypt voice packet (simplified)
     pub fn encrypt_voice(&self, recipient_id: Uuid, audio_data: &[u8]) -> Result<Vec<u8>, String> {
         // For voice, use simpler encryption due to real-time requirements
-        let session_key = self.session_keys.get(&recipient_id)
+        let session_key = self
+            .session_keys
+            .get(&recipient_id)
             .ok_or_else(|| "No session key found".to_string())?;
 
         // Simple XOR with key rotation
@@ -190,30 +205,30 @@ impl SimpleCrypto {
     pub fn generate_invite_code(&self, server_id: Uuid, expires_hours: u32) -> String {
         let expires_at = chrono::Utc::now() + chrono::Duration::hours(expires_hours as i64);
         let invite_data = format!("{}:{}:{}", server_id, expires_at.timestamp(), self.user_id);
-        
+
         // Simple encoding (production would use proper invite format)
         general_purpose::STANDARD.encode(&invite_data)
     }
 
     /// Validate and decode invite
-    pub fn decode_invite(&self, invite_code: &str) -> Result<(Uuid, chrono::DateTime<chrono::Utc>, Uuid), String> {
-        let decoded = general_purpose::STANDARD.decode(invite_code)
+    pub fn decode_invite(
+        &self,
+        invite_code: &str,
+    ) -> Result<(Uuid, chrono::DateTime<chrono::Utc>, Uuid), String> {
+        let decoded = general_purpose::STANDARD
+            .decode(invite_code)
             .map_err(|_| "Invalid invite code format")?;
-        let invite_data = String::from_utf8(decoded)
-            .map_err(|_| "Invalid invite data")?;
-        
+        let invite_data = String::from_utf8(decoded).map_err(|_| "Invalid invite data")?;
+
         let parts: Vec<&str> = invite_data.split(':').collect();
         if parts.len() != 3 {
             return Err("Invalid invite format".to_string());
         }
 
-        let server_id = Uuid::parse_str(parts[0])
-            .map_err(|_| "Invalid server ID")?;
-        let timestamp = parts[1].parse::<i64>()
-            .map_err(|_| "Invalid timestamp")?;
-        let creator_id = Uuid::parse_str(parts[2])
-            .map_err(|_| "Invalid creator ID")?;
-        
+        let server_id = Uuid::parse_str(parts[0]).map_err(|_| "Invalid server ID")?;
+        let timestamp = parts[1].parse::<i64>().map_err(|_| "Invalid timestamp")?;
+        let creator_id = Uuid::parse_str(parts[2]).map_err(|_| "Invalid creator ID")?;
+
         let expires_at = chrono::DateTime::from_timestamp(timestamp, 0)
             .ok_or_else(|| "Invalid expiration time")?;
 
@@ -228,9 +243,7 @@ impl SimpleCrypto {
 // Use hex crate for encoding, but implement simple version if not available
 mod hex {
     pub fn encode(data: &[u8]) -> String {
-        data.iter()
-            .map(|byte| format!("{:02x}", byte))
-            .collect()
+        data.iter().map(|byte| format!("{:02x}", byte)).collect()
     }
 }
 
@@ -242,10 +255,10 @@ mod tests {
     fn test_key_generation() {
         let key1 = SimpleKey::generate();
         let key2 = SimpleKey::generate();
-        
+
         // Keys should be different
         assert_ne!(key1.key_material, key2.key_material);
-        
+
         // Fingerprints should be different
         assert_ne!(key1.fingerprint(), key2.fingerprint());
     }
@@ -254,21 +267,21 @@ mod tests {
     fn test_message_encryption() {
         let user1 = Uuid::new_v4();
         let user2 = Uuid::new_v4();
-        
+
         let mut crypto1 = SimpleCrypto::new(user1);
         let mut crypto2 = SimpleCrypto::new(user2);
-        
+
         // Establish session
         let _session1 = crypto1.establish_session(user2, crypto2.get_public_fingerprint());
         let _session2 = crypto2.establish_session(user1, crypto1.get_public_fingerprint());
-        
+
         // Encrypt message
         let message = b"Hello, Accord!";
         let encrypted = crypto1.encrypt_message(user2, message).unwrap();
-        
+
         // Decrypt message
         let decrypted = crypto2.decrypt_message(user1, &encrypted).unwrap();
-        
+
         assert_eq!(message.to_vec(), decrypted);
     }
 
@@ -276,13 +289,13 @@ mod tests {
     fn test_invite_system() {
         let crypto = SimpleCrypto::new(Uuid::new_v4());
         let server_id = Uuid::new_v4();
-        
+
         // Generate invite
         let invite_code = crypto.generate_invite_code(server_id, 24);
-        
+
         // Decode invite
         let (decoded_server, _expires_at, _creator) = crypto.decode_invite(&invite_code).unwrap();
-        
+
         assert_eq!(server_id, decoded_server);
     }
 
@@ -290,19 +303,19 @@ mod tests {
     fn test_voice_encryption() {
         let user1 = Uuid::new_v4();
         let user2 = Uuid::new_v4();
-        
+
         let mut crypto1 = SimpleCrypto::new(user1);
         let mut crypto2 = SimpleCrypto::new(user2);
-        
+
         // Establish session
         crypto1.establish_session(user2, crypto2.get_public_fingerprint());
         crypto2.establish_session(user1, crypto1.get_public_fingerprint());
-        
+
         // Encrypt voice data
         let voice_data = b"fake_audio_samples";
         let encrypted = crypto1.encrypt_voice(user2, voice_data).unwrap();
         let decrypted = crypto2.decrypt_voice(user1, &encrypted).unwrap();
-        
+
         assert_eq!(voice_data.to_vec(), decrypted);
     }
 }

@@ -1,5 +1,5 @@
 //! Integration tests for the Accord server
-//! 
+//!
 //! These tests spawn the server in-process and test all major endpoints and flows.
 
 use axum::{
@@ -37,7 +37,7 @@ impl TestServer {
     async fn new() -> Self {
         // Initialize shared state with in-memory database
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
-        
+
         // Build the router with all endpoints
         let app = Router::new()
             // REST endpoints
@@ -56,7 +56,7 @@ impl TestServer {
                         CorsLayer::new()
                             .allow_methods(Any)
                             .allow_headers(Any)
-                            .allow_origin(Any)
+                            .allow_origin(Any),
                     ),
             );
 
@@ -131,7 +131,12 @@ impl TestServer {
 async fn test_health_endpoint() {
     let server = TestServer::new().await;
 
-    let response = server.client.get(&server.url("/health")).send().await.unwrap();
+    let response = server
+        .client
+        .get(&server.url("/health"))
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(response.status(), 200);
 
@@ -245,7 +250,9 @@ async fn test_authentication_success() {
     let server = TestServer::new().await;
 
     // First register a user
-    server.register_user("auth_test_user", "fake_public_key").await;
+    server
+        .register_user("auth_test_user", "fake_public_key")
+        .await;
 
     // Now authenticate
     let response = server
@@ -299,7 +306,9 @@ async fn test_websocket_connection_with_valid_token() {
     let server = TestServer::new().await;
 
     // Register and authenticate a user
-    server.register_user("ws_test_user", "fake_public_key").await;
+    server
+        .register_user("ws_test_user", "fake_public_key")
+        .await;
     let token = server.auth_user("ws_test_user", "password").await;
 
     // Connect via WebSocket with the token
@@ -308,19 +317,21 @@ async fn test_websocket_connection_with_valid_token() {
 
     // Verify connection was established by sending a ping
     let (mut sink, mut stream) = ws_stream.split();
-    
+
     let ping_message = json!({
         "message_type": "Ping",
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
-    sink.send(WsMessage::Text(ping_message.to_string())).await.unwrap();
+    sink.send(WsMessage::Text(ping_message.to_string()))
+        .await
+        .unwrap();
 
     // Wait for pong response
     let response = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
     assert!(response.is_ok());
-    
+
     if let Some(Ok(WsMessage::Text(text))) = response.unwrap() {
         let response_data: Value = serde_json::from_str(&text).unwrap();
         if response_data["type"] == "error" {
@@ -338,7 +349,7 @@ async fn test_websocket_connection_with_invalid_token() {
 
     // Try to connect with an invalid token
     let ws_url = format!("{}?token=invalid_token", server.ws_url("/ws"));
-    
+
     // This should fail to establish the connection
     let result = tokio::time::timeout(Duration::from_secs(2), connect_async(&ws_url)).await;
     assert!(result.is_err() || result.unwrap().is_err());
@@ -350,7 +361,7 @@ async fn test_websocket_connection_without_token() {
 
     // Try to connect without a token
     let ws_url = server.ws_url("/ws");
-    
+
     // This should fail to establish the connection
     let result = tokio::time::timeout(Duration::from_secs(2), connect_async(&ws_url)).await;
     assert!(result.is_err() || result.unwrap().is_err());
@@ -363,7 +374,7 @@ async fn test_message_routing_between_two_clients() {
     // Register and authenticate two users
     let user1_id = server.register_user("user1", "public_key_1").await;
     let user2_id = server.register_user("user2", "public_key_2").await;
-    
+
     let token1 = server.auth_user("user1", "password").await;
     let token2 = server.auth_user("user2", "password").await;
 
@@ -389,7 +400,10 @@ async fn test_message_routing_between_two_clients() {
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
-    sink1.send(WsMessage::Text(direct_message.to_string())).await.unwrap();
+    sink1
+        .send(WsMessage::Text(direct_message.to_string()))
+        .await
+        .unwrap();
 
     // User2 should receive the message
     let response = tokio::time::timeout(Duration::from_secs(5), stream2.next()).await;
@@ -399,7 +413,10 @@ async fn test_message_routing_between_two_clients() {
         let response_data: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(response_data["type"], "direct_message");
         assert_eq!(response_data["from"], user1_id.to_string());
-        assert_eq!(response_data["encrypted_data"], "encrypted_test_message_123");
+        assert_eq!(
+            response_data["encrypted_data"],
+            "encrypted_test_message_123"
+        );
     } else {
         panic!("Expected direct message");
     }
@@ -412,7 +429,7 @@ async fn test_channel_join_leave_and_messaging() {
     // Register and authenticate two users
     let user1_id = server.register_user("channel_user1", "public_key_1").await;
     let user2_id = server.register_user("channel_user2", "public_key_2").await;
-    
+
     let token1 = server.auth_user("channel_user1", "password").await;
     let token2 = server.auth_user("channel_user2", "password").await;
 
@@ -437,7 +454,10 @@ async fn test_channel_join_leave_and_messaging() {
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
-    sink1.send(WsMessage::Text(create_node_msg.to_string())).await.unwrap();
+    sink1
+        .send(WsMessage::Text(create_node_msg.to_string()))
+        .await
+        .unwrap();
 
     // Wait for node_created response to get node_id
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -458,7 +478,10 @@ async fn test_channel_join_leave_and_messaging() {
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
-    sink2.send(WsMessage::Text(join_node_msg.to_string())).await.unwrap();
+    sink2
+        .send(WsMessage::Text(join_node_msg.to_string()))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     // Consume the node_joined response
     let _ = tokio::time::timeout(Duration::from_secs(2), stream2.next()).await;
@@ -471,7 +494,10 @@ async fn test_channel_join_leave_and_messaging() {
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
-    sink1.send(WsMessage::Text(create_channel_msg.to_string())).await.unwrap();
+    sink1
+        .send(WsMessage::Text(create_channel_msg.to_string()))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Get channel_id from response
@@ -492,7 +518,10 @@ async fn test_channel_join_leave_and_messaging() {
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
-    sink2.send(WsMessage::Text(join_ch_msg.to_string())).await.unwrap();
+    sink2
+        .send(WsMessage::Text(join_ch_msg.to_string()))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Verify both users are in the channel
@@ -513,7 +542,10 @@ async fn test_channel_join_leave_and_messaging() {
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
-    sink1.send(WsMessage::Text(channel_message.to_string())).await.unwrap();
+    sink1
+        .send(WsMessage::Text(channel_message.to_string()))
+        .await
+        .unwrap();
 
     // Both users should receive the channel message (including the sender)
     let response1 = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
@@ -521,14 +553,21 @@ async fn test_channel_join_leave_and_messaging() {
 
     // Check that both users got the message
     for (user_name, response) in [("user1", response1), ("user2", response2)] {
-        assert!(response.is_ok(), "User {} should have received channel message", user_name);
-        
+        assert!(
+            response.is_ok(),
+            "User {} should have received channel message",
+            user_name
+        );
+
         if let Some(Ok(WsMessage::Text(text))) = response.unwrap() {
             let response_data: Value = serde_json::from_str(&text).unwrap();
             assert_eq!(response_data["type"], "channel_message");
             assert_eq!(response_data["from"], user1_id.to_string());
             assert_eq!(response_data["channel_id"], channel_id.to_string());
-            assert_eq!(response_data["encrypted_data"], "encrypted_channel_message_456");
+            assert_eq!(
+                response_data["encrypted_data"],
+                "encrypted_channel_message_456"
+            );
         } else {
             panic!("User {} expected channel message", user_name);
         }
@@ -545,7 +584,10 @@ async fn test_channel_join_leave_and_messaging() {
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
-    sink2.send(WsMessage::Text(leave_message.to_string())).await.unwrap();
+    sink2
+        .send(WsMessage::Text(leave_message.to_string()))
+        .await
+        .unwrap();
 
     // Give some time for leave operation to complete
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -568,7 +610,10 @@ async fn test_channel_join_leave_and_messaging() {
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
-    sink1.send(WsMessage::Text(channel_message2.to_string())).await.unwrap();
+    sink1
+        .send(WsMessage::Text(channel_message2.to_string()))
+        .await
+        .unwrap();
 
     // Only user1 should receive this message now (user2 left the channel)
     let response1 = tokio::time::timeout(Duration::from_secs(2), stream1.next()).await;
@@ -576,7 +621,10 @@ async fn test_channel_join_leave_and_messaging() {
 
     // User2 should NOT receive the message (with a short timeout)
     let response2 = tokio::time::timeout(Duration::from_millis(500), stream2.next()).await;
-    assert!(response2.is_err(), "User2 should not receive messages after leaving channel");
+    assert!(
+        response2.is_err(),
+        "User2 should not receive messages after leaving channel"
+    );
 }
 
 // Helper to import dependencies

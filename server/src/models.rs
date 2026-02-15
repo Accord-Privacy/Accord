@@ -35,7 +35,10 @@ pub struct Channel {
 pub enum WsMessageType {
     // ── Node operations ──
     /// Create a new Node
-    CreateNode { name: String, description: Option<String> },
+    CreateNode {
+        name: String,
+        description: Option<String>,
+    },
     /// Join an existing Node
     JoinNode { node_id: Uuid },
     /// Leave a Node
@@ -188,7 +191,10 @@ pub struct PermissionDeniedResponse {
 impl PermissionDeniedResponse {
     pub fn new(required_permission: &str, user_role: &str) -> Self {
         Self {
-            error: format!("Permission denied. Required: {}, Your role: {}", required_permission, user_role),
+            error: format!(
+                "Permission denied. Required: {}, Your role: {}",
+                required_permission, user_role
+            ),
             code: 403,
             required_permission: required_permission.to_string(),
             user_role: user_role.to_string(),
