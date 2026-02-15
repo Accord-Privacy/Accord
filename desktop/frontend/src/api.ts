@@ -281,6 +281,45 @@ export class AccordApi {
     });
   }
 
+  // Join a Node via invite code
+  async joinNodeByInvite(inviteCode: string, token: string): Promise<NodeInfo> {
+    return this.request<NodeInfo>(`/invites/${inviteCode}/join?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+    });
+  }
+
+  // Get invites for a node (admin/mod only)
+  async getNodeInvites(nodeId: string, token: string): Promise<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>> {
+    return this.request<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>>(
+      `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`
+    );
+  }
+
+  // Create an invite with options
+  async createInviteWithOptions(nodeId: string, token: string, maxUses?: number, expiresHours?: number): Promise<{ invite_code: string; expires_at?: number }> {
+    const body: any = {};
+    if (maxUses !== undefined) body.max_uses = maxUses;
+    if (expiresHours !== undefined) body.expires_hours = expiresHours;
+
+    return this.request<{ invite_code: string; expires_at?: number }>(
+      `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+        body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
+      }
+    );
+  }
+
+  // Revoke an invite
+  async revokeInvite(nodeId: string, inviteCode: string, token: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/nodes/${nodeId}/invites/${inviteCode}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {
@@ -311,4 +350,8 @@ export const createInvite = api.createInvite.bind(api);
 export const kickMember = api.kickMember.bind(api);
 export const getUserProfile = api.getUserProfile.bind(api);
 export const updateProfile = api.updateProfile.bind(api);
+export const joinNodeByInvite = api.joinNodeByInvite.bind(api);
+export const getNodeInvites = api.getNodeInvites.bind(api);
+export const createInviteWithOptions = api.createInviteWithOptions.bind(api);
+export const revokeInvite = api.revokeInvite.bind(api);
 export const testConnection = api.testConnection.bind(api);

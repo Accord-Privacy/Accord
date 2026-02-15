@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { AccordWebSocket } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User } from "./types";
@@ -15,6 +15,9 @@ import {
 } from "./crypto";
 import { FileUploadButton, FileList } from "./FileManager";
 import { VoiceChat } from "./VoiceChat";
+// Removed unused imports for NodeDiscovery and NodeSettings components
+import { notificationManager, NotificationPreferences } from "./notifications";
+import { NotificationSettings } from "./NotificationSettings";
 
 // Mock data as fallback
 const MOCK_SERVERS = ["Accord Dev", "Gaming", "Music"];
@@ -80,6 +83,16 @@ function App() {
   // Voice state
   const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null);
   const [voiceChannelName, setVoiceChannelName] = useState<string>("");
+
+  // Node discovery state
+  // Removed unused node dialog state variables
+
+  // Notification state
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(
+    notificationManager.getPreferences()
+  );
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const [forceUpdate, setForceUpdate] = useState(0); // Used to trigger re-renders when unread counts change
 
   // Permission checking utilities
   const getCurrentUserRole = useCallback((nodeId: string) => {
@@ -172,6 +185,17 @@ function App() {
         channel_id: data.channel_id,
         isEncrypted: isEncrypted,
       };
+
+      // Find which node this channel belongs to
+      const nodeId = nodes.find(node => 
+        channels.some(channel => channel.id === data.channel_id && channel.node_id === node.id)
+      )?.id;
+
+      // Add message to notification system
+      if (nodeId) {
+        notificationManager.addMessage(nodeId, data.channel_id, newMessage);
+        setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
+      }
 
       // Check if user is scrolled to the bottom before adding new message
       const container = messagesContainerRef.current;
@@ -302,6 +326,9 @@ function App() {
           container.scrollTop = container.scrollHeight;
         }
       }, 0);
+
+      // Mark channel as read after loading messages
+      markChannelAsReadAfterLoad(channelId, formattedMessages);
       
     } catch (error) {
       console.error('Failed to load messages:', error);
@@ -408,6 +435,16 @@ function App() {
     setActiveChannel(channelName);
     setAppState(prev => ({ ...prev, activeChannel: channelId }));
     
+    // Mark channel as read in notification system
+    if (selectedNodeId) {
+      // Get the latest message ID to mark as read
+      const latestMessage = appState.messages.length > 0 ? 
+        appState.messages[appState.messages.length - 1] : null;
+      
+      notificationManager.markChannelAsRead(selectedNodeId, channelId, latestMessage?.id);
+      setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
+    }
+    
     // Reset pagination state
     setIsLoadingOlderMessages(false);
     setHasMoreMessages(true);
@@ -420,7 +457,7 @@ function App() {
     if (ws && ws.isSocketConnected()) {
       ws.joinChannel(channelId);
     }
-  }, [loadMessages, ws]);
+  }, [loadMessages, ws, selectedNodeId, appState.messages]);
 
   // Handle creating a new channel
   const handleCreateChannel = async () => {
@@ -444,7 +481,7 @@ function App() {
     if (!selectedNodeId || !appState.token) return;
     
     try {
-      const response = await api.createInvite(selectedNodeId, appState.token);
+      const response = await api.createInviteWithOptions(selectedNodeId, appState.token);
       setGeneratedInvite(response.invite_code);
       setShowInviteModal(true);
     } catch (error) {
@@ -494,6 +531,24 @@ function App() {
     }
   };
 
+  // Removed unused node handlers
+
+  // Handle notification preferences update
+  const handleNotificationPreferencesChange = useCallback((preferences: NotificationPreferences) => {
+    notificationManager.updatePreferences(preferences);
+    setNotificationPreferences(preferences);
+    setForceUpdate(prev => prev + 1); // Trigger re-render for any UI changes
+  }, []);
+
+  // Mark channel as read when new messages are loaded
+  const markChannelAsReadAfterLoad = useCallback((channelId: string, messages: Message[]) => {
+    if (selectedNodeId && messages.length > 0) {
+      const latestMessage = messages[messages.length - 1];
+      notificationManager.markChannelAsRead(selectedNodeId, channelId, latestMessage.id);
+      setForceUpdate(prev => prev + 1);
+    }
+  }, [selectedNodeId]);
+
   // Handle authentication
   const handleAuth = async () => {
     if (!serverAvailable) {
@@ -541,6 +596,9 @@ function App() {
           user: { id: response.user_id, username, public_key: "", created_at: 0 }
         }));
         setIsAuthenticated(true);
+
+        // Set username for notification system
+        notificationManager.setCurrentUsername(username);
 
         // Initialize WebSocket connection
         const socket = new AccordWebSocket(response.token);
@@ -926,9 +984,11 @@ function App() {
   return (
     <div className="app">
       {/* Server list */}
-      <div className="server-list">
+      <div className="server-list" key={forceUpdate}>
         {servers.map((s, i) => {
           const nodeId = nodes.length > 0 ? nodes[i]?.id : null;
+          const nodeUnreads = nodeId ? notificationManager.getNodeUnreads(nodeId) : { totalUnreads: 0, totalMentions: 0 };
+          
           return (
             <div
               key={nodeId || s}
@@ -943,10 +1003,23 @@ function App() {
               title={s}
             >
               {s[0]}
+              {nodeUnreads.totalMentions > 0 && (
+                <div className="server-notification mention">
+                  {nodeUnreads.totalMentions > 9 ? '9+' : nodeUnreads.totalMentions}
+                </div>
+              )}
+              {nodeUnreads.totalMentions === 0 && nodeUnreads.totalUnreads > 0 && (
+                <div className="server-notification dot" />
+              )}
             </div>
           );
         })}
-        <div className="server-icon add-server" title="Add Server">+</div>
+        <div 
+          className="server-icon add-server" 
+          title="Add Server"
+        >
+          +
+        </div>
       </div>
 
       {/* Channel sidebar */}
@@ -985,7 +1058,7 @@ function App() {
                 )}
                 {hasPermission(selectedNodeId, 'ManageNode') && (
                   <button
-                    onClick={() => alert('Node management features coming soon!')}
+                    onClick={() => alert('Node settings coming soon!')}
                     style={{
                       background: '#f04747',
                       border: 'none',
@@ -995,9 +1068,9 @@ function App() {
                       cursor: 'pointer',
                       fontSize: '10px'
                     }}
-                    title="Manage Node"
+                    title="Node Settings"
                   >
-                    Manage
+                    Settings
                   </button>
                 )}
               </div>
@@ -1019,6 +1092,10 @@ function App() {
             const canDeleteChannel = selectedNodeId && hasPermission(selectedNodeId, 'DeleteChannel');
             const isVoiceChannel = channel?.channel_type === 'voice';
             const isConnectedToVoice = isVoiceChannel && voiceChannelId === channel?.id;
+            
+            const channelUnreads = selectedNodeId && channel ? 
+              notificationManager.getChannelUnreads(selectedNodeId, channel.id) : 
+              { count: 0, mentions: 0 };
             
             return (
               <div
@@ -1066,29 +1143,46 @@ function App() {
                     <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
                   )}
                 </div>
-                {canDeleteChannel && channel && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteChannel(channel.id, channel.name);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#f04747',
-                      cursor: 'pointer',
-                      fontSize: '12px',
-                      padding: '2px 4px',
-                      borderRadius: '2px',
-                      opacity: 0.7,
-                    }}
-                    title="Delete channel"
-                    onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                    onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
-                  >
-                    ×
-                  </button>
-                )}
+
+                <div className="channel-badges">
+                  {channelUnreads.mentions > 0 && (
+                    <div className="mention-badge">
+                      {channelUnreads.mentions > 9 ? '9+' : channelUnreads.mentions}
+                    </div>
+                  )}
+                  {channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
+                    channelUnreads.count > 9 ? (
+                      <div className="notification-badge">9+</div>
+                    ) : (
+                      <div className="notification-dot" />
+                    )
+                  )}
+                  
+                  {canDeleteChannel && channel && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteChannel(channel.id, channel.name);
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#f04747',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        padding: '2px 4px',
+                        borderRadius: '2px',
+                        opacity: 0.7,
+                        marginLeft: '4px'
+                      }}
+                      title="Delete channel"
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1205,14 +1299,20 @@ function App() {
             </div>
           </div>
           <button
+            onClick={() => setShowNotificationSettings(true)}
+            className="user-panel-settings"
+            title="Notification Settings"
+          >
+            🔔
+          </button>
+          <button
             onClick={handleLogout}
             style={{
               background: 'none',
               border: 'none',
               color: '#b9bbbe',
               cursor: 'pointer',
-              fontSize: '12px',
-              marginLeft: 'auto'
+              fontSize: '12px'
             }}
           >
             Logout
@@ -1320,7 +1420,12 @@ function App() {
                     </span>
                   )}
                 </div>
-                <div className="message-content">{msg.content}</div>
+                <div 
+                  className="message-content"
+                  dangerouslySetInnerHTML={{ 
+                    __html: notificationManager.highlightMentions(msg.content) 
+                  }}
+                />
               </div>
             </div>
           ))}
@@ -1574,6 +1679,16 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Notification Settings Modal */}
+      <NotificationSettings
+        isOpen={showNotificationSettings}
+        onClose={() => setShowNotificationSettings(false)}
+        preferences={notificationPreferences}
+        onPreferencesChange={handleNotificationPreferencesChange}
+      />
+
+      {/* Removed non-existent dialog components */}
     </div>
   );
 }
