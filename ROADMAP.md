@@ -2,55 +2,56 @@
 
 ## Current Status (Feb 2026)
 
-### ✅ Complete
-- **Cryptography** — X25519 key agreement, AES-256-GCM, forward secrecy, voice packet encryption
-- **Channel system** — Hybrid lobby/private model, entry requests, permission-based access
-- **Bot framework** — Command-only visibility, encrypted arguments, interactive elements
-- **Invite system** — Direct invite only, expiration controls, quality gates, approval workflow
-- **Voice system** — Real-time encrypted voice, VAD, quality profiles, group mixing
-- **Network protocol** — Message types, validation, sequencing, heartbeat, error handling
-- **Project infrastructure** — CI/CD, Docker support, license, documentation
+### ✅ Phase 1: Foundation — COMPLETE
+- [x] All 6 Rust crates compiling (core, core-minimal, server, desktop, cli, standalone-demo)
+- [x] All unit + integration tests passing (20 unit, 11 integration, 5 DB)
+- [x] Server: WebSocket relay (registration, auth, message routing, channels)
+- [x] Server: SQLite persistence (users, channels, messages, nodes, node_members, files)
+- [x] Multi-tenant Node architecture (CRUD, membership, roles: admin/mod/member)
+- [x] Node creation policies (admin_only/open/approval/invite)
+- [x] Server admin ≠ Node admin separation (zero-knowledge design)
+- [x] CLI client (register, login, Node CRUD, interactive WebSocket chat)
+- [x] E2E smoke test (server → registration → auth → Node creation)
+- [x] Encrypted file sharing (upload/download/list/delete, zero-knowledge filenames)
+- [x] Node invite links (8-char codes, expiration, usage limits, approval workflow)
+- [x] Voice channel server-side support (join/leave/relay/speaking state)
+- [x] React/TypeScript desktop frontend scaffold (Discord-like dark theme, 3-column layout)
+- [x] Frontend connected to server (API client, WebSocket, auth flow)
+- [x] Tauri 2.x desktop shell (Ubuntu 24.04 compatible)
+- [x] CI/CD pipeline, Docker support
+- [x] Core crypto: X25519 key agreement, AES-256-GCM, forward secrecy
 
-### 🔧 In Progress
-- Fixing compilation errors in core crates
-- Installing desktop (Tauri) build dependencies
+### 🔧 Phase 2: Integration & Polish — IN PROGRESS
+- [ ] Wire E2E encryption into client message flow (crypto exists but not connected)
+- [ ] Frontend: real Node/channel navigation with live server data
+- [ ] Frontend: file upload/download UI
+- [ ] Frontend: user profiles and presence indicators
+- [ ] Permissions system enforcement in frontend
+- [ ] Message history loading and scroll-back
+- [ ] Docker deployment guide for self-hosting
 
-## Phase 1: Foundation (Months 1-2)
-- [ ] All crates compiling cleanly
-- [ ] Server: WebSocket message routing
-- [ ] Server: User authentication (SRP / zero-knowledge)
-- [ ] Server: SQLite persistence layer
-- [ ] Integration tests for core crypto
-- [ ] Basic CLI client for testing
-
-## Phase 2: Voice & Real-Time (Months 2-3)
+### 📋 Phase 3: Voice & Real-Time (Next)
+- [ ] Client-side audio capture (browser/Tauri)
 - [ ] Opus codec integration
-- [ ] Real-time audio capture/playback
+- [ ] Real-time voice UI (mute, deafen, speaking indicators)
 - [ ] P2P voice for small groups (≤4)
 - [ ] Server-relayed voice for larger groups
 - [ ] Jitter buffer and packet loss handling
 
-## Phase 3: Desktop App (Months 3-5)
-- [ ] Tauri app with React/TypeScript frontend
-- [ ] Channel list, message views, voice controls
-- [ ] Integration with Rust crypto backend
-- [ ] Auto-updater and native system tray
-- [ ] Cross-platform builds (Windows, macOS, Linux)
-
-## Phase 4: Hardening (Months 5-7)
+### 📋 Phase 4: Hardening
 - [ ] Security audit (internal, then third-party)
 - [ ] Penetration testing
 - [ ] Reproducible builds
 - [ ] Self-hosting documentation
 - [ ] Performance benchmarking (10k+ concurrent users target)
 
-## Phase 5: Mobile (Months 7-10)
+### 📋 Phase 5: Mobile
 - [ ] iOS app (Swift + Rust FFI)
 - [ ] Android app (Kotlin + Rust JNI)
 - [ ] Push notifications with encryption preservation
 - [ ] Background voice support
 
-## Phase 6: Public Release (Months 10-12)
+### 📋 Phase 6: Public Release
 - [ ] Beta program
 - [ ] Community feedback integration
 - [ ] Federation protocol (multi-server communication)
@@ -89,36 +90,22 @@
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
 
-## Server Trust & Node Creation Model
+## Architecture
 
-### Node Creation Policies (Server-Level Config)
-Relay server operators choose how Nodes are created on their instance:
+### Node Model
+- **Nodes** = community spaces (like Discord servers, but E2E encrypted)
+- **Relay server** = invisible infrastructure (users never interact with it directly)
+- **Server admin ≠ Node admin** — "landlord can't enter apartments"
+- **Node creation policies:** `admin_only | open | approval | invite`
 
-| Policy | Description | Use Case |
-|--------|-------------|----------|
-| `admin_only` | Only server operator creates Nodes | Managed hosting, corporate |
-| `open` | Any authenticated user can create Nodes | Community hosting, public |
-| `approval` | Users request, admin approves | Curated communities |
-| `invite` | Existing Node owners can grant creation rights | Web of trust |
+### Trust Model
+E2E encryption means even malicious relays can't read content. Remaining risks and mitigations:
+- **Metadata** → minimize stored routing data, optional Tor support
+- **Server fingerprinting** → Ed25519 identity key, TOFU + out-of-band verification
+- **Traffic analysis** → padding, timing obfuscation (future)
 
 ### Server Discovery
-For users to find relay servers without direct links, we need a discovery mechanism:
-- **Server directory** (optional, federated) — relay servers can opt-in to be listed
-- **DNS-based discovery** — `_accord._tcp.example.com` SRV records
-- **QR code / deep links** — share server address + fingerprint
-- **Word of mouth** — direct URL sharing (primary, most secure)
-
-### Trust Model & Security Concerns
-A malicious relay server could attempt:
-- **Metadata logging** — who connects, when, to which Nodes
-- **Traffic analysis** — message timing, size patterns
-- **Payload modification** — though E2E prevents reading content
-
-**Mitigations:**
-1. **Server fingerprinting** — Ed25519 server identity key, clients pin on first connect (TOFU) or verify out-of-band
-2. **Client warnings** — prominent UI notice when connecting to a new/unverified server
-3. **E2E guarantees** — encryption means content privacy holds even on malicious relays
-4. **Metadata minimization** — relay server stores minimum necessary routing data
-5. **Server transparency** — optional attestation of server version, config, and build reproducibility
-6. **Community trust lists** — decentralized reputation (not a single authority)
-7. **Tor/onion support** — users can connect via Tor to hide their IP from relay operators
+- DNS SRV records (`_accord._tcp.example.com`)
+- QR code / deep links with server fingerprint
+- Optional federated server directory
+- Word of mouth (primary, most secure)
