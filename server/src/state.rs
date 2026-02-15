@@ -1,8 +1,9 @@
 //! State management for the Accord relay server with SQLite persistence
 
 use crate::db::Database;
-use crate::models::{AuthToken, Channel, NodeInvite};
+use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
+use crate::permissions::{Permission, has_permission};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -132,6 +133,10 @@ impl AppState {
         Ok(NodeInfo { node, members, channel_count })
     }
 
+    pub async fn get_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<Option<crate::node::NodeMember>, String> {
+        self.db.get_node_member(node_id, user_id).await.map_err(|e| e.to_string())
+    }
+
     pub async fn join_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
         // Check node exists
         match self.db.get_node(node_id).await {
@@ -160,11 +165,15 @@ impl AppState {
     }
 
     pub async fn kick_from_node(&self, admin_id: Uuid, target_id: Uuid, node_id: Uuid) -> Result<(), String> {
-        // Verify admin has permission
+        // Check if user has permission to kick members
         let member = self.db.get_node_member(node_id, admin_id).await.map_err(|e| e.to_string())?;
         match member {
-            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => {}
-            _ => return Err("Insufficient permissions".to_string()),
+            Some(m) => {
+                if !has_permission(m.role, Permission::KickMembers) {
+                    return Err("Insufficient permissions to kick members".to_string());
+                }
+            }
+            None => return Err("Must be a member of the node".to_string()),
         }
         // Can't kick the owner
         let node = self.db.get_node(node_id).await.map_err(|e| e.to_string())?.ok_or("Node not found")?;
@@ -177,11 +186,15 @@ impl AppState {
     // ── Node invite operations ──
 
     pub async fn create_invite(&self, node_id: Uuid, created_by: Uuid, max_uses: Option<u32>, expires_in_hours: Option<u32>) -> Result<(Uuid, String), String> {
-        // Check if user has permission (admin or moderator)
+        // Check if user has permission to manage invites
         let member = self.db.get_node_member(node_id, created_by).await.map_err(|e| e.to_string())?;
         match member {
-            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => {}
-            _ => return Err("Only admins and moderators can create invites".to_string()),
+            Some(m) => {
+                if !has_permission(m.role, Permission::ManageInvites) {
+                    return Err("Insufficient permissions to create invites".to_string());
+                }
+            }
+            None => return Err("Must be a member of the node".to_string()),
         }
 
         // Generate invite code (8 character alphanumeric)
@@ -236,11 +249,15 @@ impl AppState {
     }
 
     pub async fn list_invites(&self, node_id: Uuid, user_id: Uuid) -> Result<Vec<crate::models::NodeInvite>, String> {
-        // Check if user has permission (admin or moderator)
+        // Check if user has permission to manage invites
         let member = self.db.get_node_member(node_id, user_id).await.map_err(|e| e.to_string())?;
         match member {
-            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => {}
-            _ => return Err("Only admins and moderators can list invites".to_string()),
+            Some(m) => {
+                if !has_permission(m.role, Permission::ManageInvites) {
+                    return Err("Insufficient permissions to list invites".to_string());
+                }
+            }
+            None => return Err("Must be a member of the node".to_string()),
         }
 
         self.db.get_node_invites(node_id).await.map_err(|e| e.to_string())
@@ -253,11 +270,13 @@ impl AppState {
             None => return Err("Invite not found".to_string()),
         };
 
-        // Check if user has permission (admin, moderator, or creator of invite)
+        // Check if user has permission to manage invites or is the creator
         let member = self.db.get_node_member(invite.node_id, user_id).await.map_err(|e| e.to_string())?;
         let has_permission = match member {
-            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => true,
-            _ => invite.created_by == user_id,
+            Some(m) => {
+                has_permission(m.role, Permission::ManageInvites) || invite.created_by == user_id
+            }
+            None => false,
         };
 
         if !has_permission {
@@ -287,11 +306,58 @@ impl AppState {
     }
 
     pub async fn create_channel(&self, name: String, node_id: Uuid, created_by: Uuid) -> Result<Channel, String> {
-        // Verify user is member of node
-        if !self.db.is_node_member(node_id, created_by).await.unwrap_or(false) {
-            return Err("Must be a member of the node to create channels".to_string());
+        // Check if user has permission to create channels
+        let member = self.db.get_node_member(node_id, created_by).await.map_err(|e| e.to_string())?;
+        match member {
+            Some(m) => {
+                if !has_permission(m.role, Permission::CreateChannel) {
+                    return Err("Insufficient permissions to create channels".to_string());
+                }
+            }
+            None => return Err("Must be a member of the node to create channels".to_string()),
         }
         self.db.create_channel(&name, node_id, created_by).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn delete_channel(&self, channel_id: Uuid, user_id: Uuid) -> Result<(), String> {
+        // Get channel to verify it exists and get its node_id
+        let channel = match self.db.get_channel(channel_id).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return Err("Channel not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
+
+        // Check if user has permission to delete channels
+        let member = self.db.get_node_member(channel.node_id, user_id).await.map_err(|e| e.to_string())?;
+        match member {
+            Some(m) => {
+                if !has_permission(m.role, Permission::DeleteChannel) {
+                    return Err("Insufficient permissions to delete channels".to_string());
+                }
+            }
+            None => return Err("Must be a member of the node".to_string()),
+        }
+
+        // TODO: Add actual delete_channel method to database layer
+        // self.db.delete_channel(channel_id).await.map_err(|e| e.to_string())
+        Err("Channel deletion not yet implemented in database layer".to_string())
+    }
+
+    pub async fn update_node(&self, node_id: Uuid, user_id: Uuid, _name: Option<String>, _description: Option<String>) -> Result<(), String> {
+        // Check if user has permission to manage node
+        let member = self.db.get_node_member(node_id, user_id).await.map_err(|e| e.to_string())?;
+        match member {
+            Some(m) => {
+                if !has_permission(m.role, Permission::ManageNode) {
+                    return Err("Insufficient permissions to manage node settings".to_string());
+                }
+            }
+            None => return Err("Must be a member of the node".to_string()),
+        }
+
+        // TODO: Add actual update_node method to database layer
+        // self.db.update_node(node_id, name, description).await.map_err(|e| e.to_string())
+        Err("Node update not yet implemented in database layer".to_string())
     }
 
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>, String> {

@@ -176,6 +176,26 @@ pub struct ErrorResponse {
     pub code: u16,
 }
 
+/// Permission denied error response
+#[derive(Debug, Serialize)]
+pub struct PermissionDeniedResponse {
+    pub error: String,
+    pub code: u16,
+    pub required_permission: String,
+    pub user_role: String,
+}
+
+impl PermissionDeniedResponse {
+    pub fn new(required_permission: &str, user_role: &str) -> Self {
+        Self {
+            error: format!("Permission denied. Required: {}, Your role: {}", required_permission, user_role),
+            code: 403,
+            required_permission: required_permission.to_string(),
+            user_role: user_role.to_string(),
+        }
+    }
+}
+
 /// Health check response
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {

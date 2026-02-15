@@ -6,6 +6,7 @@ use crate::models::{
     WsMessage, WsMessageType,
 };
 use crate::node::NodeInfo;
+use crate::permissions::{Permission, has_permission};
 use crate::state::SharedState;
 use axum::{
     extract::{
@@ -130,6 +131,53 @@ pub async fn leave_node_handler(
     }
 }
 
+/// Update Node settings (PATCH /nodes/:id)
+pub async fn update_node_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let name = request.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let description = request.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    match state.update_node(node_id, user_id, name, description).await {
+        Ok(()) => Ok(Json(serde_json::json!({ "status": "updated", "node_id": node_id }))),
+        Err(err) => {
+            if err.contains("Insufficient permissions") {
+                Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 })))
+            } else {
+                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 })))
+            }
+        }
+    }
+}
+
+/// Kick a user from a Node (DELETE /nodes/:id/members/:user_id)
+pub async fn kick_user_handler(
+    State(state): State<SharedState>,
+    Path((node_id, target_user_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let admin_user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.kick_from_node(admin_user_id, target_user_id, node_id).await {
+        Ok(()) => {
+            info!("User {} kicked from node {} by {}", target_user_id, node_id, admin_user_id);
+            Ok(Json(serde_json::json!({ "status": "kicked", "node_id": node_id, "user_id": target_user_id })))
+        }
+        Err(err) => {
+            if err.contains("Insufficient permissions") {
+                Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 })))
+            } else {
+                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 })))
+            }
+        }
+    }
+}
+
 // ── Node invite endpoints ──
 
 /// Create a new invite for a Node (POST /nodes/:id/invites)
@@ -220,6 +268,33 @@ pub async fn use_invite_handler(
     }
 }
 
+// ── Channel endpoints ──
+
+/// Delete a channel (DELETE /channels/:id)
+pub async fn delete_channel_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.delete_channel(channel_id, user_id).await {
+        Ok(()) => {
+            info!("Channel {} deleted by {}", channel_id, user_id);
+            Ok(Json(serde_json::json!({ "status": "deleted", "channel_id": channel_id })))
+        }
+        Err(err) => {
+            if err.contains("Insufficient permissions") {
+                Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 })))
+            } else if err.contains("not yet implemented") {
+                Err((StatusCode::NOT_IMPLEMENTED, Json(ErrorResponse { error: err, code: 501 })))
+            } else {
+                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 })))
+            }
+        }
+    }
+}
+
 /// Helper to extract user_id from token query param
 async fn extract_user_from_token(
     state: &SharedState,
@@ -231,6 +306,40 @@ async fn extract_user_from_token(
     state.validate_token(token).await.ok_or_else(|| {
         (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Invalid or expired token".into(), code: 401 }))
     })
+}
+
+/// Helper to check if user has permission for a Node operation
+async fn check_node_permission(
+    state: &SharedState,
+    user_id: Uuid,
+    node_id: Uuid,
+    required_permission: Permission,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    // Get user's role in the Node
+    let member = state.get_node_member(node_id, user_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e, code: 500 })))?;
+
+    match member {
+        Some(member_info) => {
+            if has_permission(member_info.role, required_permission) {
+                Ok(())
+            } else {
+                let permission_name = format!("{:?}", required_permission);
+                let role_name = member_info.role.as_str();
+                Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse { 
+                        error: format!("Permission denied. Required: {}, Your role: {}", permission_name, role_name),
+                        code: 403 
+                    })
+                ))
+            }
+        }
+        None => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse { error: "You are not a member of this Node".into(), code: 403 })
+        ))
+    }
 }
 
 // ── WebSocket ──
