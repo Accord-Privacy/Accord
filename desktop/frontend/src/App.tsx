@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { AccordWebSocket } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User } from "./types";
@@ -60,6 +60,12 @@ function App() {
   const [members, setMembers] = useState<Array<NodeMember & { user: User }>>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+
+  // Message pagination state
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [oldestMessageCursor, setOldestMessageCursor] = useState<string | undefined>(undefined);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // Role-based permission state
   const [userRoles, setUserRoles] = useState<Record<string, 'admin' | 'moderator' | 'member'>>({});
@@ -162,10 +168,22 @@ function App() {
         isEncrypted: isEncrypted,
       };
 
+      // Check if user is scrolled to the bottom before adding new message
+      const container = messagesContainerRef.current;
+      const wasAtBottom = container ? 
+        (container.scrollHeight - container.scrollTop - container.clientHeight < 50) : true;
+
       setAppState(prev => ({
         ...prev,
         messages: [...prev.messages, newMessage]
       }));
+
+      // Auto-scroll to bottom if user was at the bottom
+      if (wasAtBottom && container) {
+        setTimeout(() => {
+          container.scrollTop = container.scrollHeight;
+        }, 0);
+      }
     });
 
     socket.on('node_info', (data) => {
@@ -247,23 +265,39 @@ function App() {
     }
   }, [appState.token, serverAvailable]);
 
-  // Load message history for selected channel
+  // Load message history for selected channel (initial load)
   const loadMessages = useCallback(async (channelId: string) => {
     if (!appState.token || !serverAvailable) return;
     
     try {
-      const messages = await api.getChannelMessages(channelId, appState.token);
+      const response = await api.getChannelMessages(channelId, appState.token);
       
       // Format messages for display
-      const formattedMessages = messages.map(msg => ({
+      const formattedMessages = response.messages.map(msg => ({
         ...msg,
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
+      
+      // Sort messages by timestamp (oldest first for display)
+      formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
       
       setAppState(prev => ({
         ...prev,
         messages: formattedMessages,
       }));
+      
+      // Update pagination state
+      setHasMoreMessages(response.has_more);
+      setOldestMessageCursor(response.next_cursor);
+      
+      // Auto-scroll to bottom on initial load
+      setTimeout(() => {
+        const container = messagesContainerRef.current;
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      }, 0);
+      
     } catch (error) {
       console.error('Failed to load messages:', error);
       handleApiError(error);
@@ -271,8 +305,78 @@ function App() {
         ...prev,
         messages: [],
       }));
+      setHasMoreMessages(false);
+      setOldestMessageCursor(undefined);
     }
   }, [appState.token, serverAvailable]);
+
+  // Load older messages (for pagination)
+  const loadOlderMessages = useCallback(async (channelId: string) => {
+    if (!appState.token || !serverAvailable || isLoadingOlderMessages || !hasMoreMessages || !oldestMessageCursor) {
+      return;
+    }
+    
+    setIsLoadingOlderMessages(true);
+    
+    try {
+      const response = await api.getChannelMessages(channelId, appState.token, 50, oldestMessageCursor);
+      
+      if (response.messages.length === 0) {
+        setHasMoreMessages(false);
+        setIsLoadingOlderMessages(false);
+        return;
+      }
+      
+      // Format messages for display
+      const formattedMessages = response.messages.map(msg => ({
+        ...msg,
+        time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }));
+      
+      // Sort new messages by timestamp (oldest first)
+      formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
+      
+      // Store current scroll position before updating messages
+      const container = messagesContainerRef.current;
+      const scrollTop = container?.scrollTop || 0;
+      const scrollHeight = container?.scrollHeight || 0;
+      
+      // Prepend older messages to the beginning of the list
+      setAppState(prev => ({
+        ...prev,
+        messages: [...formattedMessages, ...prev.messages],
+      }));
+      
+      // Update pagination state
+      setHasMoreMessages(response.has_more);
+      setOldestMessageCursor(response.next_cursor);
+      
+      // Maintain scroll position after prepending messages
+      setTimeout(() => {
+        if (container) {
+          const newScrollHeight = container.scrollHeight;
+          const heightDifference = newScrollHeight - scrollHeight;
+          container.scrollTop = scrollTop + heightDifference;
+        }
+      }, 0);
+      
+    } catch (error) {
+      console.error('Failed to load older messages:', error);
+      handleApiError(error);
+    } finally {
+      setIsLoadingOlderMessages(false);
+    }
+  }, [appState.token, serverAvailable, isLoadingOlderMessages, hasMoreMessages, oldestMessageCursor]);
+
+  // Handle scroll events for infinite scroll
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    
+    // Check if scrolled to top (with small threshold)
+    if (target.scrollTop <= 50 && hasMoreMessages && !isLoadingOlderMessages && selectedChannelId) {
+      loadOlderMessages(selectedChannelId);
+    }
+  }, [hasMoreMessages, isLoadingOlderMessages, selectedChannelId, loadOlderMessages]);
 
   // Handle node selection
   const handleNodeSelect = useCallback((nodeId: string, index: number) => {
@@ -282,6 +386,11 @@ function App() {
     setChannels([]);
     setMembers([]);
     setAppState(prev => ({ ...prev, messages: [] }));
+    
+    // Reset pagination state
+    setIsLoadingOlderMessages(false);
+    setHasMoreMessages(true);
+    setOldestMessageCursor(undefined);
     
     // Load channels and members for the selected node
     loadChannels(nodeId);
@@ -293,6 +402,11 @@ function App() {
     setSelectedChannelId(channelId);
     setActiveChannel(channelName);
     setAppState(prev => ({ ...prev, activeChannel: channelId }));
+    
+    // Reset pagination state
+    setIsLoadingOlderMessages(false);
+    setHasMoreMessages(true);
+    setOldestMessageCursor(undefined);
     
     // Load message history for the selected channel
     loadMessages(channelId);
@@ -544,6 +658,14 @@ function App() {
           messages: [...prev.messages, newMessage]
         }));
 
+        // Auto-scroll to bottom after sending
+        const container = messagesContainerRef.current;
+        if (container) {
+          setTimeout(() => {
+            container.scrollTop = container.scrollHeight;
+          }, 0);
+        }
+
       } catch (error) {
         console.error('Failed to send message:', error);
       }
@@ -562,6 +684,14 @@ function App() {
         ...prev,
         messages: [...prev.messages, newMessage]
       }));
+
+      // Auto-scroll to bottom after sending
+      const container = messagesContainerRef.current;
+      if (container) {
+        setTimeout(() => {
+          container.scrollTop = container.scrollHeight;
+        }, 0);
+      }
     }
 
     setMessage("");
@@ -1106,7 +1236,35 @@ function App() {
             </span>
           )}
         </div>
-        <div className="messages">
+        <div 
+          className="messages" 
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+        >
+          {isLoadingOlderMessages && (
+            <div style={{
+              textAlign: 'center',
+              padding: '12px',
+              color: '#b9bbbe',
+              fontSize: '14px',
+              fontStyle: 'italic'
+            }}>
+              Loading older messages...
+            </div>
+          )}
+          {!hasMoreMessages && appState.messages.length > 0 && (
+            <div style={{
+              textAlign: 'center',
+              padding: '12px',
+              color: '#72767d',
+              fontSize: '13px',
+              opacity: 0.7,
+              borderBottom: '1px solid #40444b',
+              marginBottom: '8px'
+            }}>
+              You've reached the beginning of this channel
+            </div>
+          )}
           {appState.messages.map((msg, i) => (
             <div key={msg.id || i} className="message">
               <div className="message-avatar">{msg.author[0]}</div>

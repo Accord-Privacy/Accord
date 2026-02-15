@@ -9,7 +9,7 @@ import {
   NodeInfo,
   Node,
   Channel,
-  Message,
+  MessagePaginationResponse,
   NodeMember,
   User,
   ErrorResponse,
@@ -142,12 +142,12 @@ export class AccordApi {
   }
 
   // Get channel message history
-  async getChannelMessages(channelId: string, token: string, limit: number = 50, before?: string): Promise<Message[]> {
+  async getChannelMessages(channelId: string, token: string, limit: number = 50, before?: string): Promise<MessagePaginationResponse> {
     let url = `/channels/${channelId}/messages?limit=${limit}&token=${encodeURIComponent(token)}`;
     if (before) {
       url += `&before=${encodeURIComponent(before)}`;
     }
-    return this.request<Message[]>(url);
+    return this.request<MessagePaginationResponse>(url);
   }
 
   // Upload file to channel

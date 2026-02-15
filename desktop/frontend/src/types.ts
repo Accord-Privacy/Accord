@@ -175,6 +175,13 @@ export interface Message {
   isEncrypted?: boolean;
 }
 
+// Message pagination response from server
+export interface MessagePaginationResponse {
+  messages: Message[];
+  has_more: boolean;
+  next_cursor?: string;
+}
+
 // File types
 export interface FileMetadata {
   id: string;
