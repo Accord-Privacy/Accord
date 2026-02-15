@@ -1,7 +1,9 @@
-//! In-memory state management for the Accord relay server
+//! State management for the Accord relay server with SQLite persistence
 
+use crate::db::Database;
 use crate::models::{AuthToken, Channel, User};
 //use axum::extract::ws::WebSocket;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -15,74 +17,73 @@ pub struct ActiveConnection {
 }
 
 /// Application state shared across handlers
-#[derive(Debug)]
 pub struct AppState {
-    /// Registered users indexed by user ID
-    pub users: RwLock<HashMap<Uuid, User>>,
-    /// Users indexed by username for login
-    pub users_by_username: RwLock<HashMap<String, Uuid>>,
-    /// Active authentication tokens
+    /// Database connection for persistent storage
+    pub db: Database,
+    /// Active authentication tokens (kept in-memory for performance)
     pub auth_tokens: RwLock<HashMap<String, AuthToken>>,
-    /// Channels indexed by channel ID
-    pub channels: RwLock<HashMap<Uuid, Channel>>,
-    /// Active WebSocket connections indexed by user ID
+    /// Active WebSocket connections indexed by user ID (ephemeral)
     pub connections: RwLock<HashMap<Uuid, broadcast::Sender<String>>>,
-    /// Channel memberships: channel_id -> set of user_ids
-    pub channel_members: RwLock<HashMap<Uuid, Vec<Uuid>>>,
     /// Server start time for uptime calculation
     pub start_time: u64,
 }
 
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("db", &"<Database>")
+            .field("auth_tokens", &format!("<{} tokens>", self.auth_tokens.try_read().map_or(0, |t| t.len())))
+            .field("connections", &format!("<{} connections>", self.connections.try_read().map_or(0, |c| c.len())))
+            .field("start_time", &self.start_time)
+            .finish()
+    }
+}
+
 impl AppState {
-    /// Create new application state
-    pub fn new() -> Self {
-        Self {
-            users: RwLock::new(HashMap::new()),
-            users_by_username: RwLock::new(HashMap::new()),
+    /// Create new application state with database connection
+    pub async fn new(db_path: &str) -> Result<Self> {
+        let db = Database::new(db_path).await?;
+        
+        Ok(Self {
+            db,
             auth_tokens: RwLock::new(HashMap::new()),
-            channels: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
-            channel_members: RwLock::new(HashMap::new()),
             start_time: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-        }
+        })
+    }
+
+    /// Create new application state with in-memory database (for testing)
+    pub async fn new_in_memory() -> Result<Self> {
+        Self::new(":memory:").await
     }
 
     /// Register a new user
     pub async fn register_user(&self, username: String, public_key: String) -> Result<Uuid, String> {
-        let mut users_by_username = self.users_by_username.write().await;
-        
         // Check if username already exists
-        if users_by_username.contains_key(&username) {
-            return Err("Username already exists".to_string());
+        match self.db.username_exists(&username).await {
+            Ok(exists) if exists => return Err("Username already exists".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+            _ => {}
         }
 
-        let user_id = Uuid::new_v4();
-        let user = User {
-            id: user_id,
-            username: username.clone(),
-            public_key,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        };
-
-        // Insert into both indexes
-        self.users.write().await.insert(user_id, user);
-        users_by_username.insert(username, user_id);
-
-        Ok(user_id)
+        // Create user in database
+        match self.db.create_user(&username, &public_key).await {
+            Ok(user) => Ok(user.id),
+            Err(e) => Err(format!("Failed to create user: {}", e)),
+        }
     }
 
     /// Authenticate user and create token
     pub async fn authenticate_user(&self, username: String, _password: String) -> Result<AuthToken, String> {
-        let users_by_username = self.users_by_username.read().await;
-        
-        let user_id = users_by_username.get(&username)
-            .ok_or_else(|| "User not found".to_string())?;
+        // Get user from database
+        let user = match self.db.get_user_by_username(&username).await {
+            Ok(Some(user)) => user,
+            Ok(None) => return Err("User not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
 
         // For now, simple authentication - just check if user exists
         // In a real implementation, you'd verify the password/signature
@@ -95,10 +96,11 @@ impl AppState {
 
         let auth_token = AuthToken {
             token: token.clone(),
-            user_id: *user_id,
+            user_id: user.id,
             expires_at,
         };
 
+        // Keep auth tokens in memory for fast access
         self.auth_tokens.write().await.insert(token.clone(), auth_token.clone());
         
         Ok(auth_token)
@@ -123,31 +125,58 @@ impl AppState {
 
     /// Add user to channel
     pub async fn join_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
-        let mut channel_members = self.channel_members.write().await;
-        
-        let members = channel_members.entry(channel_id).or_insert_with(Vec::new);
-        if !members.contains(&user_id) {
-            members.push(user_id);
+        match self.db.add_user_to_channel(channel_id, user_id).await {
+            Ok(()) => Ok(()),
+            Err(e) => Err(format!("Failed to join channel: {}", e)),
         }
-        
-        Ok(())
     }
 
     /// Remove user from channel
     pub async fn leave_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
-        let mut channel_members = self.channel_members.write().await;
-        
-        if let Some(members) = channel_members.get_mut(&channel_id) {
-            members.retain(|&id| id != user_id);
+        match self.db.remove_user_from_channel(channel_id, user_id).await {
+            Ok(()) => Ok(()),
+            Err(e) => Err(format!("Failed to leave channel: {}", e)),
         }
-        
-        Ok(())
     }
 
     /// Get all members of a channel
     pub async fn get_channel_members(&self, channel_id: Uuid) -> Vec<Uuid> {
-        let channel_members = self.channel_members.read().await;
-        channel_members.get(&channel_id).cloned().unwrap_or_default()
+        match self.db.get_channel_members(channel_id).await {
+            Ok(members) => members,
+            Err(_) => Vec::new(), // Return empty vec on error to maintain compatibility
+        }
+    }
+
+    /// Create a new channel
+    pub async fn create_channel(&self, name: String, created_by: Uuid) -> Result<Channel, String> {
+        match self.db.create_channel(&name, created_by).await {
+            Ok(channel) => Ok(channel),
+            Err(e) => Err(format!("Failed to create channel: {}", e)),
+        }
+    }
+
+    /// Get a channel by ID
+    pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>, String> {
+        match self.db.get_channel(channel_id).await {
+            Ok(channel) => Ok(channel),
+            Err(e) => Err(format!("Failed to get channel: {}", e)),
+        }
+    }
+
+    /// Get all channels for a user
+    pub async fn get_user_channels(&self, user_id: Uuid) -> Result<Vec<Channel>, String> {
+        match self.db.get_user_channels(user_id).await {
+            Ok(channels) => Ok(channels),
+            Err(e) => Err(format!("Failed to get user channels: {}", e)),
+        }
+    }
+
+    /// Store a message in the database
+    pub async fn store_message(&self, channel_id: Uuid, sender_id: Uuid, encrypted_payload: &[u8]) -> Result<Uuid, String> {
+        match self.db.store_message(channel_id, sender_id, encrypted_payload).await {
+            Ok(message_id) => Ok(message_id),
+            Err(e) => Err(format!("Failed to store message: {}", e)),
+        }
     }
 
     /// Add WebSocket connection

@@ -88,3 +88,37 @@
 | Privacy-preserving bots | ✅ | ❌ | ❌ | ❌ |
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
+
+## Server Trust & Node Creation Model
+
+### Node Creation Policies (Server-Level Config)
+Relay server operators choose how Nodes are created on their instance:
+
+| Policy | Description | Use Case |
+|--------|-------------|----------|
+| `admin_only` | Only server operator creates Nodes | Managed hosting, corporate |
+| `open` | Any authenticated user can create Nodes | Community hosting, public |
+| `approval` | Users request, admin approves | Curated communities |
+| `invite` | Existing Node owners can grant creation rights | Web of trust |
+
+### Server Discovery
+For users to find relay servers without direct links, we need a discovery mechanism:
+- **Server directory** (optional, federated) — relay servers can opt-in to be listed
+- **DNS-based discovery** — `_accord._tcp.example.com` SRV records
+- **QR code / deep links** — share server address + fingerprint
+- **Word of mouth** — direct URL sharing (primary, most secure)
+
+### Trust Model & Security Concerns
+A malicious relay server could attempt:
+- **Metadata logging** — who connects, when, to which Nodes
+- **Traffic analysis** — message timing, size patterns
+- **Payload modification** — though E2E prevents reading content
+
+**Mitigations:**
+1. **Server fingerprinting** — Ed25519 server identity key, clients pin on first connect (TOFU) or verify out-of-band
+2. **Client warnings** — prominent UI notice when connecting to a new/unverified server
+3. **E2E guarantees** — encryption means content privacy holds even on malicious relays
+4. **Metadata minimization** — relay server stores minimum necessary routing data
+5. **Server transparency** — optional attestation of server version, config, and build reproducibility
+6. **Community trust lists** — decentralized reputation (not a single authority)
+7. **Tor/onion support** — users can connect via Tor to hide their IP from relay operators

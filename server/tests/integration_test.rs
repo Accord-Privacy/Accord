@@ -35,8 +35,8 @@ struct TestServer {
 impl TestServer {
     /// Start a new test server on a random port
     async fn new() -> Self {
-        // Initialize shared state
-        let state: SharedState = Arc::new(AppState::new());
+        // Initialize shared state with in-memory database
+        let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
         
         // Build the router with all endpoints
         let app = Router::new()
@@ -164,7 +164,8 @@ async fn test_user_registration_success() {
 
     // Verify the user was actually registered
     let user_id = Uuid::parse_str(body["user_id"].as_str().unwrap()).unwrap();
-    assert!(server.state.users.read().await.contains_key(&user_id));
+    let user = server.state.db.get_user_by_id(user_id).await.unwrap();
+    assert!(user.is_some());
 }
 
 #[tokio::test]

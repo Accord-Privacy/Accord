@@ -3,6 +3,7 @@
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
+mod db;
 mod handlers;
 mod models;
 mod state;
@@ -41,6 +42,10 @@ struct Args {
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
+
+    /// Database file path
+    #[arg(short = 'd', long, default_value = "accord.db")]
+    database: String,
 }
 
 #[tokio::main]
@@ -60,8 +65,10 @@ async fn main() -> Result<()> {
         warn!("Running without TLS - only use for development!");
     }
 
-    // Initialize shared state
-    let state: SharedState = Arc::new(AppState::new());
+    // Initialize shared state with database
+    info!("Initializing database: {}", args.database);
+    let app_state = AppState::new(&args.database).await?;
+    let state: SharedState = Arc::new(app_state);
     
     // Build the router with all endpoints
     let app = Router::new()
