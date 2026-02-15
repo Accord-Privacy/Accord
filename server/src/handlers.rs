@@ -278,6 +278,54 @@ async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedSt
         WsMessageType::Pong => {
             info!("Received pong from user: {}", sender_user_id);
         }
+
+        // ── Voice operations ──
+        WsMessageType::JoinVoiceChannel { channel_id } => {
+            state.join_voice_channel(sender_user_id, channel_id).await?;
+            let resp = serde_json::json!({ 
+                "type": "voice_channel_joined", 
+                "channel_id": channel_id,
+                "user_id": sender_user_id
+            });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+            info!("User {} joined voice channel {}", sender_user_id, channel_id);
+        }
+
+        WsMessageType::LeaveVoiceChannel { channel_id } => {
+            state.leave_voice_channel(sender_user_id, channel_id).await?;
+            let resp = serde_json::json!({ 
+                "type": "voice_channel_left", 
+                "channel_id": channel_id,
+                "user_id": sender_user_id
+            });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+            info!("User {} left voice channel {}", sender_user_id, channel_id);
+        }
+
+        WsMessageType::VoicePacket { channel_id, encrypted_audio, sequence } => {
+            // Relay encrypted voice packet to all other participants in the channel
+            let relay = serde_json::json!({
+                "type": "voice_packet",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "encrypted_audio": encrypted_audio,
+                "sequence": sequence,
+                "timestamp": ws_message.timestamp
+            });
+            state.send_to_voice_channel(channel_id, sender_user_id, relay.to_string()).await?;
+        }
+
+        WsMessageType::VoiceSpeakingState { channel_id, user_id, speaking } => {
+            // Broadcast speaking state change to all participants
+            let broadcast = serde_json::json!({
+                "type": "voice_speaking_state",
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "speaking": speaking,
+                "timestamp": ws_message.timestamp
+            });
+            state.send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string()).await?;
+        }
     }
 
     Ok(())

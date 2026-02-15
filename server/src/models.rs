@@ -63,6 +63,24 @@ pub enum WsMessageType {
         encrypted_data: String,
     },
 
+    // ── Voice operations ──
+    /// Join a voice channel
+    JoinVoiceChannel { channel_id: Uuid },
+    /// Leave a voice channel
+    LeaveVoiceChannel { channel_id: Uuid },
+    /// Voice packet (encrypted audio data)
+    VoicePacket {
+        channel_id: Uuid,
+        encrypted_audio: Vec<u8>,
+        sequence: u64,
+    },
+    /// Voice speaking state change
+    VoiceSpeakingState {
+        channel_id: Uuid,
+        user_id: Uuid,
+        speaking: bool,
+    },
+
     /// Heartbeat
     Ping,
     /// Response to ping

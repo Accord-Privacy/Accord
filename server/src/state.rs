@@ -4,7 +4,7 @@ use crate::db::Database;
 use crate::models::{AuthToken, Channel, User};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeMember, NodeRole};
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
@@ -17,6 +17,8 @@ pub struct AppState {
     pub auth_tokens: RwLock<HashMap<String, AuthToken>>,
     /// Active WebSocket connections indexed by user ID
     pub connections: RwLock<HashMap<Uuid, broadcast::Sender<String>>>,
+    /// Voice channels state (channel_id -> set of user_ids)
+    pub voice_channels: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
     /// Server start time
     pub start_time: u64,
     /// Node creation policy
@@ -41,6 +43,7 @@ impl AppState {
             db,
             auth_tokens: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
+            voice_channels: RwLock::new(HashMap::new()),
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
         })
@@ -243,6 +246,68 @@ impl AppState {
         Ok(())
     }
 
+    // ── Voice channel operations ──
+
+    pub async fn join_voice_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
+        // Verify user has access to the channel (is a member)
+        let channel = self.get_channel(channel_id).await?
+            .ok_or_else(|| "Channel not found".to_string())?;
+        
+        if !self.db.is_node_member(channel.node_id, user_id).await.unwrap_or(false) {
+            return Err("Must be a member of the node to join voice channels".to_string());
+        }
+
+        let mut voice_channels = self.voice_channels.write().await;
+        voice_channels
+            .entry(channel_id)
+            .or_insert_with(HashSet::new)
+            .insert(user_id);
+        
+        Ok(())
+    }
+
+    pub async fn leave_voice_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
+        let mut voice_channels = self.voice_channels.write().await;
+        
+        if let Some(participants) = voice_channels.get_mut(&channel_id) {
+            participants.remove(&user_id);
+            
+            // Clean up empty voice channels
+            if participants.is_empty() {
+                voice_channels.remove(&channel_id);
+            }
+        }
+        
+        Ok(())
+    }
+
+    pub async fn get_voice_channel_participants(&self, channel_id: Uuid) -> Vec<Uuid> {
+        let voice_channels = self.voice_channels.read().await;
+        voice_channels
+            .get(&channel_id)
+            .map(|participants| participants.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    pub async fn send_to_voice_channel(&self, channel_id: Uuid, sender_id: Uuid, message: String) -> Result<(), String> {
+        let voice_channels = self.voice_channels.read().await;
+        
+        if let Some(participants) = voice_channels.get(&channel_id) {
+            let connections = self.connections.read().await;
+            
+            // Send to all participants except the sender
+            for &user_id in participants.iter() {
+                if user_id != sender_id {
+                    if let Some(sender) = connections.get(&user_id) {
+                        let _ = sender.send(message.clone());
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
     pub fn uptime(&self) -> u64 {
         now() - self.start_time
     }
@@ -326,5 +391,43 @@ mod tests {
 
         let members = state.get_channel_members(channel.id).await;
         assert_eq!(members.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_voice_channel_operations() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        let user1_id = state.register_user("user1".into(), "key1".into()).await.unwrap();
+        let user2_id = state.register_user("user2".into(), "key2".into()).await.unwrap();
+
+        // Create a node first
+        let node = state.create_node("Node".into(), user1_id, None).await.unwrap();
+
+        // Create a channel in the node  
+        let channel = state.create_channel("voice-test".into(), node.id, user1_id).await.unwrap();
+
+        // Both users join the node
+        state.join_node(user2_id, node.id).await.unwrap();
+
+        // Join voice channel
+        state.join_voice_channel(user1_id, channel.id).await.unwrap();
+        state.join_voice_channel(user2_id, channel.id).await.unwrap();
+
+        // Check participants
+        let participants = state.get_voice_channel_participants(channel.id).await;
+        assert_eq!(participants.len(), 2);
+        assert!(participants.contains(&user1_id));
+        assert!(participants.contains(&user2_id));
+
+        // Leave voice channel
+        state.leave_voice_channel(user1_id, channel.id).await.unwrap();
+        let participants = state.get_voice_channel_participants(channel.id).await;
+        assert_eq!(participants.len(), 1);
+        assert!(participants.contains(&user2_id));
+
+        // Last user leaves - channel should be cleaned up
+        state.leave_voice_channel(user2_id, channel.id).await.unwrap();
+        let participants = state.get_voice_channel_participants(channel.id).await;
+        assert_eq!(participants.len(), 0);
     }
 }
