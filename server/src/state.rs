@@ -1,7 +1,7 @@
 //! In-memory state management for the Accord relay server
 
 use crate::models::{AuthToken, Channel, User};
-use axum::extract::ws::WebSocket;
+//use axum::extract::ws::WebSocket;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};

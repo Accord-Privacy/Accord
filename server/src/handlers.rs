@@ -14,10 +14,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
+// use serde::Deserialize;
 use std::collections::HashMap;
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 /// Health check endpoint
@@ -150,7 +150,7 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
     state.add_connection(user_id, tx.clone()).await;
 
     // Spawn task to handle outgoing messages (server -> client)
-    let tx_clone = tx.clone();
+    let _tx_clone = tx.clone();
     let outgoing_task = tokio::spawn(async move {
         while let Ok(message) = rx.recv().await {
             if sender.send(Message::Text(message)).await.is_err() {
@@ -176,10 +176,16 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
                 info!("WebSocket connection closed for user: {}", user_id);
                 break;
             }
-            Ok(Message::Ping(data)) => {
-                // Respond to ping with pong
-                let pong_msg = Message::Pong(data);
-                if tx.send(serde_json::to_string(&pong_msg).unwrap_or_default()).is_err() {
+            Ok(Message::Ping(_)) => {
+                // Respond to ping with pong JSON message
+                let pong_response = serde_json::json!({
+                    "type": "pong",
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                });
+                if tx.send(pong_response.to_string()).is_err() {
                     break;
                 }
             }

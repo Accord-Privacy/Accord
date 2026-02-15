@@ -1,7 +1,7 @@
 //! Data models for the Accord relay server
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+// use std::collections::HashMap;
 use uuid::Uuid;
 
 /// User information stored on the server
