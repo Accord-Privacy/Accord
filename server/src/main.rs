@@ -29,7 +29,7 @@ use tracing::{info, warn};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Server bind address
-    #[arg(short, long, default_value = "127.0.0.1")]
+    #[arg(short = 'a', long, default_value = "127.0.0.1")]
     host: String,
 
     /// Server port
