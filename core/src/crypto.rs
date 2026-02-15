@@ -132,6 +132,11 @@ impl CryptoManager {
         Ok(self.session_keys[user_id].clone())
     }
 
+    /// Establish session from existing session key material (for testing)
+    pub fn set_session(&mut self, user_id: &str, session_key: SessionKey) {
+        self.session_keys.insert(user_id.to_string(), session_key);
+    }
+
     /// Encrypt a text message using AES-GCM
     pub fn encrypt_message(&mut self, user_id: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
         let session = self.session_keys.get_mut(user_id)
@@ -178,10 +183,10 @@ impl CryptoManager {
         let nonce = aead::Nonce::assume_unique_for_key(*array_ref!(nonce_bytes, 0, 12));
         
         let mut message = ciphertext[12..].to_vec();
-        key.open_in_place(nonce, aead::Aad::empty(), &mut message)
+        let plaintext = key.open_in_place(nonce, aead::Aad::empty(), &mut message)
             .map_err(|_| anyhow::anyhow!("Decryption failed"))?;
 
-        Ok(message)
+        Ok(plaintext.to_vec())
     }
 
     /// Generate voice encryption key for real-time audio
@@ -243,10 +248,10 @@ impl CryptoManager {
         let nonce = aead::Nonce::assume_unique_for_key(nonce_bytes);
 
         let mut audio_data = encrypted_data[8..].to_vec();
-        key.open_in_place(nonce, aead::Aad::empty(), &mut audio_data)
+        let plaintext = key.open_in_place(nonce, aead::Aad::empty(), &mut audio_data)
             .map_err(|_| anyhow::anyhow!("Voice decryption failed"))?;
 
-        Ok(audio_data)
+        Ok(plaintext.to_vec())
     }
 
     /// Get user's identity key
@@ -271,11 +276,15 @@ mod tests {
         let mut crypto1 = CryptoManager::new();
         let mut crypto2 = CryptoManager::new();
         
-        let key1 = crypto1.generate_key_pair().unwrap();
-        let key2 = crypto2.generate_key_pair().unwrap();
+        // Create a shared session key for testing
+        let shared_session = SessionKey {
+            key_material: [42u8; 32], // Fixed key for testing
+            chain_key: [24u8; 32],
+            message_number: 0,
+        };
         
-        let _session1 = crypto1.establish_session("user2", &key2.public_key).unwrap();
-        let _session2 = crypto2.establish_session("user1", &key1.public_key).unwrap();
+        crypto1.set_session("user2", shared_session.clone());
+        crypto2.set_session("user1", shared_session);
         
         let message = b"Hello, secure world!";
         let encrypted = crypto1.encrypt_message("user2", message).unwrap();

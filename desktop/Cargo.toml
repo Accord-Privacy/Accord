@@ -15,12 +15,11 @@ uuid.workspace = true
 anyhow.workspace = true
 
 # Tauri dependencies
-tauri = { version = "1.5", features = ["api-all"] }
-tauri-build = { version = "1.5", features = [] }
+tauri = "2.0"
 
 # Desktop integration
 dirs = "5.0"
 keyring = "2.0"
 
 [build-dependencies] 
-tauri-build = { version = "1.5", features = [] }
+tauri-build = "2.0"

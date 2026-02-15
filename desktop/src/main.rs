@@ -8,7 +8,6 @@
     windows_subsystem = "windows"
 )]
 
-use tauri::Manager;
 use accord_core::{init, PROTOCOL_VERSION};
 
 #[tauri::command]

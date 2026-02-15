@@ -250,10 +250,22 @@ impl InviteManager {
         user_id: Uuid,
         user_info: UserInfo,
     ) -> Result<InviteUsage> {
-        // Validate before getting mutable reference
+        self.use_invite_internal(invite_code, user_id, user_info, false)
+    }
+
+    /// Internal method to use invite with optional approval bypass
+    fn use_invite_internal(
+        &mut self,
+        invite_code: &str,
+        user_id: Uuid,
+        user_info: UserInfo,
+        bypass_approval: bool,
+    ) -> Result<InviteUsage> {
+        // Validate before getting mutable reference, but allow bypassing approval requirement
         let validation = self.validate_invite(invite_code, &user_info);
         match validation {
             InviteValidation::Valid => {},
+            InviteValidation::RequiresApproval { .. } if bypass_approval => {},
             _ => return Err(anyhow::anyhow!("Invite validation failed")),
         }
 
@@ -268,7 +280,7 @@ impl InviteManager {
             user_id,
             used_at: Utc::now(),
             user_info,
-            approval_status: ApprovalStatus::AutoApproved,
+            approval_status: if bypass_approval { ApprovalStatus::Approved } else { ApprovalStatus::AutoApproved },
         };
 
         self.usage_history.push(usage.clone());
@@ -324,19 +336,13 @@ impl InviteManager {
             return Err(anyhow::anyhow!("No permission to approve this request"));
         }
 
-        // Use the invite
-        let mut usage = self.use_invite(
+        // Use the invite with approval bypass
+        let usage = self.use_invite_internal(
             &pending_join.invite_code,
             pending_join.user_id,
             pending_join.user_info,
+            true, // bypass approval requirement
         )?;
-
-        usage.approval_status = ApprovalStatus::Approved;
-        
-        // Update in history
-        if let Some(history_entry) = self.usage_history.last_mut() {
-            history_entry.approval_status = ApprovalStatus::Approved;
-        }
 
         Ok(usage)
     }
