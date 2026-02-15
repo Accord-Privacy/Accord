@@ -1,0 +1,95 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **⚠️ Security Issues:** If this is a security vulnerability, please DO NOT file a public issue. Instead, email security@accord.chat.
+        
+        **Privacy Notice:** Please do NOT include real user messages, private keys, or personally identifiable information in bug reports.
+
+  - type: input
+    id: version
+    attributes:
+      label: Accord Version
+      description: Which version of Accord are you using?
+      placeholder: "e.g., v0.1.0 or commit hash"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Which platform is affected?
+      multiple: true
+      options:
+        - Desktop (Windows)
+        - Desktop (macOS)
+        - Desktop (Linux)
+        - Mobile (iOS)
+        - Mobile (Android)
+        - Server (Self-hosted)
+        - Web Client
+    validations:
+      required: true
+
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "Describe what happened..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: "Describe what should have happened..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Open Accord
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: If applicable, add logs to help explain your problem (remove any private information)
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here (screenshots, etc.)
+
+  - type: checkboxes
+    id: privacy-check
+    attributes:
+      label: Privacy Checklist
+      description: Please confirm you have not included sensitive information
+      options:
+        - label: I have removed all private messages, usernames, and server names
+          required: true
+        - label: I have not included cryptographic keys or tokens
+          required: true
+        - label: This issue does not contain personally identifiable information
+          required: true

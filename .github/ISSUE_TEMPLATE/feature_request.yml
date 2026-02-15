@@ -1,0 +1,121 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+title: "[FEATURE] "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy-First Development:** All feature requests will be evaluated for privacy impact. Features that compromise user privacy will not be implemented, even if technically possible.
+
+  - type: dropdown
+    id: feature-type
+    attributes:
+      label: Feature Type
+      description: What type of feature is this?
+      options:
+        - Communication (messaging, voice, video)
+        - Privacy/Security Enhancement
+        - User Interface/Experience  
+        - Server Administration
+        - Mobile/Desktop Application
+        - Self-Hosting Tools
+        - Developer/API Features
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see
+      placeholder: "I would like to be able to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Describe any alternative solutions or features you've considered
+      placeholder: "Other approaches might include..."
+
+  - type: textarea
+    id: privacy-impact
+    attributes:
+      label: Privacy Impact Assessment
+      description: How would this feature affect user privacy?
+      placeholder: |
+        - Does this require the server to access user data?
+        - Could this create new metadata that reveals user behavior?
+        - Are there privacy-preserving ways to implement this?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Level
+      description: How important is this feature to you?
+      options:
+        - Critical (prevents using Accord)
+        - High (significantly improves experience)
+        - Medium (nice to have)
+        - Low (minor convenience)
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: Describe specific scenarios where this feature would be useful
+      placeholder: |
+        1. When organizing a community event...
+        2. For moderation purposes...
+        3. To improve accessibility...
+
+  - type: textarea
+    id: technical-considerations
+    attributes:
+      label: Technical Considerations
+      description: Any technical thoughts on implementation? (Optional)
+      placeholder: "This might require changes to..."
+
+  - type: checkboxes
+    id: compatibility
+    attributes:
+      label: Platform Compatibility
+      description: Which platforms should support this feature?
+      options:
+        - label: Desktop Applications
+        - label: Mobile Applications  
+        - label: Self-hosted Servers
+        - label: Web Client (if applicable)
+
+  - type: checkboxes
+    id: requirements
+    attributes:
+      label: Requirements Checklist
+      description: Please confirm this feature aligns with Accord's mission
+      options:
+        - label: This feature preserves end-to-end encryption
+          required: true
+        - label: This feature does not require the server to read message content
+          required: true
+        - label: This feature aligns with Accord's privacy-first philosophy
+          required: true
+        - label: I have searched existing issues and this is not a duplicate
+          required: true

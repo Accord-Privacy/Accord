@@ -1,0 +1,20 @@
+[package]
+name = "accord-core-minimal"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Accord Contributors"]
+
+[dependencies]
+# Minimal dependencies that should compile without system libs
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+sha2 = "0.10"
+base64 = "0.22"
+
+# Avoid ring, tokio, and other heavy deps for now
+[dev-dependencies]
+tokio-test = "0.4"

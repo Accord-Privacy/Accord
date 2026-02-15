@@ -1,0 +1,52 @@
+name: Security Report
+description: "⚠️ DO NOT USE THIS - Email security@accord.chat instead"
+title: "🚨 SECURITY ISSUE - DO NOT SUBMIT"
+labels: ["security"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🚨 STOP - DO NOT SUBMIT THIS ISSUE
+        
+        **Security vulnerabilities should NOT be reported as public GitHub issues.**
+        
+        ## Responsible Disclosure Process
+        
+        Please report security issues through our responsible disclosure process:
+        
+        1. **Email:** security@accord.chat
+        2. **PGP Key:** [Add PGP key for encrypted communication]
+        3. **Response time:** Within 48 hours
+        
+        ## Why Private Reporting?
+        
+        - **Protects users** - Vulnerabilities aren't exposed before fixes are ready
+        - **Coordinated disclosure** - We work together to fix issues before public release
+        - **Recognition** - You'll be credited for responsible disclosure
+        - **Potential rewards** - Bug bounty program planned for Q4 2026
+        
+        ## What Qualifies as a Security Issue?
+        
+        - Bypass of end-to-end encryption
+        - Authentication/authorization bypass
+        - Remote code execution
+        - Information disclosure
+        - Cross-user data leakage
+        - Cryptographic vulnerabilities
+        
+        ## Thank You
+        
+        We appreciate your commitment to keeping Accord secure for everyone.
+        
+        **Please close this issue and email security@accord.chat instead.**
+
+  - type: textarea
+    id: redirect
+    attributes:
+      label: If you see this form, please don't submit it
+      description: Instead, email security@accord.chat with your security report
+      placeholder: "This template is only here to redirect security reports to proper channels"
+    validations:
+      required: false
