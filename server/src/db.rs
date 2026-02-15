@@ -160,6 +160,25 @@ impl Database {
         .await
         .context("Failed to create node_invites table")?;
 
+        // Create user_profiles table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id TEXT PRIMARY KEY NOT NULL,
+                display_name TEXT NOT NULL,
+                avatar_url TEXT,
+                bio TEXT,
+                status TEXT NOT NULL DEFAULT 'offline',
+                custom_status TEXT,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create user_profiles table")?;
+
         // Create indexes
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
             .execute(&self.pool)
@@ -191,6 +210,9 @@ impl Database {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_invites_node ON node_invites (node_id)")
             .execute(&self.pool)
             .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_user_profiles_status ON user_profiles (status)")
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -209,6 +231,9 @@ impl Database {
             .execute(&self.pool)
             .await
             .context("Failed to insert user")?;
+
+        // Create default user profile
+        self.create_user_profile(user_id, username).await?;
 
         Ok(User { id: user_id, username: username.to_string(), public_key: public_key.to_string(), created_at })
     }
@@ -620,6 +645,117 @@ impl Database {
             .context("Failed to delete node invite")?;
         Ok(())
     }
+
+    // ── User profile operations ──
+
+    pub async fn create_user_profile(&self, user_id: Uuid, display_name: &str) -> Result<()> {
+        let updated_at = now();
+        sqlx::query("INSERT INTO user_profiles (user_id, display_name, updated_at) VALUES (?, ?, ?)")
+            .bind(user_id.to_string())
+            .bind(display_name)
+            .bind(updated_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to create user profile")?;
+        Ok(())
+    }
+
+    pub async fn get_user_profile(&self, user_id: Uuid) -> Result<Option<crate::models::UserProfile>> {
+        let row = sqlx::query("SELECT user_id, display_name, avatar_url, bio, status, custom_status, updated_at FROM user_profiles WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query user profile")?;
+
+        row.map(|r| parse_user_profile(&r)).transpose()
+    }
+
+    pub async fn update_user_profile(
+        &self,
+        user_id: Uuid,
+        display_name: Option<&str>,
+        bio: Option<&str>,
+        status: Option<&str>,
+        custom_status: Option<&str>,
+    ) -> Result<()> {
+        let updated_at = now();
+
+        let mut query_parts = Vec::new();
+        let mut bind_values: Vec<String> = Vec::new();
+
+        if let Some(name) = display_name {
+            query_parts.push("display_name = ?");
+            bind_values.push(name.to_string());
+        }
+        if let Some(bio) = bio {
+            query_parts.push("bio = ?");
+            bind_values.push(bio.to_string());
+        }
+        if let Some(status) = status {
+            query_parts.push("status = ?");
+            bind_values.push(status.to_string());
+        }
+        if let Some(custom_status) = custom_status {
+            query_parts.push("custom_status = ?");
+            bind_values.push(custom_status.to_string());
+        }
+
+        if query_parts.is_empty() {
+            return Ok(()); // Nothing to update
+        }
+
+        query_parts.push("updated_at = ?");
+        bind_values.push(updated_at.to_string());
+
+        let sql = format!(
+            "UPDATE user_profiles SET {} WHERE user_id = ?",
+            query_parts.join(", ")
+        );
+
+        let mut query = sqlx::query(&sql);
+        for value in bind_values {
+            query = query.bind(value);
+        }
+        query = query.bind(user_id.to_string());
+
+        query.execute(&self.pool)
+            .await
+            .context("Failed to update user profile")?;
+        Ok(())
+    }
+
+    pub async fn update_user_status(&self, user_id: Uuid, status: &str) -> Result<()> {
+        let updated_at = now();
+        sqlx::query("UPDATE user_profiles SET status = ?, updated_at = ? WHERE user_id = ?")
+            .bind(status)
+            .bind(updated_at as i64)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to update user status")?;
+        Ok(())
+    }
+
+    pub async fn get_node_members_with_profiles(&self, node_id: Uuid) -> Result<Vec<crate::models::MemberWithProfile>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                nm.user_id, nm.role, nm.joined_at,
+                u.username,
+                up.display_name, up.avatar_url, up.bio, up.status, up.custom_status
+            FROM node_members nm
+            JOIN users u ON nm.user_id = u.id
+            LEFT JOIN user_profiles up ON nm.user_id = up.user_id
+            WHERE nm.node_id = ?
+            "#
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query node members with profiles")?;
+
+        rows.iter().map(|r| parse_member_with_profile(r)).collect()
+    }
 }
 
 // ── Helpers ──
@@ -670,6 +806,39 @@ fn parse_node_invite(row: &sqlx::sqlite::SqliteRow) -> Result<NodeInvite> {
         current_uses: row.get::<i64, _>("current_uses") as u32,
         expires_at: row.get::<Option<i64>, _>("expires_at").map(|t| t as u64),
         created_at: row.get::<i64, _>("created_at") as u64,
+    })
+}
+
+fn parse_user_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::UserProfile> {
+    Ok(crate::models::UserProfile {
+        user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
+        display_name: row.get("display_name"),
+        avatar_url: row.get("avatar_url"),
+        bio: row.get("bio"),
+        status: row.get("status"),
+        custom_status: row.get("custom_status"),
+        updated_at: row.get::<i64, _>("updated_at") as u64,
+    })
+}
+
+fn parse_member_with_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::MemberWithProfile> {
+    use crate::node::NodeRole;
+    
+    let role_str: String = row.get("role");
+    Ok(crate::models::MemberWithProfile {
+        user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
+        username: row.get("username"),
+        role: NodeRole::from_str(&role_str).unwrap_or(NodeRole::Member),
+        joined_at: row.get::<i64, _>("joined_at") as u64,
+        profile: crate::models::UserProfile {
+            user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
+            display_name: row.get::<Option<String>, _>("display_name").unwrap_or_else(|| row.get::<String, _>("username")),
+            avatar_url: row.get("avatar_url"),
+            bio: row.get("bio"),
+            status: row.get::<Option<String>, _>("status").unwrap_or_else(|| "offline".to_string()),
+            custom_status: row.get("custom_status"),
+            updated_at: 0, // Will be set properly when profile exists
+        },
     })
 }
 

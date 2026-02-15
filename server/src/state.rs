@@ -5,6 +5,7 @@ use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
 use crate::permissions::{Permission, has_permission};
 use anyhow::Result;
+use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -402,6 +403,91 @@ impl AppState {
                 let _ = sender.send(message.clone());
             }
         }
+        Ok(())
+    }
+
+    // ── User profile operations ──
+
+    pub async fn get_user_profile(&self, user_id: Uuid) -> Result<Option<crate::models::UserProfile>, String> {
+        self.db.get_user_profile(user_id).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn update_user_profile(
+        &self,
+        user_id: Uuid,
+        display_name: Option<&str>,
+        bio: Option<&str>,
+        status: Option<&str>,
+        custom_status: Option<&str>,
+    ) -> Result<(), String> {
+        // Update profile in database
+        self.db.update_user_profile(user_id, display_name, bio, status, custom_status)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // If status changed, broadcast presence update to all nodes the user is in
+        if status.is_some() || custom_status.is_some() {
+            self.broadcast_presence_update(user_id).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_node_members_with_profiles(&self, node_id: Uuid) -> Result<Vec<crate::models::MemberWithProfile>, String> {
+        self.db.get_node_members_with_profiles(node_id).await.map_err(|e| e.to_string())
+    }
+
+    // ── Presence tracking ──
+
+    pub async fn set_user_online(&self, user_id: Uuid) -> Result<(), String> {
+        self.db.update_user_status(user_id, "online").await.map_err(|e| e.to_string())?;
+        self.broadcast_presence_update(user_id).await
+    }
+
+    pub async fn set_user_offline(&self, user_id: Uuid) -> Result<(), String> {
+        self.db.update_user_status(user_id, "offline").await.map_err(|e| e.to_string())?;
+        self.broadcast_presence_update(user_id).await
+    }
+
+    async fn broadcast_presence_update(&self, user_id: Uuid) -> Result<(), String> {
+        // Get updated profile for broadcast
+        let profile = match self.get_user_profile(user_id).await? {
+            Some(profile) => profile,
+            None => return Ok(()), // No profile to broadcast
+        };
+
+        let presence = crate::models::UserPresence {
+            user_id,
+            status: profile.status,
+            custom_status: profile.custom_status,
+            updated_at: profile.updated_at,
+        };
+
+        // Get all nodes this user is a member of
+        let user_nodes = self.db.get_user_nodes(user_id).await.map_err(|e| e.to_string())?;
+
+        // Broadcast presence update to all members of those nodes
+        for node in user_nodes {
+            let members = self.db.get_node_members(node.id).await.map_err(|e| e.to_string())?;
+            
+            let presence_message = serde_json::json!({
+                "type": "presence_update",
+                "user_id": user_id,
+                "status": presence.status,
+                "custom_status": presence.custom_status,
+                "updated_at": presence.updated_at
+            }).to_string();
+
+            let connections = self.connections.read().await;
+            for member in members {
+                if member.user_id != user_id { // Don't send to self
+                    if let Some(sender) = connections.get(&member.user_id) {
+                        let _ = sender.send(presence_message.clone());
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

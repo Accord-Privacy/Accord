@@ -203,3 +203,43 @@ pub struct HealthResponse {
     pub version: String,
     pub uptime_seconds: u64,
 }
+
+/// User profile information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub user_id: Uuid,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    pub bio: Option<String>,
+    pub status: String, // online, idle, dnd, offline
+    pub custom_status: Option<String>,
+    pub updated_at: u64,
+}
+
+/// Request to update user profile
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub display_name: Option<String>,
+    pub bio: Option<String>,
+    pub status: Option<String>,
+    pub custom_status: Option<String>,
+}
+
+/// User presence information for broadcasting
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserPresence {
+    pub user_id: Uuid,
+    pub status: String,
+    pub custom_status: Option<String>,
+    pub updated_at: u64,
+}
+
+/// Node member with profile information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberWithProfile {
+    pub user_id: Uuid,
+    pub username: String,
+    pub role: crate::node::NodeRole,
+    pub joined_at: u64,
+    pub profile: UserProfile,
+}

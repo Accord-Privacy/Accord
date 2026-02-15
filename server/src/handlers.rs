@@ -295,6 +295,97 @@ pub async fn delete_channel_handler(
     }
 }
 
+// ── User profile endpoints ──
+
+/// Get user profile (GET /users/:id/profile)
+pub async fn get_user_profile_handler(
+    State(state): State<SharedState>,
+    Path(user_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::UserProfile>, (StatusCode, Json<ErrorResponse>)> {
+    let _requesting_user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.get_user_profile(user_id).await {
+        Ok(Some(profile)) => Ok(Json(profile)),
+        Ok(None) => Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "User profile not found".into(), code: 404 }))),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: err, code: 500 }))),
+    }
+}
+
+/// Update own profile (PATCH /users/me/profile)
+pub async fn update_user_profile_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::UpdateProfileRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Validate bio length if provided
+    if let Some(ref bio) = request.bio {
+        if bio.len() > 500 {
+            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { 
+                error: "Bio cannot exceed 500 characters".into(), 
+                code: 400 
+            })));
+        }
+    }
+
+    // Validate status if provided
+    if let Some(ref status) = request.status {
+        if !matches!(status.as_str(), "online" | "idle" | "dnd" | "offline") {
+            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { 
+                error: "Invalid status. Must be one of: online, idle, dnd, offline".into(), 
+                code: 400 
+            })));
+        }
+    }
+
+    match state.update_user_profile(
+        user_id,
+        request.display_name.as_deref(),
+        request.bio.as_deref(),
+        request.status.as_deref(),
+        request.custom_status.as_deref(),
+    ).await {
+        Ok(()) => {
+            info!("User profile updated: {}", user_id);
+            Ok(Json(serde_json::json!({ "status": "updated", "user_id": user_id })))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: err, code: 500 }))),
+    }
+}
+
+/// Get Node members with profiles (GET /nodes/:id/members)
+pub async fn get_node_members_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user is a member of the node
+    match state.get_node_member(node_id, user_id).await {
+        Ok(Some(_)) => {}, // User is a member, proceed
+        Ok(None) => {
+            return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+                error: "You must be a member of this node to view its members".into(), 
+                code: 403 
+            })));
+        }
+        Err(err) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                error: err, 
+                code: 500 
+            })));
+        }
+    }
+
+    match state.get_node_members_with_profiles(node_id).await {
+        Ok(members) => Ok(Json(serde_json::json!({ "members": members }))),
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: err, code: 500 }))),
+    }
+}
+
 /// Helper to extract user_id from token query param
 async fn extract_user_from_token(
     state: &SharedState,
@@ -369,6 +460,11 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
     let (tx, mut rx) = broadcast::channel::<String>(100);
 
     state.add_connection(user_id, tx.clone()).await;
+    
+    // Set user online when they connect
+    if let Err(err) = state.set_user_online(user_id).await {
+        error!("Failed to set user online: {}", err);
+    }
 
     let outgoing_task = tokio::spawn(async move {
         while let Ok(message) = rx.recv().await {
@@ -404,6 +500,12 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
     }
 
     state.remove_connection(user_id).await;
+    
+    // Set user offline when they disconnect
+    if let Err(err) = state.set_user_offline(user_id).await {
+        error!("Failed to set user offline: {}", err);
+    }
+    
     outgoing_task.abort();
     info!("WebSocket handler terminated for user: {}", user_id);
 }
