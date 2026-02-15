@@ -25,7 +25,7 @@ async fn initialize_crypto() -> Result<String, String> {
 
 fn main() {
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(|_app| {
             // Initialize Accord core
             init().expect("Failed to initialize Accord core");
             
