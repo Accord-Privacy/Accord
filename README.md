@@ -24,6 +24,13 @@ Accord fills the gap between Discord (great features, no privacy) and Signal (gr
   All Features                  No Decryption Keys                  All Features
 ```
 
+### Terminology
+- **Relay Server** — the actual server process/machine. Can host multiple Nodes.
+- **Node** — a community space that users join and communicate in (like a Discord "server"). Each Node has its own channels, members, roles, and invites.
+- **Channel** — a text or voice channel within a Node.
+
+One relay server instance can host many Nodes, making self-hosting efficient for communities that want to share infrastructure.
+
 ### Workspace Structure
 
 | Crate | Purpose |
