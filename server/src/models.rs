@@ -1,7 +1,6 @@
 //! Data models for the Accord relay server
 
 use serde::{Deserialize, Serialize};
-// use std::collections::HashMap;
 use uuid::Uuid;
 
 /// User information stored on the server
@@ -9,8 +8,8 @@ use uuid::Uuid;
 pub struct User {
     pub id: Uuid,
     pub username: String,
-    pub public_key: String, // Base64-encoded public identity key
-    pub created_at: u64,    // Unix timestamp
+    pub public_key: String,
+    pub created_at: u64,
 }
 
 /// Authentication token
@@ -18,36 +17,53 @@ pub struct User {
 pub struct AuthToken {
     pub token: String,
     pub user_id: Uuid,
-    pub expires_at: u64, // Unix timestamp
+    pub expires_at: u64,
 }
 
-/// Channel information
+/// Channel information (now scoped to a Node)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channel {
     pub id: Uuid,
     pub name: String,
+    pub node_id: Uuid,
     pub members: Vec<Uuid>,
     pub created_at: u64,
 }
 
-/// WebSocket message types that the server understands
+/// WebSocket message types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WsMessageType {
-    /// Join a channel
+    // ── Node operations ──
+    /// Create a new Node
+    CreateNode { name: String, description: Option<String> },
+    /// Join an existing Node
+    JoinNode { node_id: Uuid },
+    /// Leave a Node
+    LeaveNode { node_id: Uuid },
+    /// Request Node info
+    GetNodeInfo { node_id: Uuid },
+
+    // ── Channel operations (scoped to Node) ──
+    /// Join a channel within a Node
     JoinChannel { channel_id: Uuid },
     /// Leave a channel
     LeaveChannel { channel_id: Uuid },
+    /// Create a channel in a Node
+    CreateChannel { node_id: Uuid, name: String },
+
+    // ── Messaging ──
     /// Direct message to a user (encrypted blob)
-    DirectMessage { 
-        to_user: Uuid, 
-        encrypted_data: String, // Base64-encoded encrypted blob
+    DirectMessage {
+        to_user: Uuid,
+        encrypted_data: String,
     },
     /// Channel message (encrypted blob)
-    ChannelMessage { 
-        channel_id: Uuid, 
-        encrypted_data: String, // Base64-encoded encrypted blob
+    ChannelMessage {
+        channel_id: Uuid,
+        encrypted_data: String,
     },
-    /// Heartbeat/keepalive
+
+    /// Heartbeat
     Ping,
     /// Response to ping
     Pong,
@@ -65,7 +81,7 @@ pub struct WsMessage {
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
     pub username: String,
-    pub public_key: String, // Base64-encoded public identity key
+    pub public_key: String,
 }
 
 /// Registration response
@@ -79,7 +95,6 @@ pub struct RegisterResponse {
 #[derive(Debug, Deserialize)]
 pub struct AuthRequest {
     pub username: String,
-    // For now, simple password or token-based auth
     pub password: String,
 }
 
@@ -89,6 +104,13 @@ pub struct AuthResponse {
     pub token: String,
     pub user_id: Uuid,
     pub expires_at: u64,
+}
+
+/// Create Node request (REST)
+#[derive(Debug, Deserialize)]
+pub struct CreateNodeRequest {
+    pub name: String,
+    pub description: Option<String>,
 }
 
 /// Generic error response

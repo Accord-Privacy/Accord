@@ -1,20 +1,21 @@
 //! HTTP and WebSocket handlers for the Accord relay server
 
 use crate::models::{
-    AuthRequest, AuthResponse, ErrorResponse, HealthResponse, RegisterRequest, RegisterResponse,
-    WsMessage, WsMessageType,
+    AuthRequest, AuthResponse, CreateNodeRequest, ErrorResponse, HealthResponse,
+    RegisterRequest, RegisterResponse, WsMessage, WsMessageType,
 };
+use crate::node::NodeInfo;
 use crate::state::SharedState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Path, Query, State,
     },
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-// use serde::Deserialize;
+use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 use tracing::{error, info};
@@ -34,42 +35,19 @@ pub async fn register_handler(
     State(state): State<SharedState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Validate input
     if request.username.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Username cannot be empty".to_string(),
-                code: 400,
-            }),
-        ));
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Username cannot be empty".into(), code: 400 })));
     }
-
     if request.public_key.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Public key cannot be empty".to_string(),
-                code: 400,
-            }),
-        ));
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Public key cannot be empty".into(), code: 400 })));
     }
 
     match state.register_user(request.username, request.public_key).await {
         Ok(user_id) => {
             info!("Registered new user: {}", user_id);
-            Ok(Json(RegisterResponse {
-                user_id,
-                message: "User registered successfully".to_string(),
-            }))
+            Ok(Json(RegisterResponse { user_id, message: "User registered successfully".into() }))
         }
-        Err(err) => Err((
-            StatusCode::CONFLICT,
-            Json(ErrorResponse {
-                error: err,
-                code: 409,
-            }),
-        )),
+        Err(err) => Err((StatusCode::CONFLICT, Json(ErrorResponse { error: err, code: 409 }))),
     }
 }
 
@@ -81,21 +59,90 @@ pub async fn auth_handler(
     match state.authenticate_user(request.username, request.password).await {
         Ok(auth_token) => {
             info!("User authenticated: {}", auth_token.user_id);
-            Ok(Json(AuthResponse {
-                token: auth_token.token,
-                user_id: auth_token.user_id,
-                expires_at: auth_token.expires_at,
-            }))
+            Ok(Json(AuthResponse { token: auth_token.token, user_id: auth_token.user_id, expires_at: auth_token.expires_at }))
         }
-        Err(err) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: err,
-                code: 401,
-            }),
-        )),
+        Err(err) => Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: err, code: 401 }))),
     }
 }
+
+// ── Node REST endpoints ──
+
+/// Create a new Node
+pub async fn create_node_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<CreateNodeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.create_node(request.name, user_id, request.description).await {
+        Ok(node) => {
+            info!("Node created: {} by {}", node.id, user_id);
+            Ok(Json(serde_json::json!({
+                "id": node.id,
+                "name": node.name,
+                "owner_id": node.owner_id,
+                "description": node.description,
+                "created_at": node.created_at,
+            })))
+        }
+        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+    }
+}
+
+/// Get Node info
+pub async fn get_node_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+) -> Result<Json<NodeInfo>, (StatusCode, Json<ErrorResponse>)> {
+    match state.get_node_info(node_id).await {
+        Ok(info) => Ok(Json(info)),
+        Err(err) => Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: err, code: 404 }))),
+    }
+}
+
+/// Join a Node
+pub async fn join_node_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.join_node(user_id, node_id).await {
+        Ok(()) => Ok(Json(serde_json::json!({ "status": "joined", "node_id": node_id }))),
+        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+    }
+}
+
+/// Leave a Node
+pub async fn leave_node_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.leave_node(user_id, node_id).await {
+        Ok(()) => Ok(Json(serde_json::json!({ "status": "left", "node_id": node_id }))),
+        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+    }
+}
+
+/// Helper to extract user_id from token query param
+async fn extract_user_from_token(
+    state: &SharedState,
+    params: &HashMap<String, String>,
+) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
+    let token = params.get("token").ok_or_else(|| {
+        (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Missing token".into(), code: 401 }))
+    })?;
+    state.validate_token(token).await.ok_or_else(|| {
+        (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Invalid or expired token".into(), code: 401 }))
+    })
+}
+
+// ── WebSocket ──
 
 /// WebSocket upgrade handler
 pub async fn ws_handler(
@@ -103,54 +150,26 @@ pub async fn ws_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Response {
-    // Extract token from query parameters
     let token = match params.get("token") {
         Some(token) => token.clone(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Missing authentication token".to_string(),
-                    code: 401,
-                }),
-            )
-                .into_response();
-        }
+        None => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Missing authentication token".into(), code: 401 })).into_response(),
     };
 
-    // Validate token and get user ID
     let user_id = match state.validate_token(&token).await {
-        Some(user_id) => user_id,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Invalid or expired token".to_string(),
-                    code: 401,
-                }),
-            )
-                .into_response();
-        }
+        Some(uid) => uid,
+        None => return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Invalid or expired token".into(), code: 401 })).into_response(),
     };
 
     info!("WebSocket connection established for user: {}", user_id);
-
-    // Upgrade to WebSocket
     ws.on_upgrade(move |socket| websocket_handler(socket, user_id, state))
 }
 
-/// WebSocket connection handler
 async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState) {
     let (mut sender, mut receiver) = socket.split();
-    
-    // Create broadcast channel for this connection
     let (tx, mut rx) = broadcast::channel::<String>(100);
-    
-    // Register the connection
+
     state.add_connection(user_id, tx.clone()).await;
 
-    // Spawn task to handle outgoing messages (server -> client)
-    let _tx_clone = tx.clone();
     let outgoing_task = tokio::spawn(async move {
         while let Ok(message) = rx.recv().await {
             if sender.send(Message::Text(message)).await.is_err() {
@@ -159,39 +178,24 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
         }
     });
 
-    // Handle incoming messages (client -> server)
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
                 if let Err(err) = handle_ws_message(&text, user_id, &state).await {
                     error!("Error handling WebSocket message: {}", err);
-                    let error_msg = serde_json::json!({
-                        "error": err,
-                        "type": "error"
-                    });
+                    let error_msg = serde_json::json!({ "error": err, "type": "error" });
                     let _ = tx.send(error_msg.to_string());
                 }
             }
             Ok(Message::Close(_)) => {
-                info!("WebSocket connection closed for user: {}", user_id);
+                info!("WebSocket closed for user: {}", user_id);
                 break;
             }
             Ok(Message::Ping(_)) => {
-                // Respond to ping with pong JSON message
-                let pong_response = serde_json::json!({
-                    "type": "pong",
-                    "timestamp": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                });
-                if tx.send(pong_response.to_string()).is_err() {
-                    break;
-                }
+                let pong = serde_json::json!({ "type": "pong", "timestamp": now_secs() });
+                if tx.send(pong.to_string()).is_err() { break; }
             }
-            Ok(_) => {
-                // Ignore other message types (binary, pong)
-            }
+            Ok(_) => {}
             Err(err) => {
                 error!("WebSocket error for user {}: {}", user_id, err);
                 break;
@@ -199,22 +203,45 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
         }
     }
 
-    // Cleanup: remove connection and cancel outgoing task
     state.remove_connection(user_id).await;
     outgoing_task.abort();
     info!("WebSocket handler terminated for user: {}", user_id);
 }
 
-/// Handle individual WebSocket messages
-async fn handle_ws_message(
-    message: &str,
-    sender_user_id: Uuid,
-    state: &SharedState,
-) -> Result<(), String> {
-    let ws_message: WsMessage = serde_json::from_str(message)
-        .map_err(|e| format!("Invalid message format: {}", e))?;
+async fn handle_ws_message(message: &str, sender_user_id: Uuid, state: &SharedState) -> Result<(), String> {
+    let ws_message: WsMessage = serde_json::from_str(message).map_err(|e| format!("Invalid message format: {}", e))?;
 
     match ws_message.message_type {
+        WsMessageType::CreateNode { name, description } => {
+            let node = state.create_node(name, sender_user_id, description).await?;
+            let resp = serde_json::json!({ "type": "node_created", "node": node });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::JoinNode { node_id } => {
+            state.join_node(sender_user_id, node_id).await?;
+            let resp = serde_json::json!({ "type": "node_joined", "node_id": node_id });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::LeaveNode { node_id } => {
+            state.leave_node(sender_user_id, node_id).await?;
+            let resp = serde_json::json!({ "type": "node_left", "node_id": node_id });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::GetNodeInfo { node_id } => {
+            let info = state.get_node_info(node_id).await?;
+            let resp = serde_json::json!({ "type": "node_info", "data": info });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::CreateChannel { node_id, name } => {
+            let channel = state.create_channel(name, node_id, sender_user_id).await?;
+            let resp = serde_json::json!({ "type": "channel_created", "channel": channel });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
         WsMessageType::JoinChannel { channel_id } => {
             state.join_channel(sender_user_id, channel_id).await?;
             info!("User {} joined channel {}", sender_user_id, channel_id);
@@ -226,51 +253,29 @@ async fn handle_ws_message(
         }
 
         WsMessageType::DirectMessage { to_user, encrypted_data } => {
-            // Route encrypted message directly to recipient
-            // Server never decrypts - just forwards the blob
-            let relay_message = serde_json::json!({
-                "type": "direct_message",
-                "from": sender_user_id,
-                "encrypted_data": encrypted_data,
-                "message_id": ws_message.message_id,
+            let relay = serde_json::json!({
+                "type": "direct_message", "from": sender_user_id,
+                "encrypted_data": encrypted_data, "message_id": ws_message.message_id,
                 "timestamp": ws_message.timestamp
             });
-
-            state.send_to_user(to_user, relay_message.to_string()).await?;
-            info!("Relayed direct message from {} to {}", sender_user_id, to_user);
+            state.send_to_user(to_user, relay.to_string()).await?;
         }
 
         WsMessageType::ChannelMessage { channel_id, encrypted_data } => {
-            // Route encrypted message to all channel members
-            // Server never decrypts - just forwards the blob
-            let relay_message = serde_json::json!({
-                "type": "channel_message",
-                "from": sender_user_id,
-                "channel_id": channel_id,
-                "encrypted_data": encrypted_data,
-                "message_id": ws_message.message_id,
+            let relay = serde_json::json!({
+                "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
+                "encrypted_data": encrypted_data, "message_id": ws_message.message_id,
                 "timestamp": ws_message.timestamp
             });
-
-            state.send_to_channel(channel_id, relay_message.to_string()).await?;
-            info!("Relayed channel message from {} to channel {}", sender_user_id, channel_id);
+            state.send_to_channel(channel_id, relay.to_string()).await?;
         }
 
         WsMessageType::Ping => {
-            // Respond with pong
-            let pong_message = serde_json::json!({
-                "type": "pong",
-                "timestamp": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            });
-
-            state.send_to_user(sender_user_id, pong_message.to_string()).await?;
+            let pong = serde_json::json!({ "type": "pong", "timestamp": now_secs() });
+            state.send_to_user(sender_user_id, pong.to_string()).await?;
         }
 
         WsMessageType::Pong => {
-            // Just log pong receipt
             info!("Received pong from user: {}", sender_user_id);
         }
     }
@@ -278,4 +283,6 @@ async fn handle_ws_message(
     Ok(())
 }
 
-use futures_util::{sink::SinkExt, stream::StreamExt};
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+}

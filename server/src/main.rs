@@ -6,6 +6,7 @@
 mod db;
 mod handlers;
 mod models;
+mod node;
 mod state;
 
 use anyhow::Result;
@@ -14,7 +15,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use handlers::{auth_handler, health_handler, register_handler, ws_handler};
+use handlers::{auth_handler, create_node_handler, get_node_handler, join_node_handler, leave_node_handler, health_handler, register_handler, ws_handler};
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -76,6 +77,11 @@ async fn main() -> Result<()> {
         .route("/health", get(health_handler))
         .route("/register", post(register_handler))
         .route("/auth", post(auth_handler))
+        // Node endpoints
+        .route("/nodes", post(create_node_handler))
+        .route("/nodes/:id", get(get_node_handler))
+        .route("/nodes/:id/join", post(join_node_handler))
+        .route("/nodes/:id/leave", post(leave_node_handler))
         // WebSocket endpoint
         .route("/ws", get(ws_handler))
         // Add shared state
@@ -98,10 +104,14 @@ async fn main() -> Result<()> {
     println!("⚡ Ready to route encrypted messages");
     println!();
     println!("Endpoints:");
-    println!("  GET  /health    - Health check");
-    println!("  POST /register  - User registration");
-    println!("  POST /auth      - User authentication");
-    println!("  WS   /ws        - WebSocket messaging (requires ?token=<auth_token>)");
+    println!("  GET  /health          - Health check");
+    println!("  POST /register        - User registration");
+    println!("  POST /auth            - User authentication");
+    println!("  POST /nodes           - Create a Node (?token=)");
+    println!("  GET  /nodes/:id       - Get Node info");
+    println!("  POST /nodes/:id/join  - Join a Node (?token=)");
+    println!("  POST /nodes/:id/leave - Leave a Node (?token=)");
+    println!("  WS   /ws              - WebSocket messaging (?token=)");
     println!();
 
     // Create the server

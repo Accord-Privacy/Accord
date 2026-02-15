@@ -2,39 +2,33 @@
 
 use crate::db::Database;
 use crate::models::{AuthToken, Channel, User};
-//use axum::extract::ws::WebSocket;
+use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeMember, NodeRole};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 
-/// Active WebSocket connection
-#[derive(Debug)]
-pub struct ActiveConnection {
-    pub user_id: Uuid,
-    pub sender: broadcast::Sender<String>, // For sending messages to this specific connection
-}
-
 /// Application state shared across handlers
 pub struct AppState {
     /// Database connection for persistent storage
     pub db: Database,
-    /// Active authentication tokens (kept in-memory for performance)
+    /// Active authentication tokens (in-memory for performance)
     pub auth_tokens: RwLock<HashMap<String, AuthToken>>,
-    /// Active WebSocket connections indexed by user ID (ephemeral)
+    /// Active WebSocket connections indexed by user ID
     pub connections: RwLock<HashMap<Uuid, broadcast::Sender<String>>>,
-    /// Server start time for uptime calculation
+    /// Server start time
     pub start_time: u64,
+    /// Node creation policy
+    pub node_creation_policy: NodeCreationPolicy,
 }
 
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
             .field("db", &"<Database>")
-            .field("auth_tokens", &format!("<{} tokens>", self.auth_tokens.try_read().map_or(0, |t| t.len())))
-            .field("connections", &format!("<{} connections>", self.connections.try_read().map_or(0, |c| c.len())))
             .field("start_time", &self.start_time)
+            .field("node_creation_policy", &self.node_creation_policy)
             .finish()
     }
 }
@@ -43,15 +37,12 @@ impl AppState {
     /// Create new application state with database connection
     pub async fn new(db_path: &str) -> Result<Self> {
         let db = Database::new(db_path).await?;
-        
         Ok(Self {
             db,
             auth_tokens: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
-            start_time: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            start_time: now(),
+            node_creation_policy: NodeCreationPolicy::default(),
         })
     }
 
@@ -60,39 +51,29 @@ impl AppState {
         Self::new(":memory:").await
     }
 
-    /// Register a new user
+    // ── User operations ──
+
     pub async fn register_user(&self, username: String, public_key: String) -> Result<Uuid, String> {
-        // Check if username already exists
         match self.db.username_exists(&username).await {
-            Ok(exists) if exists => return Err("Username already exists".to_string()),
+            Ok(true) => return Err("Username already exists".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
             _ => {}
         }
-
-        // Create user in database
         match self.db.create_user(&username, &public_key).await {
             Ok(user) => Ok(user.id),
             Err(e) => Err(format!("Failed to create user: {}", e)),
         }
     }
 
-    /// Authenticate user and create token
     pub async fn authenticate_user(&self, username: String, _password: String) -> Result<AuthToken, String> {
-        // Get user from database
         let user = match self.db.get_user_by_username(&username).await {
             Ok(Some(user)) => user,
             Ok(None) => return Err("User not found".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
         };
 
-        // For now, simple authentication - just check if user exists
-        // In a real implementation, you'd verify the password/signature
-        
         let token = format!("tok_{}", Uuid::new_v4().simple());
-        let expires_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() + 86400; // 24 hours
+        let expires_at = now() + 86400;
 
         let auth_token = AuthToken {
             token: token.clone(),
@@ -100,142 +81,178 @@ impl AppState {
             expires_at,
         };
 
-        // Keep auth tokens in memory for fast access
-        self.auth_tokens.write().await.insert(token.clone(), auth_token.clone());
-        
+        self.auth_tokens.write().await.insert(token, auth_token.clone());
         Ok(auth_token)
     }
 
-    /// Validate authentication token
     pub async fn validate_token(&self, token: &str) -> Option<Uuid> {
         let auth_tokens = self.auth_tokens.read().await;
         let auth_token = auth_tokens.get(token)?;
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        if auth_token.expires_at > now {
+        if auth_token.expires_at > now() {
             Some(auth_token.user_id)
         } else {
             None
         }
     }
 
-    /// Add user to channel (auto-creates channel if it doesn't exist)
+    // ── Node operations ──
+
+    pub async fn create_node(&self, name: String, owner_id: Uuid, description: Option<String>) -> Result<Node, String> {
+        match self.node_creation_policy {
+            NodeCreationPolicy::Open => {}
+            NodeCreationPolicy::AdminOnly => {
+                return Err("Only server admin can create nodes".to_string());
+            }
+            NodeCreationPolicy::Approval => {
+                return Err("Node creation requires approval (not yet implemented)".to_string());
+            }
+            NodeCreationPolicy::Invite => {
+                return Err("Node creation requires an invite (not yet implemented)".to_string());
+            }
+        }
+
+        match self.db.create_node(&name, owner_id, description.as_deref()).await {
+            Ok(node) => Ok(node),
+            Err(e) => Err(format!("Failed to create node: {}", e)),
+        }
+    }
+
+    pub async fn get_node_info(&self, node_id: Uuid) -> Result<NodeInfo, String> {
+        let node = match self.db.get_node(node_id).await {
+            Ok(Some(n)) => n,
+            Ok(None) => return Err("Node not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
+        let members = self.db.get_node_members(node_id).await.map_err(|e| e.to_string())?;
+        let channel_count = self.db.count_node_channels(node_id).await.map_err(|e| e.to_string())?;
+
+        Ok(NodeInfo { node, members, channel_count })
+    }
+
+    pub async fn join_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
+        // Check node exists
+        match self.db.get_node(node_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err("Node not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        }
+        // Check not already member
+        if self.db.is_node_member(node_id, user_id).await.unwrap_or(false) {
+            return Err("Already a member of this node".to_string());
+        }
+        self.db.add_node_member(node_id, user_id, NodeRole::Member).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn leave_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
+        // Check node exists
+        let node = match self.db.get_node(node_id).await {
+            Ok(Some(n)) => n,
+            Ok(None) => return Err("Node not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
+        if node.owner_id == user_id {
+            return Err("Node owner cannot leave their own node".to_string());
+        }
+        self.db.remove_node_member(node_id, user_id).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn kick_from_node(&self, admin_id: Uuid, target_id: Uuid, node_id: Uuid) -> Result<(), String> {
+        // Verify admin has permission
+        let member = self.db.get_node_member(node_id, admin_id).await.map_err(|e| e.to_string())?;
+        match member {
+            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => {}
+            _ => return Err("Insufficient permissions".to_string()),
+        }
+        // Can't kick the owner
+        let node = self.db.get_node(node_id).await.map_err(|e| e.to_string())?.ok_or("Node not found")?;
+        if node.owner_id == target_id {
+            return Err("Cannot kick the node owner".to_string());
+        }
+        self.db.remove_node_member(node_id, target_id).await.map_err(|e| e.to_string())
+    }
+
+    // ── Channel operations (now Node-scoped) ──
+
     pub async fn join_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
-        // Check if channel exists, if not create it
-        match self.db.get_channel(channel_id).await {
-            Ok(None) => {
-                // Channel doesn't exist, create it with a default name and the specific ID
-                let channel_name = format!("Channel-{}", channel_id.simple());
-                // Create channel will automatically add the creator as a member
-                match self.db.create_channel_with_id(channel_id, &channel_name, user_id).await {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(format!("Failed to create channel: {}", e)),
-                }
-            }
-            Ok(Some(_)) => {
-                // Channel exists, just add the user
-                match self.db.add_user_to_channel(channel_id, user_id).await {
-                    Ok(()) => Ok(()),
-                    Err(e) => Err(format!("Failed to join channel: {}", e)),
-                }
-            }
-            Err(e) => Err(format!("Database error: {}", e)),
+        // Verify channel exists and user is member of the Node
+        let channel = match self.db.get_channel(channel_id).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return Err("Channel not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
+        if !self.db.is_node_member(channel.node_id, user_id).await.unwrap_or(false) {
+            return Err("Must be a member of the node to join its channels".to_string());
         }
+        self.db.add_user_to_channel(channel_id, user_id).await.map_err(|e| e.to_string())
     }
 
-    /// Remove user from channel
     pub async fn leave_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
-        match self.db.remove_user_from_channel(channel_id, user_id).await {
-            Ok(()) => Ok(()),
-            Err(e) => Err(format!("Failed to leave channel: {}", e)),
-        }
+        self.db.remove_user_from_channel(channel_id, user_id).await.map_err(|e| e.to_string())
     }
 
-    /// Get all members of a channel
-    pub async fn get_channel_members(&self, channel_id: Uuid) -> Vec<Uuid> {
-        match self.db.get_channel_members(channel_id).await {
-            Ok(members) => members,
-            Err(_) => Vec::new(), // Return empty vec on error to maintain compatibility
+    pub async fn create_channel(&self, name: String, node_id: Uuid, created_by: Uuid) -> Result<Channel, String> {
+        // Verify user is member of node
+        if !self.db.is_node_member(node_id, created_by).await.unwrap_or(false) {
+            return Err("Must be a member of the node to create channels".to_string());
         }
+        self.db.create_channel(&name, node_id, created_by).await.map_err(|e| e.to_string())
     }
 
-    /// Create a new channel
-    pub async fn create_channel(&self, name: String, created_by: Uuid) -> Result<Channel, String> {
-        match self.db.create_channel(&name, created_by).await {
-            Ok(channel) => Ok(channel),
-            Err(e) => Err(format!("Failed to create channel: {}", e)),
-        }
-    }
-
-    /// Get a channel by ID
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>, String> {
-        match self.db.get_channel(channel_id).await {
-            Ok(channel) => Ok(channel),
-            Err(e) => Err(format!("Failed to get channel: {}", e)),
-        }
+        self.db.get_channel(channel_id).await.map_err(|e| e.to_string())
     }
 
-    /// Get all channels for a user
     pub async fn get_user_channels(&self, user_id: Uuid) -> Result<Vec<Channel>, String> {
-        match self.db.get_user_channels(user_id).await {
-            Ok(channels) => Ok(channels),
-            Err(e) => Err(format!("Failed to get user channels: {}", e)),
-        }
+        self.db.get_user_channels(user_id).await.map_err(|e| e.to_string())
     }
 
-    /// Store a message in the database
+    pub async fn get_channel_members(&self, channel_id: Uuid) -> Vec<Uuid> {
+        self.db.get_channel_members(channel_id).await.unwrap_or_default()
+    }
+
     pub async fn store_message(&self, channel_id: Uuid, sender_id: Uuid, encrypted_payload: &[u8]) -> Result<Uuid, String> {
-        match self.db.store_message(channel_id, sender_id, encrypted_payload).await {
-            Ok(message_id) => Ok(message_id),
-            Err(e) => Err(format!("Failed to store message: {}", e)),
-        }
+        self.db.store_message(channel_id, sender_id, encrypted_payload).await.map_err(|e| e.to_string())
     }
 
-    /// Add WebSocket connection
+    // ── Connection management ──
+
     pub async fn add_connection(&self, user_id: Uuid, sender: broadcast::Sender<String>) {
         self.connections.write().await.insert(user_id, sender);
     }
 
-    /// Remove WebSocket connection
     pub async fn remove_connection(&self, user_id: Uuid) {
         self.connections.write().await.remove(&user_id);
     }
 
-    /// Send message to specific user
     pub async fn send_to_user(&self, user_id: Uuid, message: String) -> Result<(), String> {
         let connections = self.connections.read().await;
         if let Some(sender) = connections.get(&user_id) {
-            sender.send(message).map_err(|e| format!("Failed to send message: {}", e))?;
+            sender.send(message).map_err(|e| format!("Failed to send: {}", e))?;
         }
         Ok(())
     }
 
-    /// Send message to all members of a channel
     pub async fn send_to_channel(&self, channel_id: Uuid, message: String) -> Result<(), String> {
         let members = self.get_channel_members(channel_id).await;
         let connections = self.connections.read().await;
-
         for user_id in members {
             if let Some(sender) = connections.get(&user_id) {
-                let _ = sender.send(message.clone()); // Don't fail if one user is offline
+                let _ = sender.send(message.clone());
             }
         }
-        
         Ok(())
     }
 
-    /// Get server uptime in seconds
     pub fn uptime(&self) -> u64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        now - self.start_time
+        now() - self.start_time
     }
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 /// Shared application state type
@@ -246,30 +263,68 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn test_node_lifecycle() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner_id = state.register_user("owner".into(), "key".into()).await.unwrap();
+        let user_id = state.register_user("user".into(), "key2".into()).await.unwrap();
+
+        // Create node
+        let node = state.create_node("Test Node".into(), owner_id, Some("desc".into())).await.unwrap();
+        assert_eq!(node.name, "Test Node");
+
+        // Get info
+        let info = state.get_node_info(node.id).await.unwrap();
+        assert_eq!(info.members.len(), 1);
+        assert_eq!(info.channel_count, 1); // default general channel
+
+        // Join
+        state.join_node(user_id, node.id).await.unwrap();
+        let info = state.get_node_info(node.id).await.unwrap();
+        assert_eq!(info.members.len(), 2);
+
+        // Leave
+        state.leave_node(user_id, node.id).await.unwrap();
+        let info = state.get_node_info(node.id).await.unwrap();
+        assert_eq!(info.members.len(), 1);
+
+        // Owner can't leave
+        assert!(state.leave_node(owner_id, node.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_channel_requires_node_membership() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner_id = state.register_user("owner".into(), "key".into()).await.unwrap();
+        let outsider_id = state.register_user("outsider".into(), "key2".into()).await.unwrap();
+
+        let node = state.create_node("Node".into(), owner_id, None).await.unwrap();
+
+        // Owner can create channels
+        let channel = state.create_channel("dev".into(), node.id, owner_id).await.unwrap();
+        assert_eq!(channel.name, "dev");
+
+        // Outsider cannot create channels
+        assert!(state.create_channel("hax".into(), node.id, outsider_id).await.is_err());
+    }
+
+    #[tokio::test]
     async fn test_join_channel_auto_create() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        // Create two users
-        let user1_id = state.register_user("user1".to_string(), "key1".to_string()).await.unwrap();
-        let user2_id = state.register_user("user2".to_string(), "key2".to_string()).await.unwrap();
+        let user1_id = state.register_user("user1".into(), "key1".into()).await.unwrap();
+        let user2_id = state.register_user("user2".into(), "key2".into()).await.unwrap();
 
-        let channel_id = Uuid::new_v4();
+        // Create a node first
+        let node = state.create_node("Node".into(), user1_id, None).await.unwrap();
 
-        // User1 joins channel (should create it)
-        let result1 = state.join_channel(user1_id, channel_id).await;
-        assert!(result1.is_ok(), "User1 should be able to join channel: {:?}", result1);
+        // Create a channel in the node
+        let channel = state.create_channel("test".into(), node.id, user1_id).await.unwrap();
 
-        let members = state.get_channel_members(channel_id).await;
-        assert_eq!(members.len(), 1);
-        assert!(members.contains(&user1_id));
+        // User2 joins node, then channel
+        state.join_node(user2_id, node.id).await.unwrap();
+        state.join_channel(user2_id, channel.id).await.unwrap();
 
-        // User2 joins channel (should add to existing)
-        let result2 = state.join_channel(user2_id, channel_id).await;
-        assert!(result2.is_ok(), "User2 should be able to join channel: {:?}", result2);
-
-        let members = state.get_channel_members(channel_id).await;
-        assert_eq!(members.len(), 2, "Channel should have 2 members, got {:?}", members);
-        assert!(members.contains(&user1_id), "Channel should contain user1");
-        assert!(members.contains(&user2_id), "Channel should contain user2");
+        let members = state.get_channel_members(channel.id).await;
+        assert_eq!(members.len(), 2);
     }
 }

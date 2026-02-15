@@ -5,4 +5,5 @@
 pub mod db;
 pub mod handlers;
 pub mod models;
+pub mod node;
 pub mod state;

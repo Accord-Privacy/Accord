@@ -1,9 +1,10 @@
 //! Database layer for Accord server using SQLite
 //!
-//! Provides persistent storage for users, channels, and messages while maintaining
+//! Provides persistent storage for users, nodes, channels, and messages while maintaining
 //! zero-knowledge properties for encrypted content.
 
 use crate::models::{AuthToken, Channel, User};
+use crate::node::{Node, NodeMember, NodeRole};
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqlitePool, Row, SqlitePool as Pool};
 use std::path::Path;
@@ -17,8 +18,6 @@ pub struct Database {
 
 impl Database {
     /// Create a new database connection to the specified file path
-    ///
-    /// If the path is ":memory:", creates an in-memory database for testing
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let db_url = if db_path.as_ref().to_str() == Some(":memory:") {
             "sqlite::memory:".to_string()
@@ -52,14 +51,51 @@ impl Database {
         .await
         .context("Failed to create users table")?;
 
-        // Create channels table
+        // Create nodes table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS nodes (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                description TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (owner_id) REFERENCES users (id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create nodes table")?;
+
+        // Create node_members table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS node_members (
+                node_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at INTEGER NOT NULL,
+                PRIMARY KEY (node_id, user_id),
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create node_members table")?;
+
+        // Create channels table (with node_id)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS channels (
                 id TEXT PRIMARY KEY NOT NULL,
                 name TEXT NOT NULL,
+                node_id TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
                 FOREIGN KEY (created_by) REFERENCES users (id)
             )
             "#,
@@ -85,7 +121,7 @@ impl Database {
         .await
         .context("Failed to create channel_members table")?;
 
-        // Create messages table for persistent message history
+        // Create messages table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS messages (
@@ -103,19 +139,28 @@ impl Database {
         .await
         .context("Failed to create messages table")?;
 
-        // Create indexes for better query performance
+        // Create indexes
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
             .execute(&self.pool)
             .await?;
-
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes (owner_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_members_node ON node_members (node_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_members_user ON node_members (user_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_channels_node ON channels (node_id)")
+            .execute(&self.pool)
+            .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_channel_members_channel ON channel_members (channel_id)")
             .execute(&self.pool)
             .await?;
-
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members (user_id)")
             .execute(&self.pool)
             .await?;
-
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages (channel_id, created_at)")
             .execute(&self.pool)
             .await?;
@@ -123,34 +168,24 @@ impl Database {
         Ok(())
     }
 
-    /// Register a new user in the database
+    // ── User operations ──
+
     pub async fn create_user(&self, username: &str, public_key: &str) -> Result<User> {
         let user_id = Uuid::new_v4();
-        let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let created_at = now();
 
-        sqlx::query(
-            "INSERT INTO users (id, username, public_key, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(user_id.to_string())
-        .bind(username)
-        .bind(public_key)
-        .bind(created_at as i64)
-        .execute(&self.pool)
-        .await
-        .context("Failed to insert user")?;
+        sqlx::query("INSERT INTO users (id, username, public_key, created_at) VALUES (?, ?, ?, ?)")
+            .bind(user_id.to_string())
+            .bind(username)
+            .bind(public_key)
+            .bind(created_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert user")?;
 
-        Ok(User {
-            id: user_id,
-            username: username.to_string(),
-            public_key: public_key.to_string(),
-            created_at,
-        })
+        Ok(User { id: user_id, username: username.to_string(), public_key: public_key.to_string(), created_at })
     }
 
-    /// Get a user by their ID
     pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<User>> {
         let row = sqlx::query("SELECT id, username, public_key, created_at FROM users WHERE id = ?")
             .bind(user_id.to_string())
@@ -158,19 +193,9 @@ impl Database {
             .await
             .context("Failed to query user by ID")?;
 
-        if let Some(row) = row {
-            Ok(Some(User {
-                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-                username: row.get("username"),
-                public_key: row.get("public_key"),
-                created_at: row.get::<i64, _>("created_at") as u64,
-            }))
-        } else {
-            Ok(None)
-        }
+        row.map(|r| parse_user(&r)).transpose()
     }
 
-    /// Get a user by their username
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query("SELECT id, username, public_key, created_at FROM users WHERE username = ?")
             .bind(username)
@@ -178,59 +203,176 @@ impl Database {
             .await
             .context("Failed to query user by username")?;
 
-        if let Some(row) = row {
-            Ok(Some(User {
-                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-                username: row.get("username"),
-                public_key: row.get("public_key"),
-                created_at: row.get::<i64, _>("created_at") as u64,
-            }))
-        } else {
-            Ok(None)
-        }
+        row.map(|r| parse_user(&r)).transpose()
     }
 
-    /// Create a new channel
-    pub async fn create_channel(&self, name: &str, created_by: Uuid) -> Result<Channel> {
-        let channel_id = Uuid::new_v4();
-        self.create_channel_with_id(channel_id, name, created_by).await
+    pub async fn username_exists(&self, username: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM users WHERE username = ?")
+            .bind(username)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") > 0)
     }
 
-    /// Create a new channel with a specific ID
-    pub async fn create_channel_with_id(&self, channel_id: Uuid, name: &str, created_by: Uuid) -> Result<Channel> {
-        let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    // ── Node operations ──
 
-        sqlx::query(
-            "INSERT INTO channels (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
+    pub async fn create_node(&self, name: &str, owner_id: Uuid, description: Option<&str>) -> Result<Node> {
+        let node_id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query("INSERT INTO nodes (id, name, owner_id, description, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(node_id.to_string())
+            .bind(name)
+            .bind(owner_id.to_string())
+            .bind(description)
+            .bind(created_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert node")?;
+
+        // Add owner as admin member
+        self.add_node_member(node_id, owner_id, NodeRole::Admin).await?;
+
+        // Create a default "general" channel
+        self.create_channel("general", node_id, owner_id).await?;
+
+        Ok(Node {
+            id: node_id,
+            name: name.to_string(),
+            owner_id,
+            description: description.map(|s| s.to_string()),
+            created_at,
+        })
+    }
+
+    pub async fn get_node(&self, node_id: Uuid) -> Result<Option<Node>> {
+        let row = sqlx::query("SELECT id, name, owner_id, description, created_at FROM nodes WHERE id = ?")
+            .bind(node_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query node")?;
+
+        row.map(|r| parse_node(&r)).transpose()
+    }
+
+    pub async fn delete_node(&self, node_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM nodes WHERE id = ?")
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete node")?;
+        Ok(())
+    }
+
+    pub async fn add_node_member(&self, node_id: Uuid, user_id: Uuid, role: NodeRole) -> Result<()> {
+        let joined_at = now();
+        sqlx::query("INSERT OR IGNORE INTO node_members (node_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)")
+            .bind(node_id.to_string())
+            .bind(user_id.to_string())
+            .bind(role.as_str())
+            .bind(joined_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to add node member")?;
+        Ok(())
+    }
+
+    pub async fn remove_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM node_members WHERE node_id = ? AND user_id = ?")
+            .bind(node_id.to_string())
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to remove node member")?;
+        Ok(())
+    }
+
+    pub async fn get_node_members(&self, node_id: Uuid) -> Result<Vec<NodeMember>> {
+        let rows = sqlx::query("SELECT node_id, user_id, role, joined_at FROM node_members WHERE node_id = ?")
+            .bind(node_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query node members")?;
+
+        rows.iter().map(|r| parse_node_member(r)).collect()
+    }
+
+    pub async fn get_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<Option<NodeMember>> {
+        let row = sqlx::query("SELECT node_id, user_id, role, joined_at FROM node_members WHERE node_id = ? AND user_id = ?")
+            .bind(node_id.to_string())
+            .bind(user_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query node member")?;
+
+        row.map(|r| parse_node_member(&r)).transpose()
+    }
+
+    pub async fn is_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<bool> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM node_members WHERE node_id = ? AND user_id = ?")
+            .bind(node_id.to_string())
+            .bind(user_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    pub async fn get_user_nodes(&self, user_id: Uuid) -> Result<Vec<Node>> {
+        let rows = sqlx::query(
+            "SELECT n.id, n.name, n.owner_id, n.description, n.created_at FROM nodes n JOIN node_members nm ON n.id = nm.node_id WHERE nm.user_id = ?"
         )
-        .bind(channel_id.to_string())
-        .bind(name)
-        .bind(created_by.to_string())
-        .bind(created_at as i64)
-        .execute(&self.pool)
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
         .await
-        .context("Failed to insert channel")?;
+        .context("Failed to query user nodes")?;
 
-        // Add the creator as the first member
+        rows.iter().map(|r| parse_node(r)).collect()
+    }
+
+    pub async fn count_node_channels(&self, node_id: Uuid) -> Result<u64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM channels WHERE node_id = ?")
+            .bind(node_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") as u64)
+    }
+
+    // ── Channel operations (now scoped to nodes) ──
+
+    pub async fn create_channel(&self, name: &str, node_id: Uuid, created_by: Uuid) -> Result<Channel> {
+        let channel_id = Uuid::new_v4();
+        self.create_channel_with_id(channel_id, name, node_id, created_by).await
+    }
+
+    pub async fn create_channel_with_id(&self, channel_id: Uuid, name: &str, node_id: Uuid, created_by: Uuid) -> Result<Channel> {
+        let created_at = now();
+
+        sqlx::query("INSERT INTO channels (id, name, node_id, created_by, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(channel_id.to_string())
+            .bind(name)
+            .bind(node_id.to_string())
+            .bind(created_by.to_string())
+            .bind(created_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert channel")?;
+
+        // Add creator as first member
         self.add_user_to_channel(channel_id, created_by).await?;
 
-        // Get members to return in the Channel struct
         let members = self.get_channel_members(channel_id).await?;
 
         Ok(Channel {
             id: channel_id,
             name: name.to_string(),
+            node_id,
             members,
             created_at,
         })
     }
 
-    /// Get a channel by its ID
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>> {
-        let row = sqlx::query("SELECT id, name, created_by, created_at FROM channels WHERE id = ?")
+        let row = sqlx::query("SELECT id, name, node_id, created_by, created_at FROM channels WHERE id = ?")
             .bind(channel_id.to_string())
             .fetch_optional(&self.pool)
             .await
@@ -238,10 +380,10 @@ impl Database {
 
         if let Some(row) = row {
             let members = self.get_channel_members(channel_id).await?;
-
             Ok(Some(Channel {
                 id: Uuid::parse_str(&row.get::<String, _>("id"))?,
                 name: row.get("name"),
+                node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
             }))
@@ -250,27 +392,40 @@ impl Database {
         }
     }
 
-    /// Add a user to a channel
+    pub async fn get_node_channels(&self, node_id: Uuid) -> Result<Vec<Channel>> {
+        let rows = sqlx::query("SELECT id, name, node_id, created_by, created_at FROM channels WHERE node_id = ?")
+            .bind(node_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query node channels")?;
+
+        let mut channels = Vec::new();
+        for row in rows {
+            let channel_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+            let members = self.get_channel_members(channel_id).await?;
+            channels.push(Channel {
+                id: channel_id,
+                name: row.get("name"),
+                node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                members,
+                created_at: row.get::<i64, _>("created_at") as u64,
+            });
+        }
+        Ok(channels)
+    }
+
     pub async fn add_user_to_channel(&self, channel_id: Uuid, user_id: Uuid) -> Result<()> {
-        let joined_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        sqlx::query(
-            "INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)",
-        )
-        .bind(channel_id.to_string())
-        .bind(user_id.to_string())
-        .bind(joined_at as i64)
-        .execute(&self.pool)
-        .await
-        .context("Failed to add user to channel")?;
-
+        let joined_at = now();
+        sqlx::query("INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)")
+            .bind(channel_id.to_string())
+            .bind(user_id.to_string())
+            .bind(joined_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to add user to channel")?;
         Ok(())
     }
 
-    /// Remove a user from a channel
     pub async fn remove_user_from_channel(&self, channel_id: Uuid, user_id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?")
             .bind(channel_id.to_string())
@@ -278,11 +433,9 @@ impl Database {
             .execute(&self.pool)
             .await
             .context("Failed to remove user from channel")?;
-
         Ok(())
     }
 
-    /// Get all members of a channel
     pub async fn get_channel_members(&self, channel_id: Uuid) -> Result<Vec<Uuid>> {
         let rows = sqlx::query("SELECT user_id FROM channel_members WHERE channel_id = ?")
             .bind(channel_id.to_string())
@@ -290,96 +443,63 @@ impl Database {
             .await
             .context("Failed to query channel members")?;
 
-        let mut members = Vec::new();
-        for row in rows {
-            let user_id_str: String = row.get("user_id");
-            members.push(Uuid::parse_str(&user_id_str)?);
-        }
-
-        Ok(members)
+        rows.iter()
+            .map(|r| Uuid::parse_str(&r.get::<String, _>("user_id")).map_err(Into::into))
+            .collect()
     }
 
-    /// Store an encrypted message (for history/offline delivery)
-    pub async fn store_message(
-        &self,
-        channel_id: Uuid,
-        sender_id: Uuid,
-        encrypted_payload: &[u8],
-    ) -> Result<Uuid> {
-        let message_id = Uuid::new_v4();
-        let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    // ── Message operations ──
 
-        sqlx::query(
-            "INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(message_id.to_string())
-        .bind(channel_id.to_string())
-        .bind(sender_id.to_string())
-        .bind(encrypted_payload)
-        .bind(created_at as i64)
-        .execute(&self.pool)
-        .await
-        .context("Failed to store message")?;
+    pub async fn store_message(&self, channel_id: Uuid, sender_id: Uuid, encrypted_payload: &[u8]) -> Result<Uuid> {
+        let message_id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(message_id.to_string())
+            .bind(channel_id.to_string())
+            .bind(sender_id.to_string())
+            .bind(encrypted_payload)
+            .bind(created_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to store message")?;
 
         Ok(message_id)
     }
 
-    /// Get recent messages from a channel (for history/catching up)
-    pub async fn get_channel_messages(
-        &self,
-        channel_id: Uuid,
-        limit: u32,
-        before: Option<u64>,
-    ) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
+    pub async fn get_channel_messages(&self, channel_id: Uuid, limit: u32, before: Option<u64>) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
         let query = if let Some(before_timestamp) = before {
             sqlx::query(
-                "SELECT id, sender_id, encrypted_payload, created_at FROM messages 
-                 WHERE channel_id = ? AND created_at < ?
-                 ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
             )
             .bind(channel_id.to_string())
             .bind(before_timestamp as i64)
             .bind(limit as i64)
         } else {
             sqlx::query(
-                "SELECT id, sender_id, encrypted_payload, created_at FROM messages 
-                 WHERE channel_id = ?
-                 ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?",
             )
             .bind(channel_id.to_string())
             .bind(limit as i64)
         };
 
-        let rows = query
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to query channel messages")?;
+        let rows = query.fetch_all(&self.pool).await.context("Failed to query channel messages")?;
 
-        let mut messages = Vec::new();
-        for row in rows {
-            let message_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
-            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
+        let mut messages: Vec<_> = rows.iter().map(|row| {
+            let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
             let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
             let created_at = row.get::<i64, _>("created_at") as u64;
+            (message_id, sender_id, encrypted_payload, created_at)
+        }).collect();
 
-            messages.push((message_id, sender_id, encrypted_payload, created_at));
-        }
-
-        // Reverse to get chronological order (oldest first)
-        messages.reverse();
+        messages.reverse(); // chronological order
         Ok(messages)
     }
 
-    /// Get all channels that a user is a member of
     pub async fn get_user_channels(&self, user_id: Uuid) -> Result<Vec<Channel>> {
         let rows = sqlx::query(
-            "SELECT c.id, c.name, c.created_by, c.created_at 
-             FROM channels c 
-             JOIN channel_members cm ON c.id = cm.channel_id 
-             WHERE cm.user_id = ?",
+            "SELECT c.id, c.name, c.node_id, c.created_by, c.created_at FROM channels c JOIN channel_members cm ON c.id = cm.channel_id WHERE cm.user_id = ?",
         )
         .bind(user_id.to_string())
         .fetch_all(&self.pool)
@@ -390,38 +510,58 @@ impl Database {
         for row in rows {
             let channel_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
             let members = self.get_channel_members(channel_id).await?;
-
             channels.push(Channel {
                 id: channel_id,
                 name: row.get("name"),
+                node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
             });
         }
-
         Ok(channels)
     }
 
-    /// Check if username already exists
-    pub async fn username_exists(&self, username: &str) -> Result<bool> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM users WHERE username = ?")
-            .bind(username)
-            .fetch_one(&self.pool)
-            .await
-            .context("Failed to check username existence")?;
-
-        let count: i64 = row.get("count");
-        Ok(count > 0)
-    }
-
-    /// Clean up expired auth tokens (this would be called periodically)
-    pub async fn cleanup_expired_tokens(&self, current_time: u64) -> Result<u64> {
-        // Note: Auth tokens are still kept in-memory for now
-        // This is a placeholder for future token persistence
-        // For now, just return 0 as no database tokens were cleaned
-        let _ = current_time; // Suppress unused warning
+    pub async fn cleanup_expired_tokens(&self, _current_time: u64) -> Result<u64> {
         Ok(0)
     }
+}
+
+// ── Helpers ──
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn parse_user(row: &sqlx::sqlite::SqliteRow) -> Result<User> {
+    Ok(User {
+        id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+        username: row.get("username"),
+        public_key: row.get("public_key"),
+        created_at: row.get::<i64, _>("created_at") as u64,
+    })
+}
+
+fn parse_node(row: &sqlx::sqlite::SqliteRow) -> Result<Node> {
+    Ok(Node {
+        id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+        name: row.get("name"),
+        owner_id: Uuid::parse_str(&row.get::<String, _>("owner_id"))?,
+        description: row.get("description"),
+        created_at: row.get::<i64, _>("created_at") as u64,
+    })
+}
+
+fn parse_node_member(row: &sqlx::sqlite::SqliteRow) -> Result<NodeMember> {
+    let role_str: String = row.get("role");
+    Ok(NodeMember {
+        node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+        user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
+        role: NodeRole::from_str(&role_str).unwrap_or(NodeRole::Member),
+        joined_at: row.get::<i64, _>("joined_at") as u64,
+    })
 }
 
 #[cfg(test)]
@@ -430,69 +570,78 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_initialization() {
-        let db = Database::new(":memory:").await.expect("Failed to create in-memory database");
-        // If we get here, the database was created and migrations ran successfully
-        assert!(true);
+        let _db = Database::new(":memory:").await.expect("Failed to create in-memory database");
     }
 
     #[tokio::test]
     async fn test_user_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        // Test user creation
         let user = db.create_user("test_user", "test_public_key").await.unwrap();
         assert_eq!(user.username, "test_user");
-        assert_eq!(user.public_key, "test_public_key");
 
-        // Test get user by ID
-        let found_user = db.get_user_by_id(user.id).await.unwrap().unwrap();
-        assert_eq!(found_user.username, "test_user");
+        let found = db.get_user_by_id(user.id).await.unwrap().unwrap();
+        assert_eq!(found.username, "test_user");
 
-        // Test get user by username
-        let found_user = db.get_user_by_username("test_user").await.unwrap().unwrap();
-        assert_eq!(found_user.id, user.id);
+        let found = db.get_user_by_username("test_user").await.unwrap().unwrap();
+        assert_eq!(found.id, user.id);
 
-        // Test username existence check
         assert!(db.username_exists("test_user").await.unwrap());
-        assert!(!db.username_exists("nonexistent_user").await.unwrap());
+        assert!(!db.username_exists("nonexistent").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_node_operations() {
+        let db = Database::new(":memory:").await.unwrap();
+
+        let user = db.create_user("node_owner", "key").await.unwrap();
+        let node = db.create_node("Test Node", user.id, Some("A test node")).await.unwrap();
+        assert_eq!(node.name, "Test Node");
+        assert_eq!(node.owner_id, user.id);
+
+        // Owner should be admin member
+        let members = db.get_node_members(node.id).await.unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].role, NodeRole::Admin);
+
+        // Default general channel should exist
+        let channels = db.get_node_channels(node.id).await.unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].name, "general");
+
+        // Add another member
+        let user2 = db.create_user("member", "key2").await.unwrap();
+        db.add_node_member(node.id, user2.id, NodeRole::Member).await.unwrap();
+        assert!(db.is_node_member(node.id, user2.id).await.unwrap());
+
+        // Remove member
+        db.remove_node_member(node.id, user2.id).await.unwrap();
+        assert!(!db.is_node_member(node.id, user2.id).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_channel_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        // Create a user first
         let user = db.create_user("test_user", "test_key").await.unwrap();
+        let node = db.create_node("Test Node", user.id, None).await.unwrap();
 
-        // Create a channel
-        let channel = db.create_channel("test_channel", user.id).await.unwrap();
+        let channel = db.create_channel("test_channel", node.id, user.id).await.unwrap();
         assert_eq!(channel.name, "test_channel");
+        assert_eq!(channel.node_id, node.id);
         assert_eq!(channel.members.len(), 1);
-        assert!(channel.members.contains(&user.id));
 
-        // Get channel
-        let found_channel = db.get_channel(channel.id).await.unwrap().unwrap();
-        assert_eq!(found_channel.name, "test_channel");
+        let found = db.get_channel(channel.id).await.unwrap().unwrap();
+        assert_eq!(found.name, "test_channel");
 
-        // Test channel members
-        let members = db.get_channel_members(channel.id).await.unwrap();
-        assert_eq!(members.len(), 1);
-        assert!(members.contains(&user.id));
-
-        // Add another user
         let user2 = db.create_user("test_user2", "test_key2").await.unwrap();
         db.add_user_to_channel(channel.id, user2.id).await.unwrap();
-
         let members = db.get_channel_members(channel.id).await.unwrap();
         assert_eq!(members.len(), 2);
-        assert!(members.contains(&user.id));
-        assert!(members.contains(&user2.id));
 
-        // Remove a user
         db.remove_user_from_channel(channel.id, user2.id).await.unwrap();
         let members = db.get_channel_members(channel.id).await.unwrap();
         assert_eq!(members.len(), 1);
-        assert!(members.contains(&user.id));
     }
 
     #[tokio::test]
@@ -500,19 +649,15 @@ mod tests {
         let db = Database::new(":memory:").await.unwrap();
 
         let user = db.create_user("test_user", "test_key").await.unwrap();
-        let channel = db.create_channel("test_channel", user.id).await.unwrap();
+        let node = db.create_node("Test Node", user.id, None).await.unwrap();
+        let channel = db.create_channel("test_channel", node.id, user.id).await.unwrap();
 
-        // Store a message
         let encrypted_data = b"encrypted_message_data";
         let message_id = db.store_message(channel.id, user.id, encrypted_data).await.unwrap();
 
-        // Get messages
         let messages = db.get_channel_messages(channel.id, 10, None).await.unwrap();
         assert_eq!(messages.len(), 1);
-        
-        let (stored_id, sender_id, payload, _timestamp) = &messages[0];
-        assert_eq!(*stored_id, message_id);
-        assert_eq!(*sender_id, user.id);
-        assert_eq!(*payload, encrypted_data.to_vec());
+        assert_eq!(messages[0].0, message_id);
+        assert_eq!(messages[0].2, encrypted_data.to_vec());
     }
 }

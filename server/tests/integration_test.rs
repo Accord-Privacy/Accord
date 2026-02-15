@@ -426,34 +426,73 @@ async fn test_channel_join_leave_and_messaging() {
     let (mut sink1, mut stream1) = ws_stream1.split();
     let (mut sink2, mut stream2) = ws_stream2.split();
 
-    // Create a channel ID
-    let channel_id = Uuid::new_v4();
-
-    // Both users join the channel
-    let join_message1 = json!({
+    // Create a Node via WebSocket (user1 creates it)
+    let create_node_msg = json!({
         "message_type": {
-            "JoinChannel": {
-                "channel_id": channel_id
+            "CreateNode": {
+                "name": "Test Node",
+                "description": "A test node"
             }
         },
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
+    sink1.send(WsMessage::Text(create_node_msg.to_string())).await.unwrap();
 
-    let join_message2 = json!({
+    // Wait for node_created response to get node_id
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let node_response = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
+    let node_id: Uuid = if let Ok(Some(Ok(WsMessage::Text(text)))) = node_response {
+        let data: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(data["type"], "node_created");
+        Uuid::parse_str(data["node"]["id"].as_str().unwrap()).unwrap()
+    } else {
+        panic!("Expected node_created response");
+    };
+
+    // User2 joins the node
+    let join_node_msg = json!({
         "message_type": {
-            "JoinChannel": {
-                "channel_id": channel_id
-            }
+            "JoinNode": { "node_id": node_id }
         },
         "message_id": Uuid::new_v4(),
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
+    sink2.send(WsMessage::Text(join_node_msg.to_string())).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Consume the node_joined response
+    let _ = tokio::time::timeout(Duration::from_secs(2), stream2.next()).await;
 
-    sink1.send(WsMessage::Text(join_message1.to_string())).await.unwrap();
-    sink2.send(WsMessage::Text(join_message2.to_string())).await.unwrap();
+    // Create a channel in the node (user1)
+    let create_channel_msg = json!({
+        "message_type": {
+            "CreateChannel": { "node_id": node_id, "name": "test-channel" }
+        },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink1.send(WsMessage::Text(create_channel_msg.to_string())).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
-    // Give some time for join operations to complete
+    // Get channel_id from response
+    let ch_response = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
+    let channel_id: Uuid = if let Ok(Some(Ok(WsMessage::Text(text)))) = ch_response {
+        let data: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(data["type"], "channel_created");
+        Uuid::parse_str(data["channel"]["id"].as_str().unwrap()).unwrap()
+    } else {
+        panic!("Expected channel_created response");
+    };
+
+    // User2 joins the channel
+    let join_ch_msg = json!({
+        "message_type": {
+            "JoinChannel": { "channel_id": channel_id }
+        },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink2.send(WsMessage::Text(join_ch_msg.to_string())).await.unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Verify both users are in the channel
