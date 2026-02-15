@@ -11,11 +11,11 @@ mod state;
 
 use anyhow::Result;
 use axum::{
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use clap::Parser;
-use handlers::{auth_handler, create_node_handler, get_node_handler, join_node_handler, leave_node_handler, health_handler, register_handler, ws_handler};
+use handlers::{auth_handler, create_invite_handler, create_node_handler, get_node_handler, join_node_handler, leave_node_handler, list_invites_handler, revoke_invite_handler, use_invite_handler, health_handler, register_handler, ws_handler};
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -82,6 +82,11 @@ async fn main() -> Result<()> {
         .route("/nodes/:id", get(get_node_handler))
         .route("/nodes/:id/join", post(join_node_handler))
         .route("/nodes/:id/leave", post(leave_node_handler))
+        // Node invite endpoints
+        .route("/nodes/:id/invites", post(create_invite_handler))
+        .route("/nodes/:id/invites", get(list_invites_handler))
+        .route("/invites/:invite_id", delete(revoke_invite_handler))
+        .route("/invites/:code/join", post(use_invite_handler))
         // WebSocket endpoint
         .route("/ws", get(ws_handler))
         // Add shared state
@@ -104,14 +109,18 @@ async fn main() -> Result<()> {
     println!("⚡ Ready to route encrypted messages");
     println!();
     println!("Endpoints:");
-    println!("  GET  /health          - Health check");
-    println!("  POST /register        - User registration");
-    println!("  POST /auth            - User authentication");
-    println!("  POST /nodes           - Create a Node (?token=)");
-    println!("  GET  /nodes/:id       - Get Node info");
-    println!("  POST /nodes/:id/join  - Join a Node (?token=)");
-    println!("  POST /nodes/:id/leave - Leave a Node (?token=)");
-    println!("  WS   /ws              - WebSocket messaging (?token=)");
+    println!("  GET    /health            - Health check");
+    println!("  POST   /register          - User registration");
+    println!("  POST   /auth              - User authentication");
+    println!("  POST   /nodes             - Create a Node (?token=)");
+    println!("  GET    /nodes/:id         - Get Node info");
+    println!("  POST   /nodes/:id/join    - Join a Node (?token=)");
+    println!("  POST   /nodes/:id/leave   - Leave a Node (?token=)");
+    println!("  POST   /nodes/:id/invites - Create Node invite (?token=)");
+    println!("  GET    /nodes/:id/invites - List Node invites (?token=)");
+    println!("  DELETE /invites/:id       - Revoke invite (?token=)");
+    println!("  POST   /invites/:code/join - Join Node via invite (?token=)");
+    println!("  WS     /ws                - WebSocket messaging (?token=)");
     println!();
 
     // Create the server

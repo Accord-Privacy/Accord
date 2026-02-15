@@ -1,8 +1,9 @@
 //! HTTP and WebSocket handlers for the Accord relay server
 
 use crate::models::{
-    AuthRequest, AuthResponse, CreateNodeRequest, ErrorResponse, HealthResponse,
-    RegisterRequest, RegisterResponse, WsMessage, WsMessageType,
+    AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest, 
+    ErrorResponse, HealthResponse, RegisterRequest, RegisterResponse, UseInviteResponse, 
+    WsMessage, WsMessageType,
 };
 use crate::node::NodeInfo;
 use crate::state::SharedState;
@@ -125,6 +126,96 @@ pub async fn leave_node_handler(
 
     match state.leave_node(user_id, node_id).await {
         Ok(()) => Ok(Json(serde_json::json!({ "status": "left", "node_id": node_id }))),
+        Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
+    }
+}
+
+// ── Node invite endpoints ──
+
+/// Create a new invite for a Node (POST /nodes/:id/invites)
+pub async fn create_invite_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<CreateInviteRequest>,
+) -> Result<Json<CreateInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.create_invite(node_id, user_id, request.max_uses, request.expires_in_hours).await {
+        Ok((invite_id, invite_code)) => {
+            info!("Invite created: {} for node {} by {}", invite_code, node_id, user_id);
+            
+            // Calculate expires_at for response
+            let expires_at = request.expires_in_hours.map(|hours| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() + (hours as u64 * 3600)
+            });
+
+            Ok(Json(CreateInviteResponse {
+                id: invite_id,
+                invite_code,
+                max_uses: request.max_uses,
+                expires_at,
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            }))
+        }
+        Err(err) => Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 }))),
+    }
+}
+
+/// List invites for a Node (GET /nodes/:id/invites)
+pub async fn list_invites_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.list_invites(node_id, user_id).await {
+        Ok(invites) => Ok(Json(serde_json::json!({ "invites": invites }))),
+        Err(err) => Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 }))),
+    }
+}
+
+/// Revoke an invite (DELETE /invites/:invite_id)
+pub async fn revoke_invite_handler(
+    State(state): State<SharedState>,
+    Path(invite_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.revoke_invite(invite_id, user_id).await {
+        Ok(()) => {
+            info!("Invite revoked: {} by {}", invite_id, user_id);
+            Ok(Json(serde_json::json!({ "status": "revoked", "invite_id": invite_id })))
+        }
+        Err(err) => Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: err, code: 403 }))),
+    }
+}
+
+/// Use an invite code to join a Node (POST /invites/:code/join)
+pub async fn use_invite_handler(
+    State(state): State<SharedState>,
+    Path(invite_code): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<UseInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.use_invite(&invite_code, user_id).await {
+        Ok((node_id, node_name)) => {
+            info!("Invite used: {} by {} to join node {}", invite_code, user_id, node_id);
+            Ok(Json(UseInviteResponse {
+                status: "joined".to_string(),
+                node_id,
+                node_name,
+            }))
+        }
         Err(err) => Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err, code: 400 }))),
     }
 }

@@ -37,6 +37,9 @@ tokio-tungstenite = "0.21"
 config = "0.14"
 clap = { version = "4.0", features = ["derive"] }
 
+# Random number generation
+rand = "0.8"
+
 # TLS support
 rustls = "0.21"
 

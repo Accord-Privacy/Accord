@@ -3,7 +3,7 @@
 //! Provides persistent storage for users, nodes, channels, and messages while maintaining
 //! zero-knowledge properties for encrypted content.
 
-use crate::models::{AuthToken, Channel, User};
+use crate::models::{Channel, User, NodeInvite};
 use crate::node::{Node, NodeMember, NodeRole};
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqlitePool, Row, SqlitePool as Pool};
@@ -139,6 +139,27 @@ impl Database {
         .await
         .context("Failed to create messages table")?;
 
+        // Create node_invites table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS node_invites (
+                id TEXT PRIMARY KEY NOT NULL,
+                node_id TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                invite_code TEXT NOT NULL UNIQUE,
+                max_uses INTEGER,
+                current_uses INTEGER NOT NULL DEFAULT 0,
+                expires_at INTEGER,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create node_invites table")?;
+
         // Create indexes
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
             .execute(&self.pool)
@@ -162,6 +183,12 @@ impl Database {
             .execute(&self.pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages (channel_id, created_at)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_invites_code ON node_invites (invite_code)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_invites_node ON node_invites (node_id)")
             .execute(&self.pool)
             .await?;
 
@@ -524,6 +551,75 @@ impl Database {
     pub async fn cleanup_expired_tokens(&self, _current_time: u64) -> Result<u64> {
         Ok(0)
     }
+
+    // ── Node invite operations ──
+
+    pub async fn create_node_invite(&self, node_id: Uuid, created_by: Uuid, invite_code: &str, max_uses: Option<u32>, expires_at: Option<u64>) -> Result<Uuid> {
+        let invite_id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query("INSERT INTO node_invites (id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)")
+            .bind(invite_id.to_string())
+            .bind(node_id.to_string())
+            .bind(created_by.to_string())
+            .bind(invite_code)
+            .bind(max_uses.map(|u| u as i64))
+            .bind(expires_at.map(|t| t as i64))
+            .bind(created_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to create node invite")?;
+
+        Ok(invite_id)
+    }
+
+    pub async fn get_node_invite_by_code(&self, invite_code: &str) -> Result<Option<NodeInvite>> {
+        let row = sqlx::query("SELECT id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at FROM node_invites WHERE invite_code = ?")
+            .bind(invite_code)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query node invite by code")?;
+
+        row.map(|r| parse_node_invite(&r)).transpose()
+    }
+
+    pub async fn get_node_invites(&self, node_id: Uuid) -> Result<Vec<NodeInvite>> {
+        let rows = sqlx::query("SELECT id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at FROM node_invites WHERE node_id = ? ORDER BY created_at DESC")
+            .bind(node_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query node invites")?;
+
+        rows.iter().map(|r| parse_node_invite(r)).collect()
+    }
+
+    pub async fn increment_invite_usage(&self, invite_code: &str) -> Result<()> {
+        sqlx::query("UPDATE node_invites SET current_uses = current_uses + 1 WHERE invite_code = ?")
+            .bind(invite_code)
+            .execute(&self.pool)
+            .await
+            .context("Failed to increment invite usage")?;
+        Ok(())
+    }
+
+    pub async fn get_node_invite(&self, invite_id: Uuid) -> Result<Option<NodeInvite>> {
+        let row = sqlx::query("SELECT id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at FROM node_invites WHERE id = ?")
+            .bind(invite_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query node invite by ID")?;
+
+        row.map(|r| parse_node_invite(&r)).transpose()
+    }
+
+    pub async fn delete_node_invite(&self, invite_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM node_invites WHERE id = ?")
+            .bind(invite_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete node invite")?;
+        Ok(())
+    }
 }
 
 // ── Helpers ──
@@ -561,6 +657,19 @@ fn parse_node_member(row: &sqlx::sqlite::SqliteRow) -> Result<NodeMember> {
         user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
         role: NodeRole::from_str(&role_str).unwrap_or(NodeRole::Member),
         joined_at: row.get::<i64, _>("joined_at") as u64,
+    })
+}
+
+fn parse_node_invite(row: &sqlx::sqlite::SqliteRow) -> Result<NodeInvite> {
+    Ok(NodeInvite {
+        id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+        node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+        created_by: Uuid::parse_str(&row.get::<String, _>("created_by"))?,
+        invite_code: row.get("invite_code"),
+        max_uses: row.get::<Option<i64>, _>("max_uses").map(|u| u as u32),
+        current_uses: row.get::<i64, _>("current_uses") as u32,
+        expires_at: row.get::<Option<i64>, _>("expires_at").map(|t| t as u64),
+        created_at: row.get::<i64, _>("created_at") as u64,
     })
 }
 

@@ -1,8 +1,8 @@
 //! State management for the Accord relay server with SQLite persistence
 
 use crate::db::Database;
-use crate::models::{AuthToken, Channel, User};
-use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeMember, NodeRole};
+use crate::models::{AuthToken, Channel, NodeInvite};
+use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -174,6 +174,99 @@ impl AppState {
         self.db.remove_node_member(node_id, target_id).await.map_err(|e| e.to_string())
     }
 
+    // ── Node invite operations ──
+
+    pub async fn create_invite(&self, node_id: Uuid, created_by: Uuid, max_uses: Option<u32>, expires_in_hours: Option<u32>) -> Result<(Uuid, String), String> {
+        // Check if user has permission (admin or moderator)
+        let member = self.db.get_node_member(node_id, created_by).await.map_err(|e| e.to_string())?;
+        match member {
+            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => {}
+            _ => return Err("Only admins and moderators can create invites".to_string()),
+        }
+
+        // Generate invite code (8 character alphanumeric)
+        let invite_code = generate_invite_code();
+        
+        // Calculate expiration timestamp
+        let expires_at = expires_in_hours.map(|hours| now() + (hours as u64 * 3600));
+
+        let invite_id = self.db.create_node_invite(node_id, created_by, &invite_code, max_uses, expires_at)
+            .await.map_err(|e| e.to_string())?;
+
+        Ok((invite_id, invite_code))
+    }
+
+    pub async fn use_invite(&self, invite_code: &str, user_id: Uuid) -> Result<(Uuid, String), String> {
+        // Get invite by code
+        let invite = match self.db.get_node_invite_by_code(invite_code).await.map_err(|e| e.to_string())? {
+            Some(invite) => invite,
+            None => return Err("Invalid invite code".to_string()),
+        };
+
+        // Check if invite is expired
+        if let Some(expires_at) = invite.expires_at {
+            if now() > expires_at {
+                return Err("Invite has expired".to_string());
+            }
+        }
+
+        // Check if invite has reached max uses
+        if let Some(max_uses) = invite.max_uses {
+            if invite.current_uses >= max_uses {
+                return Err("Invite has reached maximum uses".to_string());
+            }
+        }
+
+        // Check if user is already a member
+        if self.db.is_node_member(invite.node_id, user_id).await.unwrap_or(false) {
+            return Err("Already a member of this node".to_string());
+        }
+
+        // Get node info for response
+        let node = self.db.get_node(invite.node_id).await.map_err(|e| e.to_string())?
+            .ok_or("Node not found")?;
+
+        // Join user to node
+        self.db.add_node_member(invite.node_id, user_id, NodeRole::Member).await.map_err(|e| e.to_string())?;
+
+        // Increment invite usage
+        self.db.increment_invite_usage(invite_code).await.map_err(|e| e.to_string())?;
+
+        Ok((invite.node_id, node.name))
+    }
+
+    pub async fn list_invites(&self, node_id: Uuid, user_id: Uuid) -> Result<Vec<crate::models::NodeInvite>, String> {
+        // Check if user has permission (admin or moderator)
+        let member = self.db.get_node_member(node_id, user_id).await.map_err(|e| e.to_string())?;
+        match member {
+            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => {}
+            _ => return Err("Only admins and moderators can list invites".to_string()),
+        }
+
+        self.db.get_node_invites(node_id).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn revoke_invite(&self, invite_id: Uuid, user_id: Uuid) -> Result<(), String> {
+        // Get invite to verify permissions
+        let invite = match self.db.get_node_invite(invite_id).await.map_err(|e| e.to_string())? {
+            Some(invite) => invite,
+            None => return Err("Invite not found".to_string()),
+        };
+
+        // Check if user has permission (admin, moderator, or creator of invite)
+        let member = self.db.get_node_member(invite.node_id, user_id).await.map_err(|e| e.to_string())?;
+        let has_permission = match member {
+            Some(m) if m.role == NodeRole::Admin || m.role == NodeRole::Moderator => true,
+            _ => invite.created_by == user_id,
+        };
+
+        if !has_permission {
+            return Err("Insufficient permissions to revoke this invite".to_string());
+        }
+
+        self.db.delete_node_invite(invite_id).await.map_err(|e| e.to_string())
+    }
+
     // ── Channel operations (now Node-scoped) ──
 
     pub async fn join_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
@@ -318,6 +411,17 @@ fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+/// Generate a random 8-character alphanumeric invite code
+fn generate_invite_code() -> String {
+    use rand::{distributions::Alphanumeric, Rng};
+    
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect()
 }
 
 /// Shared application state type

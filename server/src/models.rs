@@ -131,6 +131,44 @@ pub struct CreateNodeRequest {
     pub description: Option<String>,
 }
 
+/// Node invite information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeInvite {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub created_by: Uuid,
+    pub invite_code: String,
+    pub max_uses: Option<u32>,
+    pub current_uses: u32,
+    pub expires_at: Option<u64>,
+    pub created_at: u64,
+}
+
+/// Create Node invite request
+#[derive(Debug, Deserialize)]
+pub struct CreateInviteRequest {
+    pub max_uses: Option<u32>,
+    pub expires_in_hours: Option<u32>,
+}
+
+/// Create Node invite response
+#[derive(Debug, Serialize)]
+pub struct CreateInviteResponse {
+    pub id: Uuid,
+    pub invite_code: String,
+    pub max_uses: Option<u32>,
+    pub expires_at: Option<u64>,
+    pub created_at: u64,
+}
+
+/// Use invite response
+#[derive(Debug, Serialize)]
+pub struct UseInviteResponse {
+    pub status: String,
+    pub node_id: Uuid,
+    pub node_name: String,
+}
+
 /// Generic error response
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
