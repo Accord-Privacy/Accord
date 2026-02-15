@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "accord-server"
+path = "src/main.rs"
+
 [dependencies]
 accord-core = { path = "../core" }
 tokio.workspace = true
@@ -35,3 +39,6 @@ clap = { version = "4.0", features = ["derive"] }
 
 # TLS support
 rustls = "0.21"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
