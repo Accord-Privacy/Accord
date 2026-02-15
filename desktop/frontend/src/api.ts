@@ -17,6 +17,8 @@ import {
   FileMetadata,
   UserProfile,
   UpdateProfileRequest,
+  MessageReaction,
+  MessageReactionsResponse,
 } from './types';
 
 // Configuration
@@ -368,6 +370,33 @@ export class AccordApi {
   async deleteMessage(messageId: string, token: string): Promise<{ success: boolean }> {
     return this.request<{ success: boolean }>(
       `/messages/${messageId}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  // Get message reactions
+  async getMessageReactions(messageId: string, token: string): Promise<MessageReactionsResponse> {
+    return this.request<MessageReactionsResponse>(
+      `/messages/${messageId}/reactions?token=${encodeURIComponent(token)}`
+    );
+  }
+
+  // Add reaction to message
+  async addReaction(messageId: string, emoji: string, token: string): Promise<{ success: boolean; reactions: MessageReaction[] }> {
+    return this.request<{ success: boolean; reactions: MessageReaction[] }>(
+      `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'PUT',
+      }
+    );
+  }
+
+  // Remove reaction from message
+  async removeReaction(messageId: string, emoji: string, token: string): Promise<{ success: boolean; reactions: MessageReaction[] }> {
+    return this.request<{ success: boolean; reactions: MessageReaction[] }>(
+      `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}?token=${encodeURIComponent(token)}`,
       {
         method: 'DELETE',
       }

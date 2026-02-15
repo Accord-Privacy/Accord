@@ -18,13 +18,15 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    auth_handler, create_invite_handler, create_node_handler, delete_channel_handler,
-    delete_file_handler, delete_message_handler, download_file_handler, edit_message_handler,
-    get_channel_messages_handler, get_node_handler, get_node_members_handler,
+    add_reaction_handler, auth_handler, create_invite_handler, create_node_handler,
+    delete_channel_handler, delete_file_handler, delete_message_handler,
+    download_file_handler, edit_message_handler, get_channel_messages_handler,
+    get_message_reactions_handler, get_node_handler, get_node_members_handler,
     get_user_profile_handler, health_handler, join_node_handler, kick_user_handler,
     leave_node_handler, list_channel_files_handler, list_invites_handler, register_handler,
-    revoke_invite_handler, search_messages_handler, update_node_handler,
-    update_user_profile_handler, upload_file_handler, use_invite_handler, ws_handler,
+    remove_reaction_handler, revoke_invite_handler, search_messages_handler,
+    update_node_handler, update_user_profile_handler, upload_file_handler,
+    use_invite_handler, ws_handler,
 };
 use state::{AppState, SharedState};
 use std::sync::Arc;
@@ -100,6 +102,10 @@ async fn main() -> Result<()> {
         // ── Message editing and deletion ──
         .route("/messages/:id", axum::routing::patch(edit_message_handler))
         .route("/messages/:id", delete(delete_message_handler))
+        // ── Message reactions ──
+        .route("/messages/:id/reactions", get(get_message_reactions_handler))
+        .route("/messages/:id/reactions/:emoji", axum::routing::put(add_reaction_handler))
+        .route("/messages/:id/reactions/:emoji", delete(remove_reaction_handler))
         // File sharing endpoints
         .route("/channels/:id/files", post(upload_file_handler))
         .route("/channels/:id/files", get(list_channel_files_handler))
@@ -152,6 +158,9 @@ async fn main() -> Result<()> {
     println!("  DELETE /nodes/:id/members/:user_id - Kick user (?token=) [Admin/Mod]");
     println!("  DELETE /channels/:id      - Delete channel (?token=) [Admin]");
     println!("  GET    /channels/:id/messages - Get channel message history (?token=&limit=50&before=msg_id)");
+    println!("  GET    /messages/:id/reactions - Get message reactions (?token=)");
+    println!("  PUT    /messages/:id/reactions/:emoji - Add reaction (?token=)");
+    println!("  DELETE /messages/:id/reactions/:emoji - Remove reaction (?token=)");
     println!(
         "  GET    /nodes/:id/search  - Search messages in Node (?token=&q=query&channel=ch_id)"
     );

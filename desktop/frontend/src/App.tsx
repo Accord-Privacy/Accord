@@ -19,6 +19,7 @@ import { SearchOverlay } from "./SearchOverlay";
 // Removed unused imports for NodeDiscovery and NodeSettings components
 import { notificationManager, NotificationPreferences } from "./notifications";
 import { NotificationSettings } from "./NotificationSettings";
+import { Settings } from "./Settings";
 
 // Mock data as fallback
 const MOCK_SERVERS = ["Accord Dev", "Gaming", "Music"];
@@ -97,6 +98,13 @@ function App() {
   // Node discovery state
   // Removed unused node dialog state variables
 
+  // Reaction state
+  const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+
+  // Common emojis for the picker
+  const COMMON_EMOJIS = ['👍', '❤️', '😂', '🎉', '🤔', '👀', '🔥', '💯', '✅', '❌'];
+
   // Notification state
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(
     notificationManager.getPreferences()
@@ -106,6 +114,9 @@ function App() {
 
   // Search state
   const [showSearchOverlay, setShowSearchOverlay] = useState(false);
+
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false);
 
   // Permission checking utilities
   const getCurrentUserRole = useCallback((nodeId: string) => {
@@ -296,6 +307,34 @@ function App() {
       }));
 
       // Message editing/deletion functionality removed
+    });
+
+    // Handle reaction add events
+    socket.on('reaction_add', (data) => {
+      console.log('Reaction add event:', data);
+      
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(msg => 
+          msg.id === data.message_id
+            ? { ...msg, reactions: data.reactions }
+            : msg
+        ),
+      }));
+    });
+
+    // Handle reaction remove events
+    socket.on('reaction_remove', (data) => {
+      console.log('Reaction remove event:', data);
+      
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(msg => 
+          msg.id === data.message_id
+            ? { ...msg, reactions: data.reactions }
+            : msg
+        ),
+      }));
     });
 
     socket.on('error', (error: Error) => {
@@ -936,6 +975,62 @@ function App() {
     return member ? (member.role === 'admin' || member.role === 'moderator') : false;
   };
 
+  // Handle adding a reaction to a message
+  const handleAddReaction = async (messageId: string, emoji: string) => {
+    if (!appState.token) return;
+
+    try {
+      if (ws && ws.isSocketConnected()) {
+        // Send via WebSocket
+        ws.addReaction(messageId, emoji);
+      } else {
+        // Send via REST API
+        await api.addReaction(messageId, emoji, appState.token);
+      }
+    } catch (error) {
+      console.error('Failed to add reaction:', error);
+      setError('Failed to add reaction');
+    }
+
+    setShowEmojiPicker(null); // Close emoji picker
+  };
+
+  // Handle removing a reaction from a message
+  const handleRemoveReaction = async (messageId: string, emoji: string) => {
+    if (!appState.token) return;
+
+    try {
+      if (ws && ws.isSocketConnected()) {
+        // Send via WebSocket
+        ws.removeReaction(messageId, emoji);
+      } else {
+        // Send via REST API
+        await api.removeReaction(messageId, emoji, appState.token);
+      }
+    } catch (error) {
+      console.error('Failed to remove reaction:', error);
+      setError('Failed to remove reaction');
+    }
+  };
+
+  // Toggle reaction (add if not present, remove if present)
+  const handleToggleReaction = async (messageId: string, emoji: string) => {
+    if (!appState.user) return;
+
+    const message = appState.messages.find(m => m.id === messageId);
+    if (!message || !message.reactions) {
+      handleAddReaction(messageId, emoji);
+      return;
+    }
+
+    const existingReaction = message.reactions.find(r => r.emoji === emoji);
+    if (existingReaction && existingReaction.users.includes(appState.user.id)) {
+      handleRemoveReaction(messageId, emoji);
+    } else {
+      handleAddReaction(messageId, emoji);
+    }
+  };
+
   // Check for existing session on mount
   useEffect(() => {
     const checkExistingSession = async () => {
@@ -988,13 +1083,17 @@ function App() {
     }
   }, [selectedChannelId, appState.token, serverAvailable, loadMessages]);
 
-  // Keyboard shortcuts for search
+  // Keyboard shortcuts for search and settings
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey && (e.key === 'k' || e.key === 'f')) || 
           (e.metaKey && (e.key === 'k' || e.key === 'f'))) {
         e.preventDefault();
         setShowSearchOverlay(true);
+      }
+      if ((e.ctrlKey && e.key === ',') || (e.metaKey && e.key === ',')) {
+        e.preventDefault();
+        setShowSettings(true);
       }
     };
 
@@ -1498,6 +1597,13 @@ function App() {
             🔔
           </button>
           <button
+            onClick={() => setShowSettings(true)}
+            className="user-panel-settings"
+            title="Settings (Ctrl+,)"
+          >
+            ⚙️
+          </button>
+          <button
             onClick={handleLogout}
             style={{
               background: 'none',
@@ -1695,6 +1801,63 @@ function App() {
                     }}
                   />
                 )}
+
+                {/* Message Reactions */}
+                <div 
+                  className="message-reactions-container"
+                  onMouseEnter={() => setHoveredMessageId(msg.id)}
+                  onMouseLeave={() => setHoveredMessageId(null)}
+                >
+                  {/* Existing reactions */}
+                  {msg.reactions && msg.reactions.length > 0 && (
+                    <div className="message-reactions">
+                      {msg.reactions.map((reaction) => {
+                        const userReacted = appState.user && reaction.users.includes(appState.user.id);
+                        return (
+                          <button
+                            key={reaction.emoji}
+                            className={`reaction ${userReacted ? 'reaction-user-reacted' : ''}`}
+                            onClick={() => handleToggleReaction(msg.id, reaction.emoji)}
+                            title={`${reaction.users.length} reactions`}
+                          >
+                            <span className="reaction-emoji">{reaction.emoji}</span>
+                            <span className="reaction-count">{reaction.count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Add reaction button - show on hover */}
+                  {hoveredMessageId === msg.id && appState.user && (
+                    <div className="add-reaction-container">
+                      <button 
+                        className="add-reaction-btn"
+                        onClick={() => setShowEmojiPicker(showEmojiPicker === msg.id ? null : msg.id)}
+                        title="Add reaction"
+                      >
+                        😊
+                      </button>
+
+                      {/* Emoji picker */}
+                      {showEmojiPicker === msg.id && (
+                        <div className="emoji-picker">
+                          {COMMON_EMOJIS.map((emoji) => (
+                            <button
+                              key={emoji}
+                              className="emoji-option"
+                              onClick={() => handleAddReaction(msg.id, emoji)}
+                              title={`React with ${emoji}`}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Delete Confirmation Dialog */}
                 {showDeleteConfirm === msg.id && (
                   <div className="delete-confirm-overlay">
@@ -1987,6 +2150,25 @@ function App() {
         onClose={() => setShowNotificationSettings(false)}
         preferences={notificationPreferences}
         onPreferencesChange={handleNotificationPreferencesChange}
+      />
+
+      {/* Settings Modal */}
+      <Settings
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        currentUser={appState.user}
+        onUserUpdate={(updates) => {
+          // Update user state if needed
+          if (appState.user) {
+            setAppState(prev => ({
+              ...prev,
+              user: {
+                ...prev.user!,
+                ...updates
+              }
+            }));
+          }
+        }}
       />
 
       {/* Removed non-existent dialog components */}

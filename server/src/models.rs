@@ -71,8 +71,18 @@ pub enum WsMessageType {
         encrypted_data: String,
     },
     /// Delete a message (author or admin/mod)
-    DeleteMessage {
+    DeleteMessage { message_id: Uuid },
+
+    // ── Reaction operations ──
+    /// Add a reaction to a message
+    AddReaction {
         message_id: Uuid,
+        emoji: String,
+    },
+    /// Remove a reaction from a message
+    RemoveReaction {
+        message_id: Uuid,
+        emoji: String,
     },
 
     // ── Voice operations ──
@@ -318,4 +328,19 @@ pub struct SearchResponse {
     pub total_count: u32,
     pub search_query: String,
     pub note: String, // Explains that content search requires client-side decryption
+}
+
+/// Message reaction with count and user list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageReaction {
+    pub emoji: String,
+    pub count: u32,
+    pub users: Vec<Uuid>, // List of user IDs who reacted with this emoji
+    pub created_at: u64,  // When the first reaction with this emoji was added
+}
+
+/// Response for get message reactions
+#[derive(Debug, Serialize)]
+pub struct MessageReactionsResponse {
+    pub reactions: Vec<MessageReaction>,
 }

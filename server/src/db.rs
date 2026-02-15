@@ -272,6 +272,33 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Create message_reactions table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS message_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE(message_id, user_id, emoji),
+                FOREIGN KEY (message_id) REFERENCES messages (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create message_reactions table")?;
+
+        // Create indexes for reactions
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions (message_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_reactions_user ON message_reactions (user_id)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -894,21 +921,20 @@ impl Database {
         &self,
         message_id: Uuid,
         requester_id: Uuid,
-    ) -> Result<Option<(Uuid, Uuid)>> { // Returns (channel_id, sender_id) if successful
+    ) -> Result<Option<(Uuid, Uuid)>> {
+        // Returns (channel_id, sender_id) if successful
         // First, get the message details to check permissions and return channel info
-        let message_info: Option<(String, String)> = sqlx::query_as(
-            "SELECT channel_id, sender_id FROM messages WHERE id = ?"
-        )
-        .bind(message_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to query message")?;
+        let message_info: Option<(String, String)> =
+            sqlx::query_as("SELECT channel_id, sender_id FROM messages WHERE id = ?")
+                .bind(message_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to query message")?;
 
         if let Some((channel_id_str, sender_id_str)) = message_info {
-            let channel_id = Uuid::parse_str(&channel_id_str)
-                .context("Invalid channel_id format")?;
-            let sender_id = Uuid::parse_str(&sender_id_str)
-                .context("Invalid sender_id format")?;
+            let channel_id =
+                Uuid::parse_str(&channel_id_str).context("Invalid channel_id format")?;
+            let sender_id = Uuid::parse_str(&sender_id_str).context("Invalid sender_id format")?;
 
             // Check if requester is the author
             let is_author = requester_id == sender_id;
@@ -921,7 +947,7 @@ impl Database {
                     JOIN channels c ON c.node_id = nm.node_id
                     WHERE c.id = ? AND nm.user_id = ? AND nm.role IN ('admin', 'moderator')
                 )
-                "#
+                "#,
             )
             .bind(channel_id.to_string())
             .bind(requester_id.to_string())
@@ -949,9 +975,10 @@ impl Database {
     pub async fn get_message_details(
         &self,
         message_id: Uuid,
-    ) -> Result<Option<(Uuid, Uuid, u64, Option<u64>)>> { // (channel_id, sender_id, created_at, edited_at)
+    ) -> Result<Option<(Uuid, Uuid, u64, Option<u64>)>> {
+        // (channel_id, sender_id, created_at, edited_at)
         let result: Option<(String, String, i64, Option<i64>)> = sqlx::query_as(
-            "SELECT channel_id, sender_id, created_at, edited_at FROM messages WHERE id = ?"
+            "SELECT channel_id, sender_id, created_at, edited_at FROM messages WHERE id = ?",
         )
         .bind(message_id.to_string())
         .fetch_optional(&self.pool)
@@ -959,10 +986,9 @@ impl Database {
         .context("Failed to query message details")?;
 
         if let Some((channel_id_str, sender_id_str, created_at, edited_at)) = result {
-            let channel_id = Uuid::parse_str(&channel_id_str)
-                .context("Invalid channel_id format")?;
-            let sender_id = Uuid::parse_str(&sender_id_str)
-                .context("Invalid sender_id format")?;
+            let channel_id =
+                Uuid::parse_str(&channel_id_str).context("Invalid channel_id format")?;
+            let sender_id = Uuid::parse_str(&sender_id_str).context("Invalid sender_id format")?;
 
             Ok(Some((
                 channel_id,
@@ -1155,7 +1181,7 @@ impl Database {
     ) -> Result<Vec<crate::models::MemberWithProfile>> {
         let rows = sqlx::query(
             r#"
-            SELECT 
+            SELECT
                 nm.user_id, nm.role, nm.joined_at,
                 u.username,
                 up.display_name, up.avatar_url, up.bio, up.status, up.custom_status
@@ -1254,6 +1280,97 @@ impl Database {
             .context("Failed to delete file metadata")?;
 
         Ok(())
+    }
+
+    // ── Message Reaction operations ──
+
+    /// Add a reaction to a message
+    pub async fn add_reaction(
+        &self,
+        message_id: Uuid,
+        user_id: Uuid,
+        emoji: &str,
+    ) -> Result<()> {
+        let created_at = now();
+        sqlx::query(
+            "INSERT OR IGNORE INTO message_reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .bind(message_id.to_string())
+        .bind(user_id.to_string())
+        .bind(emoji)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to add reaction")?;
+
+        Ok(())
+    }
+
+    /// Remove a reaction from a message
+    pub async fn remove_reaction(
+        &self,
+        message_id: Uuid,
+        user_id: Uuid,
+        emoji: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?"
+        )
+        .bind(message_id.to_string())
+        .bind(user_id.to_string())
+        .bind(emoji)
+        .execute(&self.pool)
+        .await
+        .context("Failed to remove reaction")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get reactions for a message with counts and user lists
+    pub async fn get_message_reactions(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Vec<crate::models::MessageReaction>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT emoji, user_id, created_at
+            FROM message_reactions
+            WHERE message_id = ?
+            ORDER BY created_at ASC
+            "#
+        )
+        .bind(message_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query message reactions")?;
+
+        // Group reactions by emoji
+        let mut reaction_map: std::collections::HashMap<String, Vec<(Uuid, u64)>> = std::collections::HashMap::new();
+        
+        for row in rows {
+            let emoji: String = row.get("emoji");
+            let user_id = Uuid::parse_str(&row.get::<String, _>("user_id"))?;
+            let created_at = row.get::<i64, _>("created_at") as u64;
+            
+            reaction_map.entry(emoji)
+                .or_insert_with(Vec::new)
+                .push((user_id, created_at));
+        }
+
+        let mut reactions = Vec::new();
+        for (emoji, users) in reaction_map {
+            let created_at = users.iter().map(|(_, time)| *time).min().unwrap_or(now());
+            reactions.push(crate::models::MessageReaction {
+                emoji,
+                count: users.len() as u32,
+                users: users.into_iter().map(|(user_id, _)| user_id).collect(),
+                created_at,
+            });
+        }
+
+        // Sort by creation time (earliest first)
+        reactions.sort_by_key(|r| r.created_at);
+        Ok(reactions)
     }
 }
 

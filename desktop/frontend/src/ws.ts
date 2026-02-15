@@ -23,6 +23,8 @@ export interface WsEvents {
   voice_leave: (data: any) => void;
   voice_packet: (data: any) => void;
   voice_speaking: (data: any) => void;
+  reaction_add: (data: any) => void;
+  reaction_remove: (data: any) => void;
 }
 
 type EventListener<T = any> = (data: T) => void;
@@ -265,6 +267,15 @@ export class AccordWebSocket {
 
   sendDeleteMessage(messageId: string): void {
     this.sendMessage({ DeleteMessage: { message_id: messageId } });
+  }
+
+  // Reactions
+  addReaction(messageId: string, emoji: string): void {
+    this.sendMessage({ AddReaction: { message_id: messageId, emoji } });
+  }
+
+  removeReaction(messageId: string, emoji: string): void {
+    this.sendMessage({ RemoveReaction: { message_id: messageId, emoji } });
   }
 
   // Note: encryptedData should be base64-encoded encrypted content

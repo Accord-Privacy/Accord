@@ -2,10 +2,9 @@
 
 use crate::models::{
     AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest,
-    EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse, RegisterRequest, RegisterResponse,
-    UseInviteResponse, WsMessage, WsMessageType,
+    EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse, MessageReactionsResponse,
+    RegisterRequest, RegisterResponse, UseInviteResponse, WsMessage, WsMessageType,
 };
-use base64::Engine;
 use crate::node::NodeInfo;
 use crate::permissions::{has_permission, Permission};
 use crate::state::SharedState;
@@ -19,6 +18,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use base64::Engine;
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
@@ -1012,11 +1012,15 @@ async fn handle_ws_message(
                 .map_err(|_| "Invalid base64 encoded data".to_string())?;
 
             // Attempt to edit the message
-            match state.db.edit_message(message_id, sender_user_id, &encrypted_payload).await {
+            match state
+                .db
+                .edit_message(message_id, sender_user_id, &encrypted_payload)
+                .await
+            {
                 Ok(true) => {
                     // Get the updated message details for broadcasting
-                    if let Ok(Some((channel_id, sender_id, created_at, edited_at))) = 
-                        state.db.get_message_details(message_id).await 
+                    if let Ok(Some((channel_id, sender_id, created_at, edited_at))) =
+                        state.db.get_message_details(message_id).await
                     {
                         // Broadcast the message edit event to channel members
                         let edit_event = serde_json::json!({
@@ -1029,7 +1033,10 @@ async fn handle_ws_message(
                             "edited_at": edited_at,
                             "timestamp": now_secs()
                         });
-                        if let Err(e) = state.send_to_channel(channel_id, edit_event.to_string()).await {
+                        if let Err(e) = state
+                            .send_to_channel(channel_id, edit_event.to_string())
+                            .await
+                        {
                             error!("Failed to broadcast message edit: {}", e);
                         }
                     }
@@ -1055,7 +1062,10 @@ async fn handle_ws_message(
                         "sender_id": sender_id,
                         "timestamp": now_secs()
                     });
-                    if let Err(e) = state.send_to_channel(channel_id, delete_event.to_string()).await {
+                    if let Err(e) = state
+                        .send_to_channel(channel_id, delete_event.to_string())
+                        .await
+                    {
                         error!("Failed to broadcast message delete: {}", e);
                     }
                 }
@@ -1075,6 +1085,85 @@ async fn handle_ws_message(
 
         WsMessageType::Pong => {
             info!("Received pong from user: {}", sender_user_id);
+        }
+
+        // ── Reaction operations ──
+        WsMessageType::AddReaction { message_id, emoji } => {
+            // Check if user has access to the message
+            let message_details = state.db.get_message_details(message_id).await
+                .map_err(|e| format!("Failed to get message details: {}", e))?;
+
+            let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+                Some(details) => details,
+                None => return Err("Message not found".into()),
+            };
+
+            // Check if user is a member of the channel
+            let channel_members = state.db.get_channel_members(channel_id).await
+                .map_err(|e| format!("Failed to get channel members: {}", e))?;
+
+            if !channel_members.contains(&sender_user_id) {
+                return Err("You must be a member of this channel to add reactions".into());
+            }
+
+            // Add the reaction
+            state.db.add_reaction(message_id, sender_user_id, &emoji).await
+                .map_err(|e| format!("Failed to add reaction: {}", e))?;
+
+            // Get updated reactions for broadcasting
+            let reactions = state.db.get_message_reactions(message_id).await
+                .map_err(|e| format!("Failed to get reactions: {}", e))?;
+
+            // Broadcast reaction_add event to channel
+            let reaction_event = serde_json::json!({
+                "type": "reaction_add",
+                "message_id": message_id,
+                "channel_id": channel_id,
+                "user_id": sender_user_id,
+                "emoji": emoji,
+                "reactions": reactions,
+                "timestamp": now_secs()
+            });
+
+            if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+                error!("Failed to broadcast reaction add: {}", e);
+            }
+        }
+
+        WsMessageType::RemoveReaction { message_id, emoji } => {
+            // Check if user has access to the message
+            let message_details = state.db.get_message_details(message_id).await
+                .map_err(|e| format!("Failed to get message details: {}", e))?;
+
+            let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+                Some(details) => details,
+                None => return Err("Message not found".into()),
+            };
+
+            // Remove the reaction
+            let removed = state.db.remove_reaction(message_id, sender_user_id, &emoji).await
+                .map_err(|e| format!("Failed to remove reaction: {}", e))?;
+
+            if removed {
+                // Get updated reactions for broadcasting
+                let reactions = state.db.get_message_reactions(message_id).await
+                    .map_err(|e| format!("Failed to get reactions: {}", e))?;
+
+                // Broadcast reaction_remove event to channel
+                let reaction_event = serde_json::json!({
+                    "type": "reaction_remove",
+                    "message_id": message_id,
+                    "channel_id": channel_id,
+                    "user_id": sender_user_id,
+                    "emoji": emoji,
+                    "reactions": reactions,
+                    "timestamp": now_secs()
+                });
+
+                if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+                    error!("Failed to broadcast reaction remove: {}", e);
+                }
+            }
         }
 
         // ── Voice operations ──
@@ -1573,7 +1662,11 @@ pub async fn edit_message_handler(
         })?;
 
     // Attempt to edit the message
-    let success = match state.db.edit_message(message_id, user_id, &encrypted_payload).await {
+    let success = match state
+        .db
+        .edit_message(message_id, user_id, &encrypted_payload)
+        .await
+    {
         Ok(success) => success,
         Err(e) => {
             error!("Failed to edit message: {}", e);
@@ -1598,8 +1691,8 @@ pub async fn edit_message_handler(
     }
 
     // Get the updated message details for broadcasting
-    if let Ok(Some((channel_id, sender_id, created_at, edited_at))) = 
-        state.db.get_message_details(message_id).await 
+    if let Ok(Some((channel_id, sender_id, created_at, edited_at))) =
+        state.db.get_message_details(message_id).await
     {
         // Broadcast the message edit event to channel members
         let edit_event = serde_json::json!({
@@ -1613,7 +1706,10 @@ pub async fn edit_message_handler(
             "timestamp": now_secs()
         });
 
-        if let Err(e) = state.send_to_channel(channel_id, edit_event.to_string()).await {
+        if let Err(e) = state
+            .send_to_channel(channel_id, edit_event.to_string())
+            .await
+        {
             error!("Failed to broadcast message edit: {}", e);
         }
     }
@@ -1682,7 +1778,10 @@ pub async fn delete_message_handler(
                 "timestamp": now_secs()
             });
 
-            if let Err(e) = state.send_to_channel(channel_id, delete_event.to_string()).await {
+            if let Err(e) = state
+                .send_to_channel(channel_id, delete_event.to_string())
+                .await
+            {
                 error!("Failed to broadcast message delete: {}", e);
             }
 
@@ -1722,4 +1821,309 @@ fn extract_user_id_from_token(token: &str) -> Result<Uuid, anyhow::Error> {
     // In a real implementation, this would validate and decode a JWT token
     // For now, we'll just try to parse it as a UUID directly
     Uuid::parse_str(token).map_err(|e| anyhow::anyhow!("Invalid token format: {}", e))
+}
+
+// ── Message Reaction endpoints ──
+
+/// Add reaction to message (PUT /messages/:id/reactions/:emoji)
+pub async fn add_reaction_handler(
+    Path((message_id, emoji)): Path<(String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Validate emoji (basic check for empty string)
+    if emoji.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Emoji cannot be empty".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Check if user has access to the message (via channel membership)
+    let message_details = state.db.get_message_details(message_id).await
+        .map_err(|e| {
+            error!("Failed to get message details: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to access message".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+        Some(details) => details,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Message not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Check if user is a member of the channel
+    let channel_members = state.db.get_channel_members(channel_id).await
+        .map_err(|e| {
+            error!("Failed to get channel members: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel access".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !channel_members.contains(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "You must be a member of this channel to add reactions".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Add the reaction
+    state.db.add_reaction(message_id, user_id, &emoji).await
+        .map_err(|e| {
+            error!("Failed to add reaction: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to add reaction".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Get updated reactions for broadcasting
+    let reactions = state.db.get_message_reactions(message_id).await
+        .map_err(|e| {
+            error!("Failed to get reactions: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get reactions".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Broadcast reaction_add event to channel
+    let reaction_event = serde_json::json!({
+        "type": "reaction_add",
+        "message_id": message_id,
+        "channel_id": channel_id,
+        "user_id": user_id,
+        "emoji": emoji,
+        "reactions": reactions,
+        "timestamp": now_secs()
+    });
+
+    if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+        error!("Failed to broadcast reaction add: {}", e);
+    }
+
+    Ok(Json(serde_json::json!({"success": true, "reactions": reactions})))
+}
+
+/// Remove reaction from message (DELETE /messages/:id/reactions/:emoji)
+pub async fn remove_reaction_handler(
+    Path((message_id, emoji)): Path<(String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user has access to the message
+    let message_details = state.db.get_message_details(message_id).await
+        .map_err(|e| {
+            error!("Failed to get message details: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to access message".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+        Some(details) => details,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Message not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Remove the reaction
+    let removed = state.db.remove_reaction(message_id, user_id, &emoji).await
+        .map_err(|e| {
+            error!("Failed to remove reaction: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to remove reaction".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !removed {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Reaction not found".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    // Get updated reactions for broadcasting
+    let reactions = state.db.get_message_reactions(message_id).await
+        .map_err(|e| {
+            error!("Failed to get reactions: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get reactions".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Broadcast reaction_remove event to channel
+    let reaction_event = serde_json::json!({
+        "type": "reaction_remove",
+        "message_id": message_id,
+        "channel_id": channel_id,
+        "user_id": user_id,
+        "emoji": emoji,
+        "reactions": reactions,
+        "timestamp": now_secs()
+    });
+
+    if let Err(e) = state.send_to_channel(channel_id, reaction_event.to_string()).await {
+        error!("Failed to broadcast reaction remove: {}", e);
+    }
+
+    Ok(Json(serde_json::json!({"success": true, "reactions": reactions})))
+}
+
+/// Get reactions for a message (GET /messages/:id/reactions)
+pub async fn get_message_reactions_handler(
+    Path(message_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<MessageReactionsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user has access to the message
+    let message_details = state.db.get_message_details(message_id).await
+        .map_err(|e| {
+            error!("Failed to get message details: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to access message".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+        Some(details) => details,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Message not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Check if user is a member of the channel
+    let channel_members = state.db.get_channel_members(channel_id).await
+        .map_err(|e| {
+            error!("Failed to get channel members: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel access".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !channel_members.contains(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "You must be a member of this channel to view reactions".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Get the reactions
+    let reactions = state.db.get_message_reactions(message_id).await
+        .map_err(|e| {
+            error!("Failed to get reactions: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get reactions".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(MessageReactionsResponse { reactions }))
 }

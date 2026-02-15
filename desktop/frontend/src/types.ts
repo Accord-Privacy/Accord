@@ -96,6 +96,8 @@ export type WsMessageType =
   | { ChannelMessage: { channel_id: string; encrypted_data: string } }
   | { EditMessage: { message_id: string; encrypted_data: string } }
   | { DeleteMessage: { message_id: string } }
+  | { AddReaction: { message_id: string; emoji: string } }
+  | { RemoveReaction: { message_id: string; emoji: string } }
   | 'Ping'
   | 'Pong';
 
@@ -177,6 +179,18 @@ export interface Message {
   timestamp: number;
   edited_at?: number;
   isEncrypted?: boolean;
+  reactions?: MessageReaction[];
+}
+
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  users: string[];
+  created_at: number;
+}
+
+export interface MessageReactionsResponse {
+  reactions: MessageReaction[];
 }
 
 // Message pagination response from server
@@ -248,4 +262,25 @@ export interface VoiceSpeakingMessage {
   channel_id: string;
   user_id: string;
   speaking: boolean;
+}
+
+// Reaction WebSocket messages
+export interface ReactionAddMessage {
+  type: 'reaction_add';
+  message_id: string;
+  channel_id: string;
+  user_id: string;
+  emoji: string;
+  reactions: MessageReaction[];
+  timestamp: number;
+}
+
+export interface ReactionRemoveMessage {
+  type: 'reaction_remove';
+  message_id: string;
+  channel_id: string;
+  user_id: string;
+  emoji: string;
+  reactions: MessageReaction[];
+  timestamp: number;
 }
