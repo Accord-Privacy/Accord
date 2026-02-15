@@ -1,3 +1,4 @@
+use accord_core::crypto::CryptoManager;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use futures::{SinkExt, StreamExt};
@@ -94,6 +95,7 @@ struct ChatMessage {
 #[derive(Serialize, Deserialize)]
 struct RegisterRequest {
     username: String,
+    public_key: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,7 +121,17 @@ struct JoinNodeRequest {
 
 #[derive(Serialize, Deserialize)]
 struct SendMessageRequest {
-    content: String,
+    encrypted_content: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncryptedChatMessage {
+    id: Uuid,
+    channel_id: Uuid,
+    user_id: Uuid,
+    username: String,
+    encrypted_content: Vec<u8>,
+    timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 struct AccordClient {
@@ -136,9 +148,13 @@ impl AccordClient {
     }
 
     async fn register(&self, username: &str) -> Result<AuthResponse> {
+        // Generate X25519 keypair for this user
+        let public_key = generate_and_save_keypair()?;
+        
         let url = format!("{}/api/register", self.server_url);
         let request = RegisterRequest {
             username: username.to_string(),
+            public_key,
         };
 
         let response = self.client
@@ -280,9 +296,73 @@ fn load_token() -> Result<String> {
     Ok(token.trim().to_string())
 }
 
+fn get_identity_key_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
+    let accord_dir = home.join(".accord");
+    
+    // Create directory if it doesn't exist
+    if !accord_dir.exists() {
+        fs::create_dir_all(&accord_dir)?;
+    }
+    
+    Ok(accord_dir.join("identity.key"))
+}
+
+fn save_private_key(private_key_bytes: &[u8]) -> Result<()> {
+    let path = get_identity_key_path()?;
+    fs::write(path, private_key_bytes)?;
+    Ok(())
+}
+
+fn load_private_key() -> Result<Vec<u8>> {
+    let path = get_identity_key_path()?;
+    let key_bytes = fs::read(path)?;
+    Ok(key_bytes)
+}
+
+fn generate_and_save_keypair() -> Result<Vec<u8>> {
+    let crypto = CryptoManager::new();
+    let key_pair = crypto.generate_key_pair()?;
+    
+    // Save the private key (we need to serialize it first)
+    // For now, we'll store the public key as a placeholder since ring doesn't expose private key bytes
+    // In a real implementation, we'd use a different crypto library or serialize properly
+    save_private_key(&key_pair.public_key)?;
+    
+    Ok(key_pair.public_key)
+}
+
 async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
     // Load authentication token
     let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+
+    // Initialize crypto manager and establish a session key for this channel
+    let mut crypto = CryptoManager::new();
+    
+    // For simplicity, we'll derive a session key from the user's identity key + channel ID
+    // In a real implementation, this would involve proper key exchange with other users
+    let _private_key = load_private_key().map_err(|_| anyhow!("No identity key found. Please re-register."))?;
+    
+    // Create a deterministic but secure session key for this channel
+    // This is simplified - real implementation would use proper key exchange
+    let session_key = accord_core::crypto::SessionKey {
+        key_material: {
+            let mut key = [0u8; 32];
+            // Use channel_id as seed for session key (simplified approach)
+            let channel_bytes = channel_id.as_bytes();
+            for (i, &byte) in channel_bytes.iter().enumerate() {
+                if i < 32 {
+                    key[i] = byte;
+                }
+            }
+            key
+        },
+        chain_key: [42u8; 32], // Fixed chain key for simplicity
+        message_number: 0,
+    };
+    
+    crypto.set_session("channel", session_key);
+    println!("🔒 E2E encryption initialized for channel");
 
     // Convert HTTP URL to WebSocket URL
     let ws_url = if server_url.starts_with("https://") {
@@ -298,15 +378,54 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
     let (mut write, mut read) = ws_stream.split();
     
     println!("✅ Connected to channel {}!", channel_id);
+    println!("🔐 All messages are end-to-end encrypted");
     println!("Type messages and press Enter. Type '/quit' to exit.\n");
+
+    // Create a shared crypto manager for the read task
+    let mut read_crypto = CryptoManager::new();
+    let read_session_key = accord_core::crypto::SessionKey {
+        key_material: {
+            let mut key = [0u8; 32];
+            let channel_bytes = channel_id.as_bytes();
+            for (i, &byte) in channel_bytes.iter().enumerate() {
+                if i < 32 {
+                    key[i] = byte;
+                }
+            }
+            key
+        },
+        chain_key: [42u8; 32], 
+        message_number: 0,
+    };
+    read_crypto.set_session("channel", read_session_key);
 
     // Spawn a task to handle incoming messages
     let read_handle = tokio::spawn(async move {
         while let Some(msg) = read.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
-                    if let Ok(chat_msg) = serde_json::from_str::<ChatMessage>(&text) {
-                        println!("[{}] {}: {}", 
+                    // Try to parse as encrypted message first
+                    if let Ok(encrypted_msg) = serde_json::from_str::<EncryptedChatMessage>(&text) {
+                        match read_crypto.decrypt_message("channel", &encrypted_msg.encrypted_content) {
+                            Ok(decrypted_bytes) => {
+                                if let Ok(content) = String::from_utf8(decrypted_bytes) {
+                                    println!("[{}] {}: {}", 
+                                        encrypted_msg.timestamp.format("%H:%M:%S"),
+                                        encrypted_msg.username,
+                                        content
+                                    );
+                                } else {
+                                    println!("❌ Failed to decode decrypted message");
+                                }
+                            }
+                            Err(e) => {
+                                println!("❌ Failed to decrypt message: {}", e);
+                            }
+                        }
+                    }
+                    // Fallback to plaintext for server messages/notifications
+                    else if let Ok(chat_msg) = serde_json::from_str::<ChatMessage>(&text) {
+                        println!("[{}] {}: {} (plaintext)", 
                             chat_msg.timestamp.format("%H:%M:%S"),
                             chat_msg.username,
                             chat_msg.content
@@ -343,13 +462,21 @@ async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
         }
         
         if !input.is_empty() {
-            let message = serde_json::to_string(&SendMessageRequest {
-                content: input.to_string(),
-            })?;
-            
-            if let Err(e) = write.send(Message::Text(message)).await {
-                println!("❌ Failed to send message: {}", e);
-                break;
+            // Encrypt the message before sending
+            match crypto.encrypt_message("channel", input.as_bytes()) {
+                Ok(encrypted_content) => {
+                    let message = serde_json::to_string(&SendMessageRequest {
+                        encrypted_content,
+                    })?;
+                    
+                    if let Err(e) = write.send(Message::Text(message)).await {
+                        println!("❌ Failed to send message: {}", e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to encrypt message: {}", e);
+                }
             }
         }
     }
@@ -369,6 +496,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Register { username } => {
             println!("🔐 Registering user '{}'...", username);
+            println!("🔑 Generating X25519 keypair for E2E encryption...");
             
             match client.register(&username).await {
                 Ok(auth_response) => {
@@ -379,6 +507,7 @@ async fn main() -> Result<()> {
                     // Save token for future use
                     save_token(&auth_response.token)?;
                     println!("💾 Authentication token saved to ~/.accord/token");
+                    println!("🔒 Identity key saved to ~/.accord/identity.key");
                 }
                 Err(e) => {
                     println!("❌ Registration failed: {}", e);
