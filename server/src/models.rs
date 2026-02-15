@@ -243,3 +243,43 @@ pub struct MemberWithProfile {
     pub joined_at: u64,
     pub profile: UserProfile,
 }
+
+/// Message metadata for history (encrypted content is opaque to server)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageMetadata {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub sender_id: Uuid,
+    pub sender_username: String,
+    pub encrypted_payload: String, // Base64 encoded encrypted content
+    pub created_at: u64,
+}
+
+/// Response for paginated message history
+#[derive(Debug, Serialize)]
+pub struct MessageHistoryResponse {
+    pub messages: Vec<MessageMetadata>,
+    pub has_more: bool,
+    pub next_cursor: Option<Uuid>, // message_id for pagination
+}
+
+/// Search result containing message metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub message_id: Uuid,
+    pub channel_id: Uuid,
+    pub channel_name: String,
+    pub sender_id: Uuid,
+    pub sender_username: String,
+    pub created_at: u64,
+    pub encrypted_payload: String, // Base64 encoded - content search must happen client-side
+}
+
+/// Response for search messages
+#[derive(Debug, Serialize)]
+pub struct SearchResponse {
+    pub results: Vec<SearchResult>,
+    pub total_count: u32,
+    pub search_query: String,
+    pub note: String, // Explains that content search requires client-side decryption
+}

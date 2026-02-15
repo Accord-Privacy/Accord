@@ -16,7 +16,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use handlers::{auth_handler, create_invite_handler, create_node_handler, delete_channel_handler, get_node_handler, get_node_members_handler, get_user_profile_handler, join_node_handler, kick_user_handler, leave_node_handler, list_invites_handler, revoke_invite_handler, update_node_handler, update_user_profile_handler, use_invite_handler, health_handler, register_handler, ws_handler};
+use handlers::{auth_handler, create_invite_handler, create_node_handler, delete_channel_handler, get_channel_messages_handler, get_node_handler, get_node_members_handler, get_user_profile_handler, join_node_handler, kick_user_handler, leave_node_handler, list_invites_handler, revoke_invite_handler, search_messages_handler, update_node_handler, update_user_profile_handler, use_invite_handler, health_handler, register_handler, ws_handler};
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -87,6 +87,9 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
         // Channel endpoints
         .route("/channels/:id", delete(delete_channel_handler))
+        .route("/channels/:id/messages", get(get_channel_messages_handler))
+        // Search endpoints
+        .route("/nodes/:id/search", get(search_messages_handler))
         // User profile endpoints
         .route("/users/:id/profile", get(get_user_profile_handler))
         .route("/users/me/profile", axum::routing::patch(update_user_profile_handler))
@@ -128,6 +131,8 @@ async fn main() -> Result<()> {
     println!("  POST   /nodes/:id/leave   - Leave a Node (?token=)");
     println!("  DELETE /nodes/:id/members/:user_id - Kick user (?token=) [Admin/Mod]");
     println!("  DELETE /channels/:id      - Delete channel (?token=) [Admin]");
+    println!("  GET    /channels/:id/messages - Get channel message history (?token=&limit=50&before=msg_id)");
+    println!("  GET    /nodes/:id/search  - Search messages in Node (?token=&q=query&channel=ch_id)");
     println!("  GET    /users/:id/profile - Get user profile (?token=)");
     println!("  PATCH  /users/me/profile  - Update own profile (?token=)");
     println!("  GET    /nodes/:id/members - Get Node members with profiles (?token=)");

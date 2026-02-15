@@ -295,6 +295,137 @@ pub async fn delete_channel_handler(
     }
 }
 
+// ── Message endpoints ──
+
+/// Get channel message history with pagination (GET /channels/:id/messages)
+pub async fn get_channel_messages_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::MessageHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user has access to this channel
+    let can_access = state.user_can_access_channel(user_id, channel_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+            error: format!("Access check failed: {}", e), 
+            code: 500 
+        })))?;
+        
+    if !can_access {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+            error: "Access denied to this channel".into(), 
+            code: 403 
+        })));
+    }
+
+    // Parse query parameters
+    let limit = params.get("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(50)
+        .min(100); // Cap at 100 messages per request
+
+    let before_id = params.get("before")
+        .and_then(|s| Uuid::parse_str(s).ok());
+
+    match state.get_channel_messages_paginated(channel_id, limit, before_id).await {
+        Ok(messages) => {
+            // Check if there are more messages (look ahead by 1)
+            let has_more = if messages.len() as u32 == limit {
+                if let Some(last_msg) = messages.last() {
+                    let check_more = state.get_channel_messages_paginated(channel_id, 1, Some(last_msg.id)).await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+                            error: format!("Failed to check for more messages: {}", e), 
+                            code: 500 
+                        })))?;
+                    !check_more.is_empty()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let next_cursor = if has_more {
+                messages.last().map(|msg| msg.id)
+            } else {
+                None
+            };
+
+            Ok(Json(crate::models::MessageHistoryResponse {
+                messages,
+                has_more,
+                next_cursor,
+            }))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+            error: format!("Failed to get messages: {}", err), 
+            code: 500 
+        }))),
+    }
+}
+
+/// Search messages within a Node (GET /nodes/:id/search)
+pub async fn search_messages_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user is member of this node
+    let is_member = state.is_node_member(user_id, node_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+            error: format!("Membership check failed: {}", e), 
+            code: 500 
+        })))?;
+        
+    if !is_member {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { 
+            error: "Access denied to this node".into(), 
+            code: 403 
+        })));
+    }
+
+    // Parse query parameters
+    let query = params.get("q").ok_or_else(|| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { 
+            error: "Query parameter 'q' is required".into(), 
+            code: 400 
+        }))
+    })?;
+
+    if query.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { 
+            error: "Search query cannot be empty".into(), 
+            code: 400 
+        })));
+    }
+
+    let channel_id_filter = params.get("channel")
+        .and_then(|s| Uuid::parse_str(s).ok());
+
+    let limit = params.get("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(50)
+        .min(200); // Cap at 200 search results
+
+    match state.search_messages(node_id, query, channel_id_filter, limit).await {
+        Ok(results) => {
+            Ok(Json(crate::models::SearchResponse {
+                total_count: results.len() as u32,
+                results,
+                search_query: query.to_string(),
+                note: "Search results include metadata only. Message content is end-to-end encrypted and must be searched client-side after decryption.".to_string(),
+            }))
+        }
+        Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { 
+            error: format!("Search failed: {}", err), 
+            code: 500 
+        }))),
+    }
+}
+
 // ── User profile endpoints ──
 
 /// Get user profile (GET /users/:id/profile)

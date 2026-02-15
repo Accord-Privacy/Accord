@@ -4,6 +4,7 @@
 //! zero-knowledge properties for encrypted content.
 
 use crate::models::{Channel, User, NodeInvite};
+use base64::Engine;
 use crate::node::{Node, NodeMember, NodeRole};
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqlitePool, Row, SqlitePool as Pool};
@@ -211,6 +212,14 @@ impl Database {
             .execute(&self.pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_user_profiles_status ON user_profiles (status)")
+            .execute(&self.pool)
+            .await?;
+
+        // Additional indexes for message history and search functionality
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (created_at DESC)")
             .execute(&self.pool)
             .await?;
 
@@ -547,6 +556,161 @@ impl Database {
 
         messages.reverse(); // chronological order
         Ok(messages)
+    }
+
+    /// Get channel messages with cursor-based pagination for message history endpoint
+    pub async fn get_channel_messages_paginated(
+        &self,
+        channel_id: Uuid,
+        limit: u32,
+        before_id: Option<Uuid>,
+    ) -> Result<Vec<crate::models::MessageMetadata>> {
+        let query = if let Some(before_message_id) = before_id {
+            // Get the timestamp of the before_id message for cursor pagination
+            let before_timestamp: i64 = sqlx::query_scalar(
+                "SELECT created_at FROM messages WHERE id = ?"
+            )
+            .bind(before_message_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to get before message timestamp")?
+            .unwrap_or(0);
+
+            sqlx::query(
+                r#"
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, u.username
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                WHERE m.channel_id = ? AND m.created_at < ?
+                ORDER BY m.created_at DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(channel_id.to_string())
+            .bind(before_timestamp)
+            .bind(limit as i64)
+        } else {
+            sqlx::query(
+                r#"
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, u.username
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                WHERE m.channel_id = ?
+                ORDER BY m.created_at DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(channel_id.to_string())
+            .bind(limit as i64)
+        };
+
+        let rows = query.fetch_all(&self.pool).await.context("Failed to query channel messages")?;
+
+        let messages: Vec<_> = rows.iter().map(|row| {
+            let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+            let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
+            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+            let sender_username: String = row.get("username");
+            let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+            let created_at = row.get::<i64, _>("created_at") as u64;
+            
+            crate::models::MessageMetadata {
+                id: message_id,
+                channel_id,
+                sender_id,
+                sender_username,
+                encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
+                created_at,
+            }
+        }).collect();
+
+        Ok(messages)
+    }
+
+    /// Search messages within a Node by metadata (sender, channel, timestamp)
+    /// Note: Content search is not possible due to E2E encryption
+    pub async fn search_messages(
+        &self,
+        node_id: Uuid,
+        query: &str,
+        channel_id_filter: Option<Uuid>,
+        limit: u32,
+    ) -> Result<Vec<crate::models::SearchResult>> {
+        // Since messages are E2E encrypted, we can only search by metadata:
+        // - sender username
+        // - channel name
+        // - timestamp (not implemented in query param, but could be)
+        
+        let base_query = if let Some(channel_filter) = channel_id_filter {
+            format!(
+                r#"
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at,
+                       u.username as sender_username, c.name as channel_name
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                JOIN channels c ON m.channel_id = c.id
+                WHERE c.node_id = ? AND c.id = ?
+                  AND (LOWER(u.username) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
+                ORDER BY m.created_at DESC
+                LIMIT ?
+                "#
+            )
+        } else {
+            format!(
+                r#"
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at,
+                       u.username as sender_username, c.name as channel_name
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                JOIN channels c ON m.channel_id = c.id
+                WHERE c.node_id = ?
+                  AND (LOWER(u.username) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
+                ORDER BY m.created_at DESC
+                LIMIT ?
+                "#
+            )
+        };
+
+        let search_pattern = format!("%{}%", query.to_lowercase());
+        
+        let query_builder = if channel_id_filter.is_some() {
+            sqlx::query(&base_query)
+                .bind(node_id.to_string())
+                .bind(channel_id_filter.unwrap().to_string())
+                .bind(&search_pattern)
+                .bind(&search_pattern)
+                .bind(limit as i64)
+        } else {
+            sqlx::query(&base_query)
+                .bind(node_id.to_string())
+                .bind(&search_pattern)
+                .bind(&search_pattern)
+                .bind(limit as i64)
+        };
+
+        let rows = query_builder.fetch_all(&self.pool).await.context("Failed to search messages")?;
+
+        let results: Vec<_> = rows.iter().map(|row| {
+            let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+            let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
+            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+            let sender_username: String = row.get("sender_username");
+            let channel_name: String = row.get("channel_name");
+            let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+            let created_at = row.get::<i64, _>("created_at") as u64;
+            
+            crate::models::SearchResult {
+                message_id,
+                channel_id,
+                channel_name,
+                sender_id,
+                sender_username,
+                created_at,
+                encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
+            }
+        }).collect();
+
+        Ok(results)
     }
 
     pub async fn get_user_channels(&self, user_id: Uuid) -> Result<Vec<Channel>> {

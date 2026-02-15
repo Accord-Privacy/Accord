@@ -553,6 +553,64 @@ impl AppState {
         Ok(())
     }
 
+    // ── Message operations ──
+
+    /// Get channel messages with cursor-based pagination
+    pub async fn get_channel_messages_paginated(
+        &self,
+        channel_id: Uuid,
+        limit: u32,
+        before_id: Option<Uuid>,
+    ) -> Result<Vec<crate::models::MessageMetadata>, String> {
+        self.db
+            .get_channel_messages_paginated(channel_id, limit, before_id)
+            .await
+            .map_err(|e| format!("Database error: {}", e))
+    }
+
+    /// Search messages within a Node by metadata
+    pub async fn search_messages(
+        &self,
+        node_id: Uuid,
+        query: &str,
+        channel_id_filter: Option<Uuid>,
+        limit: u32,
+    ) -> Result<Vec<crate::models::SearchResult>, String> {
+        self.db
+            .search_messages(node_id, query, channel_id_filter, limit)
+            .await
+            .map_err(|e| format!("Database error: {}", e))
+    }
+
+    /// Check if user can access a specific channel (must be node member and channel member)
+    pub async fn user_can_access_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<bool, String> {
+        // Get channel info to find the node
+        let channel = self.db
+            .get_channel(channel_id)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?;
+        
+        let channel = channel.ok_or_else(|| "Channel not found".to_string())?;
+
+        // Check if user is a member of the node
+        let is_node_member = self.db
+            .is_node_member(channel.node_id, user_id)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?;
+
+        // For now, all node members can access all channels in the node
+        // TODO: Implement per-channel permissions if needed
+        Ok(is_node_member)
+    }
+
+    /// Check if user is a member of a node
+    pub async fn is_node_member(&self, user_id: Uuid, node_id: Uuid) -> Result<bool, String> {
+        self.db
+            .is_node_member(node_id, user_id)
+            .await
+            .map_err(|e| format!("Database error: {}", e))
+    }
+
     pub fn uptime(&self) -> u64 {
         now() - self.start_time
     }
