@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::crypto::{CryptoManager, VoiceKey};
 
 /// Voice channel configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceChannel {
     pub channel_id: Uuid,
     pub name: String,
@@ -22,7 +22,7 @@ pub struct VoiceChannel {
     pub encryption_mode: EncryptionMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VoiceChannelType {
     /// Lobby voice channel - anyone can join
     Lobby,
@@ -33,7 +33,7 @@ pub enum VoiceChannelType {
 }
 
 /// Audio quality settings for voice channels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioQuality {
     pub sample_rate: u32,    // Hz (8000, 16000, 24000, 48000)
     pub bitrate: u32,        // bits per second (8000-128000)
@@ -42,7 +42,7 @@ pub struct AudioQuality {
 }
 
 /// Voice participant information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceParticipant {
     pub user_id: Uuid,
     pub joined_at: chrono::DateTime<chrono::Utc>,
@@ -54,7 +54,7 @@ pub struct VoiceParticipant {
 }
 
 /// Voice encryption modes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EncryptionMode {
     /// End-to-end encrypted (keys shared between clients)
     EndToEnd,
@@ -65,7 +65,7 @@ pub enum EncryptionMode {
 }
 
 /// Voice packet for transmission
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoicePacket {
     pub packet_id: u64,
     pub user_id: Uuid,
@@ -76,7 +76,7 @@ pub struct VoicePacket {
     pub packet_type: VoicePacketType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VoicePacketType {
     /// Regular audio data
     Audio,

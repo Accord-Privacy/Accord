@@ -10,14 +10,14 @@ use uuid::Uuid;
 use base64::{Engine as _, engine::general_purpose};
 
 /// Simplified encryption key
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SimpleKey {
     pub key_material: [u8; 32],
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Encrypted message envelope
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedEnvelope {
     pub nonce: Vec<u8>,
     pub ciphertext: Vec<u8>,

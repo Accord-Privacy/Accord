@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{AccordMessage, MessageType};
 
 /// Protocol message envelope for network transmission
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetworkEnvelope {
     pub envelope_id: Uuid,
     pub protocol_version: u8,
@@ -16,7 +16,7 @@ pub struct NetworkEnvelope {
 }
 
 /// Connection handshake message
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandshakeMessage {
     pub user_id: Uuid,
     pub username: String,
@@ -25,7 +25,7 @@ pub struct HandshakeMessage {
 }
 
 /// Server response to handshake
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandshakeResponse {
     pub server_id: Uuid,
     pub server_name: String,
@@ -35,7 +35,7 @@ pub struct HandshakeResponse {
 }
 
 /// Channel information for client
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelInfo {
     pub channel_id: Uuid,
     pub name: String,

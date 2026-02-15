@@ -10,7 +10,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc, Duration};
 
 /// Invite configuration with expiration and access controls
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Invite {
     pub invite_code: String,
     pub server_id: Uuid,
@@ -26,7 +26,7 @@ pub struct Invite {
 }
 
 /// Types of invites with different behaviors
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum InviteType {
     /// Standard server invite
     Server,
@@ -39,7 +39,7 @@ pub enum InviteType {
 }
 
 /// Access level granted by invite
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AccessLevel {
     /// Basic member access
     Member,
@@ -52,7 +52,7 @@ pub enum AccessLevel {
 }
 
 /// Quality control gates for invite acceptance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QualityGates {
     /// Require account age minimum
     pub min_account_age_days: Option<u32>,
@@ -66,14 +66,14 @@ pub struct QualityGates {
     pub verification_questions: Vec<VerificationQuestion>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VerificationQuestion {
     pub question: String,
     pub expected_type: AnswerType,
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AnswerType {
     Text,
     MultipleChoice { options: Vec<String> },
@@ -81,7 +81,7 @@ pub enum AnswerType {
 }
 
 /// Invite usage record for tracking and auditing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InviteUsage {
     pub usage_id: Uuid,
     pub invite_code: String,
@@ -91,14 +91,14 @@ pub struct InviteUsage {
     pub approval_status: ApprovalStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserInfo {
     pub username: String,
     pub account_created: DateTime<Utc>,
     pub verification_status: VerificationStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum VerificationStatus {
     Unverified,
     EmailVerified,
@@ -106,7 +106,7 @@ pub enum VerificationStatus {
     FullyVerified,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ApprovalStatus {
     Pending,
     Approved,
@@ -127,7 +127,7 @@ pub enum InviteValidation {
 }
 
 /// Pending join request awaiting approval
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PendingJoin {
     pub request_id: Uuid,
     pub invite_code: String,

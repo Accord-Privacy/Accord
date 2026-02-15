@@ -3,8 +3,24 @@
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
+mod handlers;
+mod models;
+mod state;
+
 use anyhow::Result;
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use clap::Parser;
+use handlers::{auth_handler, health_handler, register_handler, ws_handler};
+use state::{AppState, SharedState};
+use std::sync::Arc;
+use tower::ServiceBuilder;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
@@ -44,22 +60,52 @@ async fn main() -> Result<()> {
         warn!("Running without TLS - only use for development!");
     }
 
-    // TODO: Initialize server components
-    // - WebSocket handler for real-time messaging
-    // - REST API for file uploads
-    // - User authentication system
-    // - Message routing system
-    // - Voice packet relay
-    // - Bot command routing
+    // Initialize shared state
+    let state: SharedState = Arc::new(AppState::new());
+    
+    // Build the router with all endpoints
+    let app = Router::new()
+        // REST endpoints
+        .route("/health", get(health_handler))
+        .route("/register", post(register_handler))
+        .route("/auth", post(auth_handler))
+        // WebSocket endpoint
+        .route("/ws", get(ws_handler))
+        // Add shared state
+        .with_state(state)
+        // Add middleware
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(
+                    CorsLayer::new()
+                        .allow_methods(Any)
+                        .allow_headers(Any)
+                        .allow_origin(Any)
+                ),
+        );
 
     println!("🚀 Accord Relay Server starting...");
     println!("📡 Listening on {}:{}", args.host, args.port);
     println!("🔒 Zero-knowledge design: Server cannot decrypt user content");
     println!("⚡ Ready to route encrypted messages");
+    println!();
+    println!("Endpoints:");
+    println!("  GET  /health    - Health check");
+    println!("  POST /register  - User registration");
+    println!("  POST /auth      - User authentication");
+    println!("  WS   /ws        - WebSocket messaging (requires ?token=<auth_token>)");
+    println!();
 
-    // Keep the server running (placeholder)
-    tokio::signal::ctrl_c().await?;
+    // Create the server
+    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", args.host, args.port)).await?;
+    
+    info!("Server successfully bound to {}:{}", args.host, args.port);
+
+    // Start the server
+    axum::serve(listener, app)
+        .await?;
+
     info!("Shutting down server...");
-
     Ok(())
 }

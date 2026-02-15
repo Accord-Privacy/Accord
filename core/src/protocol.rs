@@ -18,7 +18,7 @@ pub const PROTOCOL_VERSION: u8 = 1;
 pub const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
 /// Network message envelope
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetworkMessage {
     pub message_id: Uuid,
     pub message_type: MessageType,
@@ -31,7 +31,7 @@ pub struct NetworkMessage {
 }
 
 /// Types of network messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessageType {
     // Authentication & Connection
     Handshake,
@@ -77,7 +77,7 @@ pub enum MessageType {
 }
 
 /// Message payload containing the actual data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessagePayload {
     // Connection Messages
     Handshake(HandshakePayload),
@@ -122,7 +122,7 @@ pub enum MessagePayload {
 
 // Payload Definitions
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandshakePayload {
     pub protocol_version: u8,
     pub client_version: String,
@@ -130,20 +130,20 @@ pub struct HandshakePayload {
     pub public_key: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AuthPayload {
     pub user_id: Uuid,
     pub token: String,
     pub signature: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HeartbeatPayload {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub latency_check: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextMessagePayload {
     pub content: Vec<u8>, // Encrypted message content
     pub message_type: TextMessageType,
@@ -152,7 +152,7 @@ pub struct TextMessagePayload {
     pub attachments: Vec<AttachmentInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TextMessageType {
     Regular,
     System,
@@ -160,7 +160,7 @@ pub enum TextMessageType {
     Edit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttachmentInfo {
     pub file_id: Uuid,
     pub filename: String,
@@ -169,66 +169,66 @@ pub struct AttachmentInfo {
     pub encrypted: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypingPayload {
     pub is_typing: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EditPayload {
     pub original_message_id: Uuid,
     pub new_content: Vec<u8>, // Encrypted
     pub edit_timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletePayload {
     pub message_id: Uuid,
     pub delete_timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceJoinPayload {
     pub channel_id: Uuid,
     pub audio_codec: String,
     pub encryption_key: Vec<u8>, // Encrypted voice key
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceLeavePayload {
     pub channel_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoicePacketPayload {
     pub packet: VoicePacket,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceSpeakingPayload {
     pub is_speaking: bool,
     pub channel_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelJoinPayload {
     pub channel_id: Uuid,
     pub channel_key: Option<Vec<u8>>, // For private channels
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelLeavePayload {
     pub channel_id: Uuid,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelUpdatePayload {
     pub channel_id: Uuid,
     pub update_type: ChannelUpdateType,
     pub data: Vec<u8>, // Encrypted update data
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ChannelUpdateType {
     NameChange,
     TopicChange,
@@ -237,17 +237,17 @@ pub enum ChannelUpdateType {
     UserLeft,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotCommandPayload {
     pub command: BotCommand,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotResponsePayload {
     pub response: BotResponse,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileUploadPayload {
     pub file_id: Uuid,
     pub filename: String,
@@ -258,7 +258,7 @@ pub struct FileUploadPayload {
     pub encrypted_metadata: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileChunkPayload {
     pub file_id: Uuid,
     pub chunk_number: u32,
@@ -267,7 +267,7 @@ pub struct FileChunkPayload {
     pub checksum: [u8; 32], // SHA-256 of unencrypted chunk
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ServerInfoPayload {
     pub server_id: Uuid,
     pub server_name: String,
@@ -276,12 +276,12 @@ pub struct ServerInfoPayload {
     pub features: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserListPayload {
     pub users: Vec<UserInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserInfo {
     pub user_id: Uuid,
     pub username: String,
@@ -289,7 +289,7 @@ pub struct UserInfo {
     pub public_key: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UserStatus {
     Online,
     Away,
@@ -298,14 +298,14 @@ pub enum UserStatus {
     Offline,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorPayload {
     pub error_code: ErrorCode,
     pub error_message: String,
     pub details: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ErrorCode {
     // Authentication Errors
     InvalidCredentials,
@@ -342,13 +342,13 @@ pub enum ErrorCode {
     MalformedPayload,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedPayload {
     pub encrypted_data: Vec<u8>,
     pub encryption_info: EncryptionInfo,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptionInfo {
     pub algorithm: String,
     pub key_version: u32,

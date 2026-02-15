@@ -23,7 +23,7 @@ pub fn init() -> Result<(), String> {
 }
 
 /// Message types in the Accord system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessageType {
     TextMessage,
     VoicePacket,
@@ -35,7 +35,7 @@ pub enum MessageType {
 }
 
 /// Core message structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccordMessage {
     pub id: Uuid,
     pub message_type: MessageType,
@@ -46,7 +46,7 @@ pub struct AccordMessage {
 }
 
 /// User identity in the system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: Uuid,
     pub username: String,
@@ -55,7 +55,7 @@ pub struct User {
 }
 
 /// Server information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Server {
     pub id: Uuid,
     pub name: String,

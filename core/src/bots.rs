@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Bot command that can be parsed without decrypting channel content
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotCommand {
     pub command_id: Uuid,
     pub bot_id: Uuid,
@@ -21,7 +21,7 @@ pub struct BotCommand {
 }
 
 /// Bot response with embedded interface elements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotResponse {
     pub response_id: Uuid,
     pub command_id: Uuid, // Links back to original command
@@ -31,7 +31,7 @@ pub struct BotResponse {
 }
 
 /// Types of bot responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BotResponseType {
     /// Simple text response
     Text,
@@ -44,7 +44,7 @@ pub enum BotResponseType {
 }
 
 /// Interactive embedded elements that bots can provide
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EmbeddedElement {
     Button {
         id: String,
@@ -73,7 +73,7 @@ pub enum EmbeddedElement {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ButtonStyle {
     Primary,
     Secondary,
@@ -81,14 +81,14 @@ pub enum ButtonStyle {
     Danger,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SelectOption {
     pub label: String,
     pub value: String,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbedField {
     pub name: String,
     pub value: String,
@@ -96,7 +96,7 @@ pub struct EmbedField {
 }
 
 /// Action to be taken when embedded element is interacted with
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EmbeddedAction {
     /// Send another command to the bot
     Command { command: String },
@@ -109,7 +109,7 @@ pub enum EmbeddedAction {
 }
 
 /// Bot registration and metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bot {
     pub bot_id: Uuid,
     pub name: String,
@@ -122,7 +122,7 @@ pub struct Bot {
 }
 
 /// Definition of a command the bot can handle
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotCommandDefinition {
     pub command: String, // e.g., "weather", "play", "help"
     pub description: String,
@@ -130,7 +130,7 @@ pub struct BotCommandDefinition {
     pub requires_permissions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandParameter {
     pub name: String,
     pub parameter_type: ParameterType,
@@ -138,7 +138,7 @@ pub struct CommandParameter {
     pub description: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ParameterType {
     String,
     Integer,
@@ -149,7 +149,7 @@ pub enum ParameterType {
 }
 
 /// Permissions a bot has in the server
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotPermissions {
     pub can_send_messages: bool,
     pub can_send_embeds: bool,
@@ -159,7 +159,7 @@ pub struct BotPermissions {
 }
 
 /// Bot interaction tracking (for rate limiting and auditing)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BotInteraction {
     pub interaction_id: Uuid,
     pub bot_id: Uuid,
@@ -169,7 +169,7 @@ pub struct BotInteraction {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum InteractionType {
     Command,
     ButtonClick,

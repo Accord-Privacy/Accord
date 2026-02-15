@@ -28,7 +28,7 @@ pub enum VoiceChannelType {
 }
 
 /// User permissions within a channel
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelPermissions {
     pub can_speak: bool,
     pub can_invite: bool,
@@ -38,7 +38,7 @@ pub struct ChannelPermissions {
 }
 
 /// Channel member with their permissions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelMember {
     pub user_id: Uuid,
     pub permissions: ChannelPermissions,
@@ -46,7 +46,7 @@ pub struct ChannelMember {
 }
 
 /// Entry request for private channels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntryRequest {
     pub request_id: Uuid,
     pub user_id: Uuid,
@@ -56,7 +56,7 @@ pub struct EntryRequest {
 }
 
 /// Channel configuration and metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Channel {
     pub id: Uuid,
     pub name: String,
