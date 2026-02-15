@@ -49,6 +49,8 @@ export interface NodeMember {
   user_id: string;
   role: 'admin' | 'moderator' | 'member';
   joined_at: number;
+  profile?: UserProfile;
+  status?: PresenceStatus;
 }
 
 export interface NodeInfo {
@@ -75,6 +77,11 @@ export interface Channel {
   created_at: number;
 }
 
+export interface CreateChannelRequest {
+  name: string;
+  channel_type: string;
+}
+
 // WebSocket message types
 export type WsMessageType =
   | { CreateNode: { name: string; description?: string } }
@@ -99,6 +106,38 @@ export interface WsMessage {
 export interface WsIncomingMessage {
   type: string;
   [key: string]: any;
+}
+
+export interface PresenceUpdateMessage {
+  type: 'presence_update';
+  user_id: string;
+  status: PresenceStatus;
+}
+
+// User profile types
+export interface UserProfile {
+  user_id: string;
+  display_name: string;
+  avatar_url?: string;
+  bio?: string;
+  status: PresenceStatus;
+  custom_status?: string;
+  updated_at: number;
+}
+
+export enum PresenceStatus {
+  Online = 'online',
+  Idle = 'idle',
+  DND = 'dnd',
+  Offline = 'offline',
+}
+
+export interface UpdateProfileRequest {
+  display_name?: string;
+  avatar_url?: string;
+  bio?: string;
+  status?: PresenceStatus;
+  custom_status?: string;
 }
 
 // Error response

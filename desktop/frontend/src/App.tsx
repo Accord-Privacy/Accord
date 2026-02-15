@@ -61,6 +61,52 @@ function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
 
+  // Role-based permission state
+  const [userRoles, setUserRoles] = useState<Record<string, 'admin' | 'moderator' | 'member'>>({});
+  const [showCreateChannelForm, setShowCreateChannelForm] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelType, setNewChannelType] = useState("text");
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [generatedInvite, setGeneratedInvite] = useState<string>("");
+  const [error, setError] = useState<string>("");
+
+  // Permission checking utilities
+  const getCurrentUserRole = useCallback((nodeId: string) => {
+    return userRoles[nodeId] || 'member';
+  }, [userRoles]);
+
+  const hasPermission = useCallback((nodeId: string, permission: 'CreateChannel' | 'DeleteChannel' | 'ManageMembers' | 'KickMembers' | 'ManageInvites' | 'ManageNode') => {
+    const role = getCurrentUserRole(nodeId);
+    
+    switch (role) {
+      case 'admin':
+        return true; // Admin has all permissions
+      case 'moderator':
+        return ['KickMembers', 'ManageInvites'].includes(permission);
+      case 'member':
+        return false; // Members have no admin permissions
+      default:
+        return false;
+    }
+  }, [getCurrentUserRole]);
+
+  const getRoleBadge = (role: 'admin' | 'moderator' | 'member') => {
+    switch (role) {
+      case 'admin': return '👑';
+      case 'moderator': return '🛡️';
+      default: return '';
+    }
+  };
+
+  const handleApiError = (error: any) => {
+    if (error.message && error.message.includes('403')) {
+      setError("You don't have permission to perform this action");
+    } else {
+      setError(error.message || "An error occurred");
+    }
+    setTimeout(() => setError(""), 5000); // Clear error after 5 seconds
+  };
+
   // Check server availability on mount
   useEffect(() => {
     const checkServer = async () => {
@@ -137,7 +183,7 @@ function App() {
     socket.on('error', (error: Error) => {
       console.error('WebSocket error:', error);
     });
-  }, []);
+  }, [encryptionEnabled, keyPair]);
 
   // Load user's nodes
   const loadNodes = useCallback(async () => {
@@ -170,6 +216,7 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to load channels:', error);
+      handleApiError(error);
       setChannels([]);
     }
   }, [appState.token, serverAvailable, selectedChannelId]);
@@ -181,8 +228,21 @@ function App() {
     try {
       const nodeMembers = await api.getNodeMembers(nodeId, appState.token);
       setMembers(nodeMembers);
+      
+      // Find current user's role in this node
+      const currentUserId = localStorage.getItem('accord_user_id');
+      if (currentUserId) {
+        const currentUserMember = nodeMembers.find(member => member.user_id === currentUserId);
+        if (currentUserMember) {
+          setUserRoles(prev => ({
+            ...prev,
+            [nodeId]: currentUserMember.role
+          }));
+        }
+      }
     } catch (error) {
       console.error('Failed to load members:', error);
+      handleApiError(error);
       setMembers([]);
     }
   }, [appState.token, serverAvailable]);
@@ -206,6 +266,7 @@ function App() {
       }));
     } catch (error) {
       console.error('Failed to load messages:', error);
+      handleApiError(error);
       setAppState(prev => ({
         ...prev,
         messages: [],
@@ -241,6 +302,78 @@ function App() {
       ws.joinChannel(channelId);
     }
   }, [loadMessages, ws]);
+
+  // Handle creating a new channel
+  const handleCreateChannel = async () => {
+    if (!selectedNodeId || !appState.token || !newChannelName.trim()) return;
+    
+    try {
+      await api.createChannel(selectedNodeId, newChannelName.trim(), newChannelType, appState.token);
+      setShowCreateChannelForm(false);
+      setNewChannelName("");
+      setNewChannelType("text");
+      // Reload channels
+      await loadChannels(selectedNodeId);
+    } catch (error) {
+      console.error('Failed to create channel:', error);
+      handleApiError(error);
+    }
+  };
+
+  // Handle generating an invite
+  const handleGenerateInvite = async () => {
+    if (!selectedNodeId || !appState.token) return;
+    
+    try {
+      const response = await api.createInvite(selectedNodeId, appState.token);
+      setGeneratedInvite(response.invite_code);
+      setShowInviteModal(true);
+    } catch (error) {
+      console.error('Failed to generate invite:', error);
+      handleApiError(error);
+    }
+  };
+
+  // Handle kicking a member
+  const handleKickMember = async (userId: string, username: string) => {
+    if (!selectedNodeId || !appState.token) return;
+    
+    const confirmed = window.confirm(`Are you sure you want to kick ${username} from this node?`);
+    if (!confirmed) return;
+    
+    try {
+      await api.kickMember(selectedNodeId, userId, appState.token);
+      // Reload members
+      await loadMembers(selectedNodeId);
+    } catch (error) {
+      console.error('Failed to kick member:', error);
+      handleApiError(error);
+    }
+  };
+
+  // Handle deleting a channel
+  const handleDeleteChannel = async (channelId: string, channelName: string) => {
+    if (!appState.token) return;
+    
+    const confirmed = window.confirm(`Are you sure you want to delete #${channelName}? This action cannot be undone.`);
+    if (!confirmed) return;
+    
+    try {
+      await api.deleteChannel(channelId, appState.token);
+      // If we deleted the currently selected channel, clear selection
+      if (channelId === selectedChannelId) {
+        setSelectedChannelId(null);
+        setActiveChannel("# general");
+      }
+      // Reload channels
+      if (selectedNodeId) {
+        await loadChannels(selectedNodeId);
+      }
+    } catch (error) {
+      console.error('Failed to delete channel:', error);
+      handleApiError(error);
+    }
+  };
 
   // Handle authentication
   const handleAuth = async () => {
@@ -683,36 +816,219 @@ function App() {
 
       {/* Channel sidebar */}
       <div className="channel-sidebar">
-        <div className="sidebar-header">
-          {servers[activeServer]}
-          {appState.isConnected && (
-            <span style={{ fontSize: '10px', color: '#43b581', marginLeft: '8px' }}>●</span>
-          )}
-          {!serverAvailable && (
-            <span style={{ fontSize: '10px', color: '#faa61a', marginLeft: '8px' }}>DEMO</span>
+        <div className="sidebar-header" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              {servers[activeServer]}
+              {appState.isConnected && (
+                <span style={{ fontSize: '10px', color: '#43b581', marginLeft: '8px' }}>●</span>
+              )}
+              {!serverAvailable && (
+                <span style={{ fontSize: '10px', color: '#faa61a', marginLeft: '8px' }}>DEMO</span>
+              )}
+            </div>
+            
+            {/* Admin/Moderator Controls */}
+            {selectedNodeId && (hasPermission(selectedNodeId, 'ManageInvites') || hasPermission(selectedNodeId, 'ManageNode')) && (
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {hasPermission(selectedNodeId, 'ManageInvites') && (
+                  <button
+                    onClick={handleGenerateInvite}
+                    style={{
+                      background: '#7289da',
+                      border: 'none',
+                      color: '#ffffff',
+                      padding: '2px 6px',
+                      borderRadius: '2px',
+                      cursor: 'pointer',
+                      fontSize: '10px'
+                    }}
+                    title="Generate Invite"
+                  >
+                    Invite
+                  </button>
+                )}
+                {hasPermission(selectedNodeId, 'ManageNode') && (
+                  <button
+                    onClick={() => alert('Node management features coming soon!')}
+                    style={{
+                      background: '#f04747',
+                      border: 'none',
+                      color: '#ffffff',
+                      padding: '2px 6px',
+                      borderRadius: '2px',
+                      cursor: 'pointer',
+                      fontSize: '10px'
+                    }}
+                    title="Manage Node"
+                  >
+                    Manage
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          
+          {/* Show current user's role */}
+          {selectedNodeId && userRoles[selectedNodeId] && (
+            <div style={{ fontSize: '11px', color: '#b9bbbe', opacity: 0.8 }}>
+              {getRoleBadge(userRoles[selectedNodeId])} {userRoles[selectedNodeId]}
+            </div>
           )}
         </div>
+        
         <div className="channel-list">
           {channelList.map((ch, i) => {
             const channel = channels.length > 0 ? channels[i] : null;
             const isActive = channel ? channel.id === selectedChannelId : ch === activeChannel;
+            const canDeleteChannel = selectedNodeId && hasPermission(selectedNodeId, 'DeleteChannel');
+            
             return (
               <div
                 key={channel?.id || ch}
                 className={`channel ${isActive ? "active" : ""}`}
-                onClick={() => {
-                  if (channel) {
-                    handleChannelSelect(channel.id, ch);
-                  } else {
-                    setActiveChannel(ch);
-                  }
-                }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
               >
-                {ch}
+                <div
+                  onClick={() => {
+                    if (channel) {
+                      handleChannelSelect(channel.id, ch);
+                    } else {
+                      setActiveChannel(ch);
+                    }
+                  }}
+                  style={{ flex: 1, cursor: 'pointer' }}
+                >
+                  {ch}
+                </div>
+                {canDeleteChannel && channel && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteChannel(channel.id, channel.name);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#f04747',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      padding: '2px 4px',
+                      borderRadius: '2px',
+                      opacity: 0.7,
+                    }}
+                    title="Delete channel"
+                    onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                    onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             );
           })}
+          
+          {/* Create Channel Button for Admins */}
+          {selectedNodeId && hasPermission(selectedNodeId, 'CreateChannel') && (
+            <div style={{ marginTop: '8px', padding: '0 16px' }}>
+              {!showCreateChannelForm ? (
+                <button
+                  onClick={() => setShowCreateChannelForm(true)}
+                  style={{
+                    background: '#43b581',
+                    border: 'none',
+                    color: '#ffffff',
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    width: '100%'
+                  }}
+                >
+                  + Create Channel
+                </button>
+              ) : (
+                <div style={{ 
+                  background: '#40444b', 
+                  padding: '8px', 
+                  borderRadius: '4px',
+                  marginBottom: '8px'
+                }}>
+                  <input
+                    type="text"
+                    placeholder="Channel name"
+                    value={newChannelName}
+                    onChange={(e) => setNewChannelName(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '4px 8px',
+                      marginBottom: '4px',
+                      border: 'none',
+                      borderRadius: '2px',
+                      background: '#36393f',
+                      color: '#ffffff',
+                      fontSize: '12px'
+                    }}
+                  />
+                  <select
+                    value={newChannelType}
+                    onChange={(e) => setNewChannelType(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '4px 8px',
+                      marginBottom: '4px',
+                      border: 'none',
+                      borderRadius: '2px',
+                      background: '#36393f',
+                      color: '#ffffff',
+                      fontSize: '12px'
+                    }}
+                  >
+                    <option value="text">Text Channel</option>
+                    <option value="voice">Voice Channel</option>
+                  </select>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      onClick={handleCreateChannel}
+                      style={{
+                        flex: 1,
+                        background: '#43b581',
+                        border: 'none',
+                        color: '#ffffff',
+                        padding: '4px 8px',
+                        borderRadius: '2px',
+                        cursor: 'pointer',
+                        fontSize: '11px'
+                      }}
+                    >
+                      Create
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCreateChannelForm(false);
+                        setNewChannelName("");
+                        setNewChannelType("text");
+                      }}
+                      style={{
+                        flex: 1,
+                        background: '#747f8d',
+                        border: 'none',
+                        color: '#ffffff',
+                        padding: '4px 8px',
+                        borderRadius: '2px',
+                        cursor: 'pointer',
+                        fontSize: '11px'
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+        
         <div className="user-panel">
           <div className="user-avatar">
             {appState.user?.username?.[0] || "U"}
@@ -854,22 +1170,65 @@ function App() {
       <div className="member-sidebar">
         <div className="member-header">Members — {users.length}</div>
         {members.length > 0 ? (
-          members.map((member) => (
-            <div key={member.user.id} className="member">
-              <div className="member-avatar">{member.user.username[0]}</div>
-              <span className="member-name">{member.user.username}</span>
-              <span 
-                className="member-status"
-                style={{ 
-                  marginLeft: 'auto', 
-                  fontSize: '12px',
-                  color: '#43b581' // Online color - we'll assume all are online for now
-                }}
-              >
-                ●
-              </span>
-            </div>
-          ))
+          members.map((member) => {
+            const currentUserId = localStorage.getItem('accord_user_id');
+            const isCurrentUser = member.user_id === currentUserId;
+            const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers') && !isCurrentUser;
+            
+            return (
+              <div key={member.user.id} className="member" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  <div className="member-avatar">{member.user.username[0]}</div>
+                  <span className="member-name" style={{ marginLeft: '8px' }}>
+                    {member.user.username}
+                  </span>
+                  <span 
+                    style={{ 
+                      fontSize: '12px',
+                      marginLeft: '4px'
+                    }}
+                    title={member.role}
+                  >
+                    {getRoleBadge(member.role)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span 
+                    className="member-status"
+                    style={{ 
+                      fontSize: '12px',
+                      color: '#43b581' // Online color - we'll assume all are online for now
+                    }}
+                  >
+                    ●
+                  </span>
+                  {canKick && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleKickMember(member.user_id, member.user.username);
+                      }}
+                      style={{
+                        background: '#f04747',
+                        border: 'none',
+                        color: '#ffffff',
+                        padding: '2px 6px',
+                        borderRadius: '2px',
+                        cursor: 'pointer',
+                        fontSize: '10px',
+                        opacity: 0.7
+                      }}
+                      title="Kick member"
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+                    >
+                      Kick
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })
         ) : (
           users.map((u) => (
             <div key={u} className="member">
@@ -889,6 +1248,125 @@ function App() {
           ))
         )}
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          background: '#f04747',
+          color: '#ffffff',
+          padding: '12px 16px',
+          borderRadius: '4px',
+          zIndex: 1000,
+          maxWidth: '300px',
+          fontSize: '14px',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+        }}>
+          {error}
+          <button
+            onClick={() => setError("")}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#ffffff',
+              cursor: 'pointer',
+              fontSize: '16px',
+              marginLeft: '8px',
+              padding: '0'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Invite Modal */}
+      {showInviteModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1001
+        }}>
+          <div style={{
+            background: '#36393f',
+            padding: '24px',
+            borderRadius: '8px',
+            maxWidth: '400px',
+            width: '90%',
+            color: '#ffffff'
+          }}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#ffffff' }}>Invite Generated</h3>
+            <p style={{ margin: '0 0 16px 0', color: '#b9bbbe' }}>
+              Share this invite code with others to let them join this node:
+            </p>
+            <div style={{
+              background: '#40444b',
+              padding: '12px',
+              borderRadius: '4px',
+              marginBottom: '16px',
+              fontFamily: 'monospace',
+              fontSize: '14px',
+              wordBreak: 'break-all',
+              userSelect: 'text'
+            }}>
+              {generatedInvite}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(generatedInvite).then(() => {
+                    alert('Invite code copied to clipboard!');
+                  }).catch(() => {
+                    // Fallback for browsers that don't support clipboard API
+                    const textArea = document.createElement('textarea');
+                    textArea.value = generatedInvite;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    alert('Invite code copied to clipboard!');
+                  });
+                }}
+                style={{
+                  background: '#7289da',
+                  border: 'none',
+                  color: '#ffffff',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Copy
+              </button>
+              <button
+                onClick={() => {
+                  setShowInviteModal(false);
+                  setGeneratedInvite("");
+                }}
+                style={{
+                  background: '#747f8d',
+                  border: 'none',
+                  color: '#ffffff',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

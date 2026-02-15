@@ -15,6 +15,7 @@ export interface WsEvents {
   channel_created: (data: any) => void;
   direct_message: (data: any) => void;
   channel_message: (data: any) => void;
+  presence_update: (data: any) => void;
   pong: (data: any) => void;
 }
 

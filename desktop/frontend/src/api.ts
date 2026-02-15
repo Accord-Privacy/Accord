@@ -15,6 +15,8 @@ import {
   ErrorResponse,
   HealthResponse,
   FileMetadata,
+  UserProfile,
+  UpdateProfileRequest,
 } from './types';
 
 // Configuration
@@ -222,6 +224,63 @@ export class AccordApi {
     });
   }
 
+  // Create a new channel in a node
+  async createChannel(nodeId: string, name: string, channelType: string, token: string): Promise<Channel> {
+    const request = {
+      name,
+      channel_type: channelType,
+    };
+
+    return this.request<Channel>(`/nodes/${nodeId}/channels?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  // Delete a channel
+  async deleteChannel(channelId: string, token: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/channels/${channelId}?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Generate an invite for a node
+  async createInvite(nodeId: string, token: string): Promise<{ invite_code: string; expires_at?: number }> {
+    return this.request<{ invite_code: string; expires_at?: number }>(
+      `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+      }
+    );
+  }
+
+  // Kick a member from a node
+  async kickMember(nodeId: string, userId: string, token: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(
+      `/nodes/${nodeId}/members/${userId}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  // Get user profile
+  async getUserProfile(userId: string, token?: string): Promise<UserProfile> {
+    const url = token 
+      ? `/users/${userId}/profile?token=${encodeURIComponent(token)}`
+      : `/users/${userId}/profile`;
+    
+    return this.request<UserProfile>(url);
+  }
+
+  // Update own profile
+  async updateProfile(profile: UpdateProfileRequest, token: string): Promise<UserProfile> {
+    return this.request<UserProfile>(`/users/me/profile?token=${encodeURIComponent(token)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(profile),
+    });
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {
@@ -246,4 +305,10 @@ export const getUserNodes = api.getUserNodes.bind(api);
 export const getNodeChannels = api.getNodeChannels.bind(api);
 export const getNodeMembers = api.getNodeMembers.bind(api);
 export const getChannelMessages = api.getChannelMessages.bind(api);
+export const createChannel = api.createChannel.bind(api);
+export const deleteChannel = api.deleteChannel.bind(api);
+export const createInvite = api.createInvite.bind(api);
+export const kickMember = api.kickMember.bind(api);
+export const getUserProfile = api.getUserProfile.bind(api);
+export const updateProfile = api.updateProfile.bind(api);
 export const testConnection = api.testConnection.bind(api);
