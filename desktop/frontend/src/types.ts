@@ -133,4 +133,5 @@ export interface Message {
   time: string;
   channel_id?: string;
   timestamp: number;
+  isEncrypted?: boolean;
 }

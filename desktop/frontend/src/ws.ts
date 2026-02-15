@@ -237,11 +237,8 @@ export class AccordWebSocket {
     this.send({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData } });
   }
 
-  // For demo purposes, send plain text (in real app this would be encrypted)
-  sendPlainChannelMessage(channelId: string, content: string): void {
-    // For now, just use content as "encrypted" data for demo
-    this.sendChannelMessage(channelId, content);
-  }
+  // Note: encryptedData should be base64-encoded encrypted content
+  // The App component handles encryption before calling this method
 
   // Ping/Pong
   ping(): void {
