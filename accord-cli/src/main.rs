@@ -1,439 +1,502 @@
-//! # Accord CLI Demo
-//! 
-//! Simple command-line interface to demonstrate Accord functionality
-
-use accord_core_minimal::{init, demo::AccordDemo};
+use anyhow::{anyhow, Result};
+use clap::{Parser, Subcommand};
+use futures::{SinkExt, StreamExt};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use uuid::Uuid;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize Accord
-    init()?;
+#[derive(Parser)]
+#[command(name = "accord")]
+#[command(about = "Accord CLI - Privacy-first Discord alternative")]
+#[command(version = "0.1.0")]
+struct Cli {
+    /// Server URL
+    #[arg(long, default_value = "http://localhost:8080")]
+    server: String,
     
-    println!("🚀 Welcome to Accord CLI Demo!");
-    println!("Privacy-first Discord alternative");
-    println!("=================================\n");
+    #[command(subcommand)]
+    command: Commands,
+}
 
+#[derive(Subcommand)]
+enum Commands {
+    /// Register with a relay server
+    Register {
+        /// Username to register
+        username: String,
+    },
+    /// Authenticate and get a token
+    Login {
+        /// Username to login with
+        username: String,
+    },
+    /// List Nodes you're a member of
+    Nodes,
+    /// Create a new Node
+    CreateNode {
+        /// Name of the new Node
+        name: String,
+    },
+    /// Join a Node
+    Join {
+        /// Node ID to join
+        node_id: String,
+    },
+    /// List channels in a Node
+    Channels {
+        /// Node ID to list channels for
+        node_id: String,
+    },
+    /// Enter interactive chat mode
+    Chat {
+        /// Channel ID to chat in
+        channel_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct User {
+    id: Uuid,
+    username: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Node {
+    id: Uuid,
+    name: String,
+    owner_id: Uuid,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Channel {
+    id: Uuid,
+    node_id: Uuid,
+    name: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ChatMessage {
+    id: Uuid,
+    channel_id: Uuid,
+    user_id: Uuid,
+    username: String,
+    content: String,
+    timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct RegisterRequest {
+    username: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LoginRequest {
+    username: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AuthResponse {
+    token: String,
+    user: User,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CreateNodeRequest {
+    name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct JoinNodeRequest {
+    node_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SendMessageRequest {
+    content: String,
+}
+
+struct AccordClient {
+    server_url: String,
+    client: Client,
+}
+
+impl AccordClient {
+    fn new(server_url: String) -> Self {
+        Self {
+            server_url,
+            client: Client::new(),
+        }
+    }
+
+    async fn register(&self, username: &str) -> Result<AuthResponse> {
+        let url = format!("{}/api/register", self.server_url);
+        let request = RegisterRequest {
+            username: username.to_string(),
+        };
+
+        let response = self.client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Registration failed: {}", error_text));
+        }
+
+        let auth_response: AuthResponse = response.json().await?;
+        Ok(auth_response)
+    }
+
+    async fn login(&self, username: &str) -> Result<AuthResponse> {
+        let url = format!("{}/api/login", self.server_url);
+        let request = LoginRequest {
+            username: username.to_string(),
+        };
+
+        let response = self.client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Login failed: {}", error_text));
+        }
+
+        let auth_response: AuthResponse = response.json().await?;
+        Ok(auth_response)
+    }
+
+    async fn get_nodes(&self, token: &str) -> Result<Vec<Node>> {
+        let url = format!("{}/api/nodes", self.server_url);
+        let response = self.client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Failed to get nodes: {}", error_text));
+        }
+
+        let nodes: Vec<Node> = response.json().await?;
+        Ok(nodes)
+    }
+
+    async fn create_node(&self, token: &str, name: &str) -> Result<Node> {
+        let url = format!("{}/api/nodes", self.server_url);
+        let request = CreateNodeRequest {
+            name: name.to_string(),
+        };
+
+        let response = self.client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Failed to create node: {}", error_text));
+        }
+
+        let node: Node = response.json().await?;
+        Ok(node)
+    }
+
+    async fn join_node(&self, token: &str, node_id: &str) -> Result<()> {
+        let node_uuid = Uuid::parse_str(node_id)?;
+        let url = format!("{}/api/nodes/join", self.server_url);
+        let request = JoinNodeRequest {
+            node_id: node_uuid,
+        };
+
+        let response = self.client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Failed to join node: {}", error_text));
+        }
+
+        Ok(())
+    }
+
+    async fn get_channels(&self, token: &str, node_id: &str) -> Result<Vec<Channel>> {
+        let url = format!("{}/api/nodes/{}/channels", self.server_url, node_id);
+        let response = self.client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await?;
+            return Err(anyhow!("Failed to get channels: {}", error_text));
+        }
+
+        let channels: Vec<Channel> = response.json().await?;
+        Ok(channels)
+    }
+}
+
+fn get_token_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
+    let accord_dir = home.join(".accord");
+    
+    // Create directory if it doesn't exist
+    if !accord_dir.exists() {
+        fs::create_dir_all(&accord_dir)?;
+    }
+    
+    Ok(accord_dir.join("token"))
+}
+
+fn save_token(token: &str) -> Result<()> {
+    let path = get_token_path()?;
+    fs::write(path, token)?;
+    Ok(())
+}
+
+fn load_token() -> Result<String> {
+    let path = get_token_path()?;
+    let token = fs::read_to_string(path)?;
+    Ok(token.trim().to_string())
+}
+
+async fn enter_chat_mode(server_url: &str, channel_id: &str) -> Result<()> {
+    // Load authentication token
+    let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+
+    // Convert HTTP URL to WebSocket URL
+    let ws_url = if server_url.starts_with("https://") {
+        server_url.replace("https://", "wss://")
+    } else {
+        server_url.replace("http://", "ws://")
+    };
+    
+    let ws_url = format!("{}/ws/chat/{}?token={}", ws_url, channel_id, token);
+    
+    println!("🔗 Connecting to chat...");
+    let (ws_stream, _) = connect_async(&ws_url).await?;
+    let (mut write, mut read) = ws_stream.split();
+    
+    println!("✅ Connected to channel {}!", channel_id);
+    println!("Type messages and press Enter. Type '/quit' to exit.\n");
+
+    // Spawn a task to handle incoming messages
+    let read_handle = tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    if let Ok(chat_msg) = serde_json::from_str::<ChatMessage>(&text) {
+                        println!("[{}] {}: {}", 
+                            chat_msg.timestamp.format("%H:%M:%S"),
+                            chat_msg.username,
+                            chat_msg.content
+                        );
+                    } else {
+                        println!("📢 {}", text);
+                    }
+                }
+                Ok(Message::Close(_)) => {
+                    println!("🔌 Connection closed by server");
+                    break;
+                }
+                Err(e) => {
+                    println!("❌ WebSocket error: {}", e);
+                    break;
+                }
+                _ => {} // Ignore other message types
+            }
+        }
+    });
+
+    // Handle user input
     loop {
-        show_menu();
-        let choice = get_user_input("Enter your choice: ")?;
+        print!("> ");
+        io::stdout().flush()?;
         
-        match choice.trim() {
-            "1" => run_quick_demo()?,
-            "2" => run_interactive_demo()?,
-            "3" => run_crypto_demo()?,
-            "4" => run_channel_demo()?,
-            "5" => run_invite_demo()?,
-            "6" => show_architecture_info(),
-            "7" => show_security_info(),
-            "q" | "quit" | "exit" => {
-                println!("👋 Thanks for trying Accord!");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        
+        if input == "/quit" {
+            println!("👋 Leaving chat...");
+            break;
+        }
+        
+        if !input.is_empty() {
+            let message = serde_json::to_string(&SendMessageRequest {
+                content: input.to_string(),
+            })?;
+            
+            if let Err(e) = write.send(Message::Text(message)).await {
+                println!("❌ Failed to send message: {}", e);
                 break;
             }
-            _ => println!("❌ Invalid choice. Please try again.\n"),
+        }
+    }
+
+    // Clean shutdown
+    let _ = write.send(Message::Close(None)).await;
+    read_handle.abort();
+    
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let client = AccordClient::new(cli.server);
+
+    match cli.command {
+        Commands::Register { username } => {
+            println!("🔐 Registering user '{}'...", username);
+            
+            match client.register(&username).await {
+                Ok(auth_response) => {
+                    println!("✅ Registration successful!");
+                    println!("   User ID: {}", auth_response.user.id);
+                    println!("   Username: {}", auth_response.user.username);
+                    
+                    // Save token for future use
+                    save_token(&auth_response.token)?;
+                    println!("💾 Authentication token saved to ~/.accord/token");
+                }
+                Err(e) => {
+                    println!("❌ Registration failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::Login { username } => {
+            println!("🔑 Logging in user '{}'...", username);
+            
+            match client.login(&username).await {
+                Ok(auth_response) => {
+                    println!("✅ Login successful!");
+                    println!("   User ID: {}", auth_response.user.id);
+                    println!("   Username: {}", auth_response.user.username);
+                    
+                    // Save token for future use
+                    save_token(&auth_response.token)?;
+                    println!("💾 Authentication token saved to ~/.accord/token");
+                }
+                Err(e) => {
+                    println!("❌ Login failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::Nodes => {
+            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+            
+            println!("📋 Fetching your Nodes...");
+            
+            match client.get_nodes(&token).await {
+                Ok(nodes) => {
+                    if nodes.is_empty() {
+                        println!("📭 You're not a member of any Nodes yet.");
+                        println!("   Use 'accord create-node <name>' to create one, or");
+                        println!("   Use 'accord join <node-id>' to join an existing Node.");
+                    } else {
+                        println!("🏰 Your Nodes:");
+                        for node in nodes {
+                            println!("   • {} ({})", node.name, node.id);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to fetch nodes: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::CreateNode { name } => {
+            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+            
+            println!("🏗️ Creating Node '{}'...", name);
+            
+            match client.create_node(&token, &name).await {
+                Ok(node) => {
+                    println!("✅ Node created successfully!");
+                    println!("   Node ID: {}", node.id);
+                    println!("   Name: {}", node.name);
+                    println!("   Owner ID: {}", node.owner_id);
+                }
+                Err(e) => {
+                    println!("❌ Failed to create node: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::Join { node_id } => {
+            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+            
+            println!("🚪 Joining Node {}...", node_id);
+            
+            match client.join_node(&token, &node_id).await {
+                Ok(()) => {
+                    println!("✅ Successfully joined Node!");
+                }
+                Err(e) => {
+                    println!("❌ Failed to join node: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::Channels { node_id } => {
+            let token = load_token().map_err(|_| anyhow!("Not authenticated. Please run 'accord login <username>' first"))?;
+            
+            println!("📺 Fetching channels for Node {}...", node_id);
+            
+            match client.get_channels(&token, &node_id).await {
+                Ok(channels) => {
+                    if channels.is_empty() {
+                        println!("📭 No channels found in this Node.");
+                    } else {
+                        println!("📋 Channels:");
+                        for channel in channels {
+                            println!("   • {} ({})", channel.name, channel.id);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to fetch channels: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        
+        Commands::Chat { channel_id } => {
+            if let Err(e) = enter_chat_mode(&client.server_url, &channel_id).await {
+                println!("❌ Chat failed: {}", e);
+                std::process::exit(1);
+            }
         }
     }
 
     Ok(())
-}
-
-fn show_menu() {
-    println!("🎯 Accord Demo Options:");
-    println!("1. Quick Demo (full system showcase)");
-    println!("2. Interactive Demo (step by step)");
-    println!("3. Cryptography Demo");
-    println!("4. Channel System Demo");
-    println!("5. Invite System Demo");
-    println!("6. Architecture Information");
-    println!("7. Security Information");
-    println!("q. Quit");
-    println!();
-}
-
-fn run_quick_demo() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 Running Quick Demo...\n");
-    
-    let mut demo = AccordDemo::new();
-    demo.run_complete_demo();
-    demo.print_status();
-    
-    println!("\nPress Enter to continue...");
-    let _ = get_user_input("")?;
-    Ok(())
-}
-
-fn run_interactive_demo() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🎯 Interactive Demo - Build Your Own Accord Server!\n");
-    
-    let mut demo = AccordDemo::new();
-    
-    // Step 1: Create users
-    println!("Step 1: Create Users");
-    let admin_name = get_user_input("Enter admin username: ")?;
-    let admin_id = demo.create_user(admin_name.trim().to_string());
-    
-    let user_name = get_user_input("Enter second user name: ")?;
-    let user_id = demo.create_user(user_name.trim().to_string());
-    println!();
-
-    // Step 2: Create server
-    println!("Step 2: Create Server");
-    let server_name = get_user_input("Enter server name: ")?;
-    let server_id = demo.create_server(server_name.trim().to_string(), admin_id)?;
-    println!();
-
-    // Step 3: Create channels
-    println!("Step 3: Create Channels");
-    let lobby_channel = demo.create_channel(
-        server_id,
-        "General".to_string(),
-        accord_core_minimal::channel_types::ChannelType::Lobby,
-        admin_id,
-    )?;
-    
-    let private_channel = demo.create_channel(
-        server_id,
-        "Staff".to_string(),
-        accord_core_minimal::channel_types::ChannelType::Private { visible_in_list: true },
-        admin_id,
-    )?;
-    println!();
-
-    // Step 4: Join channels
-    println!("Step 4: User joins lobby channel");
-    demo.join_lobby_channel(server_id, lobby_channel, user_id)?;
-    println!();
-
-    // Step 5: Request private access
-    println!("Step 5: Request private channel access");
-    let request_message = get_user_input("Enter request message: ")?;
-    let request_id = demo.request_private_entry(
-        server_id,
-        private_channel,
-        user_id,
-        Some(request_message.trim().to_string()),
-    )?;
-    
-    println!("Should admin approve this request? (y/n)");
-    let approve = get_user_input("")?;
-    if approve.trim().to_lowercase() == "y" {
-        demo.approve_entry_request(server_id, request_id, admin_id)?;
-    }
-    println!();
-
-    // Step 6: Encrypted messaging
-    println!("Step 6: Send encrypted message");
-    demo.establish_crypto_session(admin_id, user_id)?;
-    
-    let message_text = get_user_input("Enter message to send: ")?;
-    let message = demo.send_message(admin_id, user_id, lobby_channel, message_text.trim())?;
-    demo.receive_message(user_id, &message)?;
-    println!();
-
-    demo.print_status();
-    println!("\nPress Enter to continue...");
-    let _ = get_user_input("")?;
-    Ok(())
-}
-
-fn run_crypto_demo() -> Result<(), Box<dyn std::error::Error>> {
-    use accord_core_minimal::crypto_minimal::SimpleCrypto;
-    use uuid::Uuid;
-
-    println!("🔒 Cryptography Demo\n");
-    
-    let alice_id = Uuid::new_v4();
-    let bob_id = Uuid::new_v4();
-    
-    let mut alice_crypto = SimpleCrypto::new(alice_id);
-    let mut bob_crypto = SimpleCrypto::new(bob_id);
-    
-    println!("👤 Alice's fingerprint: {}", alice_crypto.get_public_fingerprint());
-    println!("👤 Bob's fingerprint: {}", bob_crypto.get_public_fingerprint());
-    println!();
-
-    // Establish session
-    println!("🤝 Establishing encrypted session...");
-    let alice_session = alice_crypto.establish_session(bob_id, bob_crypto.get_public_fingerprint());
-    let bob_session = bob_crypto.establish_session(alice_id, alice_crypto.get_public_fingerprint());
-    
-    println!("✅ Session established");
-    println!("   Alice's session key: {}", alice_session);
-    println!("   Bob's session key: {}", bob_session);
-    println!();
-
-    // Encrypt/decrypt message
-    let message_text = get_user_input("Enter message for Alice to send to Bob: ")?;
-    let plaintext = message_text.trim().as_bytes();
-    
-    println!("🔒 Encrypting message...");
-    let encrypted = alice_crypto.encrypt_message(bob_id, plaintext)?;
-    println!("   Ciphertext length: {} bytes", encrypted.ciphertext.len());
-    println!("   Nonce: {:?}", encrypted.nonce);
-    println!();
-
-    println!("🔓 Decrypting message...");
-    let decrypted = bob_crypto.decrypt_message(alice_id, &encrypted)?;
-    let decrypted_text = String::from_utf8(decrypted)?;
-    println!("   Decrypted: \"{}\"", decrypted_text);
-    println!();
-
-    // Voice encryption demo
-    println!("🎙️ Voice Encryption Demo");
-    let fake_audio = b"fake_audio_samples_1234567890";
-    let encrypted_voice = alice_crypto.encrypt_voice(bob_id, fake_audio)?;
-    let decrypted_voice = bob_crypto.decrypt_voice(alice_id, &encrypted_voice)?;
-    
-    println!("   Original audio: {:?}", fake_audio);
-    println!("   Encrypted audio: {:?}", encrypted_voice);
-    println!("   Decrypted audio: {:?}", decrypted_voice);
-    println!("   ✅ Voice encryption working!");
-    println!();
-
-    println!("Press Enter to continue...");
-    let _ = get_user_input("")?;
-    Ok(())
-}
-
-fn run_channel_demo() -> Result<(), Box<dyn std::error::Error>> {
-    use accord_core_minimal::channel_types::{ChannelManager, ChannelType, VoiceAccessType};
-    use uuid::Uuid;
-
-    println!("📺 Channel System Demo\n");
-    
-    let mut manager = ChannelManager::new();
-    
-    let admin_id = Uuid::new_v4();
-    let user1_id = Uuid::new_v4();
-    let user2_id = Uuid::new_v4();
-    
-    println!("Creating channels...");
-    
-    // Create different channel types
-    let lobby_text = manager.create_channel(
-        "General".to_string(),
-        ChannelType::Lobby,
-        admin_id,
-        "Admin".to_string(),
-        Some("General discussion".to_string()),
-    );
-    
-    let lobby_voice = manager.create_channel(
-        "Voice Lounge".to_string(),
-        ChannelType::Voice { access_type: VoiceAccessType::Lobby },
-        admin_id,
-        "Admin".to_string(),
-        None,
-    );
-    
-    let private_channel = manager.create_channel(
-        "VIP Room".to_string(),
-        ChannelType::Private { visible_in_list: true },
-        admin_id,
-        "Admin".to_string(),
-        Some("VIP members only".to_string()),
-    );
-    
-    let hidden_channel = manager.create_channel(
-        "Secret Staff".to_string(),
-        ChannelType::Private { visible_in_list: false },
-        admin_id,
-        "Admin".to_string(),
-        Some("Hidden from channel list".to_string()),
-    );
-    
-    println!("✅ Created 4 channels");
-    println!();
-
-    // Show visible channels for different users
-    println!("📋 Visible channels for non-member:");
-    let visible = manager.get_visible_channels(user1_id);
-    for channel in visible {
-        println!("   - {} ({:?})", channel.name, channel.channel_type);
-    }
-    println!();
-
-    // User joins lobby channels
-    println!("👤 User1 joins lobby channels...");
-    manager.join_lobby_channel(lobby_text, user1_id, "User1".to_string())?;
-    manager.join_lobby_channel(lobby_voice, user1_id, "User1".to_string())?;
-    
-    println!("✅ User1 joined lobby channels");
-    println!();
-
-    // User requests private access
-    println!("📝 User1 requests VIP access...");
-    let request_id = manager.request_entry(
-        private_channel,
-        user1_id,
-        "User1".to_string(),
-        Some("I want to join the VIP room!".to_string()),
-    )?;
-    
-    println!("✅ Entry request created: {}", request_id);
-    
-    // Show pending requests
-    let pending = manager.get_pending_requests(admin_id);
-    println!("📋 Pending requests for admin: {}", pending.len());
-    for request in pending {
-        println!("   - {} wants to join channel {}", request.username, request.channel_id);
-        println!("     Message: {}", request.message.as_ref().unwrap_or(&"(no message)".to_string()));
-    }
-    println!();
-
-    // Approve request
-    println!("✅ Admin approves request...");
-    manager.approve_entry(request_id, admin_id)?;
-    println!("✅ User1 now has VIP access");
-    println!();
-
-    // Show final channel membership
-    if let Some(channel) = manager.get_channel(private_channel) {
-        println!("👥 VIP Room members:");
-        for (_, member) in &channel.members {
-            println!("   - {} (permissions: can_speak={}, can_approve={})", 
-                    member.username, 
-                    member.permissions.can_speak, 
-                    member.permissions.can_approve_entry);
-        }
-    }
-
-    println!("\nPress Enter to continue...");
-    let _ = get_user_input("")?;
-    Ok(())
-}
-
-fn run_invite_demo() -> Result<(), Box<dyn std::error::Error>> {
-    use accord_core_minimal::crypto_minimal::SimpleCrypto;
-    use uuid::Uuid;
-
-    println!("🎫 Invite System Demo\n");
-    
-    let server_id = Uuid::new_v4();
-    let admin_id = Uuid::new_v4();
-    let user_id = Uuid::new_v4();
-    
-    let admin_crypto = SimpleCrypto::new(admin_id);
-    let user_crypto = SimpleCrypto::new(user_id);
-    
-    // Create invite
-    println!("🎫 Admin creates 24-hour invite...");
-    let invite_code = admin_crypto.generate_invite_code(server_id, 24);
-    println!("   Invite code: {}", invite_code);
-    println!("   Valid for: 24 hours");
-    println!();
-
-    // Use invite
-    println!("👤 User attempts to use invite...");
-    match user_crypto.decode_invite(&invite_code) {
-        Ok((decoded_server, expires_at, creator_id)) => {
-            println!("✅ Invite is valid!");
-            println!("   Server ID: {}", decoded_server);
-            println!("   Expires at: {}", expires_at);
-            println!("   Created by: {}", creator_id);
-            println!("   ✅ User would join server {}", server_id);
-        }
-        Err(e) => {
-            println!("❌ Invite failed: {}", e);
-        }
-    }
-    println!();
-
-    // Test expired invite
-    println!("🕐 Testing expired invite...");
-    let expired_invite = admin_crypto.generate_invite_code(server_id, 0); // 0 hours = expired
-    match user_crypto.decode_invite(&expired_invite) {
-        Ok(_) => {
-            println!("❌ Expired invite incorrectly accepted");
-        }
-        Err(e) => {
-            println!("✅ Expired invite correctly rejected: {}", e);
-        }
-    }
-
-    println!("\nPress Enter to continue...");
-    let _ = get_user_input("")?;
-    Ok(())
-}
-
-fn show_architecture_info() {
-    println!("🏗️ Accord Architecture\n");
-    
-    println!("🎯 Core Philosophy:");
-    println!("   • Discord functionality + Signal security");
-    println!("   • End-to-end encryption for all communications");
-    println!("   • Zero-knowledge server (cannot decrypt user content)");
-    println!("   • Open source and self-hostable");
-    println!();
-    
-    println!("🔒 Security Features:");
-    println!("   • AES-256-GCM encryption with X25519 key agreement");
-    println!("   • Forward secrecy with automatic key rotation");
-    println!("   • Real-time encrypted voice with low latency");
-    println!("   • Privacy-preserving bot system");
-    println!();
-    
-    println!("🏰 Channel System:");
-    println!("   • Lobby channels (open join/leave)");
-    println!("   • Private channels (permission-based access)");
-    println!("   • Entry request/approval workflow");
-    println!("   • Visibility controls for private channels");
-    println!();
-    
-    println!("🎫 Invite System:");
-    println!("   • Direct invites only (no public discovery)");
-    println!("   • Configurable expiration and usage limits");
-    println!("   • Quality gates for invite acceptance");
-    println!();
-    
-    println!("Press Enter to continue...");
-    let _ = get_user_input("");
-}
-
-fn show_security_info() {
-    println!("🔒 Accord Security Model\n");
-    
-    println!("🛡️ Zero-Knowledge Server:");
-    println!("   • Server only routes encrypted messages");
-    println!("   • All encryption/decryption happens client-side");
-    println!("   • Server cannot read messages or hear voice calls");
-    println!("   • Metadata minimization (only routing information)");
-    println!();
-    
-    println!("🔐 Encryption Details:");
-    println!("   • Text: AES-256-GCM with unique nonces");
-    println!("   • Voice: Real-time AES encryption per packet");
-    println!("   • Keys: X25519 ECDH for key agreement");
-    println!("   • Forward Secrecy: Keys rotate automatically");
-    println!();
-    
-    println!("👥 Identity Verification:");
-    println!("   • Public key fingerprints for user identity");
-    println!("   • Session establishment with key exchange");
-    println!("   • Message authentication prevents tampering");
-    println!();
-    
-    println!("🚫 What Server CANNOT Do:");
-    println!("   • Read your messages");
-    println!("   • Listen to your voice calls");
-    println!("   • See file contents");
-    println!("   • Access bot command arguments");
-    println!("   • Decrypt invitation details");
-    println!();
-    
-    println!("⚠️ Current Implementation:");
-    println!("   • This is a DEMO using simplified crypto");
-    println!("   • Production version uses audited libraries");
-    println!("   • Full implementation has formal security audit");
-    println!();
-    
-    println!("Press Enter to continue...");
-    let _ = get_user_input("");
-}
-
-fn get_user_input(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input)
 }
