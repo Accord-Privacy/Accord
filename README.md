@@ -31,6 +31,8 @@ Accord fills the gap between Discord (great features, no privacy) and Signal (gr
 
 One relay server instance can host many Nodes, making self-hosting efficient for communities that want to share infrastructure.
 
+> **The server admin is just a landlord — they provide the building but can't enter your apartment.** Unlike Discord, where the company has god-mode access to everything, Accord's server admin has zero access to Node content. E2E encryption means your messages are yours.
+
 ### Workspace Structure
 
 | Crate | Purpose |
