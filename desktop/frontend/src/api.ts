@@ -21,6 +21,7 @@ import {
   MessageReactionsResponse,
   DmChannel,
   DmChannelsResponse,
+  AuditLogResponse,
 } from './types';
 
 // Configuration
@@ -458,6 +459,27 @@ export class AccordApi {
     );
   }
 
+  // Get Node audit log (admin/mod only)
+  async getNodeAuditLog(
+    nodeId: string,
+    token: string,
+    limit: number = 50,
+    beforeId?: string
+  ): Promise<AuditLogResponse> {
+    const params = new URLSearchParams({
+      token,
+      limit: limit.toString(),
+    });
+    
+    if (beforeId) {
+      params.append('before', beforeId);
+    }
+
+    return this.request<AuditLogResponse>(
+      `/nodes/${nodeId}/audit-log?${params.toString()}`
+    );
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {
@@ -497,3 +519,4 @@ export const searchMessages = api.searchMessages.bind(api);
 export const getMessageThread = api.getMessageThread.bind(api);
 export const createDmChannel = api.createDmChannel.bind(api);
 export const getDmChannels = api.getDmChannels.bind(api);
+export const getNodeAuditLog = api.getNodeAuditLog.bind(api);

@@ -13,6 +13,8 @@ pub enum Permission {
     CreateChannel,
     /// Delete channels within the Node
     DeleteChannel,
+    /// Manage channels (rename, move, organize categories)
+    ManageChannels,
     /// Manage Node membership (invite/kick users, change roles)
     ManageMembers,
     /// Kick users from the Node
@@ -39,6 +41,7 @@ pub fn role_permissions(role: NodeRole) -> HashSet<Permission> {
             vec![
                 CreateChannel,
                 DeleteChannel,
+                ManageChannels,
                 ManageMembers,
                 KickMembers,
                 ManageRoles,

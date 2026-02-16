@@ -87,6 +87,23 @@ impl Database {
         .await
         .context("Failed to create node_members table")?;
 
+        // Create channel_categories table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS channel_categories (
+                id TEXT PRIMARY KEY NOT NULL,
+                node_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create channel_categories table")?;
+
         // Create channels table (with node_id)
         sqlx::query(
             r#"
@@ -96,14 +113,28 @@ impl Database {
                 node_id TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
+                category_id TEXT,
+                position INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
-                FOREIGN KEY (created_by) REFERENCES users (id)
+                FOREIGN KEY (created_by) REFERENCES users (id),
+                FOREIGN KEY (category_id) REFERENCES channel_categories (id) ON DELETE SET NULL
             )
             "#,
         )
         .execute(&self.pool)
         .await
         .context("Failed to create channels table")?;
+
+        // Add category_id and position columns to existing channels table if they don't exist
+        sqlx::query("ALTER TABLE channels ADD COLUMN category_id TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
+
+        sqlx::query("ALTER TABLE channels ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
 
         // Create channel_members table
         sqlx::query(
@@ -347,6 +378,40 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create audit_log table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id TEXT PRIMARY KEY NOT NULL,
+                node_id TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id TEXT,
+                details TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                FOREIGN KEY (actor_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create audit_log table")?;
+
+        // Create indexes for audit_log
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_node ON audit_log (node_id, created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log (actor_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log (action)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -573,12 +638,20 @@ impl Database {
     ) -> Result<Channel> {
         let created_at = now();
 
-        sqlx::query("INSERT INTO channels (id, name, node_id, created_by, created_at) VALUES (?, ?, ?, ?, ?)")
+        // Get the next position for this node (counting existing channels)
+        let position_row = sqlx::query("SELECT COALESCE(MAX(position), -1) + 1 as next_position FROM channels WHERE node_id = ?")
+            .bind(node_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        let position = position_row.get::<i64, _>("next_position");
+
+        sqlx::query("INSERT INTO channels (id, name, node_id, created_by, created_at, position) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(channel_id.to_string())
             .bind(name)
             .bind(node_id.to_string())
             .bind(created_by.to_string())
             .bind(created_at as i64)
+            .bind(position)
             .execute(&self.pool)
             .await
             .context("Failed to insert channel")?;
@@ -622,7 +695,7 @@ impl Database {
 
     pub async fn get_node_channels(&self, node_id: Uuid) -> Result<Vec<Channel>> {
         let rows = sqlx::query(
-            "SELECT id, name, node_id, created_by, created_at FROM channels WHERE node_id = ?",
+            "SELECT id, name, node_id, created_by, created_at FROM channels WHERE node_id = ? ORDER BY position ASC",
         )
         .bind(node_id.to_string())
         .fetch_all(&self.pool)
@@ -676,6 +749,209 @@ impl Database {
         rows.iter()
             .map(|r| Uuid::parse_str(&r.get::<String, _>("user_id")).map_err(Into::into))
             .collect()
+    }
+
+    // ── Channel Category operations ──
+
+    pub async fn create_channel_category(
+        &self,
+        node_id: Uuid,
+        name: &str,
+    ) -> Result<crate::models::ChannelCategory> {
+        let category_id = Uuid::new_v4();
+        let created_at = now();
+
+        // Get the next position for this node
+        let position_row = sqlx::query("SELECT COALESCE(MAX(position), -1) + 1 as next_position FROM channel_categories WHERE node_id = ?")
+            .bind(node_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        let position = position_row.get::<i64, _>("next_position");
+
+        sqlx::query("INSERT INTO channel_categories (id, node_id, name, position, created_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(category_id.to_string())
+            .bind(node_id.to_string())
+            .bind(name)
+            .bind(position)
+            .bind(created_at as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert channel category")?;
+
+        Ok(crate::models::ChannelCategory {
+            id: category_id,
+            node_id,
+            name: name.to_string(),
+            position: position as u32,
+            created_at,
+        })
+    }
+
+    pub async fn get_node_categories(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::ChannelCategory>> {
+        let rows = sqlx::query(
+            "SELECT id, node_id, name, position, created_at FROM channel_categories WHERE node_id = ? ORDER BY position ASC",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channel categories")?;
+
+        Ok(rows
+            .iter()
+            .map(|row| crate::models::ChannelCategory {
+                id: Uuid::parse_str(&row.get::<String, _>("id")).unwrap(),
+                node_id: Uuid::parse_str(&row.get::<String, _>("node_id")).unwrap(),
+                name: row.get("name"),
+                position: row.get::<i64, _>("position") as u32,
+                created_at: row.get::<i64, _>("created_at") as u64,
+            })
+            .collect())
+    }
+
+    pub async fn update_channel_category(
+        &self,
+        category_id: Uuid,
+        name: Option<&str>,
+        position: Option<u32>,
+    ) -> Result<()> {
+        let mut query_parts = Vec::new();
+        let mut binds = Vec::new();
+
+        if let Some(name) = name {
+            query_parts.push("name = ?");
+            binds.push(name.to_string());
+        }
+
+        if let Some(position) = position {
+            query_parts.push("position = ?");
+            binds.push(position.to_string());
+        }
+
+        if query_parts.is_empty() {
+            return Ok(()); // Nothing to update
+        }
+
+        let query = format!(
+            "UPDATE channel_categories SET {} WHERE id = ?",
+            query_parts.join(", ")
+        );
+
+        let mut sqlx_query = sqlx::query(&query);
+        for bind in binds {
+            sqlx_query = sqlx_query.bind(bind);
+        }
+        sqlx_query = sqlx_query.bind(category_id.to_string());
+
+        sqlx_query
+            .execute(&self.pool)
+            .await
+            .context("Failed to update channel category")?;
+
+        Ok(())
+    }
+
+    pub async fn delete_channel_category(&self, category_id: Uuid) -> Result<()> {
+        // First, move all channels in this category to uncategorized (category_id = NULL)
+        sqlx::query("UPDATE channels SET category_id = NULL WHERE category_id = ?")
+            .bind(category_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to uncategorize channels")?;
+
+        // Then delete the category
+        sqlx::query("DELETE FROM channel_categories WHERE id = ?")
+            .bind(category_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete channel category")?;
+
+        Ok(())
+    }
+
+    pub async fn update_channel_category_and_position(
+        &self,
+        channel_id: Uuid,
+        category_id: Option<Uuid>,
+        position: Option<u32>,
+    ) -> Result<()> {
+        let mut query_parts = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
+
+        if let Some(category_id) = category_id {
+            query_parts.push("category_id = ?");
+            binds.push(category_id.to_string());
+        } else {
+            query_parts.push("category_id = NULL");
+        }
+
+        if let Some(position) = position {
+            query_parts.push("position = ?");
+            binds.push(position.to_string());
+        }
+
+        let query = format!(
+            "UPDATE channels SET {} WHERE id = ?",
+            query_parts.join(", ")
+        );
+
+        let mut sqlx_query = sqlx::query(&query);
+        for bind in binds {
+            sqlx_query = sqlx_query.bind(bind);
+        }
+        sqlx_query = sqlx_query.bind(channel_id.to_string());
+
+        sqlx_query
+            .execute(&self.pool)
+            .await
+            .context("Failed to update channel category and position")?;
+
+        Ok(())
+    }
+
+    pub async fn get_channels_with_categories(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::ChannelWithCategory>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT c.id, c.name, c.node_id, c.created_by, c.created_at, c.category_id, c.position,
+                   cat.name as category_name
+            FROM channels c
+            LEFT JOIN channel_categories cat ON c.category_id = cat.id
+            WHERE c.node_id = ?
+            ORDER BY c.category_id ASC NULLS FIRST, c.position ASC
+            "#,
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channels with categories")?;
+
+        let mut channels = Vec::new();
+        for row in rows {
+            let channel_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+            let members = self.get_channel_members(channel_id).await?;
+
+            let category_id = row
+                .get::<Option<String>, _>("category_id")
+                .and_then(|s| Uuid::parse_str(&s).ok());
+            let category_name = row.get::<Option<String>, _>("category_name");
+
+            channels.push(crate::models::ChannelWithCategory {
+                id: channel_id,
+                name: row.get("name"),
+                node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                members,
+                created_at: row.get::<i64, _>("created_at") as u64,
+                category_id,
+                category_name,
+                position: row.get::<i64, _>("position") as u32,
+            });
+        }
+        Ok(channels)
     }
 
     // ── Message operations ──
@@ -1825,6 +2101,121 @@ impl Database {
             .fetch_one(&self.pool)
             .await?;
         Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    // ── Audit Log operations ──
+
+    /// Log an audit event for a Node
+    pub async fn log_audit_event(
+        &self,
+        node_id: Uuid,
+        actor_id: Uuid,
+        action: &str,
+        target_type: &str,
+        target_id: Option<Uuid>,
+        details: Option<&str>,
+    ) -> Result<Uuid> {
+        let audit_id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query(
+            "INSERT INTO audit_log (id, node_id, actor_id, action, target_type, target_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(audit_id.to_string())
+        .bind(node_id.to_string())
+        .bind(actor_id.to_string())
+        .bind(action)
+        .bind(target_type)
+        .bind(target_id.map(|id| id.to_string()))
+        .bind(details)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to log audit event")?;
+
+        Ok(audit_id)
+    }
+
+    /// Get paginated audit log entries for a Node
+    pub async fn get_node_audit_log(
+        &self,
+        node_id: Uuid,
+        limit: u32,
+        before_id: Option<Uuid>,
+    ) -> Result<Vec<crate::models::AuditLogWithActor>> {
+        let query = if let Some(before_audit_id) = before_id {
+            // Get the timestamp of the before_id entry for cursor pagination
+            let before_timestamp: i64 =
+                sqlx::query_scalar("SELECT created_at FROM audit_log WHERE id = ?")
+                    .bind(before_audit_id.to_string())
+                    .fetch_optional(&self.pool)
+                    .await
+                    .context("Failed to get before audit entry timestamp")?
+                    .unwrap_or(0);
+
+            sqlx::query(
+                r#"
+                SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, u.username
+                FROM audit_log a
+                JOIN users u ON a.actor_id = u.id
+                WHERE a.node_id = ? AND a.created_at < ?
+                ORDER BY a.created_at DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(node_id.to_string())
+            .bind(before_timestamp)
+            .bind(limit as i64)
+        } else {
+            sqlx::query(
+                r#"
+                SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, u.username
+                FROM audit_log a
+                JOIN users u ON a.actor_id = u.id
+                WHERE a.node_id = ?
+                ORDER BY a.created_at DESC
+                LIMIT ?
+                "#,
+            )
+            .bind(node_id.to_string())
+            .bind(limit as i64)
+        };
+
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query audit log")?;
+
+        let entries: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let audit_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+                let node_id = Uuid::parse_str(&row.get::<String, _>("node_id")).unwrap();
+                let actor_id = Uuid::parse_str(&row.get::<String, _>("actor_id")).unwrap();
+                let actor_username: String = row.get("username");
+                let action: String = row.get("action");
+                let target_type: String = row.get("target_type");
+                let target_id = row
+                    .get::<Option<String>, _>("target_id")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
+                let details: Option<String> = row.get("details");
+                let created_at = row.get::<i64, _>("created_at") as u64;
+
+                crate::models::AuditLogWithActor {
+                    id: audit_id,
+                    node_id,
+                    actor_id,
+                    actor_username,
+                    action,
+                    target_type,
+                    target_id,
+                    details,
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(entries)
     }
 }
 

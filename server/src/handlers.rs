@@ -1,9 +1,10 @@
 //! HTTP and WebSocket handlers for the Accord relay server
 
 use crate::models::{
-    AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse, CreateNodeRequest,
-    EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse, MessageReactionsResponse,
-    RegisterRequest, RegisterResponse, UseInviteResponse, WsMessage, WsMessageType,
+    AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse,
+    CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
+    MessageReactionsResponse, RegisterRequest, RegisterResponse, UseInviteResponse, WsMessage,
+    WsMessageType,
 };
 use crate::node::NodeInfo;
 use crate::permissions::{has_permission, Permission};
@@ -219,10 +220,43 @@ pub async fn update_node_handler(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    match state.update_node(node_id, user_id, name, description).await {
-        Ok(()) => Ok(Json(
-            serde_json::json!({ "status": "updated", "node_id": node_id }),
-        )),
+    match state
+        .update_node(node_id, user_id, name.clone(), description.clone())
+        .await
+    {
+        Ok(()) => {
+            // Log audit event
+            let mut details = serde_json::Map::new();
+            if let Some(ref name) = name {
+                details.insert("name".to_string(), serde_json::Value::String(name.clone()));
+            }
+            if let Some(ref description) = description {
+                details.insert(
+                    "description".to_string(),
+                    serde_json::Value::String(description.clone()),
+                );
+            }
+            let details_str = if !details.is_empty() {
+                Some(serde_json::Value::Object(details).to_string())
+            } else {
+                None
+            };
+
+            log_audit_event(
+                &state,
+                node_id,
+                user_id,
+                "node_settings_update",
+                "node",
+                Some(node_id),
+                details_str.as_deref(),
+            )
+            .await;
+
+            Ok(Json(
+                serde_json::json!({ "status": "updated", "node_id": node_id }),
+            ))
+        }
         Err(err) => {
             if err.contains("Insufficient permissions") {
                 Err((
@@ -262,6 +296,22 @@ pub async fn kick_user_handler(
                 "User {} kicked from node {} by {}",
                 target_user_id, node_id, admin_user_id
             );
+
+            // Log audit event
+            let details = serde_json::json!({
+                "kicked_user_id": target_user_id
+            });
+            log_audit_event(
+                &state,
+                node_id,
+                admin_user_id,
+                "member_kick",
+                "user",
+                Some(target_user_id),
+                Some(&details.to_string()),
+            )
+            .await;
+
             Ok(Json(
                 serde_json::json!({ "status": "kicked", "node_id": node_id, "user_id": target_user_id }),
             ))
@@ -308,6 +358,24 @@ pub async fn create_invite_handler(
                 "Invite created: {} for node {} by {}",
                 invite_code, node_id, user_id
             );
+
+            // Log audit event
+            let details = serde_json::json!({
+                "invite_code": invite_code,
+                "invite_id": invite_id,
+                "max_uses": request.max_uses,
+                "expires_in_hours": request.expires_in_hours
+            });
+            log_audit_event(
+                &state,
+                node_id,
+                user_id,
+                "invite_create",
+                "invite",
+                Some(invite_id),
+                Some(&details.to_string()),
+            )
+            .await;
 
             // Calculate expires_at for response
             let expires_at = request.expires_in_hours.map(|hours| {
@@ -370,6 +438,25 @@ pub async fn revoke_invite_handler(
     match state.revoke_invite(invite_id, user_id).await {
         Ok(()) => {
             info!("Invite revoked: {} by {}", invite_id, user_id);
+
+            // Get the node_id from the invite for audit logging
+            if let Ok(Some(invite)) = state.db.get_node_invite(invite_id).await {
+                let details = serde_json::json!({
+                    "invite_code": invite.invite_code,
+                    "invite_id": invite_id
+                });
+                log_audit_event(
+                    &state,
+                    invite.node_id,
+                    user_id,
+                    "invite_revoke",
+                    "invite",
+                    Some(invite_id),
+                    Some(&details.to_string()),
+                )
+                .await;
+            }
+
             Ok(Json(
                 serde_json::json!({ "status": "revoked", "invite_id": invite_id }),
             ))
@@ -403,6 +490,294 @@ pub async fn use_invite_handler(
                 node_id,
                 node_name,
             }))
+        }
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
+    }
+}
+
+// ── Channel Category endpoints ──
+
+/// Create a channel category (POST /nodes/:id/categories)
+pub async fn create_channel_category_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::CreateChannelCategoryRequest>,
+) -> Result<Json<crate::models::CreateChannelCategoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user is admin of the node
+    let user_role = state
+        .get_user_role_in_node(user_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to check permissions: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !has_permission(user_role, Permission::ManageChannels) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Permission denied. Required: ManageChannels, Your role: {:?}",
+                    user_role
+                ),
+                code: 403,
+            }),
+        ));
+    }
+
+    match state.create_channel_category(node_id, &request.name).await {
+        Ok(category) => {
+            info!(
+                "Channel category {} created in node {}",
+                category.id, node_id
+            );
+            Ok(Json(crate::models::CreateChannelCategoryResponse {
+                id: category.id,
+                name: category.name,
+                position: category.position,
+                created_at: category.created_at,
+            }))
+        }
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
+    }
+}
+
+/// Update a channel category (PATCH /categories/:id)
+pub async fn update_channel_category_handler(
+    State(state): State<SharedState>,
+    Path(category_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::UpdateChannelCategoryRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get the category to determine the node it belongs to
+    let category = state.get_channel_category(category_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get category: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let category = category.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Channel category not found".to_string(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    // Check if user is admin of the node
+    let user_role = state
+        .get_user_role_in_node(user_id, category.node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to check permissions: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !has_permission(user_role, Permission::ManageChannels) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Permission denied. Required: ManageChannels, Your role: {:?}",
+                    user_role
+                ),
+                code: 403,
+            }),
+        ));
+    }
+
+    match state
+        .update_channel_category(category_id, request.name.as_deref(), request.position)
+        .await
+    {
+        Ok(()) => {
+            info!("Channel category {} updated", category_id);
+            Ok(Json(
+                serde_json::json!({ "status": "updated", "category_id": category_id }),
+            ))
+        }
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
+    }
+}
+
+/// Delete a channel category (DELETE /categories/:id)
+pub async fn delete_channel_category_handler(
+    State(state): State<SharedState>,
+    Path(category_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get the category to determine the node it belongs to
+    let category = state.get_channel_category(category_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get category: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let category = category.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Channel category not found".to_string(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    // Check if user is admin of the node
+    let user_role = state
+        .get_user_role_in_node(user_id, category.node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to check permissions: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !has_permission(user_role, Permission::ManageChannels) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Permission denied. Required: ManageChannels, Your role: {:?}",
+                    user_role
+                ),
+                code: 403,
+            }),
+        ));
+    }
+
+    match state.delete_channel_category(category_id).await {
+        Ok(()) => {
+            info!("Channel category {} deleted", category_id);
+            Ok(Json(
+                serde_json::json!({ "status": "deleted", "category_id": category_id }),
+            ))
+        }
+        Err(err) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: err,
+                code: 400,
+            }),
+        )),
+    }
+}
+
+/// Update a channel's category and position (PATCH /channels/:id)
+pub async fn update_channel_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::UpdateChannelRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get the channel to determine the node it belongs to
+    let channel = state.get_channel(channel_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get channel: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let channel = channel.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Channel not found".to_string(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    // Check if user is admin of the node
+    let user_role = state
+        .get_user_role_in_node(user_id, channel.node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to check permissions: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !has_permission(user_role, Permission::ManageChannels) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Permission denied. Required: manage_channels, Your role: {:?}",
+                    user_role
+                ),
+                code: 403,
+            }),
+        ));
+    }
+
+    match state
+        .update_channel_category_and_position(channel_id, request.category_id, request.position)
+        .await
+    {
+        Ok(()) => {
+            info!("Channel {} updated", channel_id);
+            Ok(Json(
+                serde_json::json!({ "status": "updated", "channel_id": channel_id }),
+            ))
         }
         Err(err) => Err((
             StatusCode::BAD_REQUEST,
@@ -814,7 +1189,7 @@ async fn check_node_permission(
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
                         error: format!(
-                            "Permission denied. Required: {}, Your role: {}",
+                            "Permission denied. Required: {:?}, Your role: {:?}",
                             permission_name, role_name
                         ),
                         code: 403,
@@ -963,8 +1338,40 @@ async fn handle_ws_message(
         }
 
         WsMessageType::CreateChannel { node_id, name } => {
-            let channel = state.create_channel(name, node_id, sender_user_id).await?;
+            let channel = state
+                .create_channel(name.clone(), node_id, sender_user_id)
+                .await?;
+
+            // Log audit event
+            let details = serde_json::json!({
+                "channel_name": name,
+                "channel_id": channel.id
+            });
+            log_audit_event(
+                &state,
+                node_id,
+                sender_user_id,
+                "channel_create",
+                "channel",
+                Some(channel.id),
+                Some(&details.to_string()),
+            )
+            .await;
+
             let resp = serde_json::json!({ "type": "channel_created", "channel": channel });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::UpdateChannel {
+            channel_id,
+            category_id,
+            position,
+        } => {
+            // This would be handled by the REST endpoint, but we can include it for completeness
+            let resp = serde_json::json!({
+                "type": "error",
+                "message": "Use REST API to update channels"
+            });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
@@ -1332,6 +1739,22 @@ async fn handle_ws_message(
                 return Err("Message is already pinned".into());
             }
 
+            // Log audit event
+            let details = serde_json::json!({
+                "message_id": message_id,
+                "channel_id": channel_id
+            });
+            log_audit_event(
+                &state,
+                channel.node_id,
+                sender_user_id,
+                "message_pin",
+                "message",
+                Some(message_id),
+                Some(&details.to_string()),
+            )
+            .await;
+
             // Broadcast pin event to channel
             let pin_event = serde_json::json!({
                 "type": "message_pin",
@@ -1406,6 +1829,22 @@ async fn handle_ws_message(
             if !success {
                 return Err("Message is not pinned".into());
             }
+
+            // Log audit event
+            let details = serde_json::json!({
+                "message_id": message_id,
+                "channel_id": channel_id
+            });
+            log_audit_event(
+                &state,
+                channel.node_id,
+                sender_user_id,
+                "message_unpin",
+                "message",
+                Some(message_id),
+                Some(&details.to_string()),
+            )
+            .await;
 
             // Broadcast unpin event to channel
             let unpin_event = serde_json::json!({
@@ -1489,7 +1928,7 @@ async fn handle_ws_message(
             state
                 .send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string())
                 .await?;
-        }
+        } // WsMessageType::UpdateChannel is handled above
     }
 
     Ok(())
@@ -2681,6 +3120,22 @@ pub async fn pin_message_handler(
         ));
     }
 
+    // Log audit event
+    let details = serde_json::json!({
+        "message_id": message_id,
+        "channel_id": channel_id
+    });
+    log_audit_event(
+        &state,
+        channel.node_id,
+        user_id,
+        "message_pin",
+        "message",
+        Some(message_id),
+        Some(&details.to_string()),
+    )
+    .await;
+
     // Broadcast pin event to channel
     let pin_event = serde_json::json!({
         "type": "message_pin",
@@ -2838,6 +3293,22 @@ pub async fn unpin_message_handler(
             }),
         ));
     }
+
+    // Log audit event
+    let details = serde_json::json!({
+        "message_id": message_id,
+        "channel_id": channel_id
+    });
+    log_audit_event(
+        &state,
+        channel.node_id,
+        user_id,
+        "message_unpin",
+        "message",
+        Some(message_id),
+        Some(&details.to_string()),
+    )
+    .await;
 
     // Broadcast unpin event to channel
     let unpin_event = serde_json::json!({
@@ -3062,4 +3533,121 @@ pub async fn get_dm_channels_handler(
     })?;
 
     Ok(Json(crate::models::DmChannelsResponse { dm_channels }))
+}
+
+// ── Audit Log Handlers ──
+
+/// Get audit log for a Node (admin/mod only)
+/// GET /nodes/:node_id/audit-log?limit=50&before=<id>
+pub async fn get_node_audit_log_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<AuditLogResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check if user is a member of the Node
+    let user_member = state
+        .db
+        .get_node_member(node_id, user_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to check node membership: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check node membership".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let user_member = user_member.ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "You are not a member of this Node".into(),
+                code: 403,
+            }),
+        )
+    })?;
+
+    // Check if user has ViewAuditLog permission
+    if !has_permission(user_member.role, Permission::ViewAuditLog) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Permission denied. Required: ViewAuditLog, Your role: {:?}",
+                    user_member.role
+                ),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Parse pagination parameters
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(50)
+        .min(100); // Max 100 entries per request
+
+    let before_id = params.get("before").and_then(|s| Uuid::parse_str(s).ok());
+
+    // Get audit log entries
+    let entries = state
+        .db
+        .get_node_audit_log(node_id, limit + 1, before_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get audit log: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get audit log".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let has_more = entries.len() > limit as usize;
+    let entries = if has_more {
+        entries.into_iter().take(limit as usize).collect()
+    } else {
+        entries
+    };
+
+    let next_cursor = if has_more {
+        entries.last().map(|entry| entry.id)
+    } else {
+        None
+    };
+
+    Ok(Json(AuditLogResponse {
+        entries,
+        has_more,
+        next_cursor,
+    }))
+}
+
+// ── Audit Log Helper Functions ──
+
+/// Helper function to log an audit event
+pub async fn log_audit_event(
+    state: &SharedState,
+    node_id: Uuid,
+    actor_id: Uuid,
+    action: &str,
+    target_type: &str,
+    target_id: Option<Uuid>,
+    details: Option<&str>,
+) {
+    if let Err(e) = state
+        .db
+        .log_audit_event(node_id, actor_id, action, target_type, target_id, details)
+        .await
+    {
+        error!("Failed to log audit event: {}", e);
+    }
 }

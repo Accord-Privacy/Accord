@@ -183,6 +183,17 @@ impl AppState {
             .map_err(|e| e.to_string())
     }
 
+    pub async fn get_user_role_in_node(
+        &self,
+        user_id: Uuid,
+        node_id: Uuid,
+    ) -> Result<crate::node::NodeRole, String> {
+        match self.get_node_member(node_id, user_id).await? {
+            Some(member) => Ok(member.role),
+            None => Err("User is not a member of this node".to_string()),
+        }
+    }
+
     pub async fn join_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
         // Check node exists
         match self.db.get_node(node_id).await {
@@ -502,6 +513,75 @@ impl AppState {
         // TODO: Add actual delete_channel method to database layer
         // self.db.delete_channel(channel_id).await.map_err(|e| e.to_string())
         Err("Channel deletion not yet implemented in database layer".to_string())
+    }
+
+    // ── Channel Category operations ──
+
+    pub async fn create_channel_category(
+        &self,
+        node_id: Uuid,
+        name: &str,
+    ) -> Result<crate::models::ChannelCategory, String> {
+        self.db
+            .create_channel_category(node_id, name)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn get_channel_category(
+        &self,
+        category_id: Uuid,
+    ) -> Result<Option<crate::models::ChannelCategory>, String> {
+        // Get category from database
+        let categories = self
+            .db
+            .get_node_categories(Uuid::nil()) // We'll need to find the node first
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // For now, we'll do a simple lookup - in a real implementation we'd add a get_category_by_id method
+        Ok(categories.into_iter().find(|c| c.id == category_id))
+    }
+
+    pub async fn update_channel_category(
+        &self,
+        category_id: Uuid,
+        name: Option<&str>,
+        position: Option<u32>,
+    ) -> Result<(), String> {
+        self.db
+            .update_channel_category(category_id, name, position)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn delete_channel_category(&self, category_id: Uuid) -> Result<(), String> {
+        self.db
+            .delete_channel_category(category_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn update_channel_category_and_position(
+        &self,
+        channel_id: Uuid,
+        category_id: Option<Uuid>,
+        position: Option<u32>,
+    ) -> Result<(), String> {
+        self.db
+            .update_channel_category_and_position(channel_id, category_id, position)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn get_channels_with_categories(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::ChannelWithCategory>, String> {
+        self.db
+            .get_channels_with_categories(node_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn update_node(

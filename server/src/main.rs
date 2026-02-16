@@ -18,16 +18,18 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    add_reaction_handler, auth_handler, create_dm_channel_handler, create_invite_handler,
-    create_node_handler, delete_channel_handler, delete_file_handler, delete_message_handler,
-    download_file_handler, edit_message_handler, get_channel_messages_handler,
-    get_dm_channels_handler, get_message_reactions_handler, get_message_thread_handler,
+    add_reaction_handler, auth_handler, create_channel_category_handler, create_dm_channel_handler,
+    create_invite_handler, create_node_handler, delete_channel_category_handler,
+    delete_channel_handler, delete_file_handler, delete_message_handler, download_file_handler,
+    edit_message_handler, get_channel_messages_handler, get_dm_channels_handler,
+    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
     get_node_handler, get_node_members_handler, get_pinned_messages_handler,
     get_user_profile_handler, health_handler, join_node_handler, kick_user_handler,
     leave_node_handler, list_channel_files_handler, list_invites_handler, pin_message_handler,
     register_handler, remove_reaction_handler, revoke_invite_handler, search_messages_handler,
-    unpin_message_handler, update_node_handler, update_user_profile_handler, upload_file_handler,
-    use_invite_handler, ws_handler,
+    unpin_message_handler, update_channel_category_handler, update_channel_handler,
+    update_node_handler, update_user_profile_handler, upload_file_handler, use_invite_handler,
+    ws_handler,
 };
 use state::{AppState, SharedState};
 use std::sync::Arc;
@@ -97,7 +99,21 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/join", post(join_node_handler))
         .route("/nodes/:id/leave", post(leave_node_handler))
         .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
+        // Channel category endpoints
+        .route(
+            "/nodes/:id/categories",
+            post(create_channel_category_handler),
+        )
+        .route(
+            "/categories/:id",
+            axum::routing::patch(update_channel_category_handler),
+        )
+        .route("/categories/:id", delete(delete_channel_category_handler))
         // Channel endpoints
+        .route(
+            "/channels/:id",
+            axum::routing::patch(update_channel_handler),
+        )
         .route("/channels/:id", delete(delete_channel_handler))
         .route("/channels/:id/messages", get(get_channel_messages_handler))
         // ── Message editing and deletion ──
@@ -136,6 +152,8 @@ async fn main() -> Result<()> {
             axum::routing::patch(update_user_profile_handler),
         )
         .route("/nodes/:id/members", get(get_node_members_handler))
+        // Audit log endpoints
+        .route("/nodes/:id/audit-log", get(get_node_audit_log_handler))
         // Node invite endpoints
         .route("/nodes/:id/invites", post(create_invite_handler))
         .route("/nodes/:id/invites", get(list_invites_handler))

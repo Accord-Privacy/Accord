@@ -355,3 +355,22 @@ export interface DmChannelWithInfo {
 export interface DmChannelsResponse {
   dm_channels: DmChannelWithInfo[];
 }
+
+// Audit log types
+export interface AuditLogEntry {
+  id: string;
+  node_id: string;
+  actor_id: string;
+  actor_username: string;
+  action: string;
+  target_type: string;
+  target_id?: string;
+  details?: string;
+  created_at: number;
+}
+
+export interface AuditLogResponse {
+  entries: AuditLogEntry[];
+  has_more: boolean;
+  next_cursor?: string;
+}

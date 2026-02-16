@@ -30,6 +30,29 @@ pub struct Channel {
     pub created_at: u64,
 }
 
+/// Channel category information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelCategory {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub name: String,
+    pub position: u32,
+    pub created_at: u64,
+}
+
+/// Channel information with category details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelWithCategory {
+    pub id: Uuid,
+    pub name: String,
+    pub node_id: Uuid,
+    pub members: Vec<Uuid>,
+    pub created_at: u64,
+    pub category_id: Option<Uuid>,
+    pub category_name: Option<String>,
+    pub position: u32,
+}
+
 /// WebSocket message types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WsMessageType {
@@ -53,6 +76,12 @@ pub enum WsMessageType {
     LeaveChannel { channel_id: Uuid },
     /// Create a channel in a Node
     CreateChannel { node_id: Uuid, name: String },
+    /// Update a channel's category and position
+    UpdateChannel {
+        channel_id: Uuid,
+        category_id: Option<Uuid>,
+        position: Option<u32>,
+    },
 
     // ── Messaging ──
     /// Direct message to a user (encrypted blob)
@@ -156,6 +185,35 @@ pub struct AuthResponse {
 pub struct CreateNodeRequest {
     pub name: String,
     pub description: Option<String>,
+}
+
+/// Create channel category request (REST)
+#[derive(Debug, Deserialize)]
+pub struct CreateChannelCategoryRequest {
+    pub name: String,
+}
+
+/// Create channel category response (REST)
+#[derive(Debug, Serialize)]
+pub struct CreateChannelCategoryResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub position: u32,
+    pub created_at: u64,
+}
+
+/// Update channel category request (REST)
+#[derive(Debug, Deserialize)]
+pub struct UpdateChannelCategoryRequest {
+    pub name: Option<String>,
+    pub position: Option<u32>,
+}
+
+/// Update channel request (REST)
+#[derive(Debug, Deserialize)]
+pub struct UpdateChannelRequest {
+    pub category_id: Option<Uuid>,
+    pub position: Option<u32>,
 }
 
 /// Node invite information
@@ -390,4 +448,39 @@ pub struct DmChannelWithInfo {
 #[derive(Debug, Serialize)]
 pub struct DmChannelsResponse {
     pub dm_channels: Vec<DmChannelWithInfo>,
+}
+
+/// Audit log entry for Node management actions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLog {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub actor_id: Uuid,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: Option<Uuid>,
+    pub details: Option<String>, // JSON string with additional context
+    pub created_at: u64,
+}
+
+/// Response for paginated audit log
+#[derive(Debug, Serialize)]
+pub struct AuditLogResponse {
+    pub entries: Vec<AuditLogWithActor>,
+    pub has_more: bool,
+    pub next_cursor: Option<Uuid>, // entry_id for pagination
+}
+
+/// Audit log entry with actor information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLogWithActor {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub actor_id: Uuid,
+    pub actor_username: String,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: Option<Uuid>,
+    pub details: Option<String>,
+    pub created_at: u64,
 }
