@@ -8,4 +8,5 @@ pub mod handlers;
 pub mod models;
 pub mod node;
 pub mod permissions;
+pub mod rate_limit;
 pub mod state;
