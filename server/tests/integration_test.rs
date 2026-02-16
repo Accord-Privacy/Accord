@@ -368,7 +368,6 @@ async fn test_websocket_connection_without_token() {
 }
 
 #[tokio::test]
-#[ignore] // DM routing test needs integration test infrastructure update
 async fn test_message_routing_between_two_clients() {
     let server = TestServer::new().await;
 
