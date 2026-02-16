@@ -64,6 +64,8 @@ pub enum WsMessageType {
     ChannelMessage {
         channel_id: Uuid,
         encrypted_data: String,
+        #[serde(default)]
+        reply_to: Option<Uuid>,
     },
     /// Edit a message (author only)
     EditMessage {
@@ -291,6 +293,18 @@ pub struct MessageMetadata {
     pub edited_at: Option<u64>,
     pub pinned_at: Option<u64>,
     pub pinned_by: Option<Uuid>,
+    pub reply_to: Option<Uuid>,
+    pub replied_message: Option<RepliedMessage>, // Preview of the message being replied to
+}
+
+/// Preview of a replied-to message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepliedMessage {
+    pub id: Uuid,
+    pub sender_id: Uuid,
+    pub sender_username: String,
+    pub encrypted_payload: String, // Base64 encoded encrypted content (snippet)
+    pub created_at: u64,
 }
 
 /// File metadata for encrypted file sharing
@@ -348,4 +362,32 @@ pub struct MessageReaction {
 #[derive(Debug, Serialize)]
 pub struct MessageReactionsResponse {
     pub reactions: Vec<MessageReaction>,
+}
+
+/// Direct Message channel between two users
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmChannel {
+    pub id: Uuid,
+    pub user1_id: Uuid,
+    pub user2_id: Uuid,
+    pub created_at: u64,
+}
+
+/// DM channel with last message preview and user info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmChannelWithInfo {
+    pub id: Uuid,
+    pub user1_id: Uuid,
+    pub user2_id: Uuid,
+    pub other_user: User,
+    pub other_user_profile: UserProfile,
+    pub last_message: Option<MessageMetadata>,
+    pub unread_count: u32,
+    pub created_at: u64,
+}
+
+/// Response for list user DM channels
+#[derive(Debug, Serialize)]
+pub struct DmChannelsResponse {
+    pub dm_channels: Vec<DmChannelWithInfo>,
 }

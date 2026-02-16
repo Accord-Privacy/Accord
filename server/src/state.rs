@@ -559,7 +559,7 @@ impl AppState {
         encrypted_payload: &[u8],
     ) -> Result<Uuid, String> {
         self.db
-            .store_message(channel_id, sender_id, encrypted_payload)
+            .store_message(channel_id, sender_id, encrypted_payload, None)
             .await
             .map_err(|e| e.to_string())
     }

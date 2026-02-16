@@ -93,7 +93,7 @@ export type WsMessageType =
   | { LeaveChannel: { channel_id: string } }
   | { CreateChannel: { node_id: string; name: string } }
   | { DirectMessage: { to_user: string; encrypted_data: string } }
-  | { ChannelMessage: { channel_id: string; encrypted_data: string } }
+  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string } }
   | { EditMessage: { message_id: string; encrypted_data: string } }
   | { DeleteMessage: { message_id: string } }
   | { AddReaction: { message_id: string; emoji: string } }
@@ -185,6 +185,17 @@ export interface Message {
   pinned_by?: string;
   isEncrypted?: boolean;
   reactions?: MessageReaction[];
+  reply_to?: string;
+  replied_message?: RepliedMessage;
+}
+
+export interface RepliedMessage {
+  id: string;
+  sender_id: string;
+  sender_username: string;
+  encrypted_payload: string;
+  created_at: number;
+  content?: string; // Decrypted content for display
 }
 
 export interface MessageReaction {
@@ -320,4 +331,27 @@ export interface TypingUser {
   user_id: string;
   username: string;
   startedAt: number;
+}
+
+// Direct Message types
+export interface DmChannel {
+  id: string;
+  user1_id: string;
+  user2_id: string;
+  created_at: number;
+}
+
+export interface DmChannelWithInfo {
+  id: string;
+  user1_id: string;
+  user2_id: string;
+  other_user: User;
+  other_user_profile: UserProfile;
+  last_message?: Message;
+  unread_count: number;
+  created_at: number;
+}
+
+export interface DmChannelsResponse {
+  dm_channels: DmChannelWithInfo[];
 }

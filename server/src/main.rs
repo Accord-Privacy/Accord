@@ -18,9 +18,10 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    add_reaction_handler, auth_handler, create_invite_handler, create_node_handler,
-    delete_channel_handler, delete_file_handler, delete_message_handler, download_file_handler,
-    edit_message_handler, get_channel_messages_handler, get_message_reactions_handler,
+    add_reaction_handler, auth_handler, create_dm_channel_handler, create_invite_handler,
+    create_node_handler, delete_channel_handler, delete_file_handler, delete_message_handler,
+    download_file_handler, edit_message_handler, get_channel_messages_handler,
+    get_dm_channels_handler, get_message_reactions_handler, get_message_thread_handler,
     get_node_handler, get_node_members_handler, get_pinned_messages_handler,
     get_user_profile_handler, health_handler, join_node_handler, kick_user_handler,
     leave_node_handler, list_channel_files_handler, list_invites_handler, pin_message_handler,
@@ -102,6 +103,8 @@ async fn main() -> Result<()> {
         // ── Message editing and deletion ──
         .route("/messages/:id", axum::routing::patch(edit_message_handler))
         .route("/messages/:id", delete(delete_message_handler))
+        // ── Message threading ──
+        .route("/messages/:id/thread", get(get_message_thread_handler))
         // ── Message reactions ──
         .route(
             "/messages/:id/reactions",
@@ -138,6 +141,9 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/invites", get(list_invites_handler))
         .route("/invites/:invite_id", delete(revoke_invite_handler))
         .route("/invites/:code/join", post(use_invite_handler))
+        // Direct Message endpoints
+        .route("/dm/:user_id", post(create_dm_channel_handler))
+        .route("/dm", get(get_dm_channels_handler))
         // WebSocket endpoint
         .route("/ws", get(ws_handler))
         // Add shared state
@@ -184,6 +190,8 @@ async fn main() -> Result<()> {
     println!("  GET    /nodes/:id/invites - List Node invites (?token=) [Admin/Mod]");
     println!("  DELETE /invites/:id       - Revoke invite (?token=) [Admin/Mod]");
     println!("  POST   /invites/:code/join - Join Node via invite (?token=)");
+    println!("  POST   /dm/:user_id       - Create/get DM channel (?token=)");
+    println!("  GET    /dm                - List user's DM channels (?token=)");
     println!("  WS     /ws                - WebSocket messaging (?token=)");
     println!();
 

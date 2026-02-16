@@ -161,6 +161,12 @@ impl Database {
             .await
             .ok(); // Ignore error if column already exists
 
+        // Add reply_to column to existing messages table if it doesn't exist
+        sqlx::query("ALTER TABLE messages ADD COLUMN reply_to TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
+
         // Create node_invites table
         sqlx::query(
             r#"
@@ -312,6 +318,32 @@ impl Database {
         .execute(&self.pool)
         .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_reactions_user ON message_reactions (user_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create dm_channels table for direct messages
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS dm_channels (
+                id TEXT PRIMARY KEY NOT NULL,
+                user1_id TEXT NOT NULL,
+                user2_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (user1_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (user2_id) REFERENCES users (id) ON DELETE CASCADE,
+                UNIQUE(user1_id, user2_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create dm_channels table")?;
+
+        // Create indexes for dm_channels
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_dm_channels_user1 ON dm_channels (user1_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_dm_channels_user2 ON dm_channels (user2_id)")
             .execute(&self.pool)
             .await?;
 
@@ -653,16 +685,18 @@ impl Database {
         channel_id: Uuid,
         sender_id: Uuid,
         encrypted_payload: &[u8],
+        reply_to: Option<Uuid>,
     ) -> Result<Uuid> {
         let message_id = Uuid::new_v4();
         let created_at = now();
 
-        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at) VALUES (?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(message_id.to_string())
             .bind(channel_id.to_string())
             .bind(sender_id.to_string())
             .bind(encrypted_payload)
             .bind(created_at as i64)
+            .bind(reply_to.map(|id| id.to_string()))
             .execute(&self.pool)
             .await
             .context("Failed to store message")?;
@@ -730,9 +764,12 @@ impl Database {
 
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, u.username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
+                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
+                LEFT JOIN messages rm ON m.reply_to = rm.id
+                LEFT JOIN users ru ON rm.sender_id = ru.id
                 WHERE m.channel_id = ? AND m.created_at < ?
                 ORDER BY m.created_at DESC
                 LIMIT ?
@@ -744,9 +781,12 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, u.username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
+                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
+                LEFT JOIN messages rm ON m.reply_to = rm.id
+                LEFT JOIN users ru ON rm.sender_id = ru.id
                 WHERE m.channel_id = ?
                 ORDER BY m.created_at DESC
                 LIMIT ?
@@ -775,6 +815,25 @@ impl Database {
                 let pinned_by = row
                     .get::<Option<String>, _>("pinned_by")
                     .and_then(|s| Uuid::parse_str(&s).ok());
+                let reply_to = row
+                    .get::<Option<String>, _>("reply_to")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
+
+                // Build replied message if it exists
+                let replied_message =
+                    if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
+                        Some(crate::models::RepliedMessage {
+                            id: Uuid::parse_str(&replied_id).unwrap(),
+                            sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))
+                                .unwrap(),
+                            sender_username: row.get("replied_username"),
+                            encrypted_payload: base64::engine::general_purpose::STANDARD
+                                .encode(&row.get::<Vec<u8>, _>("replied_payload")),
+                            created_at: row.get::<i64, _>("replied_created_at") as u64,
+                        })
+                    } else {
+                        None
+                    };
 
                 crate::models::MessageMetadata {
                     id: message_id,
@@ -787,6 +846,8 @@ impl Database {
                     edited_at,
                     pinned_at,
                     pinned_by,
+                    reply_to,
+                    replied_message,
                 }
             })
             .collect();
@@ -1431,9 +1492,12 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let rows = sqlx::query(
             r#"
-            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, u.username
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
+                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
             FROM messages m
             JOIN users u ON m.sender_id = u.id
+            LEFT JOIN messages rm ON m.reply_to = rm.id
+            LEFT JOIN users ru ON rm.sender_id = ru.id
             WHERE m.channel_id = ? AND m.pinned_at IS NOT NULL
             ORDER BY m.pinned_at DESC
             "#,
@@ -1453,6 +1517,29 @@ impl Database {
                 let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
                 let created_at = row.get::<i64, _>("created_at") as u64;
                 let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
+                let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
+                let pinned_by = row
+                    .get::<Option<String>, _>("pinned_by")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
+                let reply_to = row
+                    .get::<Option<String>, _>("reply_to")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
+
+                // Build replied message if it exists
+                let replied_message =
+                    if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
+                        Some(crate::models::RepliedMessage {
+                            id: Uuid::parse_str(&replied_id).unwrap(),
+                            sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))
+                                .unwrap(),
+                            sender_username: row.get("replied_username"),
+                            encrypted_payload: base64::engine::general_purpose::STANDARD
+                                .encode(&row.get::<Vec<u8>, _>("replied_payload")),
+                            created_at: row.get::<i64, _>("replied_created_at") as u64,
+                        })
+                    } else {
+                        None
+                    };
 
                 crate::models::MessageMetadata {
                     id: message_id,
@@ -1463,13 +1550,281 @@ impl Database {
                         .encode(&encrypted_payload),
                     created_at,
                     edited_at,
-                    pinned_at: None,
-                    pinned_by: None,
+                    pinned_at,
+                    pinned_by,
+                    reply_to,
+                    replied_message,
                 }
             })
             .collect();
 
         Ok(messages)
+    }
+
+    /// Get all replies to a message (thread view)
+    pub async fn get_message_thread(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Vec<crate::models::MessageMetadata>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
+                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
+            FROM messages m
+            JOIN users u ON m.sender_id = u.id
+            LEFT JOIN messages rm ON m.reply_to = rm.id
+            LEFT JOIN users ru ON rm.sender_id = ru.id
+            WHERE m.reply_to = ?
+            ORDER BY m.created_at ASC
+            "#,
+        )
+        .bind(message_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query message thread")?;
+
+        let messages: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
+                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+                let sender_username: String = row.get("username");
+                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+                let created_at = row.get::<i64, _>("created_at") as u64;
+                let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
+                let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
+                let pinned_by = row
+                    .get::<Option<String>, _>("pinned_by")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
+                let reply_to = row
+                    .get::<Option<String>, _>("reply_to")
+                    .and_then(|s| Uuid::parse_str(&s).ok());
+
+                // Build replied message if it exists
+                let replied_message =
+                    if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
+                        Some(crate::models::RepliedMessage {
+                            id: Uuid::parse_str(&replied_id).unwrap(),
+                            sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))
+                                .unwrap(),
+                            sender_username: row.get("replied_username"),
+                            encrypted_payload: base64::engine::general_purpose::STANDARD
+                                .encode(&row.get::<Vec<u8>, _>("replied_payload")),
+                            created_at: row.get::<i64, _>("replied_created_at") as u64,
+                        })
+                    } else {
+                        None
+                    };
+
+                crate::models::MessageMetadata {
+                    id: message_id,
+                    channel_id,
+                    sender_id,
+                    sender_username,
+                    encrypted_payload: base64::engine::general_purpose::STANDARD
+                        .encode(&encrypted_payload),
+                    created_at,
+                    edited_at,
+                    pinned_at,
+                    pinned_by,
+                    reply_to,
+                    replied_message,
+                }
+            })
+            .collect();
+
+        Ok(messages)
+    }
+
+    // ── Direct Message Channel operations ──
+
+    /// Create or get a DM channel between two users
+    pub async fn create_or_get_dm_channel(
+        &self,
+        user1_id: Uuid,
+        user2_id: Uuid,
+    ) -> Result<crate::models::DmChannel> {
+        // Ensure consistent ordering for unique constraint (user1 < user2)
+        let (user1, user2) = if user1_id < user2_id {
+            (user1_id, user2_id)
+        } else {
+            (user2_id, user1_id)
+        };
+
+        // Try to find existing DM channel
+        let existing = sqlx::query(
+            "SELECT id, user1_id, user2_id, created_at FROM dm_channels WHERE user1_id = ? AND user2_id = ?"
+        )
+        .bind(user1.to_string())
+        .bind(user2.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query existing DM channel")?;
+
+        if let Some(row) = existing {
+            return Ok(crate::models::DmChannel {
+                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
+                user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
+                created_at: row.get::<i64, _>("created_at") as u64,
+            });
+        }
+
+        // Create new DM channel
+        let dm_id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query(
+            "INSERT INTO dm_channels (id, user1_id, user2_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(dm_id.to_string())
+        .bind(user1.to_string())
+        .bind(user2.to_string())
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create DM channel")?;
+
+        // Create a channel entry for message infrastructure
+        self.create_channel_with_id(dm_id, &format!("DM-{}", dm_id), Uuid::nil(), user1_id)
+            .await?;
+
+        // Add both users to the channel
+        self.add_user_to_channel(dm_id, user1_id).await?;
+        self.add_user_to_channel(dm_id, user2_id).await?;
+
+        Ok(crate::models::DmChannel {
+            id: dm_id,
+            user1_id: user1,
+            user2_id: user2,
+            created_at,
+        })
+    }
+
+    /// Get user's DM channels with last message preview
+    pub async fn get_user_dm_channels(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::DmChannelWithInfo>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                dm.id, dm.user1_id, dm.user2_id, dm.created_at,
+                u.id as other_user_id, u.username as other_username, u.public_key as other_public_key, u.created_at as other_user_created_at,
+                up.display_name, up.avatar_url, up.bio, up.status, up.custom_status, up.updated_at
+            FROM dm_channels dm
+            JOIN users u ON (
+                CASE 
+                    WHEN dm.user1_id = ? THEN u.id = dm.user2_id
+                    ELSE u.id = dm.user1_id
+                END
+            )
+            LEFT JOIN user_profiles up ON u.id = up.user_id
+            WHERE dm.user1_id = ? OR dm.user2_id = ?
+            ORDER BY dm.created_at DESC
+            "#,
+        )
+        .bind(user_id.to_string())
+        .bind(user_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query user DM channels")?;
+
+        let mut dm_channels = Vec::new();
+        for row in rows {
+            let dm_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+
+            // Get last message for this DM channel
+            let last_message = self
+                .get_channel_messages_paginated(dm_id, 1, None)
+                .await?
+                .into_iter()
+                .next();
+
+            // Get unread count (for now, we'll implement this later)
+            let unread_count = 0u32;
+
+            let other_user = crate::models::User {
+                id: Uuid::parse_str(&row.get::<String, _>("other_user_id"))?,
+                username: row.get("other_username"),
+                public_key: row.get("other_public_key"),
+                created_at: row.get::<i64, _>("other_user_created_at") as u64,
+            };
+
+            let other_user_profile = crate::models::UserProfile {
+                user_id: other_user.id,
+                display_name: row
+                    .get::<Option<String>, _>("display_name")
+                    .unwrap_or_else(|| other_user.username.clone()),
+                avatar_url: row.get("avatar_url"),
+                bio: row.get("bio"),
+                status: row
+                    .get::<Option<String>, _>("status")
+                    .unwrap_or_else(|| "offline".to_string()),
+                custom_status: row.get("custom_status"),
+                updated_at: row
+                    .get::<Option<i64>, _>("updated_at")
+                    .map(|t| t as u64)
+                    .unwrap_or(0),
+            };
+
+            dm_channels.push(crate::models::DmChannelWithInfo {
+                id: dm_id,
+                user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
+                user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
+                other_user,
+                other_user_profile,
+                last_message,
+                unread_count,
+                created_at: row.get::<i64, _>("created_at") as u64,
+            });
+        }
+
+        Ok(dm_channels)
+    }
+
+    /// Get DM channel between two specific users
+    pub async fn get_dm_channel_between_users(
+        &self,
+        user1_id: Uuid,
+        user2_id: Uuid,
+    ) -> Result<Option<crate::models::DmChannel>> {
+        let (user1, user2) = if user1_id < user2_id {
+            (user1_id, user2_id)
+        } else {
+            (user2_id, user1_id)
+        };
+
+        let row = sqlx::query(
+            "SELECT id, user1_id, user2_id, created_at FROM dm_channels WHERE user1_id = ? AND user2_id = ?"
+        )
+        .bind(user1.to_string())
+        .bind(user2.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query DM channel between users")?;
+
+        if let Some(row) = row {
+            Ok(Some(crate::models::DmChannel {
+                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
+                user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
+                created_at: row.get::<i64, _>("created_at") as u64,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Check if a channel is a DM channel
+    pub async fn is_dm_channel(&self, channel_id: Uuid) -> Result<bool> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM dm_channels WHERE id = ?")
+            .bind(channel_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") > 0)
     }
 }
 
@@ -1684,7 +2039,7 @@ mod tests {
 
         let encrypted_data = b"encrypted_message_data";
         let message_id = db
-            .store_message(channel.id, user.id, encrypted_data)
+            .store_message(channel.id, user.id, encrypted_data, None)
             .await
             .unwrap();
 

@@ -19,6 +19,8 @@ import {
   UpdateProfileRequest,
   MessageReaction,
   MessageReactionsResponse,
+  DmChannel,
+  DmChannelsResponse,
 } from './types';
 
 // Configuration
@@ -376,6 +378,13 @@ export class AccordApi {
     );
   }
 
+  // Get message thread (replies to a message)
+  async getMessageThread(messageId: string, token: string): Promise<MessagePaginationResponse> {
+    return this.request<MessagePaginationResponse>(
+      `/messages/${messageId}/thread?token=${encodeURIComponent(token)}`
+    );
+  }
+
   // Get message reactions
   async getMessageReactions(messageId: string, token: string): Promise<MessageReactionsResponse> {
     return this.request<MessageReactionsResponse>(
@@ -430,6 +439,25 @@ export class AccordApi {
     );
   }
 
+  // Direct Message operations
+
+  // Create or get DM channel with a user
+  async createDmChannel(targetUserId: string, token: string): Promise<DmChannel> {
+    return this.request<DmChannel>(
+      `/dm/${targetUserId}?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+      }
+    );
+  }
+
+  // Get user's DM channels list
+  async getDmChannels(token: string): Promise<DmChannelsResponse> {
+    return this.request<DmChannelsResponse>(
+      `/dm?token=${encodeURIComponent(token)}`
+    );
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {
@@ -466,3 +494,6 @@ export const createInviteWithOptions = api.createInviteWithOptions.bind(api);
 export const revokeInvite = api.revokeInvite.bind(api);
 export const testConnection = api.testConnection.bind(api);
 export const searchMessages = api.searchMessages.bind(api);
+export const getMessageThread = api.getMessageThread.bind(api);
+export const createDmChannel = api.createDmChannel.bind(api);
+export const getDmChannels = api.getDmChannels.bind(api);

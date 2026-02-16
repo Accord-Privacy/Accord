@@ -982,22 +982,60 @@ async fn handle_ws_message(
             to_user,
             encrypted_data,
         } => {
+            // Create or get DM channel between the users
+            let dm_channel = state
+                .db
+                .create_or_get_dm_channel(sender_user_id, to_user)
+                .await
+                .map_err(|e| format!("Failed to create DM channel: {}", e))?;
+
+            // Store the message in the DM channel using existing channel infrastructure
+            let encrypted_payload = base64::engine::general_purpose::STANDARD
+                .decode(&encrypted_data)
+                .map_err(|_| "Invalid base64 encoded data".to_string())?;
+
+            let message_id = state
+                .db
+                .store_message(dm_channel.id, sender_user_id, &encrypted_payload, None)
+                .await
+                .map_err(|e| format!("Failed to store DM: {}", e))?;
+
+            // Broadcast as a channel message to both users
             let relay = serde_json::json!({
-                "type": "direct_message", "from": sender_user_id,
-                "encrypted_data": encrypted_data, "message_id": ws_message.message_id,
-                "timestamp": ws_message.timestamp
+                "type": "channel_message",
+                "from": sender_user_id,
+                "channel_id": dm_channel.id,
+                "encrypted_data": encrypted_data,
+                "message_id": message_id,
+                "timestamp": ws_message.timestamp,
+                "is_dm": true
             });
-            state.send_to_user(to_user, relay.to_string()).await?;
+
+            // Send to both users directly
+            let _ = state.send_to_user(sender_user_id, relay.to_string()).await;
+            let _ = state.send_to_user(to_user, relay.to_string()).await;
         }
 
         WsMessageType::ChannelMessage {
             channel_id,
             encrypted_data,
+            reply_to,
         } => {
+            // Decode and store the message
+            let encrypted_payload = base64::engine::general_purpose::STANDARD
+                .decode(&encrypted_data)
+                .map_err(|_| "Invalid base64 encoded data".to_string())?;
+
+            let message_id = state
+                .db
+                .store_message(channel_id, sender_user_id, &encrypted_payload, reply_to)
+                .await
+                .map_err(|e| format!("Failed to store message: {}", e))?;
+
             let relay = serde_json::json!({
                 "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
-                "encrypted_data": encrypted_data, "message_id": ws_message.message_id,
-                "timestamp": ws_message.timestamp
+                "encrypted_data": encrypted_data, "message_id": message_id,
+                "timestamp": ws_message.timestamp, "reply_to": reply_to
             });
             state.send_to_channel(channel_id, relay.to_string()).await?;
         }
@@ -2390,6 +2428,116 @@ pub async fn get_message_reactions_handler(
     Ok(Json(MessageReactionsResponse { reactions }))
 }
 
+/// Get thread replies for a message (GET /messages/:id/thread)
+pub async fn get_message_thread_handler(
+    Path(message_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<crate::models::MessageHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let message_id = Uuid::parse_str(&message_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid message ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let token = params.get("token").ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Token required".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    let user_id = state.validate_token(token).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid token".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    // Get the original message details to check permissions
+    let message_details = state
+        .db
+        .get_message_details(message_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get message details: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get message details".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
+        Some(details) => details,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Message not found".into(),
+                    code: 404,
+                }),
+            ));
+        }
+    };
+
+    // Check if user is a member of the channel
+    let channel_members = state
+        .db
+        .get_channel_members(channel_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get channel members: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel access".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !channel_members.contains(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "You must be a member of this channel to view thread replies".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Get the thread replies
+    let thread_messages = state.db.get_message_thread(message_id).await.map_err(|e| {
+        error!("Failed to get thread messages: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to get thread messages".into(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(crate::models::MessageHistoryResponse {
+        messages: thread_messages,
+        has_more: false, // Threads are typically small, so we don't paginate
+        next_cursor: None,
+    }))
+}
+
 // ── Message Pinning endpoints ──
 
 /// Pin a message (PUT /messages/:id/pin)
@@ -2775,4 +2923,143 @@ pub async fn get_pinned_messages_handler(
     Ok(Json(serde_json::json!({
         "pinned_messages": pinned_messages
     })))
+}
+
+// ── Direct Message Handlers ──
+
+/// Create or get a DM channel with a specific user
+/// POST /dm/:user_id
+pub async fn create_dm_channel_handler(
+    State(state): State<SharedState>,
+    Path(target_user_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::DmChannel>, (StatusCode, Json<ErrorResponse>)> {
+    // Get user ID from token
+    let token = params.get("token").ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Missing token parameter".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    let user_id = state.validate_token(token).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid or expired token".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    // Parse target user ID
+    let target_user_id = Uuid::parse_str(&target_user_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid user ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    // Check if target user exists
+    let target_user = state.db.get_user_by_id(target_user_id).await.map_err(|e| {
+        error!("Failed to get target user: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to check user".into(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    if target_user.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Target user not found".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    // Cannot DM yourself
+    if user_id == target_user_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Cannot create DM channel with yourself".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Create or get DM channel
+    let dm_channel = state
+        .db
+        .create_or_get_dm_channel(user_id, target_user_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to create DM channel: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to create DM channel".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    info!(
+        "Created/got DM channel {} between {} and {}",
+        dm_channel.id, user_id, target_user_id
+    );
+    Ok(Json(dm_channel))
+}
+
+/// Get user's DM channels with last message preview
+/// GET /dm
+pub async fn get_dm_channels_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::DmChannelsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Get user ID from token
+    let token = params.get("token").ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Missing token parameter".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    let user_id = state.validate_token(token).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid or expired token".into(),
+                code: 401,
+            }),
+        )
+    })?;
+
+    // Get user's DM channels
+    let dm_channels = state.db.get_user_dm_channels(user_id).await.map_err(|e| {
+        error!("Failed to get DM channels: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to get DM channels".into(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(crate::models::DmChannelsResponse { dm_channels }))
 }

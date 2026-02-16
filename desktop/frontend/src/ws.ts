@@ -260,8 +260,8 @@ export class AccordWebSocket {
     this.sendMessage({ DirectMessage: { to_user: toUser, encrypted_data: encryptedData } });
   }
 
-  sendChannelMessage(channelId: string, encryptedData: string): void {
-    this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData } });
+  sendChannelMessage(channelId: string, encryptedData: string, replyTo?: string): void {
+    this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData, reply_to: replyTo } });
   }
 
   sendEditMessage(messageId: string, encryptedData: string): void {

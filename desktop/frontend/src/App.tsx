@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { AccordWebSocket } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -59,6 +59,9 @@ function App() {
   const [activeServer, setActiveServer] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [ws, setWs] = useState<AccordWebSocket | null>(null);
+
+  // Reply state
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
 
   // Real data state
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -118,6 +121,11 @@ function App() {
 
   // Search state
   const [showSearchOverlay, setShowSearchOverlay] = useState(false);
+
+  // Direct Messages state
+  const [dmChannels, setDmChannels] = useState<DmChannelWithInfo[]>([]);
+  const [selectedDmChannel, setSelectedDmChannel] = useState<DmChannelWithInfo | null>(null);
+  const [showDmChannelCreate, setShowDmChannelCreate] = useState(false);
 
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
@@ -243,17 +251,41 @@ function App() {
         timestamp: data.timestamp * 1000,
         channel_id: data.channel_id,
         isEncrypted: isEncrypted,
+        reply_to: data.reply_to,
+        replied_message: data.replied_message ? {
+          id: data.replied_message.id,
+          sender_id: data.replied_message.sender_id,
+          sender_username: data.replied_message.sender_username,
+          encrypted_payload: data.replied_message.encrypted_payload,
+          created_at: data.replied_message.created_at,
+          content: data.replied_message.content, // This would need to be decrypted on the client
+        } : undefined,
       };
 
-      // Find which node this channel belongs to
-      const nodeId = nodes.find(node => 
-        channels.some(channel => channel.id === data.channel_id && channel.node_id === node.id)
-      )?.id;
+      // Check if this is a DM message
+      const isDm = data.is_dm || dmChannels.some(dm => dm.id === data.channel_id);
+      
+      if (isDm) {
+        // Handle DM message - refresh DM channels to update last message
+        loadDmChannels();
+        
+        // Add to notifications for DM
+        const dmChannel = dmChannels.find(dm => dm.id === data.channel_id);
+        if (dmChannel) {
+          notificationManager.addMessage(`dm-${dmChannel.id}`, data.channel_id, newMessage);
+          setForceUpdate(prev => prev + 1);
+        }
+      } else {
+        // Find which node this channel belongs to for regular messages
+        const nodeId = nodes.find(node => 
+          channels.some(channel => channel.id === data.channel_id && channel.node_id === node.id)
+        )?.id;
 
-      // Add message to notification system
-      if (nodeId) {
-        notificationManager.addMessage(nodeId, data.channel_id, newMessage);
-        setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
+        // Add message to notification system
+        if (nodeId) {
+          notificationManager.addMessage(nodeId, data.channel_id, newMessage);
+          setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
+        }
       }
 
       // Check if user is scrolled to the bottom before adding new message
@@ -673,6 +705,72 @@ function App() {
     loadMembers(nodeId);
   }, [loadChannels, loadMembers]);
 
+  // Load user's DM channels
+  const loadDmChannels = useCallback(async () => {
+    if (!appState.token || !serverAvailable) return;
+    
+    try {
+      const response = await api.getDmChannels(appState.token);
+      setDmChannels(response.dm_channels);
+    } catch (error) {
+      console.error('Failed to load DM channels:', error);
+      handleApiError(error);
+      setDmChannels([]);
+    }
+  }, [appState.token, serverAvailable]);
+
+  // Create or open DM channel with a user
+  const createDmChannel = useCallback(async (targetUserId: string) => {
+    if (!appState.token || !serverAvailable) return null;
+    
+    try {
+      const dmChannel = await api.createDmChannel(targetUserId, appState.token);
+      
+      // Reload DM channels to get the updated list with user info
+      await loadDmChannels();
+      
+      return dmChannel;
+    } catch (error) {
+      console.error('Failed to create DM channel:', error);
+      handleApiError(error);
+      return null;
+    }
+  }, [appState.token, serverAvailable, loadDmChannels]);
+
+  // Handle DM channel selection
+  const handleDmChannelSelect = useCallback((dmChannel: DmChannelWithInfo) => {
+    // Clear node/channel selection when selecting DM
+    setSelectedNodeId(null);
+    setSelectedChannelId(null);
+    setSelectedDmChannel(dmChannel);
+    
+    // Reset pagination state
+    setIsLoadingOlderMessages(false);
+    setHasMoreMessages(true);
+    setOldestMessageCursor(undefined);
+    
+    // Load messages for the DM channel
+    loadMessages(dmChannel.id);
+    
+    // Join the DM channel via WebSocket
+    if (ws && ws.isSocketConnected()) {
+      ws.joinChannel(dmChannel.id);
+    }
+  }, [loadMessages, ws]);
+
+  // Handle opening DM with a specific user (e.g., from member list)
+  const openDmWithUser = useCallback(async (user: User) => {
+    const dmChannel = await createDmChannel(user.id);
+    if (dmChannel) {
+      // Find the DM channel with info from our loaded channels
+      await loadDmChannels(); // Refresh to get the channel with user info
+      const dmChannelWithInfo = dmChannels.find(dm => dm.id === dmChannel.id);
+      if (dmChannelWithInfo) {
+        handleDmChannelSelect(dmChannelWithInfo);
+      }
+    }
+  }, [createDmChannel, loadDmChannels, dmChannels, handleDmChannelSelect]);
+
   // Handle channel selection
   const handleChannelSelect = useCallback((channelId: string, channelName: string) => {
     setSelectedChannelId(channelId);
@@ -866,7 +964,10 @@ function App() {
         socket.connect();
 
         // Load initial data
-        setTimeout(() => loadNodes(), 100);
+        setTimeout(() => {
+          loadNodes();
+          loadDmChannels();
+        }, 100);
 
       } else {
         // Register
@@ -943,7 +1044,8 @@ function App() {
   const handleSendMessage = async () => {
     if (!message.trim()) return;
 
-    const channelToUse = selectedChannelId || appState.activeChannel;
+    // Determine which channel to use - DM channel takes priority
+    const channelToUse = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
     
     if (ws && ws.isSocketConnected() && channelToUse) {
       // Send via WebSocket if connected and we have an active channel
@@ -962,7 +1064,8 @@ function App() {
           }
         }
 
-        ws.sendChannelMessage(channelToUse, messageToSend);
+        // Pass reply_to if we're replying to a message
+        ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id);
 
         // Add to local messages for immediate display
         const newMessage: Message = {
@@ -973,6 +1076,15 @@ function App() {
           timestamp: Date.now(),
           channel_id: channelToUse,
           isEncrypted: isEncrypted,
+          reply_to: replyingTo?.id,
+          replied_message: replyingTo ? {
+            id: replyingTo.id,
+            sender_id: replyingTo.author, // Note: this maps to username, not ID
+            sender_username: replyingTo.author,
+            encrypted_payload: "",
+            created_at: replyingTo.timestamp,
+            content: replyingTo.content,
+          } : undefined,
         };
 
         setAppState(prev => ({
@@ -1017,6 +1129,7 @@ function App() {
     }
 
     setMessage("");
+    setReplyingTo(null);
   };
 
   // Message editing functionality removed
@@ -1107,6 +1220,32 @@ function App() {
     // Check if user is admin/mod of the current node
     const member = members.find(m => m.user.id === appState.user?.id);
     return member ? (member.role === 'admin' || member.role === 'moderator') : false;
+  };
+
+  // Reply functionality
+  const handleReply = (message: Message) => {
+    setReplyingTo(message);
+    // Focus the message input
+    const messageInput = document.querySelector('.message-input') as HTMLTextAreaElement;
+    if (messageInput) {
+      messageInput.focus();
+    }
+  };
+
+  const handleCancelReply = () => {
+    setReplyingTo(null);
+  };
+
+  const scrollToMessage = (messageId: string) => {
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (messageElement) {
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add highlight effect
+      messageElement.classList.add('highlight-message');
+      setTimeout(() => {
+        messageElement.classList.remove('highlight-message');
+      }, 2000);
+    }
   };
 
   // Handle adding a reaction to a message
@@ -1261,7 +1400,10 @@ function App() {
         socket.connect();
 
         // Load initial data
-        setTimeout(() => loadNodes(), 100);
+        setTimeout(() => {
+          loadNodes();
+          loadDmChannels();
+        }, 100);
       }
     };
 
@@ -1778,6 +1920,139 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Direct Messages Section */}
+        <div className="dm-section" style={{ borderTop: '1px solid #3f4147', paddingTop: '8px', marginTop: '8px' }}>
+          <div className="dm-header" style={{ 
+            fontSize: '11px', 
+            color: '#b9bbbe', 
+            textTransform: 'uppercase', 
+            fontWeight: '600', 
+            marginBottom: '8px',
+            padding: '0 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            Direct Messages
+            <button
+              onClick={() => setShowDmChannelCreate(!showDmChannelCreate)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#b9bbbe',
+                cursor: 'pointer',
+                fontSize: '12px',
+                padding: '2px',
+                borderRadius: '2px'
+              }}
+              title="Create DM"
+            >
+              +
+            </button>
+          </div>
+          
+          <div className="dm-list">
+            {dmChannels.map((dmChannel) => {
+              const isActive = selectedDmChannel?.id === dmChannel.id;
+              const dmUnreads = notificationManager.getChannelUnreads(`dm-${dmChannel.id}`, dmChannel.id);
+              
+              return (
+                <div
+                  key={dmChannel.id}
+                  className={`dm-item ${isActive ? 'active' : ''}`}
+                  onClick={() => handleDmChannelSelect(dmChannel)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '6px 16px',
+                    cursor: 'pointer',
+                    backgroundColor: isActive ? '#40444b' : 'transparent',
+                    borderRadius: '4px',
+                    margin: '0 8px',
+                    marginBottom: '2px'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) e.currentTarget.style.backgroundColor = '#36393f';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <div 
+                    className="dm-avatar"
+                    style={{
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      backgroundColor: '#5865f2',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: '8px',
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      color: '#ffffff'
+                    }}
+                  >
+                    {dmChannel.other_user_profile.display_name[0].toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div 
+                      className="dm-name"
+                      style={{
+                        fontSize: '14px',
+                        color: isActive ? '#ffffff' : '#b9bbbe',
+                        fontWeight: isActive ? '500' : '400',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}
+                    >
+                      {dmChannel.other_user_profile.display_name}
+                    </div>
+                    {dmChannel.last_message && (
+                      <div 
+                        style={{
+                          fontSize: '11px',
+                          color: '#8e9297',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {dmChannel.last_message.content.substring(0, 30)}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Unread indicators */}
+                  <div className="dm-badges">
+                    {dmUnreads.mentions > 0 && (
+                      <div className="mention-badge">
+                        {dmUnreads.mentions > 9 ? '9+' : dmUnreads.mentions}
+                      </div>
+                    )}
+                    {dmUnreads.mentions === 0 && dmUnreads.count > 0 && (
+                      <div className="notification-dot" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            
+            {dmChannels.length === 0 && (
+              <div style={{ 
+                padding: '16px', 
+                color: '#8e9297', 
+                fontSize: '13px', 
+                textAlign: 'center' 
+              }}>
+                No direct messages yet
+              </div>
+            )}
+          </div>
+        </div>
         
         <div className="user-panel">
           <div className="user-avatar">
@@ -1822,8 +2097,41 @@ function App() {
       <div className="chat-area">
         <div className="chat-header">
           <div className="chat-header-left">
-            <span className="chat-channel-name">{activeChannel}</span>
-            <span className="chat-topic">Welcome to {activeChannel}!</span>
+            {selectedDmChannel ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <div 
+                    className="dm-avatar"
+                    style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      backgroundColor: '#5865f2',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: '8px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: '#ffffff'
+                    }}
+                  >
+                    {selectedDmChannel.other_user_profile.display_name[0].toUpperCase()}
+                  </div>
+                  <span className="chat-channel-name">
+                    {selectedDmChannel.other_user_profile.display_name}
+                  </span>
+                </div>
+                <span className="chat-topic">
+                  Direct message with {selectedDmChannel.other_user_profile.display_name}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="chat-channel-name">{activeChannel}</span>
+                <span className="chat-topic">Welcome to {activeChannel}!</span>
+              </>
+            )}
           </div>
           <div className="chat-header-right">
             <button
@@ -1927,7 +2235,17 @@ function App() {
             </div>
           )}
           {appState.messages.map((msg, i) => (
-            <div key={msg.id || i} className="message">
+            <div key={msg.id || i} className={`message ${msg.reply_to ? 'reply-message' : ''}`} data-message-id={msg.id}>
+              {/* Reply preview if this message is a reply */}
+              {msg.replied_message && (
+                <div className="reply-preview" onClick={() => scrollToMessage(msg.reply_to!)}>
+                  <div className="reply-bar"></div>
+                  <div className="reply-content">
+                    <span className="reply-author">Replying to {msg.replied_message.sender_username}</span>
+                    <span className="reply-snippet">{msg.replied_message.content || msg.replied_message.encrypted_payload.substring(0, 50) + '...'}</span>
+                  </div>
+                </div>
+              )}
               <div className="message-avatar">{msg.author[0]}</div>
               <div className="message-body">
                 <div className="message-header">
@@ -1970,9 +2288,17 @@ function App() {
                       📌
                     </span>
                   )}
-                  {/* Message Actions - Show on hover for own messages or if admin/mod */}
-                  {appState.user && (msg.author === appState.user.username || canDeleteMessage(msg)) && (
+                  {/* Message Actions - Show on hover for all users */}
+                  {appState.user && (
                     <div className="message-actions">
+                      {/* Reply button for all users */}
+                      <button
+                        onClick={() => handleReply(msg)}
+                        className="message-action-btn"
+                        title="Reply to message"
+                      >
+                        💬
+                      </button>
                       {msg.author === appState.user.username && (
                         <button
                           onClick={() => handleStartEdit(msg.id, msg.content)}
@@ -2136,6 +2462,18 @@ function App() {
           )}
         </div>
         <div className="message-input-container">
+          {/* Reply preview bar */}
+          {replyingTo && (
+            <div className="reply-input-preview">
+              <div className="reply-input-bar"></div>
+              <div className="reply-input-content">
+                <span className="reply-input-text">
+                  Replying to <strong>{replyingTo.author}</strong>: {replyingTo.content.substring(0, 100)}{replyingTo.content.length > 100 ? '...' : ''}
+                </span>
+                <button className="reply-cancel-btn" onClick={handleCancelReply} title="Cancel reply">×</button>
+              </div>
+            </div>
+          )}
           {/* File attachment button */}
           {serverAvailable && appState.activeChannel && (
             <FileUploadButton
@@ -2225,6 +2563,30 @@ function App() {
                   >
                     ●
                   </span>
+                  {!isCurrentUser && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDmWithUser(member.user);
+                      }}
+                      style={{
+                        background: '#5865f2',
+                        border: 'none',
+                        color: '#ffffff',
+                        padding: '2px 6px',
+                        borderRadius: '2px',
+                        cursor: 'pointer',
+                        fontSize: '10px',
+                        opacity: 0.7,
+                        marginRight: '4px'
+                      }}
+                      title="Send DM"
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+                    >
+                      DM
+                    </button>
+                  )}
                   {canKick && (
                     <button
                       onClick={(e) => {
@@ -2567,6 +2929,124 @@ function App() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* DM Channel Creation Modal */}
+      {showDmChannelCreate && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#36393f',
+            borderRadius: '8px',
+            padding: '24px',
+            minWidth: '300px',
+            maxWidth: '90vw',
+            maxHeight: '80vh',
+            overflow: 'auto'
+          }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '16px'
+            }}>
+              <h3 style={{ margin: 0, color: '#ffffff' }}>Start a Direct Message</h3>
+              <button
+                onClick={() => setShowDmChannelCreate(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#b9bbbe',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  padding: '4px'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div style={{ marginBottom: '16px', color: '#b9bbbe', fontSize: '14px' }}>
+              Select a user to start a direct message:
+            </div>
+            
+            <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+              {members
+                .filter(member => member.user_id !== localStorage.getItem('accord_user_id'))
+                .map((member) => (
+                  <div
+                    key={member.user_id}
+                    onClick={() => {
+                      openDmWithUser(member.user);
+                      setShowDmChannelCreate(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '8px 12px',
+                      cursor: 'pointer',
+                      borderRadius: '4px',
+                      marginBottom: '4px',
+                      backgroundColor: 'transparent'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#40444b';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                  >
+                    <div 
+                      style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        backgroundColor: '#5865f2',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: '12px',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        color: '#ffffff'
+                      }}
+                    >
+                      {member.user.username[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <div style={{ color: '#ffffff', fontSize: '14px', fontWeight: '500' }}>
+                        {member.user.username}
+                      </div>
+                      <div style={{ color: '#b9bbbe', fontSize: '12px' }}>
+                        {getRoleBadge(member.role)} {member.role}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              
+              {members.filter(member => member.user_id !== localStorage.getItem('accord_user_id')).length === 0 && (
+                <div style={{ 
+                  padding: '16px', 
+                  color: '#8e9297', 
+                  fontSize: '14px', 
+                  textAlign: 'center' 
+                }}>
+                  No other members available
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
