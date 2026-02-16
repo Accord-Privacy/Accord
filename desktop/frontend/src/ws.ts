@@ -46,7 +46,7 @@ export class AccordWebSocket {
   private isDestroyed = false;
   private pingInterval: number | null = null;
 
-  constructor(token: string, baseUrl = 'ws://localhost:8080') {
+  constructor(token: string, baseUrl = ((typeof window !== 'undefined' && (window as any).__ACCORD_SERVER_URL__) || import.meta.env.VITE_ACCORD_SERVER_URL || 'http://localhost:8080').replace(/^http/, 'ws')) {
     this.token = token;
     this.baseUrl = baseUrl.replace(/^http/, 'ws');
   }

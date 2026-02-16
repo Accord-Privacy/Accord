@@ -24,8 +24,11 @@ import {
   AuditLogResponse,
 } from './types';
 
-// Configuration
-const DEFAULT_BASE_URL = 'http://localhost:8080';
+// Configuration - check for environment variable or use localhost as default
+// For cross-machine connectivity, set VITE_ACCORD_SERVER_URL in .env or environment
+const DEFAULT_BASE_URL = (typeof window !== 'undefined' && (window as any).__ACCORD_SERVER_URL__) 
+  || import.meta.env.VITE_ACCORD_SERVER_URL 
+  || 'http://localhost:8080';
 
 export class AccordApi {
   private baseUrl: string;

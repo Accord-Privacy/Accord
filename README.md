@@ -155,11 +155,14 @@ docker-compose up -d
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see **[CONTRIBUTING.md](CONTRIBUTING.md)** for:
-- Development setup
-- Code style guidelines  
-- How to submit pull requests
-- Security considerations
+We welcome contributions! Please see **[CONTRIBUTING.md](CONTRIBUTING.md)** for development guidelines.
+
+**Get Involved:**
+- **Matrix**: Join `#accord-dev:matrix.org` for development discussion
+- **Email**: [dev@accord.chat](mailto:dev@accord.chat) for formal inquiries
+- **GitHub**: Issues for bugs, Discussions for community Q&A
+
+See **[COMMUNITY.md](COMMUNITY.md)** for detailed communication guidelines.
 
 ---
 
@@ -177,7 +180,7 @@ This project is licensed under the **GNU General Public License v3.0** — see [
 
 **Reporting Vulnerabilities:** 
 - **DO NOT** create public GitHub issues for security vulnerabilities
-- Email maintainers directly with vulnerability details
+- **Email**: [security@accord.chat](mailto:security@accord.chat) with vulnerability details
 - Include: description, severity, reproduction steps, suggested fix
 - **Response time:** Within 48 hours
 - **Fix timeline:** Critical (24-48h), High (1 week), Medium (2-4 weeks)
