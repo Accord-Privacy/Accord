@@ -191,6 +191,7 @@ export interface Message {
   reactions?: MessageReaction[];
   reply_to?: string;
   replied_message?: RepliedMessage;
+  files?: FileMetadata[];
 }
 
 export interface RepliedMessage {

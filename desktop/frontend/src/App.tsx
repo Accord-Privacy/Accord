@@ -14,7 +14,7 @@ import {
   isCryptoSupported 
 } from "./crypto";
 import { storeToken, getToken, clearToken } from "./tokenStorage";
-import { FileUploadButton, FileList } from "./FileManager";
+import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./FileManager";
 import { VoiceChat } from "./VoiceChat";
 import { SearchOverlay } from "./SearchOverlay";
 // Removed unused imports for NodeDiscovery and NodeSettings components
@@ -1836,6 +1836,18 @@ function App() {
     };
   }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showCreateNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo]);
 
+  // Apply font-size and density from localStorage on mount
+  useEffect(() => {
+    const savedFontSize = localStorage.getItem('accord-font-size');
+    if (savedFontSize) {
+      document.documentElement.style.setProperty('--font-size', savedFontSize);
+    }
+  }, []);
+
+  const [messageDensity] = useState<string>(() =>
+    localStorage.getItem('accord-message-density') || 'comfortable'
+  );
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -2452,6 +2464,12 @@ function App() {
 
       {/* Main chat area */}
       <div className="chat-area">
+      <FileDropZone
+        channelId={selectedDmChannel?.id || selectedChannelId || ''}
+        token={appState.token || ''}
+        keyPair={keyPair}
+        encryptionEnabled={encryptionEnabled}
+      >
         <div className="chat-header">
           <div className="chat-header-left">
             {selectedDmChannel ? (
@@ -2494,7 +2512,7 @@ function App() {
           </div>
         </div>
         <div 
-          className={`messages ${voiceChannelId ? 'with-voice' : ''}`}
+          className={`messages ${voiceChannelId ? 'with-voice' : ''} density-${messageDensity}`}
           ref={messagesContainerRef}
           onScroll={handleScroll}
         >
@@ -2634,6 +2652,22 @@ function App() {
                       __html: notificationManager.highlightMentions(msg.content) 
                     }}
                   />
+                )}
+
+                {/* File Attachments */}
+                {msg.files && msg.files.length > 0 && (
+                  <div className="message-attachments">
+                    {msg.files.map((file) => (
+                      <FileAttachment
+                        key={file.id}
+                        file={file}
+                        token={appState.token || ''}
+                        channelId={msg.channel_id || selectedDmChannel?.id || selectedChannelId || ''}
+                        keyPair={keyPair}
+                        encryptionEnabled={encryptionEnabled}
+                      />
+                    ))}
+                  </div>
                 )}
 
                 {/* Message Reactions */}
@@ -2783,6 +2817,7 @@ function App() {
             />
           )}
         </div>
+      </FileDropZone>
       </div>
 
       {/* Voice Chat Component */}

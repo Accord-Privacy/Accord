@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { notificationManager, NotificationPreferences } from './notifications';
+import { api } from './api';
 
 // Types for settings
 interface AccountSettings {
@@ -10,8 +11,8 @@ interface AccountSettings {
 
 interface AppearanceSettings {
   theme: 'dark' | 'light';
-  fontSize: 'small' | 'medium' | 'large';
-  compactMode: boolean;
+  fontSize: number; // px value for slider
+  messageDensity: 'compact' | 'comfortable' | 'cozy';
 }
 
 interface VoiceSettings {
@@ -48,7 +49,7 @@ interface SettingsProps {
   onUserUpdate?: (updates: Partial<AccountSettings>) => void;
 }
 
-type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'about';
+type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'about';
 
 // Default settings
 const defaultAccountSettings: AccountSettings = {
@@ -59,8 +60,8 @@ const defaultAccountSettings: AccountSettings = {
 
 const defaultAppearanceSettings: AppearanceSettings = {
   theme: 'dark',
-  fontSize: 'medium',
-  compactMode: false
+  fontSize: 15,
+  messageDensity: 'comfortable',
 };
 
 const defaultVoiceSettings: VoiceSettings = {
@@ -102,6 +103,15 @@ export const Settings: React.FC<SettingsProps> = ({
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
   const [devicesError, setDevicesError] = useState<string>('');
 
+  // Profile save state
+  const [profileDirty, setProfileDirty] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaveMsg, setProfileSaveMsg] = useState('');
+
+  // Advanced state
+  const [manualRelayUrl, setManualRelayUrl] = useState('');
+  const [clearConfirm, setClearConfirm] = useState(false);
+
   // Load settings from localStorage on mount
   useEffect(() => {
     const loadSettings = () => {
@@ -114,14 +124,24 @@ export const Settings: React.FC<SettingsProps> = ({
           setAccountSettings({
             displayName: currentUser.displayName || currentUser.display_name || currentUser.username || currentUser.public_key_hash.slice(0, 16),
             bio: currentUser.bio || '',
-            status: (currentUser.status as any) || 'online'
+            status: (currentUser.status as AccountSettings['status']) || 'online'
           });
         }
 
         // Load appearance settings
         const savedAppearance = localStorage.getItem('accord_appearance_settings');
         if (savedAppearance) {
-          setAppearanceSettings({ ...defaultAppearanceSettings, ...JSON.parse(savedAppearance) });
+          const parsed = JSON.parse(savedAppearance);
+          // Migrate old fontSize string to number
+          if (typeof parsed.fontSize === 'string') {
+            const map: Record<string, number> = { small: 13, medium: 15, large: 17 };
+            parsed.fontSize = map[parsed.fontSize] || 15;
+          }
+          if (parsed.compactMode !== undefined && !parsed.messageDensity) {
+            parsed.messageDensity = parsed.compactMode ? 'compact' : 'comfortable';
+            delete parsed.compactMode;
+          }
+          setAppearanceSettings({ ...defaultAppearanceSettings, ...parsed });
         }
 
         // Load voice settings
@@ -146,6 +166,9 @@ export const Settings: React.FC<SettingsProps> = ({
     if (isOpen) {
       loadSettings();
       loadMediaDevices();
+      setProfileDirty(false);
+      setProfileSaveMsg('');
+      setClearConfirm(false);
     }
   }, [isOpen, currentUser]);
 
@@ -167,12 +190,40 @@ export const Settings: React.FC<SettingsProps> = ({
     }
   }, []);
 
-  // Save settings to localStorage
-  const saveAccountSettings = useCallback((settings: AccountSettings) => {
-    localStorage.setItem('accord_account_settings', JSON.stringify(settings));
+  // Save settings to localStorage (does NOT call API — just local)
+  const updateAccountLocally = useCallback((settings: AccountSettings) => {
     setAccountSettings(settings);
-    onUserUpdate?.(settings);
-  }, [onUserUpdate]);
+    setProfileDirty(true);
+    setProfileSaveMsg('');
+  }, []);
+
+  const saveProfileToServer = useCallback(async () => {
+    setProfileSaving(true);
+    setProfileSaveMsg('');
+    try {
+      const token = localStorage.getItem('accord_token') ||
+        (currentUser ? localStorage.getItem(`accord_token_${api.getBaseUrl().replace(/https?:\/\//, '')}`) : null);
+      if (token) {
+        await api.updateProfile({
+          display_name: accountSettings.displayName,
+          bio: accountSettings.bio,
+        }, token);
+      }
+      localStorage.setItem('accord_account_settings', JSON.stringify(accountSettings));
+      onUserUpdate?.(accountSettings);
+      setProfileDirty(false);
+      setProfileSaveMsg('Profile saved!');
+    } catch (err) {
+      console.error('Failed to save profile:', err);
+      // Still save locally
+      localStorage.setItem('accord_account_settings', JSON.stringify(accountSettings));
+      onUserUpdate?.(accountSettings);
+      setProfileDirty(false);
+      setProfileSaveMsg('Saved locally (server sync failed)');
+    } finally {
+      setProfileSaving(false);
+    }
+  }, [accountSettings, currentUser, onUserUpdate]);
 
   const saveAppearanceSettings = useCallback((settings: AppearanceSettings) => {
     localStorage.setItem('accord_appearance_settings', JSON.stringify(settings));
@@ -213,20 +264,17 @@ export const Settings: React.FC<SettingsProps> = ({
       root.style.setProperty('--text-secondary', '#8e9297');
     }
 
-    // Apply font size
-    const fontSizes = {
-      small: '13px',
-      medium: '14px',
-      large: '16px'
-    };
-    root.style.setProperty('--font-size', fontSizes[settings.fontSize]);
+    // Apply font size (CSS variable)
+    root.style.setProperty('--font-size', `${settings.fontSize}px`);
+    localStorage.setItem('accord_font_size', String(settings.fontSize));
 
-    // Apply compact mode
-    const spacing = settings.compactMode ? '4px' : '8px';
-    root.style.setProperty('--message-spacing', spacing);
+    // Apply message density
+    const spacingMap = { compact: '2px', comfortable: '8px', cozy: '16px' };
+    root.style.setProperty('--message-spacing', spacingMap[settings.messageDensity]);
+    localStorage.setItem('accord_message_density', settings.messageDensity);
     
     // Add theme class to body
-    document.body.className = `theme-${settings.theme}${settings.compactMode ? ' compact-mode' : ''}`;
+    document.body.className = `theme-${settings.theme} density-${settings.messageDensity}`;
   };
 
   // Handle keyboard shortcuts
@@ -245,7 +293,6 @@ export const Settings: React.FC<SettingsProps> = ({
   const testMicrophone = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Simple test - could be enhanced with audio level visualization
       setTimeout(() => {
         stream.getTracks().forEach(track => track.stop());
         alert('Microphone test completed!');
@@ -256,7 +303,6 @@ export const Settings: React.FC<SettingsProps> = ({
   };
 
   const testSpeakers = () => {
-    // Play a simple test tone
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -269,6 +315,65 @@ export const Settings: React.FC<SettingsProps> = ({
     
     oscillator.start();
     oscillator.stop(audioContext.currentTime + 0.5);
+  };
+
+  // Advanced: export keypair
+  const handleExportKeypair = () => {
+    const relayHost = api.getBaseUrl().replace(/https?:\/\//, '');
+    const keys = localStorage.getItem(`accord_keys_${relayHost}`);
+    const publicKey = currentUser?.public_key || '';
+    const exportData = JSON.stringify({
+      publicKey,
+      relayHost,
+      keys: keys ? JSON.parse(keys) : null,
+      exportedAt: new Date().toISOString(),
+    }, null, 2);
+    const blob = new Blob([exportData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `accord-keypair-${relayHost}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Advanced: clear local data
+  const handleClearLocalData = () => {
+    if (!clearConfirm) {
+      setClearConfirm(true);
+      return;
+    }
+    // Clear all accord-related localStorage
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('accord_')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    setClearConfirm(false);
+    alert('Local data cleared. Please refresh the app.');
+    window.location.reload();
+  };
+
+  // Advanced: connect to manual relay
+  const handleConnectManualRelay = () => {
+    if (!manualRelayUrl.trim()) return;
+    let url = manualRelayUrl.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'http://' + url;
+    }
+    api.setBaseUrl(url);
+    alert(`Relay URL set to ${url}. You may need to re-authenticate.`);
+    setManualRelayUrl('');
+  };
+
+  // Format fingerprint
+  const formatFingerprint = (hash: string) => {
+    return hash.slice(0, 32).replace(/(.{4})/g, '$1 ').trim().toUpperCase();
   };
 
   if (!isOpen) return null;
@@ -285,7 +390,7 @@ export const Settings: React.FC<SettingsProps> = ({
               className={`settings-nav-item ${activeTab === 'account' ? 'active' : ''}`}
               onClick={() => setActiveTab('account')}
             >
-              👤 Account
+              👤 Profile
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'appearance' ? 'active' : ''}`}
@@ -312,6 +417,12 @@ export const Settings: React.FC<SettingsProps> = ({
               🔒 Privacy
             </button>
             <button
+              className={`settings-nav-item ${activeTab === 'advanced' ? 'active' : ''}`}
+              onClick={() => setActiveTab('advanced')}
+            >
+              ⚙️ Advanced
+            </button>
+            <button
               className={`settings-nav-item ${activeTab === 'about' ? 'active' : ''}`}
               onClick={() => setActiveTab('about')}
             >
@@ -326,39 +437,47 @@ export const Settings: React.FC<SettingsProps> = ({
           </div>
 
           <div className="settings-panel">
+            {/* =================== PROFILE =================== */}
             {activeTab === 'account' && (
               <div className="settings-section">
-                <h3>Account Settings</h3>
+                <h3>Profile</h3>
+
+                {/* Fingerprint */}
+                {currentUser?.public_key_hash && (
+                  <div className="settings-group">
+                    <label className="settings-label">Public Key Fingerprint</label>
+                    <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: '0.05em' }}>
+                      {formatFingerprint(currentUser.public_key_hash)}
+                    </div>
+                  </div>
+                )}
+
                 <div className="settings-group">
-                  <label className="settings-label">
-                    Display Name
-                    <input
-                      type="text"
-                      className="settings-input"
-                      value={accountSettings.displayName}
-                      onChange={(e) => saveAccountSettings({
-                        ...accountSettings,
-                        displayName: e.target.value
-                      })}
-                      placeholder="Enter display name..."
-                    />
-                  </label>
+                  <label className="settings-label">Display Name</label>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={accountSettings.displayName}
+                    onChange={(e) => updateAccountLocally({
+                      ...accountSettings,
+                      displayName: e.target.value
+                    })}
+                    placeholder="Enter display name..."
+                  />
                 </div>
 
                 <div className="settings-group">
-                  <label className="settings-label">
-                    Bio
-                    <textarea
-                      className="settings-textarea"
-                      value={accountSettings.bio}
-                      onChange={(e) => saveAccountSettings({
-                        ...accountSettings,
-                        bio: e.target.value
-                      })}
-                      placeholder="Tell others about yourself..."
-                      rows={3}
-                    />
-                  </label>
+                  <label className="settings-label">Bio</label>
+                  <textarea
+                    className="settings-textarea"
+                    value={accountSettings.bio}
+                    onChange={(e) => updateAccountLocally({
+                      ...accountSettings,
+                      bio: e.target.value
+                    })}
+                    placeholder="Tell others about yourself..."
+                    rows={3}
+                  />
                 </div>
 
                 <div className="settings-group">
@@ -368,7 +487,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       <button
                         key={status}
                         className={`status-button ${accountSettings.status === status ? 'active' : ''}`}
-                        onClick={() => saveAccountSettings({
+                        onClick={() => updateAccountLocally({
                           ...accountSettings,
                           status
                         })}
@@ -380,16 +499,32 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
                 </div>
 
+                {/* Save button */}
+                <div className="settings-group" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{ width: 'auto', padding: '10px 24px' }}
+                    disabled={!profileDirty || profileSaving}
+                    onClick={saveProfileToServer}
+                  >
+                    {profileSaving ? 'Saving...' : 'Save Profile'}
+                  </button>
+                  {profileSaveMsg && (
+                    <span style={{ fontSize: 13, color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)' }}>
+                      {profileSaveMsg}
+                    </span>
+                  )}
+                </div>
+
                 <div className="settings-group">
                   <div className="settings-info">
-                    <strong>Username:</strong> {currentUser?.username || 'Unknown'}
-                    <br />
                     <strong>User ID:</strong> {currentUser?.id || 'Unknown'}
                   </div>
                 </div>
               </div>
             )}
 
+            {/* =================== APPEARANCE =================== */}
             {activeTab === 'appearance' && (
               <div className="settings-section">
                 <h3>Appearance</h3>
@@ -422,43 +557,50 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
 
                 <div className="settings-group">
-                  <label className="settings-label">Font Size</label>
-                  <div className="font-size-buttons">
-                    {(['small', 'medium', 'large'] as const).map(size => (
-                      <button
-                        key={size}
-                        className={`font-size-button ${appearanceSettings.fontSize === size ? 'active' : ''}`}
-                        onClick={() => saveAppearanceSettings({
-                          ...appearanceSettings,
-                          fontSize: size
-                        })}
-                      >
-                        {size.charAt(0).toUpperCase() + size.slice(1)}
-                      </button>
-                    ))}
+                  <label className="settings-label">
+                    Font Size: {appearanceSettings.fontSize}px
+                  </label>
+                  <input
+                    type="range"
+                    className="settings-slider"
+                    min="12"
+                    max="20"
+                    step="1"
+                    value={appearanceSettings.fontSize}
+                    onChange={(e) => saveAppearanceSettings({
+                      ...appearanceSettings,
+                      fontSize: parseInt(e.target.value)
+                    })}
+                  />
+                  <div className="settings-help" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>12px</span><span>20px</span>
                   </div>
                 </div>
 
                 <div className="settings-group">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={appearanceSettings.compactMode}
-                      onChange={(e) => saveAppearanceSettings({
-                        ...appearanceSettings,
-                        compactMode: e.target.checked
-                      })}
-                    />
-                    <span className="checkmark"></span>
-                    Compact Mode
-                  </label>
+                  <label className="settings-label">Message Density</label>
+                  <div className="font-size-buttons">
+                    {(['compact', 'comfortable', 'cozy'] as const).map(d => (
+                      <button
+                        key={d}
+                        className={`font-size-button ${appearanceSettings.messageDensity === d ? 'active' : ''}`}
+                        onClick={() => saveAppearanceSettings({
+                          ...appearanceSettings,
+                          messageDensity: d
+                        })}
+                      >
+                        {d.charAt(0).toUpperCase() + d.slice(1)}
+                      </button>
+                    ))}
+                  </div>
                   <div className="settings-help">
-                    Reduces spacing between messages for a more compact view.
+                    Controls spacing between messages. Compact shows more messages on screen.
                   </div>
                 </div>
               </div>
             )}
 
+            {/* =================== NOTIFICATIONS =================== */}
             {activeTab === 'notifications' && (
               <div className="settings-section">
                 <h3>Notification Settings</h3>
@@ -557,6 +699,7 @@ export const Settings: React.FC<SettingsProps> = ({
               </div>
             )}
 
+            {/* =================== VOICE =================== */}
             {activeTab === 'voice' && (
               <div className="settings-section">
                 <h3>Voice & Audio Settings</h3>
@@ -731,6 +874,7 @@ export const Settings: React.FC<SettingsProps> = ({
               </div>
             )}
 
+            {/* =================== PRIVACY =================== */}
             {activeTab === 'privacy' && (
               <div className="settings-section">
                 <h3>Privacy Settings</h3>
@@ -797,6 +941,79 @@ export const Settings: React.FC<SettingsProps> = ({
               </div>
             )}
 
+            {/* =================== ADVANCED =================== */}
+            {activeTab === 'advanced' && (
+              <div className="settings-section">
+                <h3>Advanced</h3>
+
+                <div className="settings-group">
+                  <label className="settings-label">Current Relay URL</label>
+                  <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                    {api.getBaseUrl()}
+                  </div>
+                </div>
+
+                <div className="settings-group">
+                  <label className="settings-label">Connect to Relay Manually</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      className="settings-input"
+                      value={manualRelayUrl}
+                      onChange={(e) => setManualRelayUrl(e.target.value)}
+                      placeholder="e.g. 192.168.1.100:8080"
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleConnectManualRelay(); }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      style={{ width: 'auto', padding: '10px 16px', whiteSpace: 'nowrap' }}
+                      onClick={handleConnectManualRelay}
+                      disabled={!manualRelayUrl.trim()}
+                    >
+                      Connect
+                    </button>
+                  </div>
+                  <div className="settings-help">
+                    Enter a relay server address to connect to a different server.
+                  </div>
+                </div>
+
+                <div className="settings-group">
+                  <label className="settings-label">Key Management</label>
+                  <div className="test-buttons">
+                    <button className="test-button" onClick={handleExportKeypair}>
+                      📥 Export Keypair
+                    </button>
+                  </div>
+                  <div className="settings-help">
+                    Export your keypair for backup. Keep this file safe — it contains your private key.
+                  </div>
+                </div>
+
+                <div className="settings-group">
+                  <label className="settings-label">Clear Local Data</label>
+                  {!clearConfirm ? (
+                    <button className="clear-button" onClick={handleClearLocalData}>
+                      🗑️ Clear Local Data
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button className="clear-button" onClick={handleClearLocalData}>
+                        Confirm — Delete Everything
+                      </button>
+                      <button className="test-button" onClick={() => setClearConfirm(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  <div className="settings-help">
+                    Removes all locally stored settings, keys, and tokens. This cannot be undone.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* =================== ABOUT =================== */}
             {activeTab === 'about' && (
               <div className="settings-section">
                 <h3>About Accord</h3>
@@ -809,36 +1026,35 @@ export const Settings: React.FC<SettingsProps> = ({
                   
                   <div className="about-info">
                     <div className="info-row">
-                      <strong>Version:</strong> 1.0.0-alpha
+                      <strong>Version:</strong> 0.1.0-beta
+                    </div>
+                    <div className="info-row">
+                      <strong>Protocol:</strong> Accord Protocol v1
+                    </div>
+                    <div className="info-row">
+                      <strong>Platform:</strong> Desktop (Tauri + React)
                     </div>
                     <div className="info-row">
                       <strong>Build:</strong> Development
-                    </div>
-                    <div className="info-row">
-                      <strong>Platform:</strong> Desktop (Electron)
                     </div>
                   </div>
 
                   <div className="about-description">
                     <p>
-                      Accord is an open-source chat application focused on privacy, 
-                      security, and user control. Built with modern web technologies 
-                      and featuring end-to-end encryption.
+                      Accord is an open-source, privacy-first chat application with 
+                      end-to-end encryption. Your keys, your data, your control.
                     </p>
                   </div>
 
                   <div className="about-links">
                     <a href="https://github.com/accord-chat/accord" target="_blank" rel="noopener noreferrer">
-                      📖 Source Code
+                      📖 Source Code on GitHub
                     </a>
                     <a href="https://github.com/accord-chat/accord/issues" target="_blank" rel="noopener noreferrer">
-                      🐛 Report Bug
+                      🐛 Report a Bug
                     </a>
                     <a href="https://github.com/accord-chat/accord/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
                       📄 License (MIT)
-                    </a>
-                    <a href="https://discord.gg/accord" target="_blank" rel="noopener noreferrer">
-                      💬 Community
                     </a>
                   </div>
 

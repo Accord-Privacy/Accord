@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from './api';
 import { FileMetadata, UploadProgress } from './types';
 import { 
@@ -22,6 +22,7 @@ interface FileUploadState {
   fileName: string;
 }
 
+// =================== File Upload Button ===================
 export const FileUploadButton: React.FC<FileManagerProps> = ({
   channelId,
   token,
@@ -39,10 +40,7 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  const uploadFile = useCallback(async (file: File) => {
     setUploadState({
       isUploading: true,
       progress: { loaded: 0, total: file.size, percentage: 0 },
@@ -53,21 +51,12 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
       let fileToUpload = file;
       let encryptedFilename: string | undefined;
 
-      // Encrypt file and filename if encryption is enabled and we have keys
       if (encryptionEnabled && keyPair) {
         try {
           const channelKey = await getChannelKey(keyPair.privateKey, channelId);
-          
-          // Read file as ArrayBuffer
           const fileBuffer = await file.arrayBuffer();
-          
-          // Encrypt the file content
           const encryptedBuffer = await encryptFile(channelKey, fileBuffer);
-          
-          // Encrypt the filename
           encryptedFilename = await encryptFilename(channelKey, file.name);
-          
-          // Create a new File from encrypted buffer
           fileToUpload = new File([encryptedBuffer], 'encrypted_file', {
             type: 'application/octet-stream'
           });
@@ -76,7 +65,6 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
         }
       }
 
-      // Upload the file
       await api.uploadFile(
         channelId,
         fileToUpload,
@@ -91,32 +79,23 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
         }
       );
 
-      // Reset state on success
-      setUploadState({
-        isUploading: false,
-        progress: null,
-        fileName: '',
-      });
-
-      // Clear the input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-
+      setUploadState({ isUploading: false, progress: null, fileName: '' });
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
       console.error('File upload failed:', error);
       alert(`File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      
-      setUploadState({
-        isUploading: false,
-        progress: null,
-        fileName: '',
-      });
+      setUploadState({ isUploading: false, progress: null, fileName: '' });
     }
+  }, [channelId, token, keyPair, encryptionEnabled]);
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await uploadFile(file);
   };
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
+    <div className="file-upload-wrapper">
       <input
         ref={fileInputRef}
         type="file"
@@ -128,64 +107,25 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
       <button
         onClick={handleFileSelect}
         disabled={uploadState.isUploading}
-        style={{
-          background: 'none',
-          border: 'none',
-          color: '#b9bbbe',
-          cursor: uploadState.isUploading ? 'not-allowed' : 'pointer',
-          fontSize: '18px',
-          padding: '6px',
-          borderRadius: '4px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          opacity: uploadState.isUploading ? 0.5 : 1,
-        }}
+        className="file-upload-btn"
         title="Attach file"
       >
         📎
       </button>
 
       {uploadState.isUploading && uploadState.progress && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: '0',
-            marginTop: '4px',
-            background: '#36393f',
-            border: '1px solid #40444b',
-            borderRadius: '4px',
-            padding: '8px 12px',
-            minWidth: '200px',
-            zIndex: 1000,
-            fontSize: '12px',
-            color: '#dcddde',
-          }}
-        >
-          <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
+        <div className="file-upload-progress">
+          <div className="file-upload-progress-name">
             Uploading {uploadState.fileName}
           </div>
-          <div
-            style={{
-              background: '#40444b',
-              borderRadius: '2px',
-              height: '4px',
-              marginBottom: '4px',
-              overflow: 'hidden',
-            }}
-          >
+          <div className="file-upload-progress-bar-track">
             <div
-              style={{
-                background: '#7289da',
-                height: '100%',
-                width: `${uploadState.progress.percentage}%`,
-                transition: 'width 0.2s ease',
-              }}
+              className="file-upload-progress-bar-fill"
+              style={{ width: `${uploadState.progress.percentage}%` }}
             />
           </div>
-          <div style={{ color: '#b9bbbe' }}>
-            {uploadState.progress.percentage}% ({Math.round(uploadState.progress.loaded / 1024)} KB / {Math.round(uploadState.progress.total / 1024)} KB)
+          <div className="file-upload-progress-text">
+            {uploadState.progress.percentage}% ({formatFileSize(uploadState.progress.loaded)} / {formatFileSize(uploadState.progress.total)})
           </div>
         </div>
       )}
@@ -193,6 +133,275 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
   );
 };
 
+// =================== Drag & Drop Wrapper ===================
+interface DropZoneProps {
+  channelId: string;
+  token: string;
+  keyPair: CryptoKeyPair | null;
+  encryptionEnabled: boolean;
+  children: React.ReactNode;
+}
+
+export const FileDropZone: React.FC<DropZoneProps> = ({
+  channelId,
+  token,
+  keyPair,
+  encryptionEnabled,
+  children,
+}) => {
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadState, setUploadState] = useState<FileUploadState>({
+    isUploading: false,
+    progress: null,
+    fileName: '',
+  });
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    dragCounter.current = 0;
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0]; // Upload first file
+    setUploadState({
+      isUploading: true,
+      progress: { loaded: 0, total: file.size, percentage: 0 },
+      fileName: file.name,
+    });
+
+    try {
+      let fileToUpload = file;
+      let encryptedFilename: string | undefined;
+
+      if (encryptionEnabled && keyPair) {
+        try {
+          const channelKey = await getChannelKey(keyPair.privateKey, channelId);
+          const fileBuffer = await file.arrayBuffer();
+          const encryptedBuffer = await encryptFile(channelKey, fileBuffer);
+          encryptedFilename = await encryptFilename(channelKey, file.name);
+          fileToUpload = new File([encryptedBuffer], 'encrypted_file', {
+            type: 'application/octet-stream'
+          });
+        } catch (error) {
+          console.warn('Failed to encrypt file, uploading plaintext:', error);
+        }
+      }
+
+      await api.uploadFile(
+        channelId,
+        fileToUpload,
+        token,
+        encryptedFilename,
+        (loaded, total) => {
+          const percentage = Math.round((loaded / total) * 100);
+          setUploadState(prev => ({
+            ...prev,
+            progress: { loaded, total, percentage }
+          }));
+        }
+      );
+
+      setUploadState({ isUploading: false, progress: null, fileName: '' });
+    } catch (error) {
+      console.error('File upload failed:', error);
+      alert(`File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setUploadState({ isUploading: false, progress: null, fileName: '' });
+    }
+  }, [channelId, token, keyPair, encryptionEnabled]);
+
+  return (
+    <div
+      className="file-drop-zone"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {children}
+      {isDragging && (
+        <div className="file-drop-overlay">
+          <div className="file-drop-overlay-content">
+            <span className="file-drop-icon">📁</span>
+            <span>Drop file to upload</span>
+          </div>
+        </div>
+      )}
+      {uploadState.isUploading && uploadState.progress && (
+        <div className="file-drop-upload-toast">
+          <div className="file-upload-progress-name">
+            Uploading {uploadState.fileName}
+          </div>
+          <div className="file-upload-progress-bar-track">
+            <div
+              className="file-upload-progress-bar-fill"
+              style={{ width: `${uploadState.progress.percentage}%` }}
+            />
+          </div>
+          <div className="file-upload-progress-text">
+            {uploadState.progress.percentage}%
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// =================== File Attachment Display (in messages) ===================
+interface FileAttachmentProps {
+  file: FileMetadata;
+  token: string;
+  channelId: string;
+  keyPair: CryptoKeyPair | null;
+  encryptionEnabled: boolean;
+}
+
+export const FileAttachment: React.FC<FileAttachmentProps> = ({
+  file,
+  token,
+  channelId,
+  keyPair,
+  encryptionEnabled,
+}) => {
+  const [decryptedName, setDecryptedName] = useState<string>(file.encrypted_filename);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const init = async () => {
+      let filename = file.encrypted_filename;
+      if (encryptionEnabled && keyPair) {
+        try {
+          const channelKey = await getChannelKey(keyPair.privateKey, channelId);
+          filename = await decryptFilename(channelKey, file.encrypted_filename);
+        } catch {
+          // keep encrypted name
+        }
+      }
+      if (!cancelled) {
+        setDecryptedName(filename);
+        // Check if image
+        if (isImageFile(filename)) {
+          try {
+            const buffer = await api.downloadFile(file.id, token);
+            let finalBuffer = buffer;
+            if (encryptionEnabled && keyPair) {
+              try {
+                const channelKey = await getChannelKey(keyPair.privateKey, channelId);
+                finalBuffer = await decryptFile(channelKey, buffer);
+              } catch { /* use raw */ }
+            }
+            if (!cancelled) {
+              const blob = new Blob([finalBuffer]);
+              setImageUrl(URL.createObjectURL(blob));
+            }
+          } catch {
+            // no preview
+          }
+        }
+      }
+    };
+    init();
+    return () => { cancelled = true; };
+  }, [file.id, file.encrypted_filename, channelId, token, keyPair, encryptionEnabled]);
+
+  // Cleanup blob URL
+  useEffect(() => {
+    return () => {
+      if (imageUrl) URL.revokeObjectURL(imageUrl);
+    };
+  }, [imageUrl]);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const buffer = await api.downloadFile(file.id, token);
+      let finalBuffer = buffer;
+      let filename = decryptedName;
+
+      if (encryptionEnabled && keyPair) {
+        try {
+          const channelKey = await getChannelKey(keyPair.privateKey, channelId);
+          finalBuffer = await decryptFile(channelKey, buffer);
+          filename = await decryptFilename(channelKey, file.encrypted_filename);
+        } catch {
+          // use raw
+        }
+      }
+
+      const blob = new Blob([finalBuffer]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+      alert(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const icon = getFileTypeIcon(decryptedName);
+
+  return (
+    <div className="file-attachment">
+      {imageUrl && (
+        <div className="file-attachment-image-preview">
+          <img src={imageUrl} alt={decryptedName} onClick={handleDownload} />
+        </div>
+      )}
+      <div className="file-attachment-info">
+        <span className="file-attachment-icon">{icon}</span>
+        <div className="file-attachment-details">
+          <span className="file-attachment-name" title={decryptedName}>{decryptedName}</span>
+          <span className="file-attachment-size">{formatFileSize(file.file_size_bytes)}</span>
+        </div>
+        <button
+          className="file-attachment-download"
+          onClick={handleDownload}
+          disabled={downloading}
+          title="Download"
+        >
+          {downloading ? '⏳' : '⬇️'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// =================== File List Panel ===================
 export const FileList: React.FC<FileManagerProps> = ({
   channelId,
   token,
@@ -203,7 +412,7 @@ export const FileList: React.FC<FileManagerProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
 
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     if (!isVisible) return;
     
     setIsLoading(true);
@@ -212,40 +421,32 @@ export const FileList: React.FC<FileManagerProps> = ({
       setFiles(fileList);
     } catch (error) {
       console.error('Failed to load files:', error);
-      // Don't show error for demo mode
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [channelId, token, isVisible]);
 
   useEffect(() => {
     loadFiles();
-  }, [channelId, isVisible]);
+  }, [loadFiles]);
 
   const handleDownload = async (file: FileMetadata) => {
     try {
-      // Download the file
       const encryptedBuffer = await api.downloadFile(file.id, token);
       
       let finalBuffer = encryptedBuffer;
       let filename = file.encrypted_filename;
 
-      // Decrypt if encryption is enabled and we have keys
       if (encryptionEnabled && keyPair) {
         try {
           const channelKey = await getChannelKey(keyPair.privateKey, channelId);
-          
-          // Decrypt the file content
           finalBuffer = await decryptFile(channelKey, encryptedBuffer);
-          
-          // Decrypt the filename
           filename = await decryptFilename(channelKey, file.encrypted_filename);
         } catch (error) {
           console.warn('Failed to decrypt file, using encrypted data:', error);
         }
       }
 
-      // Create and trigger download
       const blob = new Blob([finalBuffer]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -255,7 +456,6 @@ export const FileList: React.FC<FileManagerProps> = ({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-
     } catch (error) {
       console.error('File download failed:', error);
       alert(`File download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -269,20 +469,11 @@ export const FileList: React.FC<FileManagerProps> = ({
 
     try {
       await api.deleteFile(file.id, token);
-      // Refresh the file list
       await loadFiles();
     } catch (error) {
       console.error('File deletion failed:', error);
       alert(`File deletion failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
   const formatTimestamp = (timestamp: number): string => {
@@ -297,134 +488,37 @@ export const FileList: React.FC<FileManagerProps> = ({
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <button
         onClick={() => setIsVisible(!isVisible)}
-        style={{
-          background: 'none',
-          border: 'none',
-          color: '#b9bbbe',
-          cursor: 'pointer',
-          fontSize: '16px',
-          padding: '6px',
-          borderRadius: '4px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
+        className="file-list-toggle-btn"
         title="Show files"
       >
         📁
       </button>
 
       {isVisible && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            right: '0',
-            marginTop: '4px',
-            background: '#36393f',
-            border: '1px solid #40444b',
-            borderRadius: '8px',
-            padding: '12px',
-            minWidth: '400px',
-            maxWidth: '500px',
-            maxHeight: '400px',
-            overflowY: 'auto',
-            zIndex: 1000,
-            fontSize: '12px',
-            color: '#dcddde',
-          }}
-        >
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center', 
-            marginBottom: '8px',
-            borderBottom: '1px solid #40444b',
-            paddingBottom: '8px'
-          }}>
-            <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
-              Channel Files
-            </div>
-            <button
-              onClick={() => setIsVisible(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#b9bbbe',
-                cursor: 'pointer',
-                fontSize: '16px',
-              }}
-            >
-              ✕
-            </button>
+        <div className="file-list-panel">
+          <div className="file-list-header">
+            <div className="file-list-title">Channel Files</div>
+            <button className="file-list-close" onClick={() => setIsVisible(false)}>✕</button>
           </div>
 
           {isLoading ? (
-            <div style={{ textAlign: 'center', color: '#b9bbbe', padding: '20px' }}>
-              Loading files...
-            </div>
+            <div className="file-list-empty">Loading files...</div>
           ) : files.length === 0 ? (
-            <div style={{ textAlign: 'center', color: '#b9bbbe', padding: '20px' }}>
-              No files uploaded yet
-            </div>
+            <div className="file-list-empty">No files uploaded yet</div>
           ) : (
-            <div>
+            <div className="file-list-items">
               {files.map((file) => (
-                <div
-                  key={file.id}
-                  style={{
-                    background: '#40444b',
-                    borderRadius: '4px',
-                    padding: '8px',
-                    marginBottom: '8px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ 
-                      fontWeight: 'bold', 
-                      marginBottom: '2px',
-                      wordBreak: 'break-all'
-                    }}>
-                      {file.encrypted_filename}
-                    </div>
-                    <div style={{ color: '#b9bbbe', fontSize: '11px' }}>
+                <div key={file.id} className="file-list-item">
+                  <div className="file-list-item-icon">{getFileTypeIcon(file.encrypted_filename)}</div>
+                  <div className="file-list-item-info">
+                    <div className="file-list-item-name">{file.encrypted_filename}</div>
+                    <div className="file-list-item-meta">
                       {formatFileSize(file.file_size_bytes)} • {formatTimestamp(file.created_at)}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
-                    <button
-                      onClick={() => handleDownload(file)}
-                      style={{
-                        background: '#7289da',
-                        border: 'none',
-                        color: 'white',
-                        padding: '4px 8px',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                      }}
-                      title="Download"
-                    >
-                      ⬇
-                    </button>
-                    <button
-                      onClick={() => handleDelete(file)}
-                      style={{
-                        background: '#f04747',
-                        border: 'none',
-                        color: 'white',
-                        padding: '4px 8px',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        fontSize: '11px',
-                      }}
-                      title="Delete"
-                    >
-                      🗑
-                    </button>
+                  <div className="file-list-item-actions">
+                    <button onClick={() => handleDownload(file)} className="file-list-item-download" title="Download">⬇</button>
+                    <button onClick={() => handleDelete(file)} className="file-list-item-delete" title="Delete">🗑</button>
                   </div>
                 </div>
               ))}
@@ -435,3 +529,32 @@ export const FileList: React.FC<FileManagerProps> = ({
     </div>
   );
 };
+
+// =================== Helpers ===================
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function isImageFile(filename: string): boolean {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext);
+}
+
+function getFileTypeIcon(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return '🖼️';
+  if (['mp4', 'webm', 'mov', 'avi'].includes(ext)) return '🎬';
+  if (['mp3', 'wav', 'ogg', 'flac', 'aac'].includes(ext)) return '🎵';
+  if (['pdf'].includes(ext)) return '📕';
+  if (['zip', 'tar', 'gz', 'rar', '7z'].includes(ext)) return '📦';
+  if (['doc', 'docx', 'txt', 'md', 'rtf'].includes(ext)) return '📄';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return '📊';
+  if (['js', 'ts', 'py', 'rs', 'go', 'c', 'cpp', 'h', 'java'].includes(ext)) return '💻';
+  if (['json', 'yaml', 'yml', 'toml', 'xml'].includes(ext)) return '⚙️';
+  return '📎';
+}
