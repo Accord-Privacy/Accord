@@ -501,6 +501,35 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // ── Encrypted metadata fields (Phase 1 metadata privacy) ──
+        // Nodes: encrypted_name, encrypted_description stored as opaque blobs
+        sqlx::query("ALTER TABLE nodes ADD COLUMN encrypted_name BLOB")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE nodes ADD COLUMN encrypted_description BLOB")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Channels: encrypted_name
+        sqlx::query("ALTER TABLE channels ADD COLUMN encrypted_name BLOB")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Channel categories: encrypted_name
+        sqlx::query("ALTER TABLE channel_categories ADD COLUMN encrypted_name BLOB")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // User profiles: display_name_encrypted (opt-in by users)
+        sqlx::query("ALTER TABLE user_profiles ADD COLUMN display_name_encrypted BLOB")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         Ok(())
     }
 
