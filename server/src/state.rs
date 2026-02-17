@@ -1039,7 +1039,11 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn is_bot_in_channel(&self, _bot_id: Uuid, _channel_id: Uuid) -> Result<bool, String> {
+    pub async fn is_bot_in_channel(
+        &self,
+        _bot_id: Uuid,
+        _channel_id: Uuid,
+    ) -> Result<bool, String> {
         Ok(false)
     }
 

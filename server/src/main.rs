@@ -249,13 +249,28 @@ async fn main() -> Result<()> {
         // Bot API endpoints
         .route("/bots", post(bot_api::register_bot_handler))
         .route("/bots/:id", get(bot_api::get_bot_handler))
-        .route("/bots/:id", axum::routing::patch(bot_api::update_bot_handler))
+        .route(
+            "/bots/:id",
+            axum::routing::patch(bot_api::update_bot_handler),
+        )
         .route("/bots/:id", delete(bot_api::delete_bot_handler))
-        .route("/bots/:id/regenerate-token", post(bot_api::regenerate_bot_token_handler))
+        .route(
+            "/bots/:id/regenerate-token",
+            post(bot_api::regenerate_bot_token_handler),
+        )
         .route("/bots/invite", post(bot_api::invite_bot_to_channel_handler))
-        .route("/bots/:bot_id/channels/:channel_id", delete(bot_api::remove_bot_from_channel_handler))
-        .route("/bot/channels/:channel_id/messages", post(bot_api::bot_send_message_handler))
-        .route("/channels/:id/bots", get(bot_api::list_channel_bots_handler))
+        .route(
+            "/bots/:bot_id/channels/:channel_id",
+            delete(bot_api::remove_bot_from_channel_handler),
+        )
+        .route(
+            "/bot/channels/:channel_id/messages",
+            post(bot_api::bot_send_message_handler),
+        )
+        .route(
+            "/channels/:id/bots",
+            get(bot_api::list_channel_bots_handler),
+        )
         // Direct Message endpoints
         .route("/dm/:user_id", post(create_dm_channel_handler))
         .route("/dm", get(get_dm_channels_handler))
