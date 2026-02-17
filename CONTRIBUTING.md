@@ -50,12 +50,11 @@ cargo fmt
 
 ## Reporting Bugs
 
-Use GitHub Issues for non-security bugs. For security vulnerabilities, email [security@accord.chat](mailto:security@accord.chat) - never create public issues for security problems.
+Use GitHub Issues for non-security bugs. For security vulnerabilities, report via GitHub Security Advisories — never create public issues for security problems.
 
 ## Community & Communication
 
-- **Matrix**: `#accord-dev:matrix.org` for real-time development discussion
-- **Email**: [dev@accord.chat](mailto:dev@accord.chat) for formal inquiries
-- **GitHub Discussions**: For community Q&A and feature brainstorming
+- **GitHub Issues**: Bug reports and feature requests
+- **GitHub Discussions**: Community Q&A and feature brainstorming
 
-See [COMMUNITY.md](COMMUNITY.md) for detailed communication guidelines and when to use each channel.
+Report security issues via GitHub Security Advisories. For other inquiries, use GitHub Issues and Discussions.

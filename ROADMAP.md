@@ -37,11 +37,9 @@
 - **Background voice** — state machine, keepalive, platform guidance docs
 
 ### 🚧 Phase 6: Public Release — IN PROGRESS
-- [x] Federation protocol (Ed25519 server identity, signed envelopes, DNS discovery)
 - [x] Bot API (permission scopes, webhooks, rate limiting, developer docs)
 - [ ] Beta program
 - [ ] Community feedback integration
-- [ ] Matrix channel + dev contact email
 
 ### 📋 Phase 7: Post-Launch Hardening — PLANNED
 - [ ] Metadata protection (encrypt usernames, channel names; minimize server-visible plaintext)
@@ -59,7 +57,7 @@
 | Key agreement | X3DH + X25519 | Full Signal protocol handshake |
 | Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
 | Voice encryption | SRTP | Per-packet, key rotation |
-| Identity keys | Ed25519 | Long-term identity + server federation |
+| Identity keys | Ed25519 | Long-term identity verification |
 | Key derivation | HKDF-SHA256 | Separate info strings per key type |
 | Password hashing | Argon2id | Server-side registration/login |
 
@@ -82,7 +80,6 @@
 | Privacy-preserving bots | ✅ | ❌ | ❌ | ❌ |
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
 | Mobile apps | ✅ | ✅ | ✅ | ✅ |
-| Federation | 🚧 | ❌ | ❌ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
 
 ## Architecture
@@ -102,4 +99,3 @@ E2E encryption means even malicious relays can't read content. Remaining risks a
 ### Server Discovery
 - DNS SRV records (`_accord._tcp.example.com`)
 - QR code / deep links with server fingerprint
-- Federated server directory (Phase 6)

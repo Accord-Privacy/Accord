@@ -149,7 +149,7 @@ docker-compose up -d
 - **Discord:** No encryption, no privacy, corporate control
 - **Signal:** Great for 1:1 and small groups, but no community features
 - **Matrix:** Complex protocol, servers can see metadata, no voice channels
-- **Accord:** The best of all worlds — Discord UX + Signal privacy + Matrix federation
+- **Accord:** The best of all worlds — Discord UX + Signal privacy
 
 ---
 
@@ -158,11 +158,8 @@ docker-compose up -d
 We welcome contributions! Please see **[CONTRIBUTING.md](CONTRIBUTING.md)** for development guidelines.
 
 **Get Involved:**
-- **Matrix**: Join `#accord-dev:matrix.org` for development discussion
-- **Email**: [dev@accord.chat](mailto:dev@accord.chat) for formal inquiries
-- **GitHub**: Issues for bugs, Discussions for community Q&A
-
-See **[COMMUNITY.md](COMMUNITY.md)** for detailed communication guidelines.
+- **GitHub Issues**: Bug reports and feature requests
+- **GitHub Discussions**: Community Q&A and feature brainstorming
 
 ---
 
@@ -180,10 +177,9 @@ This project is licensed under the **GNU General Public License v3.0** — see [
 
 **Reporting Vulnerabilities:** 
 - **DO NOT** create public GitHub issues for security vulnerabilities
-- **Email**: [security@accord.chat](mailto:security@accord.chat) with vulnerability details
+- Report security issues via **GitHub Security Advisories**
 - Include: description, severity, reproduction steps, suggested fix
-- **Response time:** Within 48 hours
-- **Fix timeline:** Critical (24-48h), High (1 week), Medium (2-4 weeks)
+- For other inquiries, use GitHub Issues and Discussions
 
 ---
 
@@ -193,7 +189,7 @@ This project is licensed under the **GNU General Public License v3.0** — see [
 **Phase 3:** Voice & real-time features
 **Phase 4:** Security audit and hardening
 **Phase 5:** Mobile apps (iOS/Android)
-**Phase 6:** Public beta and federation
+**Phase 6:** Public beta
 
 See **[ROADMAP.md](ROADMAP.md)** for detailed development timeline and technical specifications.
 

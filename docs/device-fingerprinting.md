@@ -55,7 +55,7 @@ SHA-256( device_id + \0 + screen_resolution + \0 + timezone + \0 + gpu_renderer 
 - There is **no global fingerprint database**
 - Fingerprint hashes are **NOT shared between Nodes**
 - If you are banned from Node A, Node B has no knowledge of your fingerprint from Node A
-- There is **no federation of bans** — each Node's ban list is completely independent
+- There is **no cross-Node sharing of bans** — each Node's ban list is completely independent
 
 ## Node Admin Choice
 
