@@ -71,23 +71,24 @@ mod rate_limit_middleware {
         if let Some(action) = action {
             // Extract token from query string
             if let Some(query) = request.uri().query() {
-                let token = query
-                    .split('&')
-                    .find_map(|pair| {
-                        let mut parts = pair.splitn(2, '=');
-                        if parts.next() == Some("token") {
-                            parts.next()
-                        } else {
-                            None
-                        }
-                    });
+                let token = query.split('&').find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    if parts.next() == Some("token") {
+                        parts.next()
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(token) = token {
                     if let Some(user_id) = state.validate_token(token).await {
                         if let Err(err) = state.rate_limiter.check(user_id, action).await {
                             return (
                                 StatusCode::TOO_MANY_REQUESTS,
-                                format!("Rate limit exceeded: {}. Retry after {}s", err.message, err.retry_after_secs),
+                                format!(
+                                    "Rate limit exceeded: {}. Retry after {}s",
+                                    err.message, err.retry_after_secs
+                                ),
                             )
                                 .into_response();
                         }
@@ -239,9 +240,7 @@ async fn main() -> Result<()> {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer({
-                    let cors = CorsLayer::new()
-                        .allow_methods(Any)
-                        .allow_headers(Any);
+                    let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
                     if args.cors_origins.trim() == "*" {
                         warn!("CORS: allowing ANY origin — only use in development!");
                         cors.allow_origin(Any)

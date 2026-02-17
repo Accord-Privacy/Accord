@@ -93,8 +93,13 @@ impl FileHandler {
         let file_path = Path::new(storage_path);
 
         // Canonicalize both paths to resolve symlinks, .., etc.
-        let canonical_storage = std::fs::canonicalize(&self.config.storage_dir)
-            .with_context(|| format!("Failed to canonicalize storage dir: {:?}", self.config.storage_dir))?;
+        let canonical_storage =
+            std::fs::canonicalize(&self.config.storage_dir).with_context(|| {
+                format!(
+                    "Failed to canonicalize storage dir: {:?}",
+                    self.config.storage_dir
+                )
+            })?;
 
         let canonical_file = std::fs::canonicalize(file_path)
             .with_context(|| format!("Failed to canonicalize file path: {:?}", file_path))?;

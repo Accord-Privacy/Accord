@@ -568,10 +568,7 @@ impl Database {
             return Ok(());
         }
 
-        let query = format!(
-            "UPDATE nodes SET {} WHERE id = ?",
-            query_parts.join(", ")
-        );
+        let query = format!("UPDATE nodes SET {} WHERE id = ?", query_parts.join(", "));
 
         let mut sqlx_query = sqlx::query(&query);
         for bind in binds {
