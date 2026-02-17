@@ -4,8 +4,15 @@
 [advisories]
 # Advisories we've reviewed and accepted the risk for
 ignore = [
-    # No active advisories to ignore — all resolved via dependency upgrades.
+    # glib 0.18.5: Unsoundness in VariantStrIter (NULL pointer deref)
+    # Patched in glib 0.20+ which requires GTK4. Tauri 2.x uses GTK3 (glib 0.18).
+    # Tauri GTK4 migration is in progress: https://github.com/tauri-apps/tauri/pull/14684
+    # Targeted for Tauri 3.0. We will upgrade immediately when available.
+    # Risk: Memory unsoundness in VariantStrIter — we don't directly use this API,
+    # but it exists in compiled code via Tauri's GTK3 dependency chain.
+    # TRACKING: Check monthly for Tauri 3.0 release with GTK4 support.
+    "RUSTSEC-2024-0429",
 ]
 
-# Don't fail on unmaintained crates (Tauri's GTK3 bindings)
+# Don't fail on unmaintained crates (Tauri's GTK3 bindings — resolves with GTK4 migration)
 informational_warnings = ["unmaintained"]
