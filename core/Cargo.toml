@@ -20,7 +20,7 @@ tracing-subscriber.workspace = true
 # opus = "0.3"  # Will add back when we implement voice
 
 # Networking
-quinn = "0.10"  # QUIC implementation
+quinn = "0.11"  # QUIC implementation
 
 # Serialization
 bincode = "1.3"
