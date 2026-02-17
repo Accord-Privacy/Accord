@@ -18,7 +18,7 @@ import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./File
 import { EmojiPickerButton } from "./EmojiPicker";
 import { VoiceChat } from "./VoiceChat";
 import { SearchOverlay } from "./SearchOverlay";
-// Removed unused imports for NodeDiscovery and NodeSettings components
+import { NodeSettings } from "./NodeSettings";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import { NotificationSettings } from "./NotificationSettings";
 import { Settings } from "./Settings";
@@ -164,6 +164,12 @@ function App() {
 
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
+
+  // Node settings state
+  const [showNodeSettings, setShowNodeSettings] = useState(false);
+
+  // Delete channel confirmation modal state
+  const [deleteChannelConfirm, setDeleteChannelConfirm] = useState<{ id: string; name: string } | null>(null);
 
   // Display name prompt state
   const [showDisplayNamePrompt, setShowDisplayNamePrompt] = useState(false);
@@ -1009,21 +1015,16 @@ function App() {
     }
   };
 
-  // Handle deleting a channel
-  const handleDeleteChannel = async (channelId: string, channelName: string) => {
+  // Handle deleting a channel (called after modal confirmation)
+  const handleDeleteChannelConfirmed = async (channelId: string) => {
     if (!appState.token) return;
-    
-    const confirmed = window.confirm(`Are you sure you want to delete #${channelName}? This action cannot be undone.`);
-    if (!confirmed) return;
     
     try {
       await api.deleteChannel(channelId, appState.token);
-      // If we deleted the currently selected channel, clear selection
       if (channelId === selectedChannelId) {
         setSelectedChannelId(null);
         setActiveChannel("# general");
       }
-      // Reload channels
       if (selectedNodeId) {
         await loadChannels(selectedNodeId);
       }
@@ -1031,6 +1032,7 @@ function App() {
       console.error('Failed to delete channel:', error);
       handleApiError(error);
     }
+    setDeleteChannelConfirm(null);
   };
 
   // Handle creating a new node
@@ -1867,6 +1869,8 @@ function App() {
         if (showShortcutsHelp) { setShowShortcutsHelp(false); return; }
         if (showSearchOverlay) { setShowSearchOverlay(false); return; }
         if (showSettings) { setShowSettings(false); return; }
+        if (showNodeSettings) { setShowNodeSettings(false); return; }
+        if (deleteChannelConfirm) { setDeleteChannelConfirm(null); return; }
         if (showNotificationSettings) { setShowNotificationSettings(false); return; }
         if (showCreateNodeModal) { setShowCreateNodeModal(false); return; }
         if (showInviteModal) { setShowInviteModal(false); return; }
@@ -2310,20 +2314,23 @@ function App() {
               {!serverAvailable && <span className="demo-badge">DEMO</span>}
             </div>
             
-            {selectedNodeId && (hasPermission(selectedNodeId, 'ManageInvites') || hasPermission(selectedNodeId, 'ManageNode')) && (
-              <div className="sidebar-admin-buttons">
-                {hasPermission(selectedNodeId, 'ManageInvites') && (
-                  <button onClick={handleGenerateInvite} className="sidebar-admin-btn" title="Generate Invite">Invite</button>
-                )}
-                {hasPermission(selectedNodeId, 'ManageNode') && (
-                  <button onClick={() => alert('Node settings coming soon!')} className="sidebar-admin-btn danger" title="Node Settings">Settings</button>
-                )}
-              </div>
-            )}
+            <div className="sidebar-admin-buttons">
+              {selectedNodeId && hasPermission(selectedNodeId, 'ManageInvites') && (
+                <button onClick={handleGenerateInvite} className="sidebar-admin-btn" title="Generate Invite">Invite</button>
+              )}
+              {selectedNodeId && (
+                <button onClick={() => setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings">⚙️</button>
+              )}
+            </div>
           </div>
           
           {selectedNodeId && userRoles[selectedNodeId] && (
             <div className="sidebar-role">{getRoleBadge(userRoles[selectedNodeId])} {userRoles[selectedNodeId]}</div>
+          )}
+          {selectedNodeId && nodes.find(n => n.id === selectedNodeId)?.description && (
+            <div className="sidebar-description" title={nodes.find(n => n.id === selectedNodeId)?.description}>
+              {nodes.find(n => n.id === selectedNodeId)?.description}
+            </div>
           )}
         </div>
         
@@ -2345,6 +2352,7 @@ function App() {
                 key={channel?.id || ch}
                 className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
               >
+                <span className="channel-drag-handle" title="Drag to reorder">⠿</span>
                 <div
                   onClick={() => {
                     if (channel) {
@@ -2395,7 +2403,7 @@ function App() {
                   
                   {canDeleteChannel && channel && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteChannel(channel.id, channel.name); }}
+                      onClick={(e) => { e.stopPropagation(); setDeleteChannelConfirm({ id: channel.id, name: channel.name }); }}
                       className="channel-delete-btn"
                       title="Delete channel"
                     >
@@ -2533,7 +2541,13 @@ function App() {
             ) : (
               <>
                 <span className="chat-channel-name">{activeChannel}</span>
-                <span className="chat-topic">Welcome to {activeChannel}!</span>
+                <span className="chat-topic">
+                  {(() => {
+                    const ch = channels.find(c => c.id === selectedChannelId);
+                    if (ch?.channel_type === 'voice') return `🔊 Voice channel — ${ch.name}`;
+                    return `Welcome to ${activeChannel}!`;
+                  })()}
+                </span>
               </>
             )}
           </div>
@@ -2780,13 +2794,23 @@ function App() {
                   )}
 
                   {hoveredMessageId === msg.id && appState.user && (
-                    <div className="add-reaction-container">
+                    <div className="add-reaction-container quick-react-bar">
+                      {['👍', '❤️', '😂', '🔥', '👀'].map((emoji) => (
+                        <button
+                          key={emoji}
+                          className="quick-react-btn"
+                          onClick={() => handleToggleReaction(msg.id, emoji)}
+                          title={`React with ${emoji}`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
                       <button 
                         className="add-reaction-btn"
                         onClick={() => setShowEmojiPicker(showEmojiPicker === msg.id ? null : msg.id)}
-                        title="Add reaction"
+                        title="More reactions"
                       >
-                        😊
+                        +
                       </button>
 
                       {showEmojiPicker === msg.id && (
@@ -3027,6 +3051,44 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Delete Channel Confirmation Modal */}
+      {deleteChannelConfirm && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3>Delete Channel</h3>
+            <p>Are you sure you want to delete <strong>#{deleteChannelConfirm.name}</strong>? This action cannot be undone. All messages will be permanently lost.</p>
+            <div className="modal-actions">
+              <button onClick={() => handleDeleteChannelConfirmed(deleteChannelConfirm.id)} className="btn btn-red">Delete Channel</button>
+              <button onClick={() => setDeleteChannelConfirm(null)} className="btn btn-outline">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Node Settings Modal */}
+      {showNodeSettings && selectedNodeId && (() => {
+        const currentNode = nodes.find(n => n.id === selectedNodeId);
+        if (!currentNode) return null;
+        return (
+          <NodeSettings
+            isOpen={showNodeSettings}
+            onClose={() => setShowNodeSettings(false)}
+            node={currentNode}
+            token={appState.token || ''}
+            userRole={userRoles[selectedNodeId] || 'member'}
+            onNodeUpdated={(updatedNode) => {
+              setNodes(prev => prev.map(n => n.id === updatedNode.id ? updatedNode : n));
+            }}
+            onLeaveNode={() => {
+              setSelectedNodeId(null);
+              setChannels([]);
+              setMembers([]);
+              loadNodes();
+            }}
+          />
+        );
+      })()}
 
       {/* Search Overlay */}
       <SearchOverlay

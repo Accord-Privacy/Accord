@@ -3253,3 +3253,66 @@ input, textarea, select, button {
 /* Message density classes */
 .density-compact .message { padding-top: 1px; padding-bottom: 1px; }
 .density-cozy .message { padding-top: 8px; padding-bottom: 8px; }
+
+/* ======= Channel Drag Handle ======= */
+.channel-drag-handle {
+  cursor: grab;
+  color: var(--text-faint, #4f545c);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  user-select: none;
+  flex-shrink: 0;
+  margin-right: 2px;
+  line-height: 1;
+}
+.channel:hover .channel-drag-handle { opacity: 0.6; }
+.channel-drag-handle:hover { opacity: 1 !important; color: var(--text-muted, #8e9297); }
+
+/* ======= Sidebar Node Description ======= */
+.sidebar-description {
+  font-size: 11px;
+  color: var(--text-muted, #8e9297);
+  padding: 0 12px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ======= Quick React Bar ======= */
+.quick-react-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--background-modifier-accent, #2f3136);
+  border-radius: 6px;
+  padding: 2px 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+.quick-react-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.1s, transform 0.1s;
+  line-height: 1;
+}
+.quick-react-btn:hover {
+  background: var(--background-modifier-hover, #40444b);
+  transform: scale(1.2);
+}
+
+/* ======= Delete Channel Confirm (btn-red) ======= */
+.btn-red {
+  background: var(--red, #ed4245);
+  color: #fff;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+.btn-red:hover { background: #c93b3e; }
