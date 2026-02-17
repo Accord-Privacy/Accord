@@ -117,7 +117,7 @@ impl OneTimePreKeyPair {
 }
 
 /// Published pre-key bundle (what the server stores for Bob).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PreKeyBundle {
     pub identity_key: [u8; 32],
     pub signed_prekey: [u8; 32],

@@ -1,0 +1,5 @@
+module AccordCoreFFI {
+    header "include/accord_core.h"
+    link "accord_core"
+    export *
+}

@@ -47,6 +47,9 @@ x25519-dalek = { workspace = true }
 aes-gcm = { workspace = true }
 zeroize = { workspace = true }
 
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
 [dev-dependencies]
 criterion = "0.5"
 
