@@ -6,7 +6,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::{debug, info};
 use uuid::Uuid;
+
+/// Maximum number of bot interactions to keep in memory
+const MAX_INTERACTIONS: usize = 10_000;
 
 /// Bot command that can be parsed without decrypting channel content
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -273,10 +277,17 @@ impl BotManager {
         });
 
         // In a real implementation, this would send the command to the bot process
-        println!(
-            "Routing command {} to bot {}",
-            command.command_prefix, bot.name
+        info!(
+            command_prefix = %command.command_prefix,
+            bot_name = %bot.name,
+            "Routing command to bot"
         );
+
+        // Enforce max interactions size
+        if self.interactions.len() >= MAX_INTERACTIONS {
+            let drain_count = self.interactions.len() - MAX_INTERACTIONS + 1;
+            self.interactions.drain(..drain_count);
+        }
 
         Ok(())
     }
@@ -295,9 +306,9 @@ impl BotManager {
         }
 
         // In a real implementation, this would send the response to the channel
-        println!(
-            "Bot response with {} embedded elements",
-            response.embedded_elements.len()
+        debug!(
+            embedded_count = response.embedded_elements.len(),
+            "Bot response with embedded elements"
         );
 
         Ok(())
@@ -323,10 +334,17 @@ impl BotManager {
             timestamp: chrono::Utc::now(),
         });
 
-        println!(
-            "Handling embedded interaction: {} = {}",
-            element_id, interaction_data
+        debug!(
+            element_id = %element_id,
+            interaction_data = %interaction_data,
+            "Handling embedded interaction"
         );
+
+        // Enforce max interactions size
+        if self.interactions.len() >= MAX_INTERACTIONS {
+            let drain_count = self.interactions.len() - MAX_INTERACTIONS + 1;
+            self.interactions.drain(..drain_count);
+        }
         Ok(())
     }
 
@@ -399,7 +417,7 @@ impl BotManager {
                 self.command_mappings.remove(&cmd);
             }
 
-            println!("Removed bot: {}", bot.name);
+            info!(bot_name = %bot.name, "Removed bot");
         }
 
         Ok(())

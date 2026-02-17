@@ -171,6 +171,9 @@ impl VoiceActivityDetector {
     }
 
     fn calculate_energy(&self, samples: &[i16]) -> f32 {
+        if samples.is_empty() {
+            return 0.0;
+        }
         let sum_squares: f64 = samples.iter().map(|&sample| (sample as f64).powi(2)).sum();
 
         (sum_squares / samples.len() as f64).sqrt() as f32 / i16::MAX as f32

@@ -5,6 +5,7 @@ use crate::files::FileHandler;
 use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
 use crate::permissions::{has_permission, Permission};
+use crate::rate_limit::RateLimiter;
 use anyhow::Result;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -32,6 +33,8 @@ pub struct AppState {
     pub start_time: u64,
     /// Node creation policy
     pub node_creation_policy: NodeCreationPolicy,
+    /// Rate limiter
+    pub rate_limiter: RateLimiter,
 }
 
 impl std::fmt::Debug for AppState {
@@ -58,6 +61,7 @@ impl AppState {
             voice_channels: RwLock::new(HashMap::new()),
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
+            rate_limiter: RateLimiter::new(),
         })
     }
 
@@ -549,9 +553,10 @@ impl AppState {
             None => return Err("Must be a member of the node".to_string()),
         }
 
-        // TODO: Add actual delete_channel method to database layer
-        // self.db.delete_channel(channel_id).await.map_err(|e| e.to_string())
-        Err("Channel deletion not yet implemented in database layer".to_string())
+        self.db
+            .delete_channel(channel_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     // ── Channel Category operations ──
@@ -571,15 +576,10 @@ impl AppState {
         &self,
         category_id: Uuid,
     ) -> Result<Option<crate::models::ChannelCategory>, String> {
-        // Get category from database
-        let categories = self
-            .db
-            .get_node_categories(Uuid::nil()) // We'll need to find the node first
+        self.db
+            .get_category_by_id(category_id)
             .await
-            .map_err(|e| e.to_string())?;
-
-        // For now, we'll do a simple lookup - in a real implementation we'd add a get_category_by_id method
-        Ok(categories.into_iter().find(|c| c.id == category_id))
+            .map_err(|e| e.to_string())
     }
 
     pub async fn update_channel_category(
@@ -627,8 +627,8 @@ impl AppState {
         &self,
         node_id: Uuid,
         user_id: Uuid,
-        _name: Option<String>,
-        _description: Option<String>,
+        name: Option<String>,
+        description: Option<String>,
     ) -> Result<(), String> {
         // Check if user has permission to manage node
         let member = self
@@ -645,9 +645,10 @@ impl AppState {
             None => return Err("Must be a member of the node".to_string()),
         }
 
-        // TODO: Add actual update_node method to database layer
-        // self.db.update_node(node_id, name, description).await.map_err(|e| e.to_string())
-        Err("Node update not yet implemented in database layer".to_string())
+        self.db
+            .update_node(node_id, name.as_deref(), description.as_deref())
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>, String> {

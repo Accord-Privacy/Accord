@@ -545,6 +545,48 @@ impl Database {
         row.map(|r| parse_node(&r)).transpose()
     }
 
+    pub async fn update_node(
+        &self,
+        node_id: Uuid,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<()> {
+        let mut query_parts = Vec::new();
+        let mut binds = Vec::new();
+
+        if let Some(name) = name {
+            query_parts.push("name = ?");
+            binds.push(name.to_string());
+        }
+
+        if let Some(description) = description {
+            query_parts.push("description = ?");
+            binds.push(description.to_string());
+        }
+
+        if query_parts.is_empty() {
+            return Ok(());
+        }
+
+        let query = format!(
+            "UPDATE nodes SET {} WHERE id = ?",
+            query_parts.join(", ")
+        );
+
+        let mut sqlx_query = sqlx::query(&query);
+        for bind in binds {
+            sqlx_query = sqlx_query.bind(bind);
+        }
+        sqlx_query = sqlx_query.bind(node_id.to_string());
+
+        sqlx_query
+            .execute(&self.pool)
+            .await
+            .context("Failed to update node")?;
+
+        Ok(())
+    }
+
     pub async fn delete_node(&self, node_id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM nodes WHERE id = ?")
             .bind(node_id.to_string())
@@ -741,6 +783,15 @@ impl Database {
         Ok(channels)
     }
 
+    pub async fn delete_channel(&self, channel_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM channels WHERE id = ?")
+            .bind(channel_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete channel")?;
+        Ok(())
+    }
+
     pub async fn add_user_to_channel(&self, channel_id: Uuid, user_id: Uuid) -> Result<()> {
         let joined_at = now();
         sqlx::query("INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)")
@@ -811,6 +862,30 @@ impl Database {
         })
     }
 
+    pub async fn get_category_by_id(
+        &self,
+        category_id: Uuid,
+    ) -> Result<Option<crate::models::ChannelCategory>> {
+        let row = sqlx::query(
+            "SELECT id, node_id, name, position, created_at FROM channel_categories WHERE id = ?",
+        )
+        .bind(category_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query channel category by ID")?;
+
+        row.map(|r| -> Result<crate::models::ChannelCategory> {
+            Ok(crate::models::ChannelCategory {
+                id: Uuid::parse_str(&r.get::<String, _>("id"))?,
+                node_id: Uuid::parse_str(&r.get::<String, _>("node_id"))?,
+                name: r.get("name"),
+                position: r.get::<i64, _>("position") as u32,
+                created_at: r.get::<i64, _>("created_at") as u64,
+            })
+        })
+        .transpose()
+    }
+
     pub async fn get_node_categories(
         &self,
         node_id: Uuid,
@@ -823,16 +898,17 @@ impl Database {
         .await
         .context("Failed to query channel categories")?;
 
-        Ok(rows
-            .iter()
-            .map(|row| crate::models::ChannelCategory {
-                id: Uuid::parse_str(&row.get::<String, _>("id")).unwrap(),
-                node_id: Uuid::parse_str(&row.get::<String, _>("node_id")).unwrap(),
-                name: row.get("name"),
-                position: row.get::<i64, _>("position") as u32,
-                created_at: row.get::<i64, _>("created_at") as u64,
+        rows.iter()
+            .map(|row| -> Result<crate::models::ChannelCategory> {
+                Ok(crate::models::ChannelCategory {
+                    id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                    name: row.get("name"),
+                    position: row.get::<i64, _>("position") as u32,
+                    created_at: row.get::<i64, _>("created_at") as u64,
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub async fn update_channel_category(
@@ -1032,14 +1108,14 @@ impl Database {
 
         let mut messages: Vec<_> = rows
             .iter()
-            .map(|row| {
-                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+            .map(|row| -> Result<_> {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
                 let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
                 let created_at = row.get::<i64, _>("created_at") as u64;
-                (message_id, sender_id, encrypted_payload, created_at)
+                Ok((message_id, sender_id, encrypted_payload, created_at))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         messages.reverse(); // chronological order
         Ok(messages)
@@ -1103,54 +1179,8 @@ impl Database {
 
         let messages: Vec<_> = rows
             .iter()
-            .map(|row| {
-                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
-                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
-                let sender_username: String = row.get("username");
-                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
-                let created_at = row.get::<i64, _>("created_at") as u64;
-                let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
-                let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
-                let pinned_by = row
-                    .get::<Option<String>, _>("pinned_by")
-                    .and_then(|s| Uuid::parse_str(&s).ok());
-                let reply_to = row
-                    .get::<Option<String>, _>("reply_to")
-                    .and_then(|s| Uuid::parse_str(&s).ok());
-
-                // Build replied message if it exists
-                let replied_message =
-                    if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
-                        Some(crate::models::RepliedMessage {
-                            id: Uuid::parse_str(&replied_id).unwrap(),
-                            sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))
-                                .unwrap(),
-                            sender_username: row.get("replied_username"),
-                            encrypted_payload: base64::engine::general_purpose::STANDARD
-                                .encode(&row.get::<Vec<u8>, _>("replied_payload")),
-                            created_at: row.get::<i64, _>("replied_created_at") as u64,
-                        })
-                    } else {
-                        None
-                    };
-
-                crate::models::MessageMetadata {
-                    id: message_id,
-                    channel_id,
-                    sender_id,
-                    sender_username,
-                    encrypted_payload: base64::engine::general_purpose::STANDARD
-                        .encode(&encrypted_payload),
-                    created_at,
-                    edited_at,
-                    pinned_at,
-                    pinned_by,
-                    reply_to,
-                    replied_message,
-                }
-            })
-            .collect();
+            .map(|row| parse_message_metadata(row))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(messages)
     }
@@ -1223,16 +1253,16 @@ impl Database {
 
         let results: Vec<_> = rows
             .iter()
-            .map(|row| {
-                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
-                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
+            .map(|row| -> Result<_> {
+                let message_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id"))?;
+                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
                 let sender_username: String = row.get("sender_username");
                 let channel_name: String = row.get("channel_name");
                 let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
                 let created_at = row.get::<i64, _>("created_at") as u64;
 
-                crate::models::SearchResult {
+                Ok(crate::models::SearchResult {
                     message_id,
                     channel_id,
                     channel_name,
@@ -1241,9 +1271,9 @@ impl Database {
                     created_at,
                     encrypted_payload: base64::engine::general_purpose::STANDARD
                         .encode(&encrypted_payload),
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(results)
     }
@@ -1809,54 +1839,8 @@ impl Database {
 
         let messages: Vec<_> = rows
             .iter()
-            .map(|row| {
-                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
-                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
-                let sender_username: String = row.get("username");
-                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
-                let created_at = row.get::<i64, _>("created_at") as u64;
-                let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
-                let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
-                let pinned_by = row
-                    .get::<Option<String>, _>("pinned_by")
-                    .and_then(|s| Uuid::parse_str(&s).ok());
-                let reply_to = row
-                    .get::<Option<String>, _>("reply_to")
-                    .and_then(|s| Uuid::parse_str(&s).ok());
-
-                // Build replied message if it exists
-                let replied_message =
-                    if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
-                        Some(crate::models::RepliedMessage {
-                            id: Uuid::parse_str(&replied_id).unwrap(),
-                            sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))
-                                .unwrap(),
-                            sender_username: row.get("replied_username"),
-                            encrypted_payload: base64::engine::general_purpose::STANDARD
-                                .encode(&row.get::<Vec<u8>, _>("replied_payload")),
-                            created_at: row.get::<i64, _>("replied_created_at") as u64,
-                        })
-                    } else {
-                        None
-                    };
-
-                crate::models::MessageMetadata {
-                    id: message_id,
-                    channel_id,
-                    sender_id,
-                    sender_username,
-                    encrypted_payload: base64::engine::general_purpose::STANDARD
-                        .encode(&encrypted_payload),
-                    created_at,
-                    edited_at,
-                    pinned_at,
-                    pinned_by,
-                    reply_to,
-                    replied_message,
-                }
-            })
-            .collect();
+            .map(|row| parse_message_metadata(row))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(messages)
     }
@@ -1885,54 +1869,8 @@ impl Database {
 
         let messages: Vec<_> = rows
             .iter()
-            .map(|row| {
-                let message_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-                let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id")).unwrap();
-                let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id")).unwrap();
-                let sender_username: String = row.get("username");
-                let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
-                let created_at = row.get::<i64, _>("created_at") as u64;
-                let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
-                let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
-                let pinned_by = row
-                    .get::<Option<String>, _>("pinned_by")
-                    .and_then(|s| Uuid::parse_str(&s).ok());
-                let reply_to = row
-                    .get::<Option<String>, _>("reply_to")
-                    .and_then(|s| Uuid::parse_str(&s).ok());
-
-                // Build replied message if it exists
-                let replied_message =
-                    if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
-                        Some(crate::models::RepliedMessage {
-                            id: Uuid::parse_str(&replied_id).unwrap(),
-                            sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))
-                                .unwrap(),
-                            sender_username: row.get("replied_username"),
-                            encrypted_payload: base64::engine::general_purpose::STANDARD
-                                .encode(&row.get::<Vec<u8>, _>("replied_payload")),
-                            created_at: row.get::<i64, _>("replied_created_at") as u64,
-                        })
-                    } else {
-                        None
-                    };
-
-                crate::models::MessageMetadata {
-                    id: message_id,
-                    channel_id,
-                    sender_id,
-                    sender_username,
-                    encrypted_payload: base64::engine::general_purpose::STANDARD
-                        .encode(&encrypted_payload),
-                    created_at,
-                    edited_at,
-                    pinned_at,
-                    pinned_by,
-                    reply_to,
-                    replied_message,
-                }
-            })
-            .collect();
+            .map(|row| parse_message_metadata(row))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(messages)
     }
@@ -2212,10 +2150,10 @@ impl Database {
 
         let entries: Vec<_> = rows
             .iter()
-            .map(|row| {
-                let audit_id = Uuid::parse_str(&row.get::<String, _>("id")).unwrap();
-                let node_id = Uuid::parse_str(&row.get::<String, _>("node_id")).unwrap();
-                let actor_id = Uuid::parse_str(&row.get::<String, _>("actor_id")).unwrap();
+            .map(|row| -> Result<_> {
+                let audit_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+                let node_id = Uuid::parse_str(&row.get::<String, _>("node_id"))?;
+                let actor_id = Uuid::parse_str(&row.get::<String, _>("actor_id"))?;
                 let actor_username: String = row.get("username");
                 let action: String = row.get("action");
                 let target_type: String = row.get("target_type");
@@ -2225,7 +2163,7 @@ impl Database {
                 let details: Option<String> = row.get("details");
                 let created_at = row.get::<i64, _>("created_at") as u64;
 
-                crate::models::AuditLogWithActor {
+                Ok(crate::models::AuditLogWithActor {
                     id: audit_id,
                     node_id,
                     actor_id,
@@ -2235,9 +2173,9 @@ impl Database {
                     target_id,
                     details,
                     created_at,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(entries)
     }
@@ -2250,6 +2188,51 @@ fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::MessageMetadata> {
+    let message_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+    let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id"))?;
+    let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
+    let sender_username: String = row.get("username");
+    let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+    let created_at = row.get::<i64, _>("created_at") as u64;
+    let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
+    let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
+    let pinned_by = row
+        .get::<Option<String>, _>("pinned_by")
+        .and_then(|s| Uuid::parse_str(&s).ok());
+    let reply_to = row
+        .get::<Option<String>, _>("reply_to")
+        .and_then(|s| Uuid::parse_str(&s).ok());
+
+    let replied_message =
+        if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
+            Some(crate::models::RepliedMessage {
+                id: Uuid::parse_str(&replied_id)?,
+                sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))?,
+                sender_username: row.get("replied_username"),
+                encrypted_payload: base64::engine::general_purpose::STANDARD
+                    .encode(&row.get::<Vec<u8>, _>("replied_payload")),
+                created_at: row.get::<i64, _>("replied_created_at") as u64,
+            })
+        } else {
+            None
+        };
+
+    Ok(crate::models::MessageMetadata {
+        id: message_id,
+        channel_id,
+        sender_id,
+        sender_username,
+        encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
+        created_at,
+        edited_at,
+        pinned_at,
+        pinned_by,
+        reply_to,
+        replied_message,
+    })
 }
 
 fn parse_user(row: &sqlx::sqlite::SqliteRow) -> Result<User> {

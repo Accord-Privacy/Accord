@@ -17,8 +17,8 @@ pub mod voice;
 
 use anyhow::Result;
 
-/// Accord protocol version
-pub const PROTOCOL_VERSION: u32 = 1;
+// Re-export the canonical protocol version from the protocol module
+pub use protocol::PROTOCOL_VERSION;
 
 /// Initialize the Accord core library
 pub fn init() -> Result<()> {
@@ -32,6 +32,6 @@ mod tests {
 
     #[test]
     fn it_works() {
-        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(PROTOCOL_VERSION, 1u8);
     }
 }

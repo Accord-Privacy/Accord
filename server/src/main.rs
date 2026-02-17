@@ -9,6 +9,7 @@ mod handlers;
 mod models;
 mod node;
 mod permissions;
+mod rate_limit;
 mod state;
 
 use anyhow::Result;
@@ -39,6 +40,65 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::{info, warn};
+
+mod rate_limit_middleware {
+    use crate::rate_limit::ActionType;
+    use crate::state::SharedState;
+    use axum::{
+        body::Body,
+        extract::State,
+        http::{Request, StatusCode},
+        middleware::Next,
+        response::{IntoResponse, Response},
+    };
+
+    /// Axum middleware that applies rate limiting based on the authenticated user.
+    /// Extracts the token from query params, resolves the user, and checks the rate limiter.
+    pub async fn rate_limit_layer(
+        State(state): State<SharedState>,
+        request: Request<Body>,
+        next: Next,
+    ) -> Response {
+        // Determine action type from the request path/method
+        let action = match (request.method().as_str(), request.uri().path()) {
+            ("POST", path) if path.contains("/files") => Some(ActionType::FileUpload),
+            ("PUT", path) if path.contains("/reactions") => Some(ActionType::Reaction),
+            ("PATCH", "/users/me/profile") => Some(ActionType::ProfileUpdate),
+            ("POST", path) if path.starts_with("/dm/") => Some(ActionType::DirectMessage),
+            _ => None,
+        };
+
+        if let Some(action) = action {
+            // Extract token from query string
+            if let Some(query) = request.uri().query() {
+                let token = query
+                    .split('&')
+                    .find_map(|pair| {
+                        let mut parts = pair.splitn(2, '=');
+                        if parts.next() == Some("token") {
+                            parts.next()
+                        } else {
+                            None
+                        }
+                    });
+
+                if let Some(token) = token {
+                    if let Some(user_id) = state.validate_token(token).await {
+                        if let Err(err) = state.rate_limiter.check(user_id, action).await {
+                            return (
+                                StatusCode::TOO_MANY_REQUESTS,
+                                format!("Rate limit exceeded: {}. Retry after {}s", err.message, err.retry_after_secs),
+                            )
+                                .into_response();
+                        }
+                    }
+                }
+            }
+        }
+
+        next.run(request).await
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -171,6 +231,10 @@ async fn main() -> Result<()> {
         // Add shared state
         .with_state(state.clone())
         // Add middleware
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware::rate_limit_layer,
+        ))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
