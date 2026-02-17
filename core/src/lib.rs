@@ -19,6 +19,7 @@ pub mod jitter_buffer;
 pub mod jni;
 pub mod p2p_voice;
 pub mod protocol;
+pub mod push_crypto;
 pub mod session_manager;
 pub mod srtp;
 pub mod voice;

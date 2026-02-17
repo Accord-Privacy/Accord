@@ -556,6 +556,112 @@ pub struct PrekeyMessageResponse {
     pub created_at: u64,
 }
 
+// ── Push notification models ──
+
+/// Platform for push notifications
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PushPlatform {
+    Ios,
+    Android,
+}
+
+impl PushPlatform {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PushPlatform::Ios => "ios",
+            PushPlatform::Android => "android",
+        }
+    }
+}
+
+impl std::str::FromStr for PushPlatform {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ios" => Ok(PushPlatform::Ios),
+            "android" => Ok(PushPlatform::Android),
+            _ => Err(format!("unknown platform: {}", s)),
+        }
+    }
+}
+
+/// User preference for how much info appears in push notifications
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationPrivacy {
+    /// Show sender display name and channel
+    Full,
+    /// Show "New message" only
+    #[default]
+    Partial,
+    /// Silent background wake — no visible notification
+    Stealth,
+}
+
+impl NotificationPrivacy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NotificationPrivacy::Full => "full",
+            NotificationPrivacy::Partial => "partial",
+            NotificationPrivacy::Stealth => "stealth",
+        }
+    }
+}
+
+impl std::str::FromStr for NotificationPrivacy {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "full" => Ok(NotificationPrivacy::Full),
+            "partial" => Ok(NotificationPrivacy::Partial),
+            "stealth" => Ok(NotificationPrivacy::Stealth),
+            _ => Err(format!("unknown privacy level: {}", s)),
+        }
+    }
+}
+
+/// A registered device token for push notifications
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceToken {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub platform: PushPlatform,
+    pub token: String,
+    pub privacy_level: NotificationPrivacy,
+    pub created_at: u64,
+}
+
+/// Request to register a device token
+#[derive(Debug, Deserialize)]
+pub struct RegisterDeviceTokenRequest {
+    pub platform: PushPlatform,
+    pub token: String,
+    #[serde(default)]
+    pub privacy_level: Option<NotificationPrivacy>,
+}
+
+/// Response after registering a device token
+#[derive(Debug, Serialize)]
+pub struct RegisterDeviceTokenResponse {
+    pub id: Uuid,
+    pub status: String,
+}
+
+/// Request to deregister a device token
+#[derive(Debug, Deserialize)]
+pub struct DeregisterDeviceTokenRequest {
+    pub token: String,
+}
+
+/// Request to update push notification preferences
+#[derive(Debug, Deserialize)]
+pub struct UpdatePushPreferencesRequest {
+    pub privacy_level: NotificationPrivacy,
+    /// Optional: only update for a specific token
+    pub token: Option<String>,
+}
+
 /// Audit log entry with actor information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditLogWithActor {

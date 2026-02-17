@@ -3998,3 +3998,118 @@ pub async fn log_audit_event(
         error!("Failed to log audit event: {}", e);
     }
 }
+
+// ── Push notification endpoints ──
+
+/// Register a device token for push notifications (POST /push/register)
+pub async fn register_push_token_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::RegisterDeviceTokenRequest>,
+) -> Result<Json<crate::models::RegisterDeviceTokenResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    if request.token.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Token cannot be empty".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let privacy_level = request
+        .privacy_level
+        .unwrap_or(crate::models::NotificationPrivacy::Partial);
+
+    match state
+        .db
+        .register_device_token(user_id, request.platform, &request.token, privacy_level)
+        .await
+    {
+        Ok(id) => {
+            info!(
+                "Device token registered for user {} ({:?})",
+                user_id, request.platform
+            );
+            Ok(Json(crate::models::RegisterDeviceTokenResponse {
+                id,
+                status: "registered".to_string(),
+            }))
+        }
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to register device token: {}", err),
+                code: 500,
+            }),
+        )),
+    }
+}
+
+/// Deregister a device token (DELETE /push/register)
+pub async fn deregister_push_token_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::DeregisterDeviceTokenRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.db.remove_device_token(user_id, &request.token).await {
+        Ok(true) => Ok(Json(serde_json::json!({ "status": "deregistered" }))),
+        Ok(false) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Token not found".into(),
+                code: 404,
+            }),
+        )),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to deregister token: {}", err),
+                code: 500,
+            }),
+        )),
+    }
+}
+
+/// Update push notification preferences (PUT /push/preferences)
+pub async fn update_push_preferences_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::UpdatePushPreferencesRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state
+        .db
+        .update_push_privacy(user_id, request.token.as_deref(), request.privacy_level)
+        .await
+    {
+        Ok(updated) => {
+            if updated == 0 {
+                Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: "No device tokens found to update".into(),
+                        code: 404,
+                    }),
+                ))
+            } else {
+                Ok(Json(serde_json::json!({
+                    "status": "updated",
+                    "tokens_updated": updated
+                })))
+            }
+        }
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to update preferences: {}", err),
+                code: 500,
+            }),
+        )),
+    }
+}

@@ -12,6 +12,7 @@ mod handlers;
 mod models;
 mod node;
 mod permissions;
+pub mod push;
 #[allow(dead_code)]
 mod rate_limit;
 mod state;
@@ -25,16 +26,17 @@ use clap::Parser;
 use handlers::{
     add_reaction_handler, auth_handler, create_channel_category_handler, create_dm_channel_handler,
     create_invite_handler, create_node_handler, delete_channel_category_handler,
-    delete_channel_handler, delete_file_handler, delete_message_handler, download_file_handler,
-    edit_message_handler, fetch_key_bundle_handler, get_channel_messages_handler,
-    get_dm_channels_handler, get_message_reactions_handler, get_message_thread_handler,
-    get_node_audit_log_handler, get_node_handler, get_node_members_handler,
-    get_pinned_messages_handler, get_prekey_messages_handler, get_user_profile_handler,
-    health_handler, join_node_handler, kick_user_handler, leave_node_handler,
-    list_channel_files_handler, list_invites_handler, pin_message_handler,
-    publish_key_bundle_handler, register_handler, remove_reaction_handler, revoke_invite_handler,
-    search_messages_handler, store_prekey_message_handler, unpin_message_handler,
-    update_channel_category_handler, update_channel_handler, update_node_handler,
+    delete_channel_handler, delete_file_handler, delete_message_handler,
+    deregister_push_token_handler, download_file_handler, edit_message_handler,
+    fetch_key_bundle_handler, get_channel_messages_handler, get_dm_channels_handler,
+    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
+    get_node_handler, get_node_members_handler, get_pinned_messages_handler,
+    get_prekey_messages_handler, get_user_profile_handler, health_handler, join_node_handler,
+    kick_user_handler, leave_node_handler, list_channel_files_handler, list_invites_handler,
+    pin_message_handler, publish_key_bundle_handler, register_handler, register_push_token_handler,
+    remove_reaction_handler, revoke_invite_handler, search_messages_handler,
+    store_prekey_message_handler, unpin_message_handler, update_channel_category_handler,
+    update_channel_handler, update_node_handler, update_push_preferences_handler,
     update_user_profile_handler, upload_file_handler, use_invite_handler, ws_handler,
 };
 use state::{AppState, SharedState};
@@ -234,6 +236,13 @@ async fn main() -> Result<()> {
         .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
         .route("/keys/prekey-message", post(store_prekey_message_handler))
         .route("/keys/prekey-messages", get(get_prekey_messages_handler))
+        // Push notification endpoints
+        .route("/push/register", post(register_push_token_handler))
+        .route("/push/register", delete(deregister_push_token_handler))
+        .route(
+            "/push/preferences",
+            axum::routing::put(update_push_preferences_handler),
+        )
         // Direct Message endpoints
         .route("/dm/:user_id", post(create_dm_channel_handler))
         .route("/dm", get(get_dm_channels_handler))

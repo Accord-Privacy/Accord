@@ -39,8 +39,14 @@ ctr = "0.9"
 hmac = "0.12"
 sha1 = "0.10"
 
+# Base64 encoding
+base64 = "0.21"
+
 # Random generation
 rand = "0.8"
+
+# Serialization for push metadata
+serde_json = "1.0"
 
 # Double Ratchet dependencies
 x25519-dalek = { workspace = true }

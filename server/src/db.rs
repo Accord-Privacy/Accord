@@ -478,6 +478,29 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create device_tokens table for push notifications
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS device_tokens (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                token TEXT NOT NULL,
+                privacy_level TEXT NOT NULL DEFAULT 'partial',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                UNIQUE(user_id, token)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create device_tokens table")?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens (user_id)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -2378,6 +2401,115 @@ impl Database {
             .await?;
 
         Ok(messages)
+    }
+
+    // ── Push notification device token operations ──
+
+    /// Register a device token for push notifications
+    pub async fn register_device_token(
+        &self,
+        user_id: Uuid,
+        platform: crate::models::PushPlatform,
+        token: &str,
+        privacy_level: crate::models::NotificationPrivacy,
+    ) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        let now = now();
+
+        // Upsert: if token already exists for this user, update it
+        sqlx::query(
+            r#"
+            INSERT INTO device_tokens (id, user_id, platform, token, privacy_level, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, token) DO UPDATE SET
+                platform = excluded.platform,
+                privacy_level = excluded.privacy_level
+            "#,
+        )
+        .bind(id.to_string())
+        .bind(user_id.to_string())
+        .bind(platform.as_str())
+        .bind(token)
+        .bind(privacy_level.as_str())
+        .bind(now as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to register device token")?;
+
+        Ok(id)
+    }
+
+    /// Remove a device token
+    pub async fn remove_device_token(&self, user_id: Uuid, token: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM device_tokens WHERE user_id = ? AND token = ?")
+            .bind(user_id.to_string())
+            .bind(token)
+            .execute(&self.pool)
+            .await
+            .context("Failed to remove device token")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get all device tokens for a user
+    pub async fn get_device_tokens(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::DeviceToken>> {
+        let rows = sqlx::query(
+            "SELECT id, user_id, platform, token, privacy_level, created_at FROM device_tokens WHERE user_id = ?",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get device tokens")?;
+
+        let mut tokens = Vec::new();
+        for row in rows {
+            tokens.push(crate::models::DeviceToken {
+                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
+                platform: row
+                    .get::<String, _>("platform")
+                    .parse()
+                    .unwrap_or(crate::models::PushPlatform::Android),
+                token: row.get("token"),
+                privacy_level: row
+                    .get::<String, _>("privacy_level")
+                    .parse()
+                    .unwrap_or_default(),
+                created_at: row.get::<i64, _>("created_at") as u64,
+            });
+        }
+
+        Ok(tokens)
+    }
+
+    /// Update push notification privacy level for a user's tokens
+    pub async fn update_push_privacy(
+        &self,
+        user_id: Uuid,
+        token: Option<&str>,
+        privacy_level: crate::models::NotificationPrivacy,
+    ) -> Result<u64> {
+        let result = if let Some(token) = token {
+            sqlx::query(
+                "UPDATE device_tokens SET privacy_level = ? WHERE user_id = ? AND token = ?",
+            )
+            .bind(privacy_level.as_str())
+            .bind(user_id.to_string())
+            .bind(token)
+            .execute(&self.pool)
+            .await?
+        } else {
+            sqlx::query("UPDATE device_tokens SET privacy_level = ? WHERE user_id = ?")
+                .bind(privacy_level.as_str())
+                .bind(user_id.to_string())
+                .execute(&self.pool)
+                .await?
+        };
+
+        Ok(result.rows_affected())
     }
 }
 
