@@ -14,14 +14,14 @@
 
 use crate::federation_models::*;
 use crate::state::SharedState;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 /// Current federation protocol version.
@@ -37,7 +37,7 @@ const MAX_NONCE_CACHE_SIZE: usize = 10_000;
 // ── Configuration ──
 
 /// Federation configuration for this server.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FederationConfig {
     /// Whether federation is enabled at the server level
     pub enabled: bool,
@@ -49,18 +49,6 @@ pub struct FederationConfig {
     pub blocked_servers: Vec<String>,
     /// Node IDs that have opted into federation
     pub federated_node_ids: Vec<Uuid>,
-}
-
-impl Default for FederationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            server_domain: String::new(),
-            allowed_servers: Vec::new(),
-            blocked_servers: Vec::new(),
-            federated_node_ids: Vec::new(),
-        }
-    }
 }
 
 impl FederationConfig {
@@ -368,6 +356,12 @@ pub struct FederationClient {
     http_client: reqwest::Client,
 }
 
+impl Default for FederationClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FederationClient {
     pub fn new() -> Self {
         Self {
@@ -514,9 +508,9 @@ pub async fn federation_inbox_handler(
         FederationEvent::Message {
             from,
             to,
-            encrypted_payload,
+            encrypted_payload: _,
             message_id,
-            reply_to,
+            reply_to: _,
         } => {
             // Route the E2E encrypted message to the local recipient
             info!(
@@ -528,7 +522,7 @@ pub async fn federation_inbox_handler(
         FederationEvent::TypingStart {
             from,
             to,
-            channel_id,
+            channel_id: _,
         } => {
             info!("Federation typing {} -> {}", from, to);
             // TODO: Relay typing indicator

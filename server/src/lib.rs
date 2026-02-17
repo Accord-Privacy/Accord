@@ -2,6 +2,10 @@
 //!
 //! Exposes modules for testing and reuse
 
+// Federation and Bot API are scaffolding — not yet fully wired into production routes.
+// Allow dead code until integration is complete.
+#![allow(dead_code)]
+
 pub mod bot_api;
 pub mod db;
 pub mod federation;

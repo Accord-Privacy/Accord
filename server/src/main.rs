@@ -3,6 +3,9 @@
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
+// Federation and Bot API modules are scaffolding — allow unused until fully integrated.
+#![allow(dead_code)]
+
 mod bot_api;
 #[allow(dead_code)]
 mod db;

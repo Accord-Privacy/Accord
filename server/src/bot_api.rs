@@ -269,7 +269,10 @@ fn generate_bot_token() -> String {
     format!(
         "{}{}",
         BOT_TOKEN_PREFIX,
-        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &token_bytes)
+        base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            &token_bytes
+        )
     )
 }
 
@@ -326,7 +329,10 @@ pub async fn register_bot_handler(
     let api_token = generate_bot_token();
     let token_hash = hash_token(&api_token);
 
-    let webhook_secret = request.webhook_url.as_ref().map(|_| generate_webhook_secret());
+    let webhook_secret = request
+        .webhook_url
+        .as_ref()
+        .map(|_| generate_webhook_secret());
 
     let bot_id = Uuid::new_v4();
     let now = now_secs();
@@ -358,7 +364,12 @@ pub async fn register_bot_handler(
         )
     })?;
 
-    tracing::info!("Bot registered: {} (id: {}) by user {}", bot_id, bot_id, owner_id);
+    tracing::info!(
+        "Bot registered: {} (id: {}) by user {}",
+        bot_id,
+        bot_id,
+        owner_id
+    );
 
     Ok(Json(RegisterBotResponse {
         bot_id,
@@ -426,18 +437,15 @@ pub async fn update_bot_handler(
         ));
     }
 
-    state
-        .update_bot(bot_id, request)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Failed to update bot: {}", e),
-                    code: 500,
-                }),
-            )
-        })?;
+    state.update_bot(bot_id, request).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to update bot: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
 
     Ok(Json(
         serde_json::json!({ "status": "updated", "bot_id": bot_id }),
@@ -592,8 +600,10 @@ pub async fn invite_bot_to_channel_handler(
             )
         })?;
 
-    if !crate::permissions::has_permission(user_role, crate::permissions::Permission::ManageChannels)
-    {
+    if !crate::permissions::has_permission(
+        user_role,
+        crate::permissions::Permission::ManageChannels,
+    ) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -681,8 +691,10 @@ pub async fn remove_bot_from_channel_handler(
             )
         })?;
 
-    if !crate::permissions::has_permission(user_role, crate::permissions::Permission::ManageChannels)
-    {
+    if !crate::permissions::has_permission(
+        user_role,
+        crate::permissions::Permission::ManageChannels,
+    ) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -745,7 +757,11 @@ pub async fn bot_send_message_handler(
     }
 
     // Check bot is in this channel
-    if !state.is_bot_in_channel(bot.id, channel_id).await.unwrap_or(false) {
+    if !state
+        .is_bot_in_channel(bot.id, channel_id)
+        .await
+        .unwrap_or(false)
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -769,15 +785,18 @@ pub async fn bot_send_message_handler(
             )
         })?;
 
-    let content = body.get("content").and_then(|v| v.as_str()).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Missing 'content' field".into(),
-                code: 400,
-            }),
-        )
-    })?;
+    let content = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Missing 'content' field".into(),
+                    code: 400,
+                }),
+            )
+        })?;
 
     let message_id = Uuid::new_v4();
     let now = now_secs();
@@ -873,18 +892,15 @@ async fn extract_bot_from_token(
     })?;
 
     let token_hash = hash_token(token);
-    state
-        .validate_bot_token(&token_hash)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Invalid bot token".into(),
-                    code: 401,
-                }),
-            )
-        })
+    state.validate_bot_token(&token_hash).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid bot token".into(),
+                code: 401,
+            }),
+        )
+    })
 }
 
 // ── Tests ──
