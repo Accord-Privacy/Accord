@@ -36,5 +36,10 @@ sha2 = "0.10"
 # Random generation
 rand = "0.8"
 
+# Double Ratchet dependencies
+x25519-dalek = { workspace = true }
+aes-gcm = { workspace = true }
+zeroize = { workspace = true }
+
 [dev-dependencies]
 criterion = "0.5"

@@ -143,6 +143,9 @@ impl CryptoManager {
     }
 
     /// Ratchet the chain key forward to derive a new message key, providing forward secrecy.
+    #[deprecated(
+        note = "Use double_ratchet::DoubleRatchetSession for full Double Ratchet protocol"
+    )]
     /// Each message uses a unique key derived from the chain key, and the chain key advances.
     fn ratchet_chain_key(chain_key: &mut [u8; 32]) -> [u8; 32] {
         let hk = Hkdf::<Sha256>::new(None, chain_key);
@@ -158,6 +161,7 @@ impl CryptoManager {
     }
 
     /// Encrypt a text message using AES-GCM with forward secrecy via key ratcheting
+    #[allow(deprecated)]
     pub fn encrypt_message(&mut self, user_id: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
         let session = self
             .session_keys
@@ -193,6 +197,7 @@ impl CryptoManager {
     }
 
     /// Decrypt a text message
+    #[allow(deprecated)]
     pub fn decrypt_message(&mut self, user_id: &str, ciphertext: &[u8]) -> Result<Vec<u8>> {
         if ciphertext.len() < 12 {
             return Err(anyhow::anyhow!("Ciphertext too short"));

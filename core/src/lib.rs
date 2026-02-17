@@ -11,6 +11,7 @@
 pub mod bots;
 pub mod channels;
 pub mod crypto;
+pub mod double_ratchet;
 pub mod invites;
 pub mod protocol;
 pub mod voice;
