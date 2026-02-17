@@ -42,6 +42,9 @@ sha1 = "0.10"
 # Base64 encoding
 base64 = "0.21"
 
+# Hex encoding
+hex = "0.4"
+
 # Random generation
 rand = "0.8"
 

@@ -12,6 +12,7 @@ pub mod background_voice;
 pub mod bots;
 pub mod channels;
 pub mod crypto;
+pub mod device_fingerprint;
 pub mod double_ratchet;
 pub mod ffi;
 pub mod invites;

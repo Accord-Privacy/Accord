@@ -168,18 +168,55 @@ pub async fn get_node_handler(
     }
 }
 
+/// Optional body for join_node (device fingerprint hash)
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct JoinNodeRequest {
+    /// Optional device fingerprint hash for ban enforcement
+    #[serde(default)]
+    pub device_fingerprint_hash: Option<String>,
+}
+
 /// Join a Node
 pub async fn join_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     Query(params): Query<HashMap<String, String>>,
+    body: Option<Json<JoinNodeRequest>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
+    let fingerprint_hash = body.and_then(|b| b.0.device_fingerprint_hash);
+
+    // Check device fingerprint ban before joining
+    if let Some(ref fph) = fingerprint_hash {
+        let device_banned = state
+            .db
+            .is_device_banned_from_node(node_id, fph)
+            .await
+            .unwrap_or(false);
+        if device_banned {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Your device is banned from this node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
 
     match state.join_node(user_id, node_id).await {
-        Ok(()) => Ok(Json(
-            serde_json::json!({ "status": "joined", "node_id": node_id }),
-        )),
+        Ok(()) => {
+            // Store device fingerprint hash if provided
+            if let Some(ref fph) = fingerprint_hash {
+                let _ = state
+                    .db
+                    .set_member_device_fingerprint(node_id, user_id, fph)
+                    .await;
+            }
+            Ok(Json(
+                serde_json::json!({ "status": "joined", "node_id": node_id }),
+            ))
+        }
         Err(err) => Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -562,12 +599,13 @@ pub async fn ban_user_handler(
 
     state
         .db
-        .ban_from_node(
+        .ban_from_node_with_fingerprint(
             node_id,
             &request.public_key_hash,
             user_id,
             reason_bytes.as_deref(),
             request.expires_at,
+            request.device_fingerprint_hash.as_deref(),
         )
         .await
         .map_err(|e| {
@@ -674,6 +712,55 @@ pub async fn unban_user_handler(
             }),
         ))
     }
+}
+
+/// Check if a user/device is banned from a Node (GET /nodes/:id/ban-check)
+pub async fn ban_check_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let public_key_hash = params.get("public_key_hash");
+    let device_fingerprint_hash = params.get("device_fingerprint_hash");
+
+    if public_key_hash.is_none() && device_fingerprint_hash.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Must provide public_key_hash and/or device_fingerprint_hash query param"
+                    .into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let key_banned = if let Some(pkh) = public_key_hash {
+        state
+            .db
+            .is_banned_from_node(node_id, pkh)
+            .await
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let device_banned = if let Some(fph) = device_fingerprint_hash {
+        state
+            .db
+            .is_device_banned_from_node(node_id, fph)
+            .await
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    Ok(Json(serde_json::json!({
+        "banned": key_banned || device_banned,
+        "key_banned": key_banned,
+        "device_banned": device_banned,
+    })))
 }
 
 /// List bans for a Node (GET /nodes/:id/bans)

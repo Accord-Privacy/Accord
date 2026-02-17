@@ -38,6 +38,9 @@ pub struct NodeBan {
     /// Encrypted with the Node metadata key — relay cannot read the reason
     pub reason_encrypted: Option<Vec<u8>>,
     pub expires_at: Option<u64>,
+    /// Optional device fingerprint hash (for device-level ban enforcement)
+    #[serde(default)]
+    pub device_fingerprint_hash: Option<String>,
 }
 
 /// Authentication token
@@ -728,6 +731,9 @@ pub struct BanUserRequest {
     /// Optional expiration timestamp (Unix seconds)
     #[serde(default)]
     pub expires_at: Option<u64>,
+    /// Optional device fingerprint hash to also ban the device
+    #[serde(default)]
+    pub device_fingerprint_hash: Option<String>,
 }
 
 /// Request to unban a user from a Node

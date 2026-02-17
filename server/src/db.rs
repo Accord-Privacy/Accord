@@ -586,6 +586,18 @@ impl Database {
         .await
         .context("Failed to create node_bans table")?;
 
+        // ── Device fingerprint columns for ban enforcement ──
+        // node_members: store fingerprint hash at join time (nullable — opt-in)
+        sqlx::query("ALTER TABLE node_members ADD COLUMN device_fingerprint_hash TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+        // node_bans: optional fingerprint-based ban (nullable)
+        sqlx::query("ALTER TABLE node_bans ADD COLUMN device_fingerprint_hash TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Indexes for zero-knowledge identity
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_users_public_key_hash ON users (public_key_hash)",
@@ -596,6 +608,12 @@ impl Database {
             .execute(&self.pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_bans_key ON node_bans (public_key_hash)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_bans_fingerprint ON node_bans (device_fingerprint_hash)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_members_fingerprint ON node_members (device_fingerprint_hash)")
             .execute(&self.pool)
             .await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_user_profiles_node ON node_user_profiles (node_id)")
@@ -688,7 +706,7 @@ impl Database {
 
     // ── Node ban operations ──
 
-    /// Ban a public_key_hash from a Node
+    /// Ban a public_key_hash from a Node, with optional device fingerprint hash
     pub async fn ban_from_node(
         &self,
         node_id: Uuid,
@@ -697,9 +715,30 @@ impl Database {
         reason_encrypted: Option<&[u8]>,
         expires_at: Option<u64>,
     ) -> Result<()> {
+        self.ban_from_node_with_fingerprint(
+            node_id,
+            public_key_hash,
+            banned_by,
+            reason_encrypted,
+            expires_at,
+            None,
+        )
+        .await
+    }
+
+    /// Ban a public_key_hash from a Node, optionally also banning the device fingerprint
+    pub async fn ban_from_node_with_fingerprint(
+        &self,
+        node_id: Uuid,
+        public_key_hash: &str,
+        banned_by: Uuid,
+        reason_encrypted: Option<&[u8]>,
+        expires_at: Option<u64>,
+        device_fingerprint_hash: Option<&str>,
+    ) -> Result<()> {
         let banned_at = now();
         sqlx::query(
-            "INSERT OR REPLACE INTO node_bans (node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO node_bans (node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at, device_fingerprint_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(node_id.to_string())
         .bind(public_key_hash)
@@ -707,6 +746,7 @@ impl Database {
         .bind(banned_at as i64)
         .bind(reason_encrypted)
         .bind(expires_at.map(|t| t as i64))
+        .bind(device_fingerprint_hash)
         .execute(&self.pool)
         .await
         .context("Failed to ban user from node")?;
@@ -741,7 +781,7 @@ impl Database {
     /// List all bans for a Node
     pub async fn get_node_bans(&self, node_id: Uuid) -> Result<Vec<crate::models::NodeBan>> {
         let rows = sqlx::query(
-            "SELECT node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at FROM node_bans WHERE node_id = ? ORDER BY banned_at DESC",
+            "SELECT node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at, device_fingerprint_hash FROM node_bans WHERE node_id = ? ORDER BY banned_at DESC",
         )
         .bind(node_id.to_string())
         .fetch_all(&self.pool)
@@ -757,9 +797,94 @@ impl Database {
                     banned_at: row.get::<i64, _>("banned_at") as u64,
                     reason_encrypted: row.get::<Option<Vec<u8>>, _>("reason_encrypted"),
                     expires_at: row.get::<Option<i64>, _>("expires_at").map(|t| t as u64),
+                    device_fingerprint_hash: row
+                        .get::<Option<String>, _>("device_fingerprint_hash"),
                 })
             })
             .collect()
+    }
+
+    // ── Device fingerprint ban operations ──
+
+    /// Ban a device fingerprint hash from a Node
+    pub async fn ban_device_from_node(
+        &self,
+        node_id: Uuid,
+        device_fingerprint_hash: &str,
+        banned_by: Uuid,
+        reason_encrypted: Option<&[u8]>,
+        expires_at: Option<u64>,
+    ) -> Result<()> {
+        let banned_at = now();
+        // Use a synthetic public_key_hash for device-only bans (prefixed to distinguish)
+        let synthetic_pkh = format!("device:{}", device_fingerprint_hash);
+        sqlx::query(
+            "INSERT OR REPLACE INTO node_bans (node_id, public_key_hash, device_fingerprint_hash, banned_by, banned_at, reason_encrypted, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(node_id.to_string())
+        .bind(&synthetic_pkh)
+        .bind(device_fingerprint_hash)
+        .bind(banned_by.to_string())
+        .bind(banned_at as i64)
+        .bind(reason_encrypted)
+        .bind(expires_at.map(|t| t as i64))
+        .execute(&self.pool)
+        .await
+        .context("Failed to ban device from node")?;
+        Ok(())
+    }
+
+    /// Check if a device fingerprint hash is banned from a Node (considering expiry)
+    pub async fn is_device_banned_from_node(
+        &self,
+        node_id: Uuid,
+        device_fingerprint_hash: &str,
+    ) -> Result<bool> {
+        let current_time = now() as i64;
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_bans WHERE node_id = ? AND device_fingerprint_hash = ? AND (expires_at IS NULL OR expires_at > ?)",
+        )
+        .bind(node_id.to_string())
+        .bind(device_fingerprint_hash)
+        .bind(current_time)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    /// Store device fingerprint hash for a node member
+    pub async fn set_member_device_fingerprint(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+        device_fingerprint_hash: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE node_members SET device_fingerprint_hash = ? WHERE node_id = ? AND user_id = ?",
+        )
+        .bind(device_fingerprint_hash)
+        .bind(node_id.to_string())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to set member device fingerprint")?;
+        Ok(())
+    }
+
+    /// Unban a device fingerprint hash from a Node
+    pub async fn unban_device_from_node(
+        &self,
+        node_id: Uuid,
+        device_fingerprint_hash: &str,
+    ) -> Result<bool> {
+        let result =
+            sqlx::query("DELETE FROM node_bans WHERE node_id = ? AND device_fingerprint_hash = ?")
+                .bind(node_id.to_string())
+                .bind(device_fingerprint_hash)
+                .execute(&self.pool)
+                .await
+                .context("Failed to unban device from node")?;
+        Ok(result.rows_affected() > 0)
     }
 
     // ── Node user profile operations ──

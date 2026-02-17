@@ -34,6 +34,7 @@ dependencies = [
  "criterion",
  "ctr",
  "flate2",
+ "hex",
  "hkdf",
  "hmac",
  "jni",
