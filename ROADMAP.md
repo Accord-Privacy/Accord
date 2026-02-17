@@ -1,116 +1,65 @@
 # Accord Roadmap
 
-## Current Status (Feb 2026)
+## Current Status: Phase 6 In Progress (Feb 2026)
 
-### ✅ Phase 1: Foundation — COMPLETE
-- [x] All 6 Rust crates compiling (core, core-minimal, server, desktop, cli, standalone-demo)
-- [x] All unit + integration tests passing (20 unit, 11 integration, 5 DB)
-- [x] Server: WebSocket relay (registration, auth, message routing, channels)
-- [x] Server: SQLite persistence (users, channels, messages, nodes, node_members, files)
-- [x] Multi-tenant Node architecture (CRUD, membership, roles: admin/mod/member)
-- [x] Node creation policies (admin_only/open/approval/invite)
-- [x] Server admin ≠ Node admin separation (zero-knowledge design)
-- [x] CLI client (register, login, Node CRUD, interactive WebSocket chat)
-- [x] E2E smoke test (server → registration → auth → Node creation)
-- [x] Encrypted file sharing (upload/download/list/delete, zero-knowledge filenames)
-- [x] Node invite links (8-char codes, expiration, usage limits, approval workflow)
-- [x] Voice channel server-side support (join/leave/relay/speaking state)
-- [x] React/TypeScript desktop frontend scaffold (Discord-like dark theme, 3-column layout)
-- [x] Frontend connected to server (API client, WebSocket, auth flow)
-- [x] Tauri 2.x desktop shell (Ubuntu 24.04 compatible)
-- [x] CI/CD pipeline, Docker support
-- [x] Core crypto: X25519 key agreement, AES-256-GCM, forward secrecy
+---
 
-### ✅ Phase 2: Integration & Polish — COMPLETE
-- [x] Wire E2E encryption into client message flow
-- [x] Frontend: real Node/channel navigation with live server data
-- [x] Frontend: file upload/download UI
-- [x] Frontend: user profiles and presence indicators
-- [x] Permissions system enforcement in frontend
-- [x] Message history loading and scroll-back
-- [x] Docker deployment guide for self-hosting
-- [x] Desktop UI: configurable server URL for cross-machine connectivity
-- [x] Windows build pipeline (NSIS/MSI installers, GitHub Actions)
-- [x] Startup scripts (Linux/Windows)
+### ✅ Phase 1–2: Foundation + Core Features — COMPLETE
+- Server with WebSocket relay, SQLite persistence, Argon2 authentication
+- REST API, React/TypeScript frontend (Discord-like dark theme)
+- CLI client, Tauri desktop shell, Docker deployment
+- E2E encryption (X25519, AES-256-GCM, HKDF forward secrecy)
+- Multi-tenant Node architecture, invite links, file sharing
+- Windows/Linux builds, CI/CD pipeline
 
-### ✅ Phase 3: Voice & Real-Time — COMPLETE (partial)
-- [x] Client-side audio capture (browser/Tauri)
-- [x] Opus codec integration
-- [x] Real-time voice UI (mute, deafen, speaking indicators)
-- [x] Server-relayed voice for groups
-- [x] Voice packet encryption (placeholder, pending WebRTC/SRTP)
-- [ ] P2P voice for small groups (≤4)
-- [ ] Jitter buffer and packet loss handling
+### ✅ Phase 3: Voice & Real-Time — COMPLETE
+- P2P voice mesh for small groups (≤4 users)
+- ICE-lite connectivity, SRTP encryption
+- Opus codec, jitter buffer, packet loss handling
+- Relay fallback for restrictive NATs
+- Voice UI (mute, deafen, speaking indicators)
 
-### ✅ Phase 2.5: Security Audit & Hardening — COMPLETE (Feb 17, 2026)
-Full codebase audit: 7 CRITICAL, 16 HIGH, 26 MEDIUM, 24 LOW findings across Rust, frontend, and infra.
+### ✅ Phase 4: Security Hardening — COMPLETE
+- **Double Ratchet** — full Signal protocol spec with X3DH key agreement
+- **SRTP voice encryption** — replaced placeholder with proper WebRTC-grade encryption
+- **Dependency upgrades** — quinn 0.11, sqlx 0.8, all audit findings resolved
+- **Reproducible builds** verified
+- **Performance benchmarks** (10k+ concurrent users target)
+- **Comprehensive audit** — all CRITICAL (7), HIGH (16), MEDIUM (26), LOW (24) findings fixed
+  - Argon2 hashing, token validation, XSS prevention, CORS lockdown
+  - File path traversal prevention, private key encryption at rest
+  - Rate limiting, structured logging, clippy + `cargo audit` in CI
 
-**CRITICAL fixes applied:**
-- [x] Argon2 password hashing (registration + login)
-- [x] Proper token validation (no more hardcoded UUIDs)
-- [x] Safe crypto (removed unsafe `array_ref!` macro, TryInto)
-- [x] REST endpoints validate tokens server-side (no client-supplied user_id)
-- [x] XSS prevention (DOMPurify sanitization)
-- [x] Improved E2E key derivation (user-specific, not just channel ID)
+### ✅ Phase 5: Mobile — COMPLETE
+- **iOS** — Rust FFI bridge, Swift wrapper, Swift Package Manager distribution
+- **Android** — Rust JNI bridge, Kotlin wrapper
+- **Push notifications** — APNs/FCM traits, 3 privacy levels (full/metadata-only/silent), E2E encrypted metadata
+- **Background voice** — state machine, keepalive, platform guidance docs
 
-**HIGH fixes applied:**
-- [x] HKDF key derivation with separate session/chain keys
-- [x] Key ratcheting for forward secrecy
-- [x] Token cleanup (expired token removal)
-- [x] Auth tokens via Authorization: Bearer header
-- [x] CORS restricted to configurable allowlist
-- [x] File path canonicalization (traversal prevention)
-- [x] Voice key rotation
-- [x] Secure token storage with expiry (frontend)
-- [x] Private key encryption at rest (PBKDF2 + AES-GCM)
-- [x] WebSocket auth handshake (token out of URL)
-- [x] Password strength validation
-- [x] Tightened Tauri CSP
-
-**Remaining (MEDIUM/LOW):**
-- [ ] Fix `get_channel_category` nil UUID bug (M7)
-- [ ] Wire up rate limiting to endpoints (L9)
-- [ ] Replace `println!` with structured logging in bots (L1)
-- [ ] Fix `delete_channel` / `update_node` stubs (M10/M11)
-- [ ] Add clippy + `cargo audit` to CI
-- [ ] Fix duplicate `PROTOCOL_VERSION` constants (M3)
-- [ ] Bounded bot interactions vector (M4)
-- [ ] Division-by-zero guard in `calculate_energy` (M5)
-- [ ] Grapheme-aware validation lengths (M6)
-- [ ] `unwrap()` → `?` in DB row parsing (M9)
-- [ ] Error boundary for React frontend
-- [ ] Remove console.log spam from production builds
-
-### 📋 Phase 4: Hardening (Next)
-- [ ] Internal security audit pass on remaining MEDIUM/LOW items
-- [ ] Penetration testing
-- [ ] Reproducible builds
-- [ ] Performance benchmarking (10k+ concurrent users target)
-- [ ] Full Double Ratchet protocol (replace current simplified ratchet)
-- [ ] WebRTC/SRTP for voice encryption
-
-### 📋 Phase 5: Mobile
-- [ ] iOS app (Swift + Rust FFI)
-- [ ] Android app (Kotlin + Rust JNI)
-- [ ] Push notifications with encryption preservation
-- [ ] Background voice support
-
-### 📋 Phase 6: Public Release
+### 🚧 Phase 6: Public Release — IN PROGRESS
+- [x] Federation protocol (Ed25519 server identity, signed envelopes, DNS discovery)
+- [x] Bot API (permission scopes, webhooks, rate limiting, developer docs)
 - [ ] Beta program
 - [ ] Community feedback integration
-- [ ] Federation protocol (multi-server communication)
-- [ ] Bot API documentation for third-party developers
+- [ ] Matrix channel + dev contact email
+
+### 📋 Phase 7: Post-Launch Hardening — PLANNED
+- [ ] Metadata protection (encrypt usernames, channel names; minimize server-visible plaintext)
+- [ ] Onion routing for metadata resistance
+- [ ] Post-quantum key exchange (ML-KEM / hybrid X25519+Kyber)
+- [ ] External security firm audit
+
+---
 
 ## Technical Specifications
 
 ### Cryptographic Protocol
 | Component | Algorithm | Details |
 |-----------|-----------|---------|
-| Key agreement | X25519 ECDH | Per-session between clients |
-| Message encryption | AES-256-GCM | Unique nonce per message |
-| Forward secrecy | HKDF ratchet | Chain key advances per message |
-| Voice encryption | AES-256-GCM | Per-packet, key rotation supported |
-| Identity keys | Ed25519 | Long-term identity verification |
+| Key agreement | X3DH + X25519 | Full Signal protocol handshake |
+| Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
+| Voice encryption | SRTP | Per-packet, key rotation |
+| Identity keys | Ed25519 | Long-term identity + server federation |
 | Key derivation | HKDF-SHA256 | Separate info strings per key type |
 | Password hashing | Argon2id | Server-side registration/login |
 
@@ -122,7 +71,6 @@ Full codebase audit: 7 CRITICAL, 16 HIGH, 26 MEDIUM, 24 LOW findings across Rust
 | Concurrent users | 10,000+ per server |
 | Message throughput | 1,000+ msg/sec |
 | Max file size | 100MB (chunked, encrypted) |
-| CPU (voice) | <10% on modern hardware |
 
 ### Differentiators
 | | Accord | Discord | Signal | Matrix |
@@ -133,6 +81,8 @@ Full codebase audit: 7 CRITICAL, 16 HIGH, 26 MEDIUM, 24 LOW findings across Rust
 | Zero-knowledge server | ✅ | ❌ | ✅ | ❌ |
 | Privacy-preserving bots | ✅ | ❌ | ❌ | ❌ |
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
+| Mobile apps | ✅ | ✅ | ✅ | ✅ |
+| Federation | 🚧 | ❌ | ❌ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
 
 ## Architecture
@@ -145,12 +95,11 @@ Full codebase audit: 7 CRITICAL, 16 HIGH, 26 MEDIUM, 24 LOW findings across Rust
 
 ### Trust Model
 E2E encryption means even malicious relays can't read content. Remaining risks and mitigations:
-- **Metadata** → minimize stored routing data, optional Tor support
+- **Metadata** → Phase 7: encrypt usernames/channels, onion routing
 - **Server fingerprinting** → Ed25519 identity key, TOFU + out-of-band verification
-- **Traffic analysis** → padding, timing obfuscation (future)
+- **Quantum threats** → Phase 7: post-quantum key exchange
 
 ### Server Discovery
 - DNS SRV records (`_accord._tcp.example.com`)
 - QR code / deep links with server fingerprint
-- Optional federated server directory
-- Word of mouth (primary, most secure)
+- Federated server directory (Phase 6)
