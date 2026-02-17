@@ -15,6 +15,7 @@ import {
 } from "./crypto";
 import { storeToken, getToken, clearToken } from "./tokenStorage";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./FileManager";
+import { EmojiPickerButton } from "./EmojiPicker";
 import { VoiceChat } from "./VoiceChat";
 import { SearchOverlay } from "./SearchOverlay";
 // Removed unused imports for NodeDiscovery and NodeSettings components
@@ -171,6 +172,14 @@ function App() {
 
   // Keyboard shortcuts help state
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Message input emoji picker state
+  const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Scroll-to-bottom state
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [newMessageCount, setNewMessageCount] = useState(0);
 
   // Presence state
   const [presenceMap, setPresenceMap] = useState<Map<string, import('./types').PresenceStatus>>(new Map());
@@ -379,6 +388,9 @@ function App() {
         setTimeout(() => {
           container.scrollTop = container.scrollHeight;
         }, 0);
+      } else {
+        // User is scrolled up — increment unread count
+        setNewMessageCount(prev => prev + 1);
       }
     });
 
@@ -756,7 +768,26 @@ function App() {
     }
   }, [appState.token, serverAvailable, isLoadingOlderMessages, hasMoreMessages, oldestMessageCursor]);
 
-  // Handle scroll events for infinite scroll
+  // Handle inserting emoji at cursor position
+  const handleInsertEmoji = useCallback((emoji: string) => {
+    const textarea = messageInputRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const newMsg = message.substring(0, start) + emoji + message.substring(end);
+      setMessage(newMsg);
+      // Restore cursor position after emoji
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + emoji.length;
+        textarea.focus();
+      }, 0);
+    } else {
+      setMessage(prev => prev + emoji);
+    }
+    setShowInputEmojiPicker(false);
+  }, [message]);
+
+  // Handle scroll events for infinite scroll + scroll-to-bottom
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement;
     
@@ -764,7 +795,22 @@ function App() {
     if (target.scrollTop <= 50 && hasMoreMessages && !isLoadingOlderMessages && selectedChannelId) {
       loadOlderMessages(selectedChannelId);
     }
+
+    // Show/hide scroll-to-bottom button
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    setShowScrollToBottom(distanceFromBottom > 200);
+    if (distanceFromBottom < 50) {
+      setNewMessageCount(0);
+    }
   }, [hasMoreMessages, isLoadingOlderMessages, selectedChannelId, loadOlderMessages]);
+
+  const scrollToBottom = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      setNewMessageCount(0);
+    }
+  }, []);
 
   // Handle node selection
   const handleNodeSelect = useCallback((nodeId: string, index: number) => {
@@ -2543,8 +2589,46 @@ function App() {
               <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
             </div>
           )}
-          {appState.messages.map((msg, i) => (
-            <div key={msg.id || i} className={`message ${msg.reply_to ? 'reply-message' : ''}`} data-message-id={msg.id}>
+          {appState.messages.map((msg, i) => {
+            const prevMsg = i > 0 ? appState.messages[i - 1] : null;
+            const isGrouped = prevMsg
+              && prevMsg.author === msg.author
+              && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
+              && !msg.reply_to;
+
+            // Date separator
+            const msgDate = new Date(msg.timestamp);
+            const prevDate = prevMsg ? new Date(prevMsg.timestamp) : null;
+            const showDateSep = !prevDate
+              || msgDate.toDateString() !== prevDate.toDateString();
+
+            const formatDateSep = (d: Date) => {
+              const now = new Date();
+              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+              const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+              const diff = today.getTime() - msgDay.getTime();
+              if (diff === 0) return 'Today';
+              if (diff === 86400000) return 'Yesterday';
+              return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+            };
+
+            // Relative timestamp
+            const formatRelativeTime = (ts: number) => {
+              const diff = Date.now() - ts;
+              if (diff < 60000) return 'just now';
+              if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+              if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+              return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            };
+
+            return (
+              <React.Fragment key={msg.id || i}>
+                {showDateSep && (
+                  <div className="date-separator">
+                    <span className="date-separator-text">{formatDateSep(msgDate)}</span>
+                  </div>
+                )}
+                <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped' : ''}`} data-message-id={msg.id}>
               {/* Reply preview if this message is a reply */}
               {msg.replied_message && (
                 <div className="reply-preview" onClick={() => scrollToMessage(msg.reply_to!)}>
@@ -2555,17 +2639,18 @@ function App() {
                   </div>
                 </div>
               )}
-              <div className="message-avatar">{msg.author[0]}</div>
+              {!isGrouped && <div className="message-avatar">{msg.author[0]}</div>}
+              {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
               <div className="message-body">
+                {!isGrouped && (
                 <div className="message-header">
                   <span className="message-author" onContextMenu={(e) => {
-                    // Find the member who authored this message
                     const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
                     if (authorMember) {
                       handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
                     }
                   }}>{msg.author}</span>
-                  <span className="message-time">{msg.time}</span>
+                  <span className="message-time">{formatRelativeTime(msg.timestamp)}</span>
                   {msg.edited_at && (
                     <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                   )}
@@ -2578,7 +2663,6 @@ function App() {
                   {/* Message Actions - Show on hover for all users */}
                   {appState.user && (
                     <div className="message-actions">
-                      {/* Reply button for all users */}
                       <button
                         onClick={() => handleReply(msg)}
                         className="message-action-btn"
@@ -2604,19 +2688,19 @@ function App() {
                           🗑️
                         </button>
                       )}
-                      {/* Pin/Unpin button for admin/moderator users */}
                       {canDeleteMessage(msg) && (
                         <button
                           onClick={() => msg.pinned_at ? handleUnpinMessage(msg.id) : handlePinMessage(msg.id)}
                           className="message-action-btn"
                           title={msg.pinned_at ? "Unpin message" : "Pin message"}
                         >
-                          {msg.pinned_at ? '📌' : '📌'}
+                          📌
                         </button>
                       )}
                     </div>
                   )}
                 </div>
+                )}
                 {/* Editing Interface */}
                 {editingMessageId === msg.id ? (
                   <div className="message-edit-container">
@@ -2676,7 +2760,6 @@ function App() {
                   onMouseEnter={() => setHoveredMessageId(msg.id)}
                   onMouseLeave={() => setHoveredMessageId(null)}
                 >
-                  {/* Existing reactions */}
                   {msg.reactions && msg.reactions.length > 0 && (
                     <div className="message-reactions">
                       {msg.reactions.map((reaction) => {
@@ -2696,7 +2779,6 @@ function App() {
                     </div>
                   )}
 
-                  {/* Add reaction button - show on hover */}
                   {hoveredMessageId === msg.id && appState.user && (
                     <div className="add-reaction-container">
                       <button 
@@ -2707,7 +2789,6 @@ function App() {
                         😊
                       </button>
 
-                      {/* Emoji picker */}
                       {showEmojiPicker === msg.id && (
                         <div className="emoji-picker">
                           {COMMON_EMOJIS.map((emoji) => (
@@ -2750,7 +2831,16 @@ function App() {
                 )}
               </div>
             </div>
-          ))}
+              </React.Fragment>
+            );
+          })}
+
+          {/* Scroll to bottom button */}
+          {showScrollToBottom && (
+            <button className="scroll-to-bottom-btn" onClick={scrollToBottom}>
+              ↓ {newMessageCount > 0 && <span className="scroll-to-bottom-count">{newMessageCount}</span>}
+            </button>
+          )}
           
         </div>
         {/* Typing indicator */}
@@ -2785,16 +2875,15 @@ function App() {
             />
           )}
           <textarea
+            ref={messageInputRef}
             className="message-input"
             placeholder={`Message ${activeChannel}`}
             value={message}
             rows={1}
             onChange={(e) => {
               setMessage(e.target.value);
-              // Auto-resize textarea
               e.target.style.height = 'auto';
               e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
-              // Send typing indicator when user types (throttled)
               if (selectedChannelId) {
                 sendTypingIndicator(selectedChannelId);
               }
@@ -2804,8 +2893,13 @@ function App() {
                 e.preventDefault();
                 handleSendMessage();
               }
-              // Shift+Enter: default behavior (newline in textarea)
             }}
+          />
+          <EmojiPickerButton
+            isOpen={showInputEmojiPicker}
+            onToggle={() => setShowInputEmojiPicker(prev => !prev)}
+            onSelect={handleInsertEmoji}
+            onClose={() => setShowInputEmojiPicker(false)}
           />
           {/* File list button */}
           {serverAvailable && appState.activeChannel && (
