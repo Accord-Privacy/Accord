@@ -1,5 +1,13 @@
 // Client-side encryption using Web Crypto API
 // No external dependencies - uses built-in browser crypto
+//
+// ⚠️  WARNING: INSECURE PLACEHOLDER ENCRYPTION ⚠️
+// The current key derivation does NOT provide true end-to-end encryption.
+// Channel keys are derived from channel ID + a user-specific token, meaning
+// the server (or anyone with the channel UUID and token) can decrypt messages.
+// A proper implementation requires ECDH key exchange between participants
+// (e.g., Sender Keys, MLS, or pairwise Double Ratchet).
+// TODO: Implement proper key exchange protocol for real E2EE.
 
 const STORAGE_KEYS = {
   PRIVATE_KEY: 'accord_private_key',
@@ -75,12 +83,24 @@ export async function deriveChannelKey(privateKey: CryptoKey, channelId: string)
 
 /**
  * Create a deterministic key from channel ID (fallback method)
+ * 
+ * ⚠️  WARNING: This is NOT real E2EE. The key is derived from the channel ID
+ * combined with a user-local secret. Any party with the channel UUID and the
+ * user's token/secret can derive the same key. This is a placeholder until
+ * proper ECDH key exchange is implemented.
+ * TODO: Replace with proper multi-party key agreement (MLS / Sender Keys).
  */
 async function createChannelKeyFromId(channelId: string): Promise<CryptoKey> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(channelId);
   
-  // Hash the channel ID to create key material
+  // Incorporate user-specific secret to make keys less trivially derivable
+  // This is still NOT real E2EE — just makes it harder than plain channel ID hashing
+  const userSecret = localStorage.getItem('accord_token') || '';
+  const privateKeyB64 = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY) || '';
+  const material = `${channelId}:${userSecret}:${privateKeyB64.slice(0, 32)}`;
+  const data = encoder.encode(material);
+  
+  // Hash the combined material to create key
   const digest = await window.crypto.subtle.digest('SHA-256', data);
   
   const key = await window.crypto.subtle.importKey(
@@ -231,15 +251,79 @@ export async function exportPublicKey(publicKey: CryptoKey): Promise<string> {
 }
 
 /**
- * Save keypair to localStorage
+ * Derive a wrapping key from a passphrase using PBKDF2.
+ * Used to encrypt the private key before storing in localStorage.
+ */
+async function deriveWrappingKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey(
+    'raw',
+    encoder.encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return window.crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations: 100000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Encrypt data with a passphrase-derived key (AES-GCM).
+ */
+async function encryptWithPassphrase(data: ArrayBuffer, passphrase: string): Promise<string> {
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const wrappingKey = await deriveWrappingKey(passphrase, salt);
+  const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, data);
+  // Format: base64(salt + iv + ciphertext)
+  const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+  combined.set(salt, 0);
+  combined.set(iv, salt.length);
+  combined.set(new Uint8Array(encrypted), salt.length + iv.length);
+  return arrayBufferToBase64(combined.buffer);
+}
+
+/**
+ * Decrypt data with a passphrase-derived key (AES-GCM).
+ */
+async function decryptWithPassphrase(encryptedB64: string, passphrase: string): Promise<ArrayBuffer> {
+  const combined = new Uint8Array(base64ToArrayBuffer(encryptedB64));
+  const salt = combined.slice(0, 16);
+  const iv = combined.slice(16, 28);
+  const ciphertext = combined.slice(28);
+  const wrappingKey = await deriveWrappingKey(passphrase, salt);
+  return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, ciphertext);
+}
+
+/**
+ * Get a passphrase for key encryption. Uses the auth token as a derived secret
+ * so the user doesn't need to enter a separate passphrase.
+ * TODO: Consider prompting the user for an explicit passphrase for better security.
+ */
+function getKeyPassphrase(): string {
+  // Use a combination of token and a fixed app secret as the passphrase
+  const token = localStorage.getItem('accord_token') || '';
+  return `accord-key-wrap:${token}`;
+}
+
+/**
+ * Save keypair to localStorage (private key encrypted with passphrase)
  */
 export async function saveKeyToStorage(keyPair: CryptoKeyPair): Promise<void> {
   try {
-    // Export private key
     const privateKeyData = await window.crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
     const publicKeyData = await window.crypto.subtle.exportKey('spki', keyPair.publicKey);
     
-    localStorage.setItem(STORAGE_KEYS.PRIVATE_KEY, arrayBufferToBase64(privateKeyData));
+    // Encrypt private key before storing
+    const passphrase = getKeyPassphrase();
+    const encryptedPrivateKey = await encryptWithPassphrase(privateKeyData, passphrase);
+    
+    localStorage.setItem(STORAGE_KEYS.PRIVATE_KEY, encryptedPrivateKey);
     localStorage.setItem(STORAGE_KEYS.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
   } catch (error) {
     throw new Error(`Failed to save keys to storage: ${error}`);
@@ -247,18 +331,26 @@ export async function saveKeyToStorage(keyPair: CryptoKeyPair): Promise<void> {
 }
 
 /**
- * Load keypair from localStorage
+ * Load keypair from localStorage (decrypts private key with passphrase)
  */
 export async function loadKeyFromStorage(): Promise<CryptoKeyPair | null> {
   try {
-    const privateKeyB64 = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
+    const privateKeyEncrypted = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
     const publicKeyB64 = localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
     
-    if (!privateKeyB64 || !publicKeyB64) {
+    if (!privateKeyEncrypted || !publicKeyB64) {
       return null;
     }
     
-    const privateKeyBuffer = base64ToArrayBuffer(privateKeyB64);
+    let privateKeyBuffer: ArrayBuffer;
+    try {
+      // Try decrypting with passphrase (new format)
+      const passphrase = getKeyPassphrase();
+      privateKeyBuffer = await decryptWithPassphrase(privateKeyEncrypted, passphrase);
+    } catch {
+      // Fallback: try reading as plain base64 (legacy unencrypted format)
+      privateKeyBuffer = base64ToArrayBuffer(privateKeyEncrypted);
+    }
     const publicKeyBuffer = base64ToArrayBuffer(publicKeyB64);
     
     const privateKey = await window.crypto.subtle.importKey(

@@ -6,6 +6,10 @@ use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
 use crate::permissions::{has_permission, Permission};
 use anyhow::Result;
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
 use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -68,13 +72,31 @@ impl AppState {
         &self,
         username: String,
         public_key: String,
+        password: String,
     ) -> Result<Uuid, String> {
         match self.db.username_exists(&username).await {
             Ok(true) => return Err("Username already exists".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
             _ => {}
         }
-        match self.db.create_user(&username, &public_key).await {
+
+        // Hash password with Argon2
+        let password_hash = if password.is_empty() {
+            String::new()
+        } else {
+            let salt = SaltString::generate(&mut OsRng);
+            let argon2 = Argon2::default();
+            argon2
+                .hash_password(password.as_bytes(), &salt)
+                .map_err(|e| format!("Failed to hash password: {}", e))?
+                .to_string()
+        };
+
+        match self
+            .db
+            .create_user(&username, &public_key, &password_hash)
+            .await
+        {
             Ok(user) => Ok(user.id),
             Err(e) => Err(format!("Failed to create user: {}", e)),
         }
@@ -83,13 +105,32 @@ impl AppState {
     pub async fn authenticate_user(
         &self,
         username: String,
-        _password: String,
+        password: String,
     ) -> Result<AuthToken, String> {
         let user = match self.db.get_user_by_username(&username).await {
             Ok(Some(user)) => user,
             Ok(None) => return Err("User not found".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
         };
+
+        // Verify password
+        let stored_hash = self
+            .db
+            .get_user_password_hash(&username)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?
+            .unwrap_or_default();
+
+        if !stored_hash.is_empty() {
+            let parsed_hash = PasswordHash::new(&stored_hash)
+                .map_err(|e| format!("Invalid stored password hash: {}", e))?;
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed_hash)
+                .map_err(|_| "Invalid password".to_string())?;
+        } else if !password.is_empty() {
+            // No hash stored but password provided - reject
+            return Err("Invalid password".to_string());
+        }
 
         let token = format!("tok_{}", Uuid::new_v4().simple());
         let expires_at = now() + 86400;
@@ -927,6 +968,15 @@ impl AppState {
             .map_err(|e| format!("Database error: {}", e))
     }
 
+    /// Remove expired auth tokens from memory (H3: token cleanup)
+    pub async fn cleanup_expired_tokens(&self) -> usize {
+        let current_time = now();
+        let mut tokens = self.auth_tokens.write().await;
+        let before = tokens.len();
+        tokens.retain(|_, token| token.expires_at > current_time);
+        before - tokens.len()
+    }
+
     pub fn uptime(&self) -> u64 {
         now() - self.start_time
     }
@@ -961,11 +1011,11 @@ mod tests {
     async fn test_node_lifecycle() {
         let state = AppState::new_in_memory().await.unwrap();
         let owner_id = state
-            .register_user("owner".into(), "key".into())
+            .register_user("owner".into(), "key".into(), "".into())
             .await
             .unwrap();
         let user_id = state
-            .register_user("user".into(), "key2".into())
+            .register_user("user".into(), "key2".into(), "".into())
             .await
             .unwrap();
 
@@ -999,11 +1049,11 @@ mod tests {
     async fn test_channel_requires_node_membership() {
         let state = AppState::new_in_memory().await.unwrap();
         let owner_id = state
-            .register_user("owner".into(), "key".into())
+            .register_user("owner".into(), "key".into(), "".into())
             .await
             .unwrap();
         let outsider_id = state
-            .register_user("outsider".into(), "key2".into())
+            .register_user("outsider".into(), "key2".into(), "".into())
             .await
             .unwrap();
 
@@ -1031,11 +1081,11 @@ mod tests {
         let state = AppState::new_in_memory().await.unwrap();
 
         let user1_id = state
-            .register_user("user1".into(), "key1".into())
+            .register_user("user1".into(), "key1".into(), "".into())
             .await
             .unwrap();
         let user2_id = state
-            .register_user("user2".into(), "key2".into())
+            .register_user("user2".into(), "key2".into(), "".into())
             .await
             .unwrap();
 
@@ -1064,11 +1114,11 @@ mod tests {
         let state = AppState::new_in_memory().await.unwrap();
 
         let user1_id = state
-            .register_user("user1".into(), "key1".into())
+            .register_user("user1".into(), "key1".into(), "".into())
             .await
             .unwrap();
         let user2_id = state
-            .register_user("user2".into(), "key2".into())
+            .register_user("user2".into(), "key2".into(), "".into())
             .await
             .unwrap();
 

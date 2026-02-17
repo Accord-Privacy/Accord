@@ -44,6 +44,7 @@ impl Database {
                 id TEXT PRIMARY KEY NOT NULL,
                 username TEXT NOT NULL UNIQUE,
                 public_key TEXT NOT NULL,
+                password_hash TEXT NOT NULL DEFAULT '',
                 created_at INTEGER NOT NULL
             )
             "#,
@@ -124,6 +125,12 @@ impl Database {
         .execute(&self.pool)
         .await
         .context("Failed to create channels table")?;
+
+        // Add password_hash column to existing users table if it doesn't exist
+        sqlx::query("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
 
         // Add category_id and position columns to existing channels table if they don't exist
         sqlx::query("ALTER TABLE channels ADD COLUMN category_id TEXT")
@@ -417,18 +424,26 @@ impl Database {
 
     // ── User operations ──
 
-    pub async fn create_user(&self, username: &str, public_key: &str) -> Result<User> {
+    pub async fn create_user(
+        &self,
+        username: &str,
+        public_key: &str,
+        password_hash: &str,
+    ) -> Result<User> {
         let user_id = Uuid::new_v4();
         let created_at = now();
 
-        sqlx::query("INSERT INTO users (id, username, public_key, created_at) VALUES (?, ?, ?, ?)")
-            .bind(user_id.to_string())
-            .bind(username)
-            .bind(public_key)
-            .bind(created_at as i64)
-            .execute(&self.pool)
-            .await
-            .context("Failed to insert user")?;
+        sqlx::query(
+            "INSERT INTO users (id, username, public_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(username)
+        .bind(public_key)
+        .bind(password_hash)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert user")?;
 
         // Create default user profile
         self.create_user_profile(user_id, username).await?;
@@ -462,6 +477,15 @@ impl Database {
         .context("Failed to query user by username")?;
 
         row.map(|r| parse_user(&r)).transpose()
+    }
+
+    pub async fn get_user_password_hash(&self, username: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT password_hash FROM users WHERE username = ?")
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query user password hash")?;
+        Ok(row.map(|r| r.get::<String, _>("password_hash")))
     }
 
     pub async fn username_exists(&self, username: &str) -> Result<bool> {
@@ -2338,7 +2362,7 @@ mod tests {
         let db = Database::new(":memory:").await.unwrap();
 
         let user = db
-            .create_user("test_user", "test_public_key")
+            .create_user("test_user", "test_public_key", "")
             .await
             .unwrap();
         assert_eq!(user.username, "test_user");
@@ -2357,7 +2381,7 @@ mod tests {
     async fn test_node_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("node_owner", "key").await.unwrap();
+        let user = db.create_user("node_owner", "key", "").await.unwrap();
         let node = db
             .create_node("Test Node", user.id, Some("A test node"))
             .await
@@ -2376,7 +2400,7 @@ mod tests {
         assert_eq!(channels[0].name, "general");
 
         // Add another member
-        let user2 = db.create_user("member", "key2").await.unwrap();
+        let user2 = db.create_user("member", "key2", "").await.unwrap();
         db.add_node_member(node.id, user2.id, NodeRole::Member)
             .await
             .unwrap();
@@ -2391,7 +2415,7 @@ mod tests {
     async fn test_channel_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("test_user", "test_key").await.unwrap();
+        let user = db.create_user("test_user", "test_key", "").await.unwrap();
         let node = db.create_node("Test Node", user.id, None).await.unwrap();
 
         let channel = db
@@ -2405,7 +2429,7 @@ mod tests {
         let found = db.get_channel(channel.id).await.unwrap().unwrap();
         assert_eq!(found.name, "test_channel");
 
-        let user2 = db.create_user("test_user2", "test_key2").await.unwrap();
+        let user2 = db.create_user("test_user2", "test_key2", "").await.unwrap();
         db.add_user_to_channel(channel.id, user2.id).await.unwrap();
         let members = db.get_channel_members(channel.id).await.unwrap();
         assert_eq!(members.len(), 2);
@@ -2421,7 +2445,7 @@ mod tests {
     async fn test_message_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("test_user", "test_key").await.unwrap();
+        let user = db.create_user("test_user", "test_key", "").await.unwrap();
         let node = db.create_node("Test Node", user.id, None).await.unwrap();
         let channel = db
             .create_channel("test_channel", node.id, user.id)

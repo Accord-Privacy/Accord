@@ -46,6 +46,9 @@ base64 = "0.21"
 # Cryptographic hashing
 sha2 = "0.10"
 
+# Password hashing
+argon2 = "0.5"
+
 # TLS support
 rustls = "0.21"
 

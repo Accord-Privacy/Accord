@@ -156,6 +156,8 @@ pub struct WsMessage {
 pub struct RegisterRequest {
     pub username: String,
     pub public_key: String,
+    #[serde(default)]
+    pub password: String,
 }
 
 /// Registration response
@@ -257,7 +259,6 @@ pub struct UseInviteResponse {
 /// Edit message request
 #[derive(Debug, Deserialize)]
 pub struct EditMessageRequest {
-    pub user_id: Uuid,
     pub encrypted_data: String,
 }
 

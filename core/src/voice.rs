@@ -404,6 +404,35 @@ impl VoiceProcessor {
         Ok(())
     }
 
+    /// Rotate the voice key for a channel, providing forward secrecy for voice.
+    /// Should be called periodically (e.g., every N packets or every M seconds).
+    pub fn rotate_voice_key(&mut self, channel_id: Uuid) -> Result<VoiceKey> {
+        let new_key = self.crypto.generate_voice_key()?;
+        self.voice_keys
+            .insert((channel_id, self.local_user_id), new_key);
+        // Return a clone-equivalent for distribution to other participants
+        let key_ref = self
+            .voice_keys
+            .get(&(channel_id, self.local_user_id))
+            .ok_or_else(|| anyhow::anyhow!("Failed to retrieve rotated key"))?;
+        Ok(VoiceKey {
+            aes_key: key_ref.aes_key,
+            nonce_prefix: key_ref.nonce_prefix,
+            sequence: key_ref.sequence,
+        })
+    }
+
+    /// Check if the voice key for a channel should be rotated.
+    /// Returns true if the sequence number exceeds the rotation threshold.
+    pub fn should_rotate_key(&self, channel_id: Uuid) -> bool {
+        const KEY_ROTATION_THRESHOLD: u64 = 100_000; // Rotate every 100k packets
+        if let Some(key) = self.voice_keys.get(&(channel_id, self.local_user_id)) {
+            key.sequence >= KEY_ROTATION_THRESHOLD
+        } else {
+            false
+        }
+    }
+
     /// Set volume for specific user
     pub fn set_user_volume(&mut self, channel_id: Uuid, user_id: Uuid, volume: f32) -> Result<()> {
         let volume = volume.clamp(0.0, 2.0); // Allow up to 200% volume

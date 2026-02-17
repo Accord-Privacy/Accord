@@ -13,6 +13,7 @@ import {
   clearChannelKeyCache,
   isCryptoSupported 
 } from "./crypto";
+import { storeToken, getToken, clearToken } from "./tokenStorage";
 import { FileUploadButton, FileList } from "./FileManager";
 import { VoiceChat } from "./VoiceChat";
 import { SearchOverlay } from "./SearchOverlay";
@@ -932,7 +933,7 @@ function App() {
         const response = await api.login(username, password);
         
         // Store token and user info
-        localStorage.setItem('accord_token', response.token);
+        storeToken(response.token);
         localStorage.setItem('accord_user_id', response.user_id);
 
         // Load existing keys or generate new ones
@@ -970,7 +971,16 @@ function App() {
         }, 100);
 
       } else {
-        // Register
+        // Register — validate password strength
+        if (password.length < 8) {
+          setAuthError("Password must be at least 8 characters long");
+          return;
+        }
+        if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
+          setAuthError("Password must contain at least one uppercase letter, one lowercase letter, and one number");
+          return;
+        }
+        
         let publicKeyToUse = publicKey.trim();
         
         // Auto-generate keypair if no public key provided and crypto is supported
@@ -1013,7 +1023,7 @@ function App() {
       setWs(null);
     }
     
-    localStorage.removeItem('accord_token');
+    clearToken();
     localStorage.removeItem('accord_user_id');
     
     // Clear encryption state
@@ -1373,7 +1383,7 @@ function App() {
   // Check for existing session on mount
   useEffect(() => {
     const checkExistingSession = async () => {
-      const token = localStorage.getItem('accord_token');
+      const token = getToken();
       const userId = localStorage.getItem('accord_user_id');
       
       if (token && userId && serverAvailable) {
@@ -1508,25 +1518,33 @@ function App() {
               />
             </div>
 
-            {isLoginMode && (
-              <div style={{ marginBottom: '1rem' }}>
-                <input
-                  type="password"
-                  placeholder="Password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.8rem',
-                    borderRadius: '4px',
-                    border: 'none',
-                    background: '#40444b',
-                    color: '#ffffff',
-                    fontSize: '1rem'
-                  }}
-                />
-              </div>
-            )}
+            <div style={{ marginBottom: '1rem' }}>
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.8rem',
+                  borderRadius: '4px',
+                  border: 'none',
+                  background: '#40444b',
+                  color: '#ffffff',
+                  fontSize: '1rem'
+                }}
+              />
+              {!isLoginMode && password && password.length < 8 && (
+                <div style={{ fontSize: '0.8rem', color: '#f04747', marginTop: '0.3rem' }}>
+                  Password must be at least 8 characters
+                </div>
+              )}
+              {!isLoginMode && password.length >= 8 && !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password) && (
+                <div style={{ fontSize: '0.8rem', color: '#faa61a', marginTop: '0.3rem' }}>
+                  Recommended: include uppercase, lowercase, and a number
+                </div>
+              )}
+            </div>
 
             {!isLoginMode && (
               <div style={{ marginBottom: '1rem' }}>

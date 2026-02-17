@@ -60,7 +60,7 @@ pub async fn register_handler(
     }
 
     match state
-        .register_user(request.username, request.public_key)
+        .register_user(request.username, request.public_key, request.password)
         .await
     {
         Ok(user_id) => {
@@ -1135,7 +1135,7 @@ pub async fn get_node_members_handler(
     }
 }
 
-/// Helper to extract user_id from token query param
+/// Helper to extract user_id from Authorization: Bearer header or query param fallback
 async fn extract_user_from_token(
     state: &SharedState,
     params: &HashMap<String, String>,
@@ -1144,7 +1144,51 @@ async fn extract_user_from_token(
         (
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
-                error: "Missing token".into(),
+                error: "Missing token. Use Authorization: Bearer header or ?token= query param"
+                    .into(),
+                code: 401,
+            }),
+        )
+    })?;
+    state.validate_token(token).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid or expired token".into(),
+                code: 401,
+            }),
+        )
+    })
+}
+
+/// Extract token from Authorization: Bearer header, falling back to query param
+fn extract_token_from_headers_or_params<'a>(
+    headers: &'a HeaderMap,
+    params: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    // Prefer Authorization: Bearer header
+    if let Some(auth_header) = headers.get(header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return Some(token);
+            }
+        }
+    }
+    // Fall back to query param
+    params.get("token").map(|s| s.as_str())
+}
+
+/// Extract user_id from Authorization: Bearer header with query param fallback
+async fn extract_user_from_header_or_token(
+    state: &SharedState,
+    headers: &HeaderMap,
+    params: &HashMap<String, String>,
+) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
+    let token = extract_token_from_headers_or_params(headers, params).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Missing authentication. Use Authorization: Bearer <token> header".into(),
                 code: 401,
             }),
         )
@@ -1926,12 +1970,11 @@ async fn handle_ws_message(
 pub async fn upload_file_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // Get user from auth token (this assumes auth middleware sets user info)
-    // For now, we'll extract it from a custom header - in a real implementation,
-    // this would be handled by auth middleware
-    let user_id = match extract_user_from_request(&state).await {
+    let user_id = match extract_user_from_request(&state, &headers, &params).await {
         Ok(user_id) => user_id,
         Err(_) => {
             return Err((
@@ -2061,9 +2104,10 @@ pub async fn upload_file_handler(
 pub async fn download_file_handler(
     State(state): State<SharedState>,
     Path(file_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    // Get user from auth token
-    let user_id = match extract_user_from_request(&state).await {
+    let user_id = match extract_user_from_request(&state, &headers, &params).await {
         Ok(user_id) => user_id,
         Err(_) => {
             return Err((
@@ -2165,9 +2209,10 @@ pub async fn download_file_handler(
 pub async fn list_channel_files_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<FileMetadata>>, (StatusCode, Json<ErrorResponse>)> {
-    // Get user from auth token
-    let user_id = match extract_user_from_request(&state).await {
+    let user_id = match extract_user_from_request(&state, &headers, &params).await {
         Ok(user_id) => user_id,
         Err(_) => {
             return Err((
@@ -2482,15 +2527,18 @@ pub async fn delete_message_handler(
     }
 }
 
-/// Extract user ID from request (placeholder - should be handled by auth middleware)
-async fn extract_user_from_request(_state: &SharedState) -> Result<Uuid, anyhow::Error> {
-    // This is a placeholder implementation
-    // In a real implementation, this would extract the user ID from a JWT token
-    // or session stored in headers/cookies, validated by auth middleware
-
-    // For development/testing, we'll use a hardcoded user ID
-    // TODO: Replace with proper authentication
-    Ok(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000")?)
+/// Extract user ID from request headers (Authorization: Bearer token)
+async fn extract_user_from_request(
+    state: &SharedState,
+    headers: &HeaderMap,
+    params: &HashMap<String, String>,
+) -> Result<Uuid, anyhow::Error> {
+    let token = extract_token_from_headers_or_params(headers, params)
+        .ok_or_else(|| anyhow::anyhow!("Missing authentication token"))?;
+    state
+        .validate_token(token)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Invalid or expired token"))
 }
 
 fn now_secs() -> u64 {

@@ -28,6 +28,10 @@ flate2 = "1.0"
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# Key derivation
+hkdf = "0.12"
+sha2 = "0.10"
+
 # Random generation
 rand = "0.8"
 

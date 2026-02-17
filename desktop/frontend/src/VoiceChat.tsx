@@ -1,6 +1,13 @@
+// ⚠️  WARNING: VOICE DATA ENCRYPTION IS BEST-EFFORT
+// Voice packets are encrypted with the channel key before sending, but the
+// channel key derivation itself is a placeholder (see crypto.ts).
+// For true voice security, implement WebRTC with SRTP for peer-to-peer audio.
+// TODO: Implement WebRTC-based voice with SRTP/DTLS for proper voice encryption.
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AccordWebSocket } from './ws';
 import { VoiceState, VoiceJoinMessage, VoiceLeaveMessage, VoicePacketMessage, VoiceSpeakingMessage } from './types';
+import { getChannelKey, encryptMessage, decryptMessage } from './crypto';
 
 interface VoiceChatProps {
   ws: AccordWebSocket | null;
@@ -8,6 +15,7 @@ interface VoiceChatProps {
   channelId: string;
   channelName: string;
   onLeave: () => void;
+  privateKey?: CryptoKey | null;
 }
 
 export const VoiceChat: React.FC<VoiceChatProps> = ({
@@ -15,7 +23,8 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   currentUserId,
   channelId,
   channelName,
-  onLeave
+  onLeave,
+  privateKey
 }) => {
   const [voiceState, setVoiceState] = useState<VoiceState>({
     channelId: null,
@@ -91,14 +100,27 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         const arrayBuffer = audioData.buffer;
         const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
 
-        // Send voice packet
+        // Send voice packet (encrypt if possible)
         if (ws && ws.isSocketConnected()) {
-          ws.send(JSON.stringify({
-            type: 'voice_packet',
-            channel_id: channelId,
-            user_id: currentUserId,
-            data: base64Data
-          }));
+          const sendPacket = async () => {
+            let packetData = base64Data;
+            if (privateKey) {
+              try {
+                const channelCryptoKey = await getChannelKey(privateKey, channelId);
+                packetData = await encryptMessage(channelCryptoKey, base64Data);
+              } catch {
+                // Fallback to unencrypted if encryption fails
+              }
+            }
+            ws.send(JSON.stringify({
+              type: 'voice_packet',
+              channel_id: channelId,
+              user_id: currentUserId,
+              data: packetData,
+              encrypted: !!privateKey
+            }));
+          };
+          sendPacket();
         }
       };
 
@@ -365,10 +387,20 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       }
     };
 
-    const handleVoicePacket = (message: VoicePacketMessage) => {
+    const handleVoicePacket = async (message: VoicePacketMessage) => {
       if (message.channel_id !== channelId || message.user_id === currentUserId) return;
       
-      playAudio(message.user_id, message.data);
+      let audioData = message.data;
+      // Decrypt voice data if encrypted and we have a key
+      if ((message as any).encrypted && privateKey) {
+        try {
+          const channelCryptoKey = await getChannelKey(privateKey, channelId);
+          audioData = await decryptMessage(channelCryptoKey, message.data);
+        } catch {
+          // Fallback: try playing as-is
+        }
+      }
+      playAudio(message.user_id, audioData);
     };
 
     const handleVoiceSpeaking = (message: VoiceSpeakingMessage) => {

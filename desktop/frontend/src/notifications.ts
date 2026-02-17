@@ -234,8 +234,12 @@ export class NotificationManager {
   public highlightMentions(content: string): string {
     if (!this.currentUsername) return content;
     
-    let highlighted = content;
-    const username = this.currentUsername;
+    // SECURITY: Sanitize content first to prevent XSS before inserting HTML
+    const DOMPurify = (window as any).DOMPurify;
+    let sanitized = DOMPurify ? DOMPurify.sanitize(content, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] }) : this.escapeHtml(content);
+    
+    let highlighted = sanitized;
+    const username = this.escapeRegExp(this.currentUsername);
     
     // Highlight @username (case insensitive)
     const usernameRegex = new RegExp(`(@${username})`, 'gi');
@@ -246,6 +250,16 @@ export class NotificationManager {
     highlighted = highlighted.replace(everyoneRegex, '<span class="mention mention-everyone">$1</span>');
     
     return highlighted;
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  private escapeRegExp(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private handleMessageNotification(message: Message, channelId: string, isMention: boolean): void {

@@ -87,7 +87,9 @@ export class AccordWebSocket {
       return; // Already connecting
     }
 
-    const wsUrl = `${this.baseUrl}/ws?token=${encodeURIComponent(this.token)}`;
+    // SECURITY: Don't send token in URL query params (logged by proxies/servers).
+    // Connect without token, then authenticate via first message.
+    const wsUrl = `${this.baseUrl}/ws`;
     
     try {
       this.ws = new WebSocket(wsUrl);
@@ -107,6 +109,14 @@ export class AccordWebSocket {
       this.isConnected = true;
       this.reconnectAttempts = 0;
       this.reconnectDelay = 1000;
+      
+      // SECURITY: Send auth token as first message instead of in URL
+      this.ws!.send(JSON.stringify({
+        message_type: 'Authenticate',
+        token: this.token,
+        message_id: this.generateId(),
+        timestamp: Math.floor(Date.now() / 1000),
+      }));
       
       // Start ping interval
       this.startPingInterval();

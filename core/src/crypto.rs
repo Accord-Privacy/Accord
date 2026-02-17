@@ -4,22 +4,11 @@
 //! Uses Signal Protocol for text messages and custom protocols for voice.
 
 use anyhow::{Context, Result};
+use hkdf::Hkdf;
 use ring::rand::{SecureRandom, SystemRandom};
 use ring::{aead, agreement};
+use sha2::Sha256;
 use std::collections::HashMap;
-
-// Helper macro for array references (would normally use arrayref crate)
-macro_rules! array_ref {
-    ($arr:expr, $offset:expr, $len:expr) => {{
-        {
-            #[inline]
-            unsafe fn as_array<T>(slice: &[T]) -> &[T; $len] {
-                &*(slice.as_ptr() as *const [_; $len])
-            }
-            unsafe { as_array(&$arr[$offset..]) }
-        }
-    }};
-}
 
 /// Accord encryption version for protocol compatibility
 pub const ENCRYPTION_VERSION: u8 = 1;
@@ -116,13 +105,16 @@ impl CryptoManager {
             our_key_pair.private_key,
             &their_public_key,
             |key_material| {
+                let hk = Hkdf::<Sha256>::new(None, key_material);
+
                 let mut session_key = [0u8; 32];
                 let mut chain_key = [0u8; 32];
 
-                // Derive session key and chain key from shared secret
-                // In production, use HKDF for proper key derivation
-                session_key.copy_from_slice(&key_material[0..32]);
-                chain_key.copy_from_slice(&key_material[0..32]);
+                // Derive session key and chain key with different info strings
+                hk.expand(b"accord-session-key-v1", &mut session_key)
+                    .expect("HKDF expand for session key");
+                hk.expand(b"accord-chain-key-v1", &mut chain_key)
+                    .expect("HKDF expand for chain key");
 
                 (session_key, chain_key)
             },
@@ -144,14 +136,32 @@ impl CryptoManager {
         self.session_keys.insert(user_id.to_string(), session_key);
     }
 
-    /// Encrypt a text message using AES-GCM
+    /// Ratchet the chain key forward to derive a new message key, providing forward secrecy.
+    /// Each message uses a unique key derived from the chain key, and the chain key advances.
+    fn ratchet_chain_key(chain_key: &mut [u8; 32]) -> [u8; 32] {
+        let hk = Hkdf::<Sha256>::new(None, chain_key);
+        let mut message_key = [0u8; 32];
+        hk.expand(b"accord-message-key", &mut message_key)
+            .expect("HKDF expand for message key");
+        // Advance chain key
+        let mut new_chain_key = [0u8; 32];
+        hk.expand(b"accord-chain-advance", &mut new_chain_key)
+            .expect("HKDF expand for chain advance");
+        *chain_key = new_chain_key;
+        message_key
+    }
+
+    /// Encrypt a text message using AES-GCM with forward secrecy via key ratcheting
     pub fn encrypt_message(&mut self, user_id: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
         let session = self
             .session_keys
             .get_mut(user_id)
             .context("No session key found for user")?;
 
-        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &session.key_material)
+        // Ratchet forward to get a unique message key
+        let message_key = Self::ratchet_chain_key(&mut session.chain_key);
+
+        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &message_key)
             .map_err(|_| anyhow::anyhow!("Failed to create encryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
@@ -170,7 +180,7 @@ impl CryptoManager {
         let mut result = nonce_bytes.to_vec();
         result.extend_from_slice(&ciphertext);
 
-        // Advance message number for forward secrecy
+        // Advance message number
         session.message_number += 1;
 
         Ok(result)
@@ -184,16 +194,21 @@ impl CryptoManager {
 
         let session = self
             .session_keys
-            .get(user_id)
+            .get_mut(user_id)
             .context("No session key found for user")?;
 
-        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &session.key_material)
+        // Ratchet forward to get the same message key as the sender
+        let message_key = Self::ratchet_chain_key(&mut session.chain_key);
+
+        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &message_key)
             .map_err(|_| anyhow::anyhow!("Failed to create decryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
-        // Extract nonce and ciphertext
-        let nonce_bytes = &ciphertext[0..12];
-        let nonce = aead::Nonce::assume_unique_for_key(*array_ref!(nonce_bytes, 0, 12));
+        // Extract nonce using safe TryInto
+        let nonce_arr: [u8; 12] = ciphertext[0..12]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Failed to extract nonce"))?;
+        let nonce = aead::Nonce::assume_unique_for_key(nonce_arr);
 
         let mut message = ciphertext[12..].to_vec();
         let plaintext = key
@@ -264,8 +279,11 @@ impl CryptoManager {
             .map_err(|_| anyhow::anyhow!("Failed to create voice decryption key"))?;
         let key = aead::LessSafeKey::new(key);
 
-        // Extract sequence number
-        let sequence = u64::from_be_bytes(*array_ref!(encrypted_data, 0, 8));
+        // Extract sequence number using safe TryInto
+        let seq_bytes: [u8; 8] = encrypted_data[0..8]
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Failed to extract sequence number"))?;
+        let sequence = u64::from_be_bytes(seq_bytes);
 
         // Reconstruct nonce
         let mut nonce_bytes = [0u8; 12];
@@ -303,15 +321,20 @@ mod tests {
         let mut crypto1 = CryptoManager::new();
         let mut crypto2 = CryptoManager::new();
 
-        // Create a shared session key for testing
-        let shared_session = SessionKey {
-            key_material: [42u8; 32], // Fixed key for testing
+        // Create shared session keys with identical chain keys for both sides
+        let session1 = SessionKey {
+            key_material: [42u8; 32],
             chain_key: [24u8; 32],
             message_number: 0,
         };
+        let session2 = SessionKey {
+            key_material: [42u8; 32],
+            chain_key: [24u8; 32], // Same chain key so ratcheting stays in sync
+            message_number: 0,
+        };
 
-        crypto1.set_session("user2", shared_session.clone());
-        crypto2.set_session("user1", shared_session);
+        crypto1.set_session("user2", session1);
+        crypto2.set_session("user1", session2);
 
         let message = b"Hello, secure world!";
         let encrypted = crypto1.encrypt_message("user2", message).unwrap();
