@@ -137,6 +137,23 @@ pub enum WsMessageType {
         speaking: bool,
     },
 
+    // ── Key exchange operations (Double Ratchet / X3DH) ──
+    /// Publish prekey bundle
+    PublishKeyBundle {
+        identity_key: String,
+        signed_prekey: String,
+        one_time_prekeys: Vec<String>,
+    },
+    /// Fetch another user's prekey bundle
+    FetchKeyBundle { target_user_id: Uuid },
+    /// Store a prekey message for offline user
+    StorePrekeyMessage {
+        recipient_id: Uuid,
+        message_data: String,
+    },
+    /// Retrieve pending prekey messages
+    GetPrekeyMessages,
+
     /// Heartbeat
     Ping,
     /// Response to ping
@@ -470,6 +487,48 @@ pub struct AuditLogResponse {
     pub entries: Vec<AuditLogWithActor>,
     pub has_more: bool,
     pub next_cursor: Option<Uuid>, // entry_id for pagination
+}
+
+// ── Key Bundle models (Double Ratchet / X3DH) ──
+
+/// Request to publish a prekey bundle
+#[derive(Debug, Deserialize)]
+pub struct PublishKeyBundleRequest {
+    pub identity_key: String,          // base64
+    pub signed_prekey: String,         // base64
+    pub one_time_prekeys: Vec<String>, // base64
+}
+
+/// Response after publishing a prekey bundle
+#[derive(Debug, Serialize)]
+pub struct PublishKeyBundleResponse {
+    pub status: String,
+    pub one_time_prekeys_stored: usize,
+}
+
+/// Response for fetching a user's prekey bundle
+#[derive(Debug, Serialize)]
+pub struct FetchKeyBundleResponse {
+    pub user_id: Uuid,
+    pub identity_key: String,            // base64
+    pub signed_prekey: String,           // base64
+    pub one_time_prekey: Option<String>, // base64 (consumed)
+}
+
+/// Request to store a prekey message (X3DH initial message)
+#[derive(Debug, Deserialize)]
+pub struct StorePrekeyMessageRequest {
+    pub recipient_id: Uuid,
+    pub message_data: String, // base64
+}
+
+/// Prekey message retrieved by recipient
+#[derive(Debug, Serialize)]
+pub struct PrekeyMessageResponse {
+    pub id: Uuid,
+    pub sender_id: Uuid,
+    pub message_data: String, // base64
+    pub created_at: u64,
 }
 
 /// Audit log entry with actor information

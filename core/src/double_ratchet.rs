@@ -51,7 +51,7 @@ impl std::fmt::Debug for SecretBytes {
 // ─── Message header ──────────────────────────────────────────────────────────
 
 /// Unencrypted header sent with each message.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MessageHeader {
     /// Sender's current DH ratchet public key.
     pub dh_public_key: [u8; 32],
@@ -62,7 +62,7 @@ pub struct MessageHeader {
 }
 
 /// A complete encrypted message (header + ciphertext).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DoubleRatchetMessage {
     pub header: MessageHeader,
     /// 12-byte nonce ++ AES-GCM ciphertext (with tag).

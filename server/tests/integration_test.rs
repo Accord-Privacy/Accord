@@ -21,7 +21,10 @@ use uuid::Uuid;
 
 // Import the server modules
 use accord_server::{
-    handlers::{auth_handler, health_handler, register_handler, ws_handler},
+    handlers::{
+        auth_handler, fetch_key_bundle_handler, get_prekey_messages_handler, health_handler,
+        publish_key_bundle_handler, register_handler, store_prekey_message_handler, ws_handler,
+    },
     state::{AppState, SharedState},
 };
 
@@ -44,6 +47,11 @@ impl TestServer {
             .route("/health", get(health_handler))
             .route("/register", post(register_handler))
             .route("/auth", post(auth_handler))
+            // Key bundle endpoints
+            .route("/keys/bundle", post(publish_key_bundle_handler))
+            .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
+            .route("/keys/prekey-message", post(store_prekey_message_handler))
+            .route("/keys/prekey-messages", get(get_prekey_messages_handler))
             // WebSocket endpoint
             .route("/ws", get(ws_handler))
             // Add shared state
@@ -106,6 +114,12 @@ impl TestServer {
         assert_eq!(response.status(), 200);
         let body: Value = response.json().await.unwrap();
         Uuid::parse_str(body["user_id"].as_str().unwrap()).unwrap()
+    }
+
+    /// Register a user and authenticate, returning the token
+    async fn register_and_auth(&self, username: &str) -> String {
+        self.register_user(username, "fake_public_key").await;
+        self.auth_user(username, "").await
     }
 
     /// Authenticate a user and return the token
@@ -636,3 +650,353 @@ async fn test_channel_join_leave_and_messaging() {
 
 // Helper to import dependencies
 use futures_util::{SinkExt, StreamExt};
+
+// ── Double Ratchet integration tests ──
+
+/// Test key bundle publish and fetch via REST endpoints
+#[tokio::test]
+async fn test_key_bundle_publish_and_fetch() {
+    let server = TestServer::new().await;
+
+    // Register two users
+    let alice_token = server.register_and_auth("alice").await;
+    let bob_token = server.register_and_auth("bob").await;
+
+    // Get Bob's user ID
+    let bob_user = server
+        .state
+        .db
+        .get_user_by_username("bob")
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Bob publishes key bundle
+    let publish_resp = server
+        .client
+        .post(&format!(
+            "{}/keys/bundle?token={}",
+            server.base_url, bob_token
+        ))
+        .json(&json!({
+            "identity_key": base64::engine::general_purpose::STANDARD.encode([1u8; 32]),
+            "signed_prekey": base64::engine::general_purpose::STANDARD.encode([2u8; 32]),
+            "one_time_prekeys": [
+                base64::engine::general_purpose::STANDARD.encode([3u8; 32]),
+                base64::engine::general_purpose::STANDARD.encode([4u8; 32]),
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(publish_resp.status(), 200);
+    let publish_body: Value = publish_resp.json().await.unwrap();
+    assert_eq!(publish_body["status"], "published");
+    assert_eq!(publish_body["one_time_prekeys_stored"], 2);
+
+    // Alice fetches Bob's key bundle
+    let fetch_resp = server
+        .client
+        .get(&format!(
+            "{}/keys/bundle/{}?token={}",
+            server.base_url, bob_user.id, alice_token
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(fetch_resp.status(), 200);
+    let fetch_body: Value = fetch_resp.json().await.unwrap();
+    assert_eq!(fetch_body["user_id"], bob_user.id.to_string());
+    assert!(fetch_body["one_time_prekey"].is_string()); // Got one OTP
+
+    // Fetch again — should get the second OTP
+    let fetch_resp2 = server
+        .client
+        .get(&format!(
+            "{}/keys/bundle/{}?token={}",
+            server.base_url, bob_user.id, alice_token
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    let fetch_body2: Value = fetch_resp2.json().await.unwrap();
+    assert!(fetch_body2["one_time_prekey"].is_string());
+    // The two OTPs should be different
+    assert_ne!(
+        fetch_body["one_time_prekey"],
+        fetch_body2["one_time_prekey"]
+    );
+
+    // Fetch a third time — no more OTPs
+    let fetch_resp3 = server
+        .client
+        .get(&format!(
+            "{}/keys/bundle/{}?token={}",
+            server.base_url, bob_user.id, alice_token
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    let fetch_body3: Value = fetch_resp3.json().await.unwrap();
+    assert!(fetch_body3["one_time_prekey"].is_null());
+}
+
+/// Test prekey message store and retrieve
+#[tokio::test]
+async fn test_prekey_message_store_and_retrieve() {
+    let server = TestServer::new().await;
+
+    let alice_token = server.register_and_auth("alice").await;
+    let bob_token = server.register_and_auth("bob").await;
+
+    let bob_user = server
+        .state
+        .db
+        .get_user_by_username("bob")
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Alice stores a prekey message for Bob
+    let store_resp = server
+        .client
+        .post(&format!(
+            "{}/keys/prekey-message?token={}",
+            server.base_url, alice_token
+        ))
+        .json(&json!({
+            "recipient_id": bob_user.id,
+            "message_data": base64::engine::general_purpose::STANDARD.encode(b"x3dh initial message data"),
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(store_resp.status(), 200);
+
+    // Bob retrieves prekey messages
+    let get_resp = server
+        .client
+        .get(&format!(
+            "{}/keys/prekey-messages?token={}",
+            server.base_url, bob_token
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(get_resp.status(), 200);
+    let get_body: Value = get_resp.json().await.unwrap();
+    let messages = get_body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+
+    // Decode and verify the message data
+    let msg_data_b64 = messages[0]["message_data"].as_str().unwrap();
+    let msg_data = base64::engine::general_purpose::STANDARD
+        .decode(msg_data_b64)
+        .unwrap();
+    assert_eq!(msg_data, b"x3dh initial message data");
+
+    // Retrieve again — should be empty (messages are consumed)
+    let get_resp2 = server
+        .client
+        .get(&format!(
+            "{}/keys/prekey-messages?token={}",
+            server.base_url, bob_token
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    let get_body2: Value = get_resp2.json().await.unwrap();
+    assert_eq!(get_body2["messages"].as_array().unwrap().len(), 0);
+}
+
+/// Full Double Ratchet simulation: two users exchanging messages via server using X3DH + DR
+#[tokio::test]
+async fn test_double_ratchet_e2e_via_server() {
+    use accord_core::double_ratchet::PreKeyBundle;
+    use accord_core::session_manager::{LocalKeyMaterial, SessionId, SessionManager};
+
+    let server = TestServer::new().await;
+
+    // Register users and get tokens
+    let alice_token = server.register_and_auth("alice").await;
+    let bob_token = server.register_and_auth("bob").await;
+
+    let alice_user = server
+        .state
+        .db
+        .get_user_by_username("alice")
+        .await
+        .unwrap()
+        .unwrap();
+    let bob_user = server
+        .state
+        .db
+        .get_user_by_username("bob")
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Both generate local key material
+    let alice_keys = LocalKeyMaterial::generate(5);
+    let mut bob_keys = LocalKeyMaterial::generate(5);
+
+    // Bob publishes his key bundle to server
+    let bob_bundle = bob_keys.to_publishable_bundle();
+    let publish_resp = server
+        .client
+        .post(&format!(
+            "{}/keys/bundle?token={}",
+            server.base_url, bob_token
+        ))
+        .json(&json!({
+            "identity_key": base64::engine::general_purpose::STANDARD.encode(bob_bundle.identity_key),
+            "signed_prekey": base64::engine::general_purpose::STANDARD.encode(bob_bundle.signed_prekey),
+            "one_time_prekeys": bob_bundle.one_time_prekeys.iter()
+                .map(|opk| base64::engine::general_purpose::STANDARD.encode(opk))
+                .collect::<Vec<_>>(),
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(publish_resp.status(), 200);
+
+    // Alice fetches Bob's key bundle
+    let fetch_resp = server
+        .client
+        .get(&format!(
+            "{}/keys/bundle/{}?token={}",
+            server.base_url, bob_user.id, alice_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(fetch_resp.status(), 200);
+    let fetch_body: Value = fetch_resp.json().await.unwrap();
+
+    // Reconstruct the PreKeyBundle from server response
+    let ik_bytes: [u8; 32] = base64::engine::general_purpose::STANDARD
+        .decode(fetch_body["identity_key"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let spk_bytes: [u8; 32] = base64::engine::general_purpose::STANDARD
+        .decode(fetch_body["signed_prekey"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let opk_bytes: Option<[u8; 32]> = fetch_body["one_time_prekey"].as_str().map(|s| {
+        base64::engine::general_purpose::STANDARD
+            .decode(s)
+            .unwrap()
+            .try_into()
+            .unwrap()
+    });
+
+    let their_bundle = PreKeyBundle {
+        identity_key: ik_bytes,
+        signed_prekey: spk_bytes,
+        one_time_prekey: opk_bytes,
+    };
+
+    // Alice initiates session and encrypts first message
+    let mut alice_mgr = SessionManager::new();
+    let session_id_alice = SessionId {
+        peer_user_id: bob_user.id.to_string(),
+        channel_id: "test-channel".to_string(),
+    };
+
+    let x3dh_initial = alice_mgr
+        .initiate_session(
+            &alice_keys,
+            &their_bundle,
+            session_id_alice.clone(),
+            b"Hello Bob from Double Ratchet!",
+        )
+        .unwrap();
+
+    // Alice sends X3DH initial message via server (store as prekey message)
+    let initial_msg_bytes = bincode::serialize(&x3dh_initial).unwrap();
+    let store_resp = server
+        .client
+        .post(&format!(
+            "{}/keys/prekey-message?token={}",
+            server.base_url, alice_token
+        ))
+        .json(&json!({
+            "recipient_id": bob_user.id,
+            "message_data": base64::engine::general_purpose::STANDARD.encode(&initial_msg_bytes),
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(store_resp.status(), 200);
+
+    // Bob retrieves the prekey message
+    let get_resp = server
+        .client
+        .get(&format!(
+            "{}/keys/prekey-messages?token={}",
+            server.base_url, bob_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    let get_body: Value = get_resp.json().await.unwrap();
+    let messages = get_body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 1);
+
+    let msg_data = base64::engine::general_purpose::STANDARD
+        .decode(messages[0]["message_data"].as_str().unwrap())
+        .unwrap();
+    let received_initial: accord_core::session_manager::X3DHInitialMessage =
+        bincode::deserialize(&msg_data).unwrap();
+
+    // Bob processes the initial message
+    let mut bob_mgr = SessionManager::new();
+    let session_id_bob = SessionId {
+        peer_user_id: alice_user.id.to_string(),
+        channel_id: "test-channel".to_string(),
+    };
+
+    let decrypted = bob_mgr
+        .receive_initial_message(&mut bob_keys, &received_initial, session_id_bob.clone())
+        .unwrap();
+    assert_eq!(decrypted, b"Hello Bob from Double Ratchet!");
+
+    // Now Bob can reply using the established session
+    let bob_reply = bob_mgr
+        .encrypt_message(&session_id_bob, b"Hello Alice, DR session works!")
+        .unwrap();
+
+    // Alice decrypts the reply
+    let alice_decrypted = alice_mgr
+        .decrypt_message(&session_id_alice, &bob_reply)
+        .unwrap();
+    assert_eq!(alice_decrypted, b"Hello Alice, DR session works!");
+
+    // Exchange a few more messages to verify ratcheting works
+    for i in 0..5 {
+        let msg = alice_mgr
+            .encrypt_message(&session_id_alice, format!("Alice msg {i}").as_bytes())
+            .unwrap();
+        let dec = bob_mgr.decrypt_message(&session_id_bob, &msg).unwrap();
+        assert_eq!(dec, format!("Alice msg {i}").as_bytes());
+
+        let reply = bob_mgr
+            .encrypt_message(&session_id_bob, format!("Bob msg {i}").as_bytes())
+            .unwrap();
+        let dec = alice_mgr
+            .decrypt_message(&session_id_alice, &reply)
+            .unwrap();
+        assert_eq!(dec, format!("Bob msg {i}").as_bytes());
+    }
+}
+
+use base64::Engine as _;

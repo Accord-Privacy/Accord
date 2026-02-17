@@ -266,6 +266,55 @@ impl Database {
         .await
         .context("Failed to create files table")?;
 
+        // Create key_bundles table for Double Ratchet prekey bundles
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS key_bundles (
+                user_id TEXT PRIMARY KEY NOT NULL,
+                identity_key BLOB NOT NULL,
+                signed_prekey BLOB NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create key_bundles table")?;
+
+        // Create one_time_prekeys table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS one_time_prekeys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                prekey BLOB NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create one_time_prekeys table")?;
+
+        // Create prekey_messages table for storing X3DH initial messages
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS prekey_messages (
+                id TEXT PRIMARY KEY NOT NULL,
+                recipient_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                message_data BLOB NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (recipient_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (sender_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create prekey_messages table")?;
+
         // Create indexes
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
             .execute(&self.pool)
@@ -319,6 +368,16 @@ impl Database {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files (content_hash)")
             .execute(&self.pool)
             .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_one_time_prekeys_user ON one_time_prekeys (user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_prekey_messages_recipient ON prekey_messages (recipient_id)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         // Additional indexes for message history and search functionality
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id)")
@@ -2172,6 +2231,153 @@ impl Database {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(entries)
+    }
+
+    // ── Key Bundle operations (Double Ratchet / X3DH) ──
+
+    /// Store or update a user's prekey bundle
+    pub async fn publish_key_bundle(
+        &self,
+        user_id: Uuid,
+        identity_key: &[u8],
+        signed_prekey: &[u8],
+        one_time_prekeys: &[Vec<u8>],
+    ) -> Result<()> {
+        let updated_at = now();
+
+        // Upsert key bundle
+        sqlx::query(
+            "INSERT INTO key_bundles (user_id, identity_key, signed_prekey, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET identity_key = excluded.identity_key, signed_prekey = excluded.signed_prekey, updated_at = excluded.updated_at",
+        )
+        .bind(user_id.to_string())
+        .bind(identity_key)
+        .bind(signed_prekey)
+        .bind(updated_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to publish key bundle")?;
+
+        // Replace one-time prekeys
+        sqlx::query("DELETE FROM one_time_prekeys WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await?;
+
+        for opk in one_time_prekeys {
+            sqlx::query("INSERT INTO one_time_prekeys (user_id, prekey) VALUES (?, ?)")
+                .bind(user_id.to_string())
+                .bind(opk.as_slice())
+                .execute(&self.pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Fetch a user's prekey bundle, consuming one one-time prekey
+    pub async fn fetch_key_bundle(
+        &self,
+        user_id: Uuid,
+    ) -> Result<
+        Option<(
+            Vec<u8>,         // identity_key
+            Vec<u8>,         // signed_prekey
+            Option<Vec<u8>>, // one_time_prekey (consumed)
+        )>,
+    > {
+        let row =
+            sqlx::query("SELECT identity_key, signed_prekey FROM key_bundles WHERE user_id = ?")
+                .bind(user_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to fetch key bundle")?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let identity_key: Vec<u8> = row.get("identity_key");
+        let signed_prekey: Vec<u8> = row.get("signed_prekey");
+
+        // Try to consume one one-time prekey (FIFO)
+        let opk_row =
+            sqlx::query("SELECT id, prekey FROM one_time_prekeys WHERE user_id = ? LIMIT 1")
+                .bind(user_id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
+
+        let one_time_prekey = if let Some(opk_row) = opk_row {
+            let opk_id: i64 = opk_row.get("id");
+            let prekey: Vec<u8> = opk_row.get("prekey");
+            // Delete the consumed prekey
+            sqlx::query("DELETE FROM one_time_prekeys WHERE id = ?")
+                .bind(opk_id)
+                .execute(&self.pool)
+                .await?;
+            Some(prekey)
+        } else {
+            None
+        };
+
+        Ok(Some((identity_key, signed_prekey, one_time_prekey)))
+    }
+
+    /// Store a prekey message (X3DH initial message for offline recipient)
+    pub async fn store_prekey_message(
+        &self,
+        recipient_id: Uuid,
+        sender_id: Uuid,
+        message_data: &[u8],
+    ) -> Result<Uuid> {
+        let msg_id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query(
+            "INSERT INTO prekey_messages (id, recipient_id, sender_id, message_data, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(msg_id.to_string())
+        .bind(recipient_id.to_string())
+        .bind(sender_id.to_string())
+        .bind(message_data)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to store prekey message")?;
+
+        Ok(msg_id)
+    }
+
+    /// Retrieve and delete all pending prekey messages for a user
+    pub async fn get_prekey_messages(
+        &self,
+        recipient_id: Uuid,
+    ) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
+        // (id, sender_id, message_data, created_at)
+        let rows = sqlx::query(
+            "SELECT id, sender_id, message_data, created_at FROM prekey_messages WHERE recipient_id = ? ORDER BY created_at ASC",
+        )
+        .bind(recipient_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get prekey messages")?;
+
+        let mut messages = Vec::new();
+        for row in &rows {
+            let id = Uuid::parse_str(&row.get::<String, _>("id"))?;
+            let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
+            let message_data: Vec<u8> = row.get("message_data");
+            let created_at = row.get::<i64, _>("created_at") as u64;
+            messages.push((id, sender_id, message_data, created_at));
+        }
+
+        // Delete retrieved messages
+        sqlx::query("DELETE FROM prekey_messages WHERE recipient_id = ?")
+            .bind(recipient_id.to_string())
+            .execute(&self.pool)
+            .await?;
+
+        Ok(messages)
     }
 }
 

@@ -14,6 +14,7 @@ pub mod crypto;
 pub mod double_ratchet;
 pub mod invites;
 pub mod protocol;
+pub mod session_manager;
 pub mod voice;
 
 use anyhow::Result;

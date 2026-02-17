@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::bots::{BotCommand, BotResponse};
+use crate::session_manager::{PublishableKeyBundle, X3DHInitialMessage};
 use crate::voice::VoicePacket;
 
 /// Protocol version for compatibility checking
@@ -72,6 +73,11 @@ pub enum MessageType {
     UserList,
     PermissionUpdate,
 
+    // Key Exchange (Double Ratchet / X3DH)
+    KeyBundlePublish,
+    KeyBundleFetch,
+    X3DHInitial,
+
     // Error Handling
     Error,
 }
@@ -116,8 +122,17 @@ pub enum MessagePayload {
     // Error Messages
     Error(ErrorPayload),
 
+    // Key exchange payloads
+    KeyBundlePublish(KeyBundlePublishPayload),
+    KeyBundleFetch(KeyBundleFetchPayload),
+    KeyBundleResponse(KeyBundleResponsePayload),
+    X3DHInitial(X3DHInitialPayload),
+
     // Generic encrypted payload
     Encrypted(EncryptedPayload),
+
+    // Double Ratchet encrypted message
+    DoubleRatchetEncrypted(DoubleRatchetPayload),
 }
 
 // Payload Definitions
@@ -340,6 +355,48 @@ pub enum ErrorCode {
     InvalidMessage,
     UnsupportedVersion,
     MalformedPayload,
+}
+
+// ── Key exchange payloads ──
+
+/// Publish a prekey bundle to the server
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyBundlePublishPayload {
+    pub bundle: PublishableKeyBundle,
+}
+
+/// Request another user's prekey bundle
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyBundleFetchPayload {
+    pub target_user_id: Uuid,
+}
+
+/// Server response with a user's prekey bundle
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyBundleResponsePayload {
+    pub user_id: Uuid,
+    pub identity_key: [u8; 32],
+    pub signed_prekey: [u8; 32],
+    pub one_time_prekey: Option<[u8; 32]>,
+}
+
+/// X3DH initial message to establish a Double Ratchet session
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct X3DHInitialPayload {
+    pub initial_message: X3DHInitialMessage,
+}
+
+/// Double Ratchet encrypted message with header
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DoubleRatchetPayload {
+    /// Sender's current DH ratchet public key
+    pub sender_ratchet_key: [u8; 32],
+    /// Number of messages in the previous sending chain
+    pub previous_chain_length: u32,
+    /// Message number in the current sending chain
+    pub message_number: u32,
+    /// The encrypted ciphertext (nonce + AES-GCM ciphertext)
+    pub ciphertext: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

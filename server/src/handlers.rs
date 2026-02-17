@@ -1254,6 +1254,185 @@ async fn check_node_permission(
 
 // ── WebSocket ──
 
+// ── Key Bundle endpoints (Double Ratchet / X3DH) ──
+
+/// Publish a prekey bundle (POST /keys/bundle)
+pub async fn publish_key_bundle_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::PublishKeyBundleRequest>,
+) -> Result<Json<crate::models::PublishKeyBundleResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let identity_key = base64::engine::general_purpose::STANDARD
+        .decode(&request.identity_key)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid base64 for identity_key".into(),
+                    code: 400,
+                }),
+            )
+        })?;
+
+    let signed_prekey = base64::engine::general_purpose::STANDARD
+        .decode(&request.signed_prekey)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid base64 for signed_prekey".into(),
+                    code: 400,
+                }),
+            )
+        })?;
+
+    let mut one_time_prekeys = Vec::new();
+    for opk_b64 in &request.one_time_prekeys {
+        let opk = base64::engine::general_purpose::STANDARD
+            .decode(opk_b64)
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "Invalid base64 for one_time_prekey".into(),
+                        code: 400,
+                    }),
+                )
+            })?;
+        one_time_prekeys.push(opk);
+    }
+
+    let count = one_time_prekeys.len();
+
+    state
+        .db
+        .publish_key_bundle(user_id, &identity_key, &signed_prekey, &one_time_prekeys)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to publish key bundle: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    info!("Key bundle published for user: {}", user_id);
+    Ok(Json(crate::models::PublishKeyBundleResponse {
+        status: "published".to_string(),
+        one_time_prekeys_stored: count,
+    }))
+}
+
+/// Fetch a user's prekey bundle (GET /keys/bundle/:user_id)
+pub async fn fetch_key_bundle_handler(
+    State(state): State<SharedState>,
+    Path(target_user_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::FetchKeyBundleResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.db.fetch_key_bundle(target_user_id).await {
+        Ok(Some((identity_key, signed_prekey, one_time_prekey))) => {
+            Ok(Json(crate::models::FetchKeyBundleResponse {
+                user_id: target_user_id,
+                identity_key: base64::engine::general_purpose::STANDARD.encode(&identity_key),
+                signed_prekey: base64::engine::general_purpose::STANDARD.encode(&signed_prekey),
+                one_time_prekey: one_time_prekey
+                    .map(|opk| base64::engine::general_purpose::STANDARD.encode(&opk)),
+            }))
+        }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "No key bundle found for user".into(),
+                code: 404,
+            }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to fetch key bundle: {}", e),
+                code: 500,
+            }),
+        )),
+    }
+}
+
+/// Store a prekey message (POST /keys/prekey-message)
+pub async fn store_prekey_message_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::StorePrekeyMessageRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let sender_id = extract_user_from_token(&state, &params).await?;
+
+    let message_data = base64::engine::general_purpose::STANDARD
+        .decode(&request.message_data)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid base64 for message_data".into(),
+                    code: 400,
+                }),
+            )
+        })?;
+
+    let msg_id = state
+        .db
+        .store_prekey_message(request.recipient_id, sender_id, &message_data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to store prekey message: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(
+        serde_json::json!({ "status": "stored", "message_id": msg_id }),
+    ))
+}
+
+/// Get pending prekey messages (GET /keys/prekey-messages)
+pub async fn get_prekey_messages_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let messages = state.db.get_prekey_messages(user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get prekey messages: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let response: Vec<crate::models::PrekeyMessageResponse> = messages
+        .into_iter()
+        .map(
+            |(id, sender_id, data, created_at)| crate::models::PrekeyMessageResponse {
+                id,
+                sender_id,
+                message_data: base64::engine::general_purpose::STANDARD.encode(&data),
+                created_at,
+            },
+        )
+        .collect();
+
+    Ok(Json(serde_json::json!({ "messages": response })))
+}
+
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -1552,6 +1731,96 @@ async fn handle_ws_message(
                     error!("Failed to delete message: {}", e);
                 }
             }
+        }
+
+        // ── Key exchange operations ──
+        WsMessageType::PublishKeyBundle {
+            identity_key,
+            signed_prekey,
+            one_time_prekeys,
+        } => {
+            let ik = base64::engine::general_purpose::STANDARD
+                .decode(&identity_key)
+                .map_err(|_| "Invalid base64 for identity_key".to_string())?;
+            let spk = base64::engine::general_purpose::STANDARD
+                .decode(&signed_prekey)
+                .map_err(|_| "Invalid base64 for signed_prekey".to_string())?;
+            let mut opks = Vec::new();
+            for opk_b64 in &one_time_prekeys {
+                let opk = base64::engine::general_purpose::STANDARD
+                    .decode(opk_b64)
+                    .map_err(|_| "Invalid base64 for one_time_prekey".to_string())?;
+                opks.push(opk);
+            }
+            state
+                .db
+                .publish_key_bundle(sender_user_id, &ik, &spk, &opks)
+                .await
+                .map_err(|e| format!("Failed to publish key bundle: {}", e))?;
+            let resp = serde_json::json!({ "type": "key_bundle_published" });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::FetchKeyBundle { target_user_id } => {
+            match state.db.fetch_key_bundle(target_user_id).await {
+                Ok(Some((ik, spk, opk))) => {
+                    let resp = serde_json::json!({
+                        "type": "key_bundle_response",
+                        "user_id": target_user_id,
+                        "identity_key": base64::engine::general_purpose::STANDARD.encode(&ik),
+                        "signed_prekey": base64::engine::general_purpose::STANDARD.encode(&spk),
+                        "one_time_prekey": opk.map(|k| base64::engine::general_purpose::STANDARD.encode(&k)),
+                    });
+                    state.send_to_user(sender_user_id, resp.to_string()).await?;
+                }
+                Ok(None) => {
+                    let resp = serde_json::json!({
+                        "type": "error",
+                        "message": "No key bundle found for user"
+                    });
+                    state.send_to_user(sender_user_id, resp.to_string()).await?;
+                }
+                Err(e) => {
+                    return Err(format!("Failed to fetch key bundle: {}", e));
+                }
+            }
+        }
+
+        WsMessageType::StorePrekeyMessage {
+            recipient_id,
+            message_data,
+        } => {
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(&message_data)
+                .map_err(|_| "Invalid base64 for message_data".to_string())?;
+            let msg_id = state
+                .db
+                .store_prekey_message(recipient_id, sender_user_id, &data)
+                .await
+                .map_err(|e| format!("Failed to store prekey message: {}", e))?;
+            let resp = serde_json::json!({ "type": "prekey_message_stored", "message_id": msg_id });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::GetPrekeyMessages => {
+            let messages = state
+                .db
+                .get_prekey_messages(sender_user_id)
+                .await
+                .map_err(|e| format!("Failed to get prekey messages: {}", e))?;
+            let msgs: Vec<serde_json::Value> = messages
+                .into_iter()
+                .map(|(id, sid, data, ts)| {
+                    serde_json::json!({
+                        "id": id,
+                        "sender_id": sid,
+                        "message_data": base64::engine::general_purpose::STANDARD.encode(&data),
+                        "created_at": ts,
+                    })
+                })
+                .collect();
+            let resp = serde_json::json!({ "type": "prekey_messages", "messages": msgs });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
         WsMessageType::Ping => {
