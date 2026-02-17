@@ -93,6 +93,7 @@ dependencies = [
  "bincode",
  "clap",
  "config",
+ "criterion",
  "futures-util",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -1134,6 +1135,7 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
+ "futures",
  "is-terminal",
  "itertools",
  "num-traits",
@@ -1146,6 +1148,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 

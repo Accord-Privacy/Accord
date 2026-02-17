@@ -49,3 +49,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"
+
+[[bench]]
+name = "crypto_benchmarks"
+harness = false
