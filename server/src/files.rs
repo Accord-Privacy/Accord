@@ -88,33 +88,41 @@ impl FileHandler {
         Ok((file_path.to_string_lossy().to_string(), content_hash))
     }
 
-    /// Read an encrypted file from disk
-    pub async fn read_file(&self, storage_path: &str) -> Result<Vec<u8>> {
+    /// Canonicalize and validate a file path is within the storage directory (H6 fix)
+    fn validate_path(&self, storage_path: &str) -> Result<PathBuf> {
         let file_path = Path::new(storage_path);
 
-        // Security check: ensure the path is within our storage directory
-        if !file_path.starts_with(&self.config.storage_dir) {
+        // Canonicalize both paths to resolve symlinks, .., etc.
+        let canonical_storage = std::fs::canonicalize(&self.config.storage_dir)
+            .with_context(|| format!("Failed to canonicalize storage dir: {:?}", self.config.storage_dir))?;
+
+        let canonical_file = std::fs::canonicalize(file_path)
+            .with_context(|| format!("Failed to canonicalize file path: {:?}", file_path))?;
+
+        if !canonical_file.starts_with(&canonical_storage) {
             return Err(anyhow!("Invalid file path: path traversal detected"));
         }
 
-        fs::read(file_path)
+        Ok(canonical_file)
+    }
+
+    /// Read an encrypted file from disk
+    pub async fn read_file(&self, storage_path: &str) -> Result<Vec<u8>> {
+        let canonical_path = self.validate_path(storage_path)?;
+
+        fs::read(&canonical_path)
             .await
-            .with_context(|| format!("Failed to read file from {:?}", file_path))
+            .with_context(|| format!("Failed to read file from {:?}", canonical_path))
     }
 
     /// Delete a file from disk
     pub async fn delete_file(&self, storage_path: &str) -> Result<()> {
-        let file_path = Path::new(storage_path);
+        let canonical_path = self.validate_path(storage_path)?;
 
-        // Security check: ensure the path is within our storage directory
-        if !file_path.starts_with(&self.config.storage_dir) {
-            return Err(anyhow!("Invalid file path: path traversal detected"));
-        }
-
-        if file_path.exists() {
-            fs::remove_file(file_path)
+        if canonical_path.exists() {
+            fs::remove_file(&canonical_path)
                 .await
-                .with_context(|| format!("Failed to delete file at {:?}", file_path))?;
+                .with_context(|| format!("Failed to delete file at {:?}", canonical_path))?;
         }
 
         Ok(())
@@ -122,30 +130,21 @@ impl FileHandler {
 
     /// Get file size from disk
     pub async fn get_file_size(&self, storage_path: &str) -> Result<u64> {
-        let file_path = Path::new(storage_path);
+        let canonical_path = self.validate_path(storage_path)?;
 
-        // Security check: ensure the path is within our storage directory
-        if !file_path.starts_with(&self.config.storage_dir) {
-            return Err(anyhow!("Invalid file path: path traversal detected"));
-        }
-
-        let metadata = fs::metadata(file_path)
+        let metadata = fs::metadata(&canonical_path)
             .await
-            .with_context(|| format!("Failed to get file metadata for {:?}", file_path))?;
+            .with_context(|| format!("Failed to get file metadata for {:?}", canonical_path))?;
 
         Ok(metadata.len())
     }
 
     /// Check if a file exists on disk
     pub async fn file_exists(&self, storage_path: &str) -> bool {
-        let file_path = Path::new(storage_path);
-
-        // Security check: ensure the path is within our storage directory
-        if !file_path.starts_with(&self.config.storage_dir) {
-            return false;
+        match self.validate_path(storage_path) {
+            Ok(path) => path.exists(),
+            Err(_) => false,
         }
-
-        file_path.exists()
     }
 
     /// Verify content hash of a stored file

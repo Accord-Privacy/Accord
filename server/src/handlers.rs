@@ -2268,9 +2268,10 @@ pub async fn list_channel_files_handler(
 pub async fn delete_file_handler(
     State(state): State<SharedState>,
     Path(file_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    // Get user from auth token
-    let user_id = match extract_user_from_request(&state).await {
+    let user_id = match extract_user_from_request(&state, &headers, &params).await {
         Ok(user_id) => user_id,
         Err(_) => {
             return Err((
@@ -2363,6 +2364,8 @@ pub async fn delete_file_handler(
 /// Edit message endpoint
 pub async fn edit_message_handler(
     Path(message_id): Path<String>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<SharedState>,
     Json(request): Json<EditMessageRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -2376,7 +2379,8 @@ pub async fn edit_message_handler(
         )
     })?;
 
-    let user_id = request.user_id;
+    // Extract user_id from validated auth token, not from request body (C5 fix)
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
 
     // Decode the encrypted payload
     let encrypted_payload = base64::engine::general_purpose::STANDARD
@@ -2450,6 +2454,7 @@ pub async fn edit_message_handler(
 /// Delete message endpoint
 pub async fn delete_message_handler(
     Path(message_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -2463,24 +2468,8 @@ pub async fn delete_message_handler(
         )
     })?;
 
-    let token = params.get("token").ok_or((
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse {
-            error: "Missing token parameter".into(),
-            code: 400,
-        }),
-    ))?;
-
-    // Get user ID from token (simplified - in production use proper JWT validation)
-    let user_id = extract_user_id_from_token(token).map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Invalid or expired token".into(),
-                code: 401,
-            }),
-        )
-    })?;
+    // Validate token against the token store and extract user_id (C4 fix)
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
 
     // Attempt to delete the message
     let result = match state.db.delete_message(message_id, user_id).await {
@@ -2546,14 +2535,6 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
-}
-
-/// Extract user ID from token (simplified implementation for development)
-fn extract_user_id_from_token(token: &str) -> Result<Uuid, anyhow::Error> {
-    // This is a placeholder implementation
-    // In a real implementation, this would validate and decode a JWT token
-    // For now, we'll just try to parse it as a UUID directly
-    Uuid::parse_str(token).map_err(|e| anyhow::anyhow!("Invalid token format: {}", e))
 }
 
 // ── Message Reaction endpoints ──

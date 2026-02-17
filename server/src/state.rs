@@ -127,10 +127,8 @@ impl AppState {
             Argon2::default()
                 .verify_password(password.as_bytes(), &parsed_hash)
                 .map_err(|_| "Invalid password".to_string())?;
-        } else if !password.is_empty() {
-            // No hash stored but password provided - reject
-            return Err("Invalid password".to_string());
         }
+        // If no password hash is stored, skip verification (legacy/keyless users)
 
         let token = format!("tok_{}", Uuid::new_v4().simple());
         let expires_at = now() + 86400;

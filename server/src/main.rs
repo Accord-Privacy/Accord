@@ -35,7 +35,7 @@ use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
 };
 use tracing::{info, warn};
@@ -58,6 +58,10 @@ struct Args {
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
+
+    /// Allowed CORS origins (comma-separated). Use '*' for any (dev only).
+    #[arg(long, default_value = "http://localhost:3000,http://localhost:5173")]
+    cors_origins: String,
 
     /// Database file path
     #[arg(short = 'd', long, default_value = "accord.db")]
@@ -165,17 +169,28 @@ async fn main() -> Result<()> {
         // WebSocket endpoint
         .route("/ws", get(ws_handler))
         // Add shared state
-        .with_state(state)
+        .with_state(state.clone())
         // Add middleware
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
-                .layer(
-                    CorsLayer::new()
+                .layer({
+                    let cors = CorsLayer::new()
                         .allow_methods(Any)
-                        .allow_headers(Any)
-                        .allow_origin(Any),
-                ),
+                        .allow_headers(Any);
+                    if args.cors_origins.trim() == "*" {
+                        warn!("CORS: allowing ANY origin — only use in development!");
+                        cors.allow_origin(Any)
+                    } else {
+                        let origins: Vec<_> = args
+                            .cors_origins
+                            .split(',')
+                            .filter_map(|o| o.trim().parse().ok())
+                            .collect();
+                        info!("CORS: allowed origins: {:?}", origins);
+                        cors.allow_origin(AllowOrigin::list(origins))
+                    }
+                }),
         );
 
     println!("🚀 Accord Relay Server starting...");
@@ -212,6 +227,21 @@ async fn main() -> Result<()> {
     println!("  GET    /dm                - List user's DM channels (?token=)");
     println!("  WS     /ws                - WebSocket messaging (?token=)");
     println!();
+
+    // Spawn periodic token cleanup task (H3)
+    {
+        let cleanup_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // every 5 min
+            loop {
+                interval.tick().await;
+                let removed = cleanup_state.cleanup_expired_tokens().await;
+                if removed > 0 {
+                    info!("Cleaned up {} expired auth tokens", removed);
+                }
+            }
+        });
+    }
 
     // Create the server
     let listener = tokio::net::TcpListener::bind(&format!("{}:{}", args.host, args.port)).await?;
