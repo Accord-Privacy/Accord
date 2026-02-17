@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId } from "./api";
-import { AccordWebSocket } from "./ws";
+import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink } from "./types";
 import { 
   generateKeyPair, 
@@ -85,6 +85,7 @@ function App() {
   const [activeServer, setActiveServer] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [ws, setWs] = useState<AccordWebSocket | null>(null);
+  const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo>({ status: 'disconnected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
 
   // Reply state
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -246,10 +247,20 @@ function App() {
   const setupWebSocketHandlers = useCallback((socket: AccordWebSocket) => {
     socket.on('connected', () => {
       setAppState(prev => ({ ...prev, isConnected: true }));
+      setConnectionInfo({ status: 'connected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
     });
 
     socket.on('disconnected', () => {
       setAppState(prev => ({ ...prev, isConnected: false }));
+    });
+
+    socket.on('connection_status', (info: ConnectionInfo) => {
+      setConnectionInfo(info);
+    });
+
+    socket.on('auth_error', () => {
+      // Auth token expired — force re-login
+      handleLogout();
     });
 
     socket.on('message', (_msg: WsIncomingMessage) => {
@@ -1741,38 +1752,36 @@ function App() {
   if (showKeyBackup) {
     return (
       <div className="app">
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
-          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '500px', maxWidth: '90vw' }}>
-            <h2 style={{ textAlign: 'center', marginBottom: '1rem' }}>🔑 Backup Your Key</h2>
-            <p style={{ color: '#b9bbbe', marginBottom: '1rem', fontSize: '0.9rem' }}>
-              Your identity is your keypair. If you lose it, you lose access to your account forever. 
-              <strong style={{ color: '#faa61a' }}> There is no recovery.</strong>
+        <div className="auth-page">
+          <div className="auth-card key-backup-card">
+            <h2 className="auth-title">🔑 Backup Your Key</h2>
+            <p className="auth-subtitle">
+              Your identity is your keypair. If you lose it, you lose access to your account forever.
+              <strong className="warning" style={{ color: 'var(--yellow)' }}> There is no recovery.</strong>
             </p>
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Your Public Key Fingerprint:</label>
-              <div style={{ background: '#40444b', padding: '0.6rem', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all' }}>
-                {publicKeyHash || 'computing...'}
-              </div>
+            <div className="form-group">
+              <label className="form-label">Your Public Key Fingerprint</label>
+              <div className="key-value">{publicKeyHash || 'computing...'}</div>
             </div>
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Public Key (share this):</label>
+            <div className="form-group">
+              <label className="form-label">Public Key (share this)</label>
               <textarea
                 readOnly
                 value={publicKey}
                 rows={3}
-                style={{ width: '100%', background: '#40444b', color: '#ffffff', border: 'none', borderRadius: '4px', padding: '0.6rem', fontFamily: 'monospace', fontSize: '0.75rem', resize: 'none' }}
+                className="form-textarea"
               />
             </div>
-            <p style={{ color: '#43b581', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            <div className="auth-success" style={{ marginBottom: '16px' }}>
               ✅ Your keypair is saved in this browser's storage. To use Accord on another device, you'll need to export and import your key.
-            </p>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
+            </div>
+            <div className="key-backup-actions">
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(publicKey).catch(() => {});
                   alert('Public key copied to clipboard!');
                 }}
-                style={{ flex: 1, padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#43b581', color: '#ffffff', fontSize: '1rem', cursor: 'pointer' }}
+                className="btn btn-green"
               >
                 Copy Public Key
               </button>
@@ -1783,7 +1792,7 @@ function App() {
                   setPassword("");
                   setAuthError("");
                 }}
-                style={{ flex: 1, padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer' }}
+                className="btn btn-primary"
               >
                 Continue to Login
               </button>
@@ -1798,63 +1807,50 @@ function App() {
   if (showWelcomeScreen) {
     return (
       <div className="app">
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
-          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '450px', maxWidth: '90vw' }}>
+        <div className="auth-page">
+          <div className="auth-card auth-card-narrow">
             
             {welcomeMode === 'choose' && (
               <>
-                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Welcome to Accord</h2>
-                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '2rem', fontSize: '0.9rem' }}>
-                  Private, encrypted communication
-                </p>
-                
-                <button
-                  onClick={() => setWelcomeMode('invite')}
-                  style={{ width: '100%', padding: '1rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', marginBottom: '0.75rem' }}
-                >
-                  I have an invite link
-                </button>
-                
-                <button
-                  onClick={() => setWelcomeMode('admin')}
-                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: '1px solid #4f545c', background: 'transparent', color: '#b9bbbe', fontSize: '0.9rem', cursor: 'pointer' }}
-                >
-                  Set up a new relay (admin)
-                </button>
+                <div className="auth-brand">
+                  <h1>⚡ <span className="brand-accent">Accord</span></h1>
+                </div>
+                <p className="auth-tagline">Privacy-first community communications</p>
+                <div className="auth-buttons-stack">
+                  <button onClick={() => setWelcomeMode('invite')} className="btn btn-primary">
+                    I have an invite link
+                  </button>
+                  <button onClick={() => setWelcomeMode('admin')} className="btn btn-outline">
+                    Set up a new relay (admin)
+                  </button>
+                </div>
               </>
             )}
 
             {welcomeMode === 'invite' && !inviteNeedsRegister && (
               <>
-                <button onClick={() => { setWelcomeMode('choose'); setInviteError(''); setInviteLinkInput(''); setParsedInvite(null); setInviteRelayVersion(''); }} style={{ background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.85rem', marginBottom: '1rem' }}>← Back</button>
-                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Join via Invite</h2>
-                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
-                  Paste the invite link you received
-                </p>
+                <button onClick={() => { setWelcomeMode('choose'); setInviteError(''); setInviteLinkInput(''); setParsedInvite(null); setInviteRelayVersion(''); }} className="auth-back-btn">← Back</button>
+                <h2 className="auth-title">Join via Invite</h2>
+                <p className="auth-subtitle">Paste the invite link you received</p>
                 
-                <div style={{ marginBottom: '1rem' }}>
+                <div className="form-group">
                   <input
                     type="text"
                     placeholder="accord://host:port/invite/CODE or https://..."
                     value={inviteLinkInput}
                     onChange={(e) => setInviteLinkInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleInviteLinkSubmit(); }}
-                    style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '0.95rem' }}
+                    className="form-input"
                   />
                 </div>
 
-                {inviteError && (
-                  <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{inviteError}</div>
-                )}
-
-                {inviteRelayVersion && (
-                  <div style={{ color: '#43b581', marginBottom: '1rem', fontSize: '0.85rem' }}>✅ Connected to relay v{inviteRelayVersion}</div>
-                )}
+                {inviteError && <div className="auth-error">{inviteError}</div>}
+                {inviteRelayVersion && <div className="auth-success">✅ Connected to relay v{inviteRelayVersion}</div>}
 
                 <button
                   onClick={handleInviteLinkSubmit}
                   disabled={inviteConnecting || !inviteLinkInput.trim()}
-                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', opacity: (inviteConnecting || !inviteLinkInput.trim()) ? 0.6 : 1 }}
+                  className="btn btn-primary"
                 >
                   {inviteConnecting ? 'Connecting to relay...' : 'Join'}
                 </button>
@@ -1863,34 +1859,30 @@ function App() {
 
             {welcomeMode === 'invite' && inviteNeedsRegister && (
               <>
-                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Create Your Identity</h2>
-                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                  Connected to relay — now set a password to create your identity
-                </p>
-                <div style={{ background: '#2f3136', padding: '0.6rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.8rem', color: '#43b581' }}>
-                  🔐 A keypair will be auto-generated. No username needed.
+                <h2 className="auth-title">Create Your Identity</h2>
+                <p className="auth-subtitle">Connected to relay — now set a password to create your identity</p>
+                <div className="auth-info-box">
+                  <span className="accent">🔐 A keypair will be auto-generated. No username needed.</span>
                 </div>
 
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Password (min 8 characters)</label>
+                <div className="form-group">
+                  <label className="form-label">Password (min 8 characters)</label>
                   <input
                     type="password"
                     placeholder="Choose a password"
                     value={invitePassword}
                     onChange={(e) => setInvitePassword(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleInviteRegister(); }}
-                    style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+                    className="form-input"
                   />
                 </div>
 
-                {inviteError && (
-                  <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{inviteError}</div>
-                )}
+                {inviteError && <div className="auth-error">{inviteError}</div>}
 
                 <button
                   onClick={handleInviteRegister}
                   disabled={inviteJoining || invitePassword.length < 8}
-                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#43b581', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', opacity: (inviteJoining || invitePassword.length < 8) ? 0.6 : 1 }}
+                  className="btn btn-green"
                 >
                   {inviteJoining ? 'Creating identity & joining...' : 'Create Identity & Join'}
                 </button>
@@ -1899,36 +1891,29 @@ function App() {
 
             {welcomeMode === 'admin' && (
               <>
-                <button onClick={() => { setWelcomeMode('choose'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.85rem', marginBottom: '1rem' }}>← Back</button>
-                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Connect to Relay</h2>
-                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
-                  Enter the relay server URL (admin/power-user)
-                </p>
+                <button onClick={() => { setWelcomeMode('choose'); setAuthError(''); }} className="auth-back-btn">← Back</button>
+                <h2 className="auth-title">Connect to Relay</h2>
+                <p className="auth-subtitle">Enter the relay server URL (admin/power-user)</p>
                 
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Server URL</label>
+                <div className="form-group">
+                  <label className="form-label">Server URL</label>
                   <input
                     type="text"
                     placeholder="http://localhost:8080"
                     value={serverUrl}
                     onChange={(e) => setServerUrl(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleServerConnect(); }}
-                    style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+                    className="form-input"
                   />
                 </div>
 
-                {authError && (
-                  <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>
-                )}
-
-                {serverVersion && (
-                  <div style={{ color: '#43b581', marginBottom: '1rem', fontSize: '0.85rem' }}>✅ Connected — server v{serverVersion}</div>
-                )}
+                {authError && <div className="auth-error">{authError}</div>}
+                {serverVersion && <div className="auth-success">✅ Connected — server v{serverVersion}</div>}
 
                 <button
                   onClick={handleServerConnect}
                   disabled={serverConnecting}
-                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', opacity: serverConnecting ? 0.6 : 1 }}
+                  className="btn btn-primary"
                 >
                   {serverConnecting ? 'Connecting...' : 'Connect'}
                 </button>
@@ -1944,35 +1929,30 @@ function App() {
   if (showServerScreen) {
     return (
       <div className="app">
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
-          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '400px', maxWidth: '90vw' }}>
-            <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Connect to Relay</h2>
-            <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.9rem' }}>Manual relay connection</p>
+        <div className="auth-page">
+          <div className="auth-card auth-card-narrow">
+            <h2 className="auth-title">Connect to Relay</h2>
+            <p className="auth-subtitle">Manual relay connection</p>
             
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Server URL</label>
+            <div className="form-group">
+              <label className="form-label">Server URL</label>
               <input
                 type="text"
                 placeholder="http://localhost:8080"
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleServerConnect(); }}
-                style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+                className="form-input"
               />
             </div>
 
-            {authError && (
-              <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>
-            )}
-
-            {serverVersion && (
-              <div style={{ color: '#43b581', marginBottom: '1rem', fontSize: '0.85rem' }}>✅ Connected — server v{serverVersion}</div>
-            )}
+            {authError && <div className="auth-error">{authError}</div>}
+            {serverVersion && <div className="auth-success">✅ Connected — server v{serverVersion}</div>}
 
             <button
               onClick={handleServerConnect}
               disabled={serverConnecting}
-              style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', marginBottom: '0.5rem', opacity: serverConnecting ? 0.6 : 1 }}
+              className="btn btn-primary"
             >
               {serverConnecting ? 'Connecting...' : 'Connect'}
             </button>
@@ -1986,80 +1966,69 @@ function App() {
   if (!isAuthenticated) {
     return (
       <div className="app">
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
-          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '450px', maxWidth: '90vw' }}>
-            <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+        <div className="auth-page">
+          <div className="auth-card">
+            <h2 className="auth-title">
               {isLoginMode ? 'Login to Accord' : 'Create Identity'}
             </h2>
-            <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+            <p className="auth-subtitle">
               {isLoginMode 
                 ? 'Authenticate with your keypair and password' 
                 : 'A new keypair will be generated automatically'}
             </p>
             
-            <div style={{ background: '#2f3136', padding: '0.6rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.8rem', color: '#b9bbbe' }}>
-              🔗 {serverUrl} {serverAvailable && <span style={{ color: '#43b581' }}>● connected</span>}
-              <button onClick={() => { setShowWelcomeScreen(true); setWelcomeMode('choose'); setAuthError(''); }} style={{ float: 'right', background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.8rem' }}>Change</button>
+            <div className="auth-server-bar">
+              <span>🔗 {serverUrl} {serverAvailable && <span className="connected">● connected</span>}</span>
+              <button onClick={() => { setShowWelcomeScreen(true); setWelcomeMode('choose'); setAuthError(''); }} className="btn-ghost" style={{ fontSize: '12px' }}>Change</button>
             </div>
 
             {isLoginMode && (
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>
-                  Key Status
-                </label>
-                <div style={{ background: '#40444b', padding: '0.6rem', borderRadius: '4px', fontSize: '0.85rem' }}>
+              <div className="form-group">
+                <label className="form-label">Key Status</label>
+                <div className="auth-info-box">
                   {keyPair || publicKey ? (
-                    <span style={{ color: '#43b581' }}>🔑 Keypair loaded from browser storage</span>
+                    <span className="accent">🔑 Keypair loaded from browser storage</span>
                   ) : (
-                    <span style={{ color: '#faa61a' }}>⚠️ No keypair found — register or import</span>
+                    <span style={{ color: 'var(--yellow)' }}>⚠️ No keypair found — register or import</span>
                   )}
                 </div>
               </div>
             )}
 
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Password</label>
+            <div className="form-group">
+              <label className="form-label">Password</label>
               <input
                 type="password"
                 placeholder={isLoginMode ? "Enter your password" : "Choose a password (min 8 chars)"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleAuth(); }}
-                style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+                className="form-input"
               />
               {!isLoginMode && password && password.length < 8 && (
-                <div style={{ fontSize: '0.8rem', color: '#f04747', marginTop: '0.3rem' }}>
+                <div className="form-hint" style={{ color: 'var(--red)' }}>
                   Password must be at least 8 characters
                 </div>
               )}
             </div>
 
             {!isLoginMode && encryptionEnabled && (
-              <div style={{ marginBottom: '1rem', background: '#2f3136', padding: '0.6rem', borderRadius: '4px' }}>
-                <div style={{ fontSize: '0.8rem', color: '#43b581' }}>
-                  🔐 A new ECDH P-256 keypair will be generated for your identity
-                </div>
-                <div style={{ fontSize: '0.75rem', color: '#b9bbbe', marginTop: '0.3rem' }}>
-                  No username needed — you are identified by your public key hash
-                </div>
+              <div className="auth-info-box" style={{ marginBottom: '20px' }}>
+                <div className="accent">🔐 A new ECDH P-256 keypair will be generated for your identity</div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>No username needed — you are identified by your public key hash</div>
               </div>
             )}
 
-            {authError && (
-              <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>
-            )}
+            {authError && <div className="auth-error">{authError}</div>}
 
-            <button
-              onClick={handleAuth}
-              style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', marginBottom: '1rem' }}
-            >
+            <button onClick={handleAuth} className="btn btn-primary" style={{ marginBottom: '16px' }}>
               {isLoginMode ? 'Login' : 'Create Identity & Register'}
             </button>
 
-            <div style={{ textAlign: 'center' }}>
+            <div className="auth-toggle">
               <button
                 onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(""); setPassword(""); }}
-                style={{ background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', textDecoration: 'underline' }}
+                className="btn-ghost"
               >
                 {isLoginMode ? 'Need to create an identity?' : 'Already have a keypair? Login'}
               </button>
@@ -2121,64 +2090,40 @@ function App() {
 
       {/* Channel sidebar */}
       <div className="channel-sidebar">
-        <div className="sidebar-header" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="sidebar-header">
+          <div className="sidebar-header-row">
             <div style={{ display: 'flex', alignItems: 'center' }}>
               {servers[activeServer]}
-              {appState.isConnected && (
-                <span style={{ fontSize: '10px', color: '#43b581', marginLeft: '8px' }}>●</span>
+              {serverAvailable && (
+                <span className="connection-status">
+                  <span className={`connection-dot ${connectionInfo.status}`}>●</span>
+                  <span className="connection-label">
+                    {connectionInfo.status === 'connected' && 'Connected'}
+                    {connectionInfo.status === 'reconnecting' && `Reconnecting... ${connectionInfo.reconnectAttempt}/${connectionInfo.maxReconnectAttempts}`}
+                    {connectionInfo.status === 'disconnected' && !appState.isConnected && 'Disconnected'}
+                  </span>
+                  {connectionInfo.status === 'disconnected' && !appState.isConnected && ws && (
+                    <button className="connection-retry-btn" onClick={() => ws.retry()}>Retry</button>
+                  )}
+                </span>
               )}
-              {!serverAvailable && (
-                <span style={{ fontSize: '10px', color: '#faa61a', marginLeft: '8px' }}>DEMO</span>
-              )}
+              {!serverAvailable && <span className="demo-badge">DEMO</span>}
             </div>
             
-            {/* Admin/Moderator Controls */}
             {selectedNodeId && (hasPermission(selectedNodeId, 'ManageInvites') || hasPermission(selectedNodeId, 'ManageNode')) && (
-              <div style={{ display: 'flex', gap: '4px' }}>
+              <div className="sidebar-admin-buttons">
                 {hasPermission(selectedNodeId, 'ManageInvites') && (
-                  <button
-                    onClick={handleGenerateInvite}
-                    style={{
-                      background: '#7289da',
-                      border: 'none',
-                      color: '#ffffff',
-                      padding: '2px 6px',
-                      borderRadius: '2px',
-                      cursor: 'pointer',
-                      fontSize: '10px'
-                    }}
-                    title="Generate Invite"
-                  >
-                    Invite
-                  </button>
+                  <button onClick={handleGenerateInvite} className="sidebar-admin-btn" title="Generate Invite">Invite</button>
                 )}
                 {hasPermission(selectedNodeId, 'ManageNode') && (
-                  <button
-                    onClick={() => alert('Node settings coming soon!')}
-                    style={{
-                      background: '#f04747',
-                      border: 'none',
-                      color: '#ffffff',
-                      padding: '2px 6px',
-                      borderRadius: '2px',
-                      cursor: 'pointer',
-                      fontSize: '10px'
-                    }}
-                    title="Node Settings"
-                  >
-                    Settings
-                  </button>
+                  <button onClick={() => alert('Node settings coming soon!')} className="sidebar-admin-btn danger" title="Node Settings">Settings</button>
                 )}
               </div>
             )}
           </div>
           
-          {/* Show current user's role */}
           {selectedNodeId && userRoles[selectedNodeId] && (
-            <div style={{ fontSize: '11px', color: '#b9bbbe', opacity: 0.8 }}>
-              {getRoleBadge(userRoles[selectedNodeId])} {userRoles[selectedNodeId]}
-            </div>
+            <div className="sidebar-role">{getRoleBadge(userRoles[selectedNodeId])} {userRoles[selectedNodeId]}</div>
           )}
         </div>
         
@@ -2197,13 +2142,7 @@ function App() {
             return (
               <div
                 key={channel?.id || ch}
-                className={`channel ${isActive ? "active" : ""}`}
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'space-between',
-                  background: isConnectedToVoice ? 'rgba(67, 181, 129, 0.2)' : undefined
-                }}
+                className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""}`}
               >
                 <div
                   onClick={() => {
@@ -2257,24 +2196,9 @@ function App() {
                   
                   {canDeleteChannel && channel && (
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteChannel(channel.id, channel.name);
-                      }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#f04747',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        padding: '2px 4px',
-                        borderRadius: '2px',
-                        opacity: 0.7,
-                        marginLeft: '4px'
-                      }}
+                      onClick={(e) => { e.stopPropagation(); handleDeleteChannel(channel.id, channel.name); }}
+                      className="channel-delete-btn"
                       title="Delete channel"
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
                     >
                       ×
                     </button>
@@ -2286,98 +2210,21 @@ function App() {
           
           {/* Create Channel Button for Admins */}
           {selectedNodeId && hasPermission(selectedNodeId, 'CreateChannel') && (
-            <div style={{ marginTop: '8px', padding: '0 16px' }}>
+            <div style={{ marginTop: '8px', padding: '0 8px' }}>
               {!showCreateChannelForm ? (
-                <button
-                  onClick={() => setShowCreateChannelForm(true)}
-                  style={{
-                    background: '#43b581',
-                    border: 'none',
-                    color: '#ffffff',
-                    padding: '6px 12px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    width: '100%'
-                  }}
-                >
+                <button onClick={() => setShowCreateChannelForm(true)} className="btn btn-green btn-sm" style={{ width: '100%' }}>
                   + Create Channel
                 </button>
               ) : (
-                <div style={{ 
-                  background: '#40444b', 
-                  padding: '8px', 
-                  borderRadius: '4px',
-                  marginBottom: '8px'
-                }}>
-                  <input
-                    type="text"
-                    placeholder="Channel name"
-                    value={newChannelName}
-                    onChange={(e) => setNewChannelName(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '4px 8px',
-                      marginBottom: '4px',
-                      border: 'none',
-                      borderRadius: '2px',
-                      background: '#36393f',
-                      color: '#ffffff',
-                      fontSize: '12px'
-                    }}
-                  />
-                  <select
-                    value={newChannelType}
-                    onChange={(e) => setNewChannelType(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '4px 8px',
-                      marginBottom: '4px',
-                      border: 'none',
-                      borderRadius: '2px',
-                      background: '#36393f',
-                      color: '#ffffff',
-                      fontSize: '12px'
-                    }}
-                  >
+                <div className="create-channel-form">
+                  <input type="text" placeholder="Channel name" value={newChannelName} onChange={(e) => setNewChannelName(e.target.value)} />
+                  <select value={newChannelType} onChange={(e) => setNewChannelType(e.target.value)}>
                     <option value="text">Text Channel</option>
                     <option value="voice">Voice Channel</option>
                   </select>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button
-                      onClick={handleCreateChannel}
-                      style={{
-                        flex: 1,
-                        background: '#43b581',
-                        border: 'none',
-                        color: '#ffffff',
-                        padding: '4px 8px',
-                        borderRadius: '2px',
-                        cursor: 'pointer',
-                        fontSize: '11px'
-                      }}
-                    >
-                      Create
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowCreateChannelForm(false);
-                        setNewChannelName("");
-                        setNewChannelType("text");
-                      }}
-                      style={{
-                        flex: 1,
-                        background: '#747f8d',
-                        border: 'none',
-                        color: '#ffffff',
-                        padding: '4px 8px',
-                        borderRadius: '2px',
-                        cursor: 'pointer',
-                        fontSize: '11px'
-                      }}
-                    >
-                      Cancel
-                    </button>
+                  <div className="create-channel-actions">
+                    <button onClick={handleCreateChannel} className="btn btn-green btn-sm">Create</button>
+                    <button onClick={() => { setShowCreateChannelForm(false); setNewChannelName(""); setNewChannelType("text"); }} className="btn btn-outline btn-sm">Cancel</button>
                   </div>
                 </div>
               )}
@@ -2386,34 +2233,10 @@ function App() {
         </div>
 
         {/* Direct Messages Section */}
-        <div className="dm-section" style={{ borderTop: '1px solid #3f4147', paddingTop: '8px', marginTop: '8px' }}>
-          <div className="dm-header" style={{ 
-            fontSize: '11px', 
-            color: '#b9bbbe', 
-            textTransform: 'uppercase', 
-            fontWeight: '600', 
-            marginBottom: '8px',
-            padding: '0 16px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}>
+        <div className="dm-section">
+          <div className="dm-header">
             Direct Messages
-            <button
-              onClick={() => setShowDmChannelCreate(!showDmChannelCreate)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#b9bbbe',
-                cursor: 'pointer',
-                fontSize: '12px',
-                padding: '2px',
-                borderRadius: '2px'
-              }}
-              title="Create DM"
-            >
-              +
-            </button>
+            <button onClick={() => setShowDmChannelCreate(!showDmChannelCreate)} className="dm-header-add-btn" title="Create DM">+</button>
           </div>
           
           <div className="dm-list">
@@ -2426,67 +2249,14 @@ function App() {
                   key={dmChannel.id}
                   className={`dm-item ${isActive ? 'active' : ''}`}
                   onClick={() => handleDmChannelSelect(dmChannel)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '6px 16px',
-                    cursor: 'pointer',
-                    backgroundColor: isActive ? '#40444b' : 'transparent',
-                    borderRadius: '4px',
-                    margin: '0 8px',
-                    marginBottom: '2px'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = '#36393f';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
-                  }}
                 >
-                  <div 
-                    className="dm-avatar"
-                    style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      backgroundColor: '#5865f2',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginRight: '8px',
-                      fontSize: '10px',
-                      fontWeight: '600',
-                      color: '#ffffff'
-                    }}
-                  >
+                  <div className="dm-avatar">
                     {dmChannel.other_user_profile.display_name[0].toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div 
-                      className="dm-name"
-                      style={{
-                        fontSize: '14px',
-                        color: isActive ? '#ffffff' : '#b9bbbe',
-                        fontWeight: isActive ? '500' : '400',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                      }}
-                    >
-                      {dmChannel.other_user_profile.display_name}
-                    </div>
+                    <div className="dm-name">{dmChannel.other_user_profile.display_name}</div>
                     {dmChannel.last_message && (
-                      <div 
-                        style={{
-                          fontSize: '11px',
-                          color: '#8e9297',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis'
-                        }}
-                      >
-                        {dmChannel.last_message.content.substring(0, 30)}
-                      </div>
+                      <div className="dm-last-message">{dmChannel.last_message.content.substring(0, 30)}</div>
                     )}
                   </div>
                   
@@ -2506,14 +2276,7 @@ function App() {
             })}
             
             {dmChannels.length === 0 && (
-              <div style={{ 
-                padding: '16px', 
-                color: '#8e9297', 
-                fontSize: '13px', 
-                textAlign: 'center' 
-              }}>
-                No direct messages yet
-              </div>
+              <div className="dm-empty">No direct messages yet</div>
             )}
           </div>
         </div>
@@ -2542,18 +2305,7 @@ function App() {
           >
             ⚙️
           </button>
-          <button
-            onClick={handleLogout}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#b9bbbe',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            Logout
-          </button>
+          <button onClick={handleLogout} className="user-panel-logout">Logout</button>
         </div>
       </div>
 
@@ -2564,27 +2316,10 @@ function App() {
             {selectedDmChannel ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <div 
-                    className="dm-avatar"
-                    style={{
-                      width: '24px',
-                      height: '24px',
-                      borderRadius: '50%',
-                      backgroundColor: '#5865f2',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginRight: '8px',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      color: '#ffffff'
-                    }}
-                  >
+                  <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '8px' }}>
                     {selectedDmChannel.other_user_profile.display_name[0].toUpperCase()}
                   </div>
-                  <span className="chat-channel-name">
-                    {selectedDmChannel.other_user_profile.display_name}
-                  </span>
+                  <span className="chat-channel-name">{selectedDmChannel.other_user_profile.display_name}</span>
                 </div>
                 <span className="chat-topic">
                   Direct message with {selectedDmChannel.other_user_profile.display_name}
@@ -2598,67 +2333,15 @@ function App() {
             )}
           </div>
           <div className="chat-header-right">
-            <button
-              onClick={togglePinnedPanel}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '18px',
-                cursor: 'pointer',
-                color: showPinnedPanel ? '#faa61a' : '#666',
-                marginRight: '12px',
-                padding: '4px',
-                borderRadius: '4px',
-                transition: 'color 0.2s'
-              }}
-              title="Toggle pinned messages"
-            >
-              📌
-            </button>
+            <button onClick={togglePinnedPanel} className={`chat-header-btn ${showPinnedPanel ? 'active' : ''}`} title="Toggle pinned messages">📌</button>
             {encryptionEnabled && keyPair && (
-              <span 
-                style={{ 
-                  fontSize: '12px', 
-                  color: '#43b581',
-                  marginRight: '16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-                title="End-to-end encryption enabled"
-              >
-                🔐 E2EE
-              </span>
+              <span className="e2ee-badge enabled" title="End-to-end encryption enabled">🔐 E2EE</span>
             )}
             {encryptionEnabled && !keyPair && (
-              <span 
-                style={{ 
-                  fontSize: '12px', 
-                  color: '#faa61a',
-                  marginRight: '16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-                title="Encryption not available"
-              >
-                🔓 No Keys
-              </span>
+              <span className="e2ee-badge warning" title="Encryption not available">🔓 No Keys</span>
             )}
             {!encryptionEnabled && (
-              <span 
-                style={{ 
-                  fontSize: '12px', 
-                  color: '#747f8d',
-                  marginRight: '16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-                title="Encryption not supported"
-              >
-                🚫 No E2EE
-              </span>
+              <span className="e2ee-badge disabled" title="Encryption not supported">🚫 No E2EE</span>
             )}
             <button
               className="search-button"
@@ -2675,27 +2358,30 @@ function App() {
           onScroll={handleScroll}
         >
           {isLoadingOlderMessages && (
-            <div style={{
-              textAlign: 'center',
-              padding: '12px',
-              color: '#b9bbbe',
-              fontSize: '14px',
-              fontStyle: 'italic'
-            }}>
-              Loading older messages...
-            </div>
+            <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
           )}
           {!hasMoreMessages && appState.messages.length > 0 && (
-            <div style={{
-              textAlign: 'center',
-              padding: '12px',
-              color: '#72767d',
-              fontSize: '13px',
-              opacity: 0.7,
-              borderBottom: '1px solid #40444b',
-              marginBottom: '8px'
-            }}>
-              You've reached the beginning of this channel
+            <div className="messages-beginning">You've reached the beginning of this channel</div>
+          )}
+          {!isLoadingOlderMessages && appState.messages.length === 0 && selectedChannelId && (
+            <div className="empty-state">
+              <div className="empty-state-icon">💬</div>
+              <div className="empty-state-title">No messages yet</div>
+              <div className="empty-state-text">Be the first to send a message in this channel!</div>
+            </div>
+          )}
+          {!selectedChannelId && !selectedDmChannel && channels.length === 0 && nodes.length > 0 && (
+            <div className="empty-state">
+              <div className="empty-state-icon">#</div>
+              <div className="empty-state-title">No channels</div>
+              <div className="empty-state-text">Create a channel to start chatting.</div>
+            </div>
+          )}
+          {nodes.length === 0 && !selectedDmChannel && (
+            <div className="empty-state">
+              <div className="empty-state-icon">⚡</div>
+              <div className="empty-state-title">Welcome to Accord</div>
+              <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
             </div>
           )}
           {appState.messages.map((msg, i) => (
@@ -2716,41 +2402,13 @@ function App() {
                   <span className="message-author">{msg.author}</span>
                   <span className="message-time">{msg.time}</span>
                   {msg.edited_at && (
-                    <span 
-                      style={{ 
-                        fontSize: '12px', 
-                        color: '#666',
-                        marginLeft: '8px',
-                        fontStyle: 'italic'
-                      }}
-                      title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}
-                    >
-                      (edited)
-                    </span>
+                    <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                   )}
                   {msg.isEncrypted && (
-                    <span 
-                      style={{ 
-                        fontSize: '12px', 
-                        color: '#43b581',
-                        marginLeft: '8px'
-                      }}
-                      title="End-to-end encrypted"
-                    >
-                      🔒
-                    </span>
+                    <span className="message-encrypted-badge" title="End-to-end encrypted">🔒</span>
                   )}
                   {msg.pinned_at && (
-                    <span 
-                      style={{ 
-                        fontSize: '12px', 
-                        color: '#faa61a',
-                        marginLeft: '8px'
-                      }}
-                      title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}
-                    >
-                      📌
-                    </span>
+                    <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}>📌</span>
                   )}
                   {/* Message Actions - Show on hover for all users */}
                   {appState.user && (
@@ -3001,85 +2659,24 @@ function App() {
             const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers') && !isCurrentUser;
             
             return (
-              <div key={member.user.id} className="member" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                  <div className="member-avatar">{displayName(member.user)[0]}</div>
-                  <span className="member-name" style={{ marginLeft: '8px' }}>
-                    {displayName(member.user)}
-                  </span>
-                  <span 
-                    style={{ 
-                      fontSize: '12px',
-                      marginLeft: '4px'
-                    }}
-                    title={member.role}
-                  >
-                    {getRoleBadge(member.role)}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span 
-                    className="member-status"
-                    style={{ 
-                      fontSize: '12px',
-                      color: '#43b581' // Online color - we'll assume all are online for now
-                    }}
-                  >
-                    ●
-                  </span>
+              <div key={member.user.id} className="member">
+                <div className="member-avatar">{displayName(member.user)[0]}</div>
+                <span className="member-name">{displayName(member.user)}</span>
+                <span className="member-role-badge" title={member.role}>{getRoleBadge(member.role)}</span>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span className="member-status-dot">●</span>
                   {!isCurrentUser && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openDmWithUser(member.user);
-                      }}
-                      style={{
-                        background: '#5865f2',
-                        border: 'none',
-                        color: '#ffffff',
-                        padding: '2px 6px',
-                        borderRadius: '2px',
-                        cursor: 'pointer',
-                        fontSize: '10px',
-                        opacity: 0.7,
-                        marginRight: '4px'
-                      }}
-                      title="Send DM"
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
-                    >
-                      DM
-                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>
                   )}
                   {canKick && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleKickMember(member.user_id, displayName(member.user));
-                      }}
-                      style={{
-                        background: '#f04747',
-                        border: 'none',
-                        color: '#ffffff',
-                        padding: '2px 6px',
-                        borderRadius: '2px',
-                        cursor: 'pointer',
-                        fontSize: '10px',
-                        opacity: 0.7
-                      }}
-                      title="Kick member"
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
-                    >
-                      Kick
-                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); handleKickMember(member.user_id, displayName(member.user)); }} className="member-action-btn danger" title="Kick member">Kick</button>
                   )}
                 </div>
               </div>
             );
           })
         ) : members.length === 0 ? (
-          <div style={{ padding: '16px', color: '#8e9297', fontSize: '13px', textAlign: 'center' }}>
+          <div className="members-empty">
             {nodes.length === 0 ? 'Join or create a node to see members' : 'No members loaded'}
           </div>
         ) : null}
@@ -3087,98 +2684,29 @@ function App() {
 
       {/* Error Message */}
       {error && (
-        <div style={{
-          position: 'fixed',
-          top: '20px',
-          right: '20px',
-          background: '#f04747',
-          color: '#ffffff',
-          padding: '12px 16px',
-          borderRadius: '4px',
-          zIndex: 1000,
-          maxWidth: '300px',
-          fontSize: '14px',
-          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
-        }}>
-          {error}
-          <button
-            onClick={() => setError("")}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#ffffff',
-              cursor: 'pointer',
-              fontSize: '16px',
-              marginLeft: '8px',
-              padding: '0'
-            }}
-          >
-            ×
-          </button>
+        <div className="error-toast">
+          <span style={{ flex: 1 }}>{error}</span>
+          <button onClick={() => setError("")} className="error-toast-close">×</button>
         </div>
       )}
 
       {/* Create Node Modal */}
       {showCreateNodeModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1001
-        }}>
-          <div style={{
-            background: '#36393f',
-            padding: '24px',
-            borderRadius: '8px',
-            maxWidth: '400px',
-            width: '90%',
-            color: '#ffffff'
-          }}>
-            <h3 style={{ margin: '0 0 16px 0' }}>Create a Node</h3>
-            <p style={{ margin: '0 0 16px 0', color: '#b9bbbe', fontSize: '0.9rem' }}>
-              A Node is your community space. A #general channel will be created automatically.
-            </p>
-            <div style={{ marginBottom: '12px' }}>
-              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '4px' }}>Node Name</label>
-              <input
-                type="text"
-                placeholder="My Community"
-                value={newNodeName}
-                onChange={(e) => setNewNodeName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateNode(); }}
-                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
-              />
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3>Create a Node</h3>
+            <p>A Node is your community space. A #general channel will be created automatically.</p>
+            <div className="form-group">
+              <label className="form-label">Node Name</label>
+              <input type="text" placeholder="My Community" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleCreateNode(); }} className="form-input" />
             </div>
-            <div style={{ marginBottom: '16px' }}>
-              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '4px' }}>Description (optional)</label>
-              <input
-                type="text"
-                placeholder="What's this node about?"
-                value={newNodeDescription}
-                onChange={(e) => setNewNodeDescription(e.target.value)}
-                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '0.95rem' }}
-              />
+            <div className="form-group">
+              <label className="form-label">Description (optional)</label>
+              <input type="text" placeholder="What's this node about?" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="form-input" />
             </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={handleCreateNode}
-                disabled={creatingNode || !newNodeName.trim()}
-                style={{ background: '#43b581', border: 'none', color: '#ffffff', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', opacity: (creatingNode || !newNodeName.trim()) ? 0.6 : 1 }}
-              >
-                {creatingNode ? 'Creating...' : 'Create Node'}
-              </button>
-              <button
-                onClick={() => { setShowCreateNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }}
-                style={{ background: '#747f8d', border: 'none', color: '#ffffff', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
+            <div className="modal-actions">
+              <button onClick={handleCreateNode} disabled={creatingNode || !newNodeName.trim()} className="btn btn-green">{creatingNode ? 'Creating...' : 'Create Node'}</button>
+              <button onClick={() => { setShowCreateNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
             </div>
           </div>
         </div>
@@ -3186,49 +2714,17 @@ function App() {
 
       {/* Invite Modal */}
       {showInviteModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1001
-        }}>
-          <div style={{
-            background: '#36393f',
-            padding: '24px',
-            borderRadius: '8px',
-            maxWidth: '400px',
-            width: '90%',
-            color: '#ffffff'
-          }}>
-            <h3 style={{ margin: '0 0 16px 0', color: '#ffffff' }}>Invite Link Generated</h3>
-            <p style={{ margin: '0 0 16px 0', color: '#b9bbbe' }}>
-              Share this invite link with others to let them join this node:
-            </p>
-            <div style={{
-              background: '#40444b',
-              padding: '12px',
-              borderRadius: '4px',
-              marginBottom: '16px',
-              fontFamily: 'monospace',
-              fontSize: '14px',
-              wordBreak: 'break-all',
-              userSelect: 'text'
-            }}>
-              {generatedInvite}
-            </div>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3>Invite Link Generated</h3>
+            <p>Share this invite link with others to let them join this node:</p>
+            <div className="modal-code-block">{generatedInvite}</div>
+            <div className="modal-actions">
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(generatedInvite).then(() => {
                     alert('Invite code copied to clipboard!');
                   }).catch(() => {
-                    // Fallback for browsers that don't support clipboard API
                     const textArea = document.createElement('textarea');
                     textArea.value = generatedInvite;
                     document.body.appendChild(textArea);
@@ -3238,33 +2734,11 @@ function App() {
                     alert('Invite code copied to clipboard!');
                   });
                 }}
-                style={{
-                  background: '#7289da',
-                  border: 'none',
-                  color: '#ffffff',
-                  padding: '8px 16px',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
+                className="btn btn-primary" style={{ width: 'auto' }}
               >
                 Copy
               </button>
-              <button
-                onClick={() => {
-                  setShowInviteModal(false);
-                  setGeneratedInvite("");
-                }}
-                style={{
-                  background: '#747f8d',
-                  border: 'none',
-                  color: '#ffffff',
-                  padding: '8px 16px',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Close
-              </button>
+              <button onClick={() => { setShowInviteModal(false); setGeneratedInvite(""); }} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
             </div>
           </div>
         </div>
@@ -3452,116 +2926,33 @@ function App() {
 
       {/* DM Channel Creation Modal */}
       {showDmChannelCreate && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            backgroundColor: '#36393f',
-            borderRadius: '8px',
-            padding: '24px',
-            minWidth: '300px',
-            maxWidth: '90vw',
-            maxHeight: '80vh',
-            overflow: 'auto'
-          }}>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '16px'
-            }}>
-              <h3 style={{ margin: 0, color: '#ffffff' }}>Start a Direct Message</h3>
-              <button
-                onClick={() => setShowDmChannelCreate(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#b9bbbe',
-                  cursor: 'pointer',
-                  fontSize: '18px',
-                  padding: '4px'
-                }}
-              >
-                ×
-              </button>
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '380px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0 }}>Start a Direct Message</h3>
+              <button onClick={() => setShowDmChannelCreate(false)} className="error-toast-close" style={{ color: 'var(--text-muted)' }}>×</button>
             </div>
-            
-            <div style={{ marginBottom: '16px', color: '#b9bbbe', fontSize: '14px' }}>
-              Select a user to start a direct message:
-            </div>
-            
+            <p>Select a user to start a direct message:</p>
             <div style={{ maxHeight: '300px', overflow: 'auto' }}>
               {members
                 .filter(member => member.user_id !== localStorage.getItem('accord_user_id'))
                 .map((member) => (
                   <div
                     key={member.user_id}
-                    onClick={() => {
-                      openDmWithUser(member.user);
-                      setShowDmChannelCreate(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '8px 12px',
-                      cursor: 'pointer',
-                      borderRadius: '4px',
-                      marginBottom: '4px',
-                      backgroundColor: 'transparent'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#40444b';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'transparent';
-                    }}
+                    className="member"
+                    onClick={() => { openDmWithUser(member.user); setShowDmChannelCreate(false); }}
                   >
-                    <div 
-                      style={{
-                        width: '24px',
-                        height: '24px',
-                        borderRadius: '50%',
-                        backgroundColor: '#5865f2',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        marginRight: '12px',
-                        fontSize: '12px',
-                        fontWeight: '600',
-                        color: '#ffffff'
-                      }}
-                    >
+                    <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '12px' }}>
                       {displayName(member.user)[0].toUpperCase()}
                     </div>
                     <div>
-                      <div style={{ color: '#ffffff', fontSize: '14px', fontWeight: '500' }}>
-                        {displayName(member.user)}
-                      </div>
-                      <div style={{ color: '#b9bbbe', fontSize: '12px' }}>
-                        {getRoleBadge(member.role)} {member.role}
-                      </div>
+                      <div style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500' }}>{displayName(member.user)}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{getRoleBadge(member.role)} {member.role}</div>
                     </div>
                   </div>
                 ))}
-              
               {members.filter(member => member.user_id !== localStorage.getItem('accord_user_id')).length === 0 && (
-                <div style={{ 
-                  padding: '16px', 
-                  color: '#8e9297', 
-                  fontSize: '14px', 
-                  textAlign: 'center' 
-                }}>
-                  No other members available
-                </div>
+                <div className="members-empty">No other members available</div>
               )}
             </div>
           </div>

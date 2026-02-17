@@ -3,11 +3,22 @@
 import { WsMessage, WsMessageType, WsIncomingMessage } from './types';
 
 // Event types for the WebSocket client
+export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
+
+export interface ConnectionInfo {
+  status: ConnectionStatus;
+  reconnectAttempt: number;
+  maxReconnectAttempts: number;
+}
+
 export interface WsEvents {
   connected: () => void;
   disconnected: () => void;
+  reconnecting: (info: { attempt: number; maxAttempts: number }) => void;
+  connection_status: (info: ConnectionInfo) => void;
   message: (message: WsIncomingMessage) => void;
   error: (error: Error) => void;
+  auth_error: () => void;
   node_created: (data: any) => void;
   node_joined: (data: any) => void;
   node_left: (data: any) => void;
@@ -38,17 +49,36 @@ export class AccordWebSocket {
   private baseUrl: string;
   private listeners: Map<string, Set<EventListener>> = new Map();
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
+  private maxReconnectAttempts = 20;
   private reconnectDelay = 1000; // Start with 1 second
   private maxReconnectDelay = 30000; // Max 30 seconds
   private reconnectTimeout: number | null = null;
   private isConnected = false;
   private isDestroyed = false;
   private pingInterval: number | null = null;
+  private connectionStatus: ConnectionStatus = 'disconnected';
+  private messageQueue: string[] = [];
+  private onlineHandler: (() => void) | null = null;
+  private offlineHandler: (() => void) | null = null;
 
   constructor(token: string, baseUrl = ((typeof window !== 'undefined' && (window as any).__ACCORD_SERVER_URL__) || import.meta.env.VITE_ACCORD_SERVER_URL || 'http://localhost:8080').replace(/^http/, 'ws')) {
     this.token = token;
     this.baseUrl = baseUrl.replace(/^http/, 'ws');
+
+    // Listen for online/offline events
+    if (typeof window !== 'undefined') {
+      this.onlineHandler = () => {
+        if (!this.isConnected && !this.isDestroyed) {
+          this.reconnectAttempts = 0;
+          this.connect();
+        }
+      };
+      this.offlineHandler = () => {
+        this.setConnectionStatus('disconnected');
+      };
+      window.addEventListener('online', this.onlineHandler);
+      window.addEventListener('offline', this.offlineHandler);
+    }
   }
 
   // Event emitter methods
@@ -77,6 +107,35 @@ export class AccordWebSocket {
         }
       });
     }
+  }
+
+  private setConnectionStatus(status: ConnectionStatus): void {
+    this.connectionStatus = status;
+    this.emit('connection_status', {
+      status,
+      reconnectAttempt: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
+    });
+  }
+
+  getConnectionInfo(): ConnectionInfo {
+    return {
+      status: this.connectionStatus,
+      reconnectAttempt: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
+    };
+  }
+
+  // Reset reconnection and try again (for manual retry button)
+  retry(): void {
+    this.isDestroyed = false;
+    this.reconnectAttempts = 0;
+    this.reconnectDelay = 1000;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    this.connect();
   }
 
   // Connection management
@@ -120,12 +179,23 @@ export class AccordWebSocket {
       // Start ping interval
       this.startPingInterval();
       
+      // Flush offline message queue
+      this.flushMessageQueue();
+      
+      this.setConnectionStatus('connected');
       this.emit('connected');
     };
 
     this.ws.onmessage = (event) => {
       try {
         const message: WsIncomingMessage = JSON.parse(event.data);
+        
+        // Detect auth errors (token expired/invalid)
+        if (message.type === 'error' && (message as any).code === 'auth_failed') {
+          this.emit('auth_error');
+          this.isDestroyed = true; // Stop reconnecting on auth failure
+          return;
+        }
         
         // Emit general message event
         this.emit('message', message);
@@ -144,11 +214,22 @@ export class AccordWebSocket {
       this.isConnected = false;
       this.stopPingInterval();
       
+      // Auth rejection from server (4401 or 4403)
+      if (event.code === 4401 || event.code === 4403) {
+        this.setConnectionStatus('disconnected');
+        this.emit('auth_error');
+        this.emit('disconnected');
+        return;
+      }
+      
       this.emit('disconnected');
       
       if (!this.isDestroyed && event.code !== 1000) {
         // Not a normal closure, attempt reconnect
+        this.setConnectionStatus('reconnecting');
         this.scheduleReconnect();
+      } else {
+        this.setConnectionStatus('disconnected');
       }
     };
 
@@ -161,8 +242,15 @@ export class AccordWebSocket {
   private scheduleReconnect(): void {
     if (this.isDestroyed || this.reconnectTimeout) return;
     
+    // Check browser online status
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      this.setConnectionStatus('disconnected');
+      return; // Will reconnect via online event listener
+    }
+    
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
+      this.setConnectionStatus('disconnected');
       this.emit('error', new Error('Max reconnection attempts reached'));
       return;
     }
@@ -173,6 +261,8 @@ export class AccordWebSocket {
       this.maxReconnectDelay
     );
 
+    this.setConnectionStatus('reconnecting');
+    this.emit('reconnecting', { attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts });
 
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
@@ -216,10 +306,11 @@ export class AccordWebSocket {
     }
   }
 
-  // Generic send method for custom messages
+  // Generic send method for custom messages (queues if offline)
   send(message: string): void {
     if (!this.isConnected || !this.ws) {
-      console.warn('WebSocket not connected, cannot send message');
+      // Queue message for later delivery
+      this.messageQueue.push(message);
       return;
     }
 
@@ -227,8 +318,25 @@ export class AccordWebSocket {
       this.ws.send(message);
     } catch (error) {
       console.error('Error sending WebSocket message:', error);
+      this.messageQueue.push(message);
       this.emit('error', new Error('Failed to send message'));
     }
+  }
+
+  private flushMessageQueue(): void {
+    while (this.messageQueue.length > 0 && this.isConnected && this.ws) {
+      const msg = this.messageQueue.shift()!;
+      try {
+        this.ws.send(msg);
+      } catch {
+        this.messageQueue.unshift(msg);
+        break;
+      }
+    }
+  }
+
+  getQueuedMessageCount(): number {
+    return this.messageQueue.length;
   }
 
   // Node operations
@@ -338,6 +446,13 @@ export class AccordWebSocket {
       this.ws = null;
     }
     
+    // Remove online/offline listeners
+    if (typeof window !== 'undefined') {
+      if (this.onlineHandler) window.removeEventListener('online', this.onlineHandler);
+      if (this.offlineHandler) window.removeEventListener('offline', this.offlineHandler);
+    }
+    
+    this.messageQueue = [];
     this.listeners.clear();
   }
 }
