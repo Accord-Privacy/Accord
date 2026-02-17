@@ -623,6 +623,68 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create friend_requests table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS friend_requests (
+                id TEXT PRIMARY KEY NOT NULL,
+                from_user_id TEXT NOT NULL,
+                to_user_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                dm_key_bundle BLOB,
+                created_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                FOREIGN KEY (from_user_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (to_user_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create friend_requests table")?;
+
+        // Create friendships table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS friendships (
+                user_a_hash TEXT NOT NULL,
+                user_b_hash TEXT NOT NULL,
+                friendship_proof BLOB,
+                established_at INTEGER NOT NULL,
+                PRIMARY KEY (user_a_hash, user_b_hash)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create friendships table")?;
+
+        // Indexes for friend_requests
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_friend_requests_from ON friend_requests (from_user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests (to_user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_friend_requests_status ON friend_requests (status)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Indexes for friendships
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_friendships_a ON friendships (user_a_hash)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_friendships_b ON friendships (user_b_hash)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -2886,6 +2948,245 @@ impl Database {
         }
 
         Ok(tokens)
+    }
+
+    // ── Friendship operations ──
+
+    /// Create a friend request (must share a node)
+    pub async fn create_friend_request(
+        &self,
+        from_user_id: Uuid,
+        to_user_id: Uuid,
+        node_id: Uuid,
+        dm_key_bundle: Option<&[u8]>,
+    ) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        let created_at = now();
+
+        sqlx::query(
+            "INSERT INTO friend_requests (id, from_user_id, to_user_id, node_id, dm_key_bundle, created_at, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+        )
+        .bind(id.to_string())
+        .bind(from_user_id.to_string())
+        .bind(to_user_id.to_string())
+        .bind(node_id.to_string())
+        .bind(dm_key_bundle)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create friend request")?;
+
+        Ok(id)
+    }
+
+    /// Accept a friend request — sets status to 'accepted' and creates a friendship
+    pub async fn accept_friend_request(
+        &self,
+        request_id: Uuid,
+        friendship_proof: Option<&[u8]>,
+    ) -> Result<bool> {
+        // Get the request
+        let row = sqlx::query(
+            "SELECT id, from_user_id, to_user_id, status FROM friend_requests WHERE id = ?",
+        )
+        .bind(request_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query friend request")?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(false),
+        };
+
+        let status: String = row.get("status");
+        if status != "pending" {
+            return Ok(false);
+        }
+
+        let from_user_id = Uuid::parse_str(&row.get::<String, _>("from_user_id"))?;
+        let to_user_id = Uuid::parse_str(&row.get::<String, _>("to_user_id"))?;
+
+        // Update status
+        sqlx::query("UPDATE friend_requests SET status = 'accepted' WHERE id = ?")
+            .bind(request_id.to_string())
+            .execute(&self.pool)
+            .await?;
+
+        // Get public_key_hashes for both users
+        let from_hash = self
+            .get_user_public_key_hash(from_user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("From user not found"))?;
+        let to_hash = self
+            .get_user_public_key_hash(to_user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("To user not found"))?;
+
+        // Canonical ordering for the friendship (smaller hash first)
+        let (user_a, user_b) = if from_hash < to_hash {
+            (from_hash, to_hash)
+        } else {
+            (to_hash, from_hash)
+        };
+
+        let established_at = now();
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO friendships (user_a_hash, user_b_hash, friendship_proof, established_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&user_a)
+        .bind(&user_b)
+        .bind(friendship_proof)
+        .bind(established_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create friendship")?;
+
+        Ok(true)
+    }
+
+    /// Reject a friend request
+    pub async fn reject_friend_request(&self, request_id: Uuid) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE friend_requests SET status = 'rejected' WHERE id = ? AND status = 'pending'",
+        )
+        .bind(request_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to reject friend request")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get pending friend requests for a user (incoming)
+    pub async fn get_pending_requests(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::FriendRequest>> {
+        let rows = sqlx::query(
+            "SELECT id, from_user_id, to_user_id, node_id, dm_key_bundle, created_at, status FROM friend_requests WHERE to_user_id = ? AND status = 'pending' ORDER BY created_at DESC",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query pending friend requests")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::FriendRequest> {
+                Ok(crate::models::FriendRequest {
+                    id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                    from_user_id: Uuid::parse_str(&row.get::<String, _>("from_user_id"))?,
+                    to_user_id: Uuid::parse_str(&row.get::<String, _>("to_user_id"))?,
+                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                    dm_key_bundle: row.get("dm_key_bundle"),
+                    created_at: row.get::<i64, _>("created_at") as u64,
+                    status: row.get("status"),
+                })
+            })
+            .collect()
+    }
+
+    /// Get friends of a user (returns list of public_key_hashes)
+    pub async fn get_friends(
+        &self,
+        user_public_key_hash: &str,
+    ) -> Result<Vec<crate::models::Friendship>> {
+        let rows = sqlx::query(
+            "SELECT user_a_hash, user_b_hash, friendship_proof, established_at FROM friendships WHERE user_a_hash = ? OR user_b_hash = ? ORDER BY established_at DESC",
+        )
+        .bind(user_public_key_hash)
+        .bind(user_public_key_hash)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query friends")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::Friendship> {
+                Ok(crate::models::Friendship {
+                    user_a_hash: row.get("user_a_hash"),
+                    user_b_hash: row.get("user_b_hash"),
+                    friendship_proof: row.get("friendship_proof"),
+                    established_at: row.get::<i64, _>("established_at") as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Check if two users are friends
+    pub async fn are_friends(&self, user_a_hash: &str, user_b_hash: &str) -> Result<bool> {
+        let (a, b) = if user_a_hash < user_b_hash {
+            (user_a_hash, user_b_hash)
+        } else {
+            (user_b_hash, user_a_hash)
+        };
+
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM friendships WHERE user_a_hash = ? AND user_b_hash = ?",
+        )
+        .bind(a)
+        .bind(b)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    /// Remove a friendship
+    pub async fn remove_friend(&self, user_a_hash: &str, user_b_hash: &str) -> Result<bool> {
+        let (a, b) = if user_a_hash < user_b_hash {
+            (user_a_hash, user_b_hash)
+        } else {
+            (user_b_hash, user_a_hash)
+        };
+
+        let result =
+            sqlx::query("DELETE FROM friendships WHERE user_a_hash = ? AND user_b_hash = ?")
+                .bind(a)
+                .bind(b)
+                .execute(&self.pool)
+                .await
+                .context("Failed to remove friendship")?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Check if two users share at least one node
+    pub async fn share_a_node(&self, user_a_id: Uuid, user_b_id: Uuid) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_members a JOIN node_members b ON a.node_id = b.node_id WHERE a.user_id = ? AND b.user_id = ?",
+        )
+        .bind(user_a_id.to_string())
+        .bind(user_b_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    /// Get a friend request by ID
+    pub async fn get_friend_request(
+        &self,
+        request_id: Uuid,
+    ) -> Result<Option<crate::models::FriendRequest>> {
+        let row = sqlx::query(
+            "SELECT id, from_user_id, to_user_id, node_id, dm_key_bundle, created_at, status FROM friend_requests WHERE id = ?",
+        )
+        .bind(request_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query friend request")?;
+
+        row.map(|r| -> Result<crate::models::FriendRequest> {
+            Ok(crate::models::FriendRequest {
+                id: Uuid::parse_str(&r.get::<String, _>("id"))?,
+                from_user_id: Uuid::parse_str(&r.get::<String, _>("from_user_id"))?,
+                to_user_id: Uuid::parse_str(&r.get::<String, _>("to_user_id"))?,
+                node_id: Uuid::parse_str(&r.get::<String, _>("node_id"))?,
+                dm_key_bundle: r.get("dm_key_bundle"),
+                created_at: r.get::<i64, _>("created_at") as u64,
+                status: r.get("status"),
+            })
+        })
+        .transpose()
     }
 
     /// Update push notification privacy level for a user's tokens

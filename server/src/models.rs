@@ -749,6 +749,50 @@ pub struct NodeBansResponse {
     pub bans: Vec<NodeBan>,
 }
 
+/// Friend request between two users
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendRequest {
+    pub id: Uuid,
+    pub from_user_id: Uuid,
+    pub to_user_id: Uuid,
+    pub node_id: Uuid,
+    pub dm_key_bundle: Option<Vec<u8>>,
+    pub created_at: u64,
+    pub status: String, // pending, accepted, rejected
+}
+
+/// Friendship record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Friendship {
+    pub user_a_hash: String,
+    pub user_b_hash: String,
+    pub friendship_proof: Option<Vec<u8>>,
+    pub established_at: u64,
+}
+
+/// Request to send a friend request
+#[derive(Debug, Deserialize)]
+pub struct SendFriendRequestRequest {
+    pub to_user_id: Uuid,
+    pub node_id: Uuid,
+    #[serde(default)]
+    pub dm_key_bundle: Option<String>, // base64
+}
+
+/// Request to accept a friend request
+#[derive(Debug, Deserialize)]
+pub struct AcceptFriendRequestRequest {
+    pub request_id: Uuid,
+    #[serde(default)]
+    pub friendship_proof: Option<String>, // base64
+}
+
+/// Request to reject a friend request
+#[derive(Debug, Deserialize)]
+pub struct RejectFriendRequestRequest {
+    pub request_id: Uuid,
+}
+
 /// Request to set a per-Node user profile
 #[derive(Debug, Deserialize)]
 pub struct SetNodeUserProfileRequest {

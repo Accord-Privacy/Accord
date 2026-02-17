@@ -14,7 +14,7 @@ use crate::jitter_buffer::{JitterBuffer, JitterBufferConfig};
 use crate::srtp::{SrtpPacket, VoiceDecryptor, VoiceEncryptor, VoiceSessionKey};
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use uuid::Uuid;
 
@@ -42,6 +42,90 @@ pub const ICE_MAX_CHECK_ATTEMPTS: u32 = 10;
 
 /// Consent freshness interval (RFC 7675): re-check connectivity periodically
 pub const CONSENT_INTERVAL_MS: u64 = 15_000;
+
+/// Warning displayed to users when enabling any non-AlwaysRelay mode.
+pub const P2P_WARNING: &str = "P2P voice may reveal your IP address to other participants.";
+
+// ─── Voice Privacy Settings ──────────────────────────────────────────────────
+
+/// Controls when P2P (direct) voice connections are allowed.
+/// Default is `AlwaysRelay` for maximum privacy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoicePrivacyMode {
+    /// Default — all voice routed through relay, no IP exposure.
+    #[default]
+    AlwaysRelay,
+    /// P2P only with users on the friends list.
+    FriendsOnly,
+    /// P2P only with explicitly whitelisted users.
+    Whitelist,
+    /// P2P with anyone in the voice channel.
+    Everyone,
+}
+
+/// Per-user voice privacy configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoicePrivacyConfig {
+    /// Which mode governs P2P consent.
+    pub mode: VoicePrivacyMode,
+    /// Public-key hashes of users explicitly allowed for P2P (used in `Whitelist` mode).
+    pub p2p_whitelist: HashSet<String>,
+    /// Public-key hashes of users explicitly blocked from P2P.
+    /// Overrides `FriendsOnly` and `Everyone` modes.
+    pub p2p_blocklist: HashSet<String>,
+}
+
+impl Default for VoicePrivacyConfig {
+    fn default() -> Self {
+        Self {
+            mode: VoicePrivacyMode::AlwaysRelay,
+            p2p_whitelist: HashSet::new(),
+            p2p_blocklist: HashSet::new(),
+        }
+    }
+}
+
+impl VoicePrivacyConfig {
+    /// Check whether this user's config allows a P2P connection with `peer_key_hash`.
+    /// `is_friend` indicates whether the peer is on this user's friends list.
+    pub fn allows_p2p(&self, peer_key_hash: &str, is_friend: bool) -> bool {
+        // Blocklist always wins
+        if self.p2p_blocklist.contains(peer_key_hash) {
+            return false;
+        }
+        match self.mode {
+            VoicePrivacyMode::AlwaysRelay => false,
+            VoicePrivacyMode::FriendsOnly => is_friend,
+            VoicePrivacyMode::Whitelist => self.p2p_whitelist.contains(peer_key_hash),
+            VoicePrivacyMode::Everyone => true,
+        }
+    }
+}
+
+/// Check whether a P2P connection is mutually consented between two users.
+///
+/// Both users must independently allow P2P with each other.
+/// `is_friends` is true if the two users are mutual friends.
+pub fn check_p2p_consent(
+    config_a: &VoicePrivacyConfig,
+    key_hash_a: &str,
+    config_b: &VoicePrivacyConfig,
+    key_hash_b: &str,
+    is_friends: bool,
+) -> bool {
+    config_a.allows_p2p(key_hash_b, is_friends) && config_b.allows_p2p(key_hash_a, is_friends)
+}
+
+// ─── Routing Decision ────────────────────────────────────────────────────────
+
+/// How a specific peer pair is routed in a hybrid voice channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PairRouting {
+    /// Direct P2P — both users consented.
+    DirectP2P,
+    /// Routed through the server relay.
+    Relay,
+}
 
 // ─── ICE Candidate Types ─────────────────────────────────────────────────────
 
@@ -394,6 +478,10 @@ pub struct VoiceMeshSession {
     pub relay_mode: bool,
     /// Voice session key (shared across the group)
     voice_key: VoiceSessionKey,
+    /// Per-peer routing decisions (hybrid: some P2P, some relay in same channel)
+    pub pair_routing: HashMap<Uuid, PairRouting>,
+    /// Local user's voice privacy config
+    pub local_privacy: VoicePrivacyConfig,
 }
 
 impl VoiceMeshSession {
@@ -411,7 +499,76 @@ impl VoiceMeshSession {
             peers: HashMap::new(),
             relay_mode: false,
             voice_key,
+            pair_routing: HashMap::new(),
+            local_privacy: VoicePrivacyConfig::default(),
         }
+    }
+
+    /// Create a new mesh session with a specific privacy configuration.
+    pub fn with_privacy(
+        channel_id: Uuid,
+        local_user_id: Uuid,
+        local_ssrc: u32,
+        voice_key: VoiceSessionKey,
+        privacy: VoicePrivacyConfig,
+    ) -> Self {
+        Self {
+            channel_id,
+            local_user_id,
+            local_ssrc,
+            peers: HashMap::new(),
+            relay_mode: false,
+            voice_key,
+            pair_routing: HashMap::new(),
+            local_privacy: privacy,
+        }
+    }
+
+    /// Decide routing for a peer based on mutual consent.
+    ///
+    /// `peer_config` is the remote user's privacy config.
+    /// `local_key_hash` / `peer_key_hash` are the respective public key hashes.
+    /// `is_friends` is whether the two users are mutual friends.
+    ///
+    /// Returns the routing decision and stores it internally.
+    pub fn decide_routing(
+        &mut self,
+        peer_id: Uuid,
+        peer_config: &VoicePrivacyConfig,
+        local_key_hash: &str,
+        peer_key_hash: &str,
+        is_friends: bool,
+    ) -> PairRouting {
+        let routing = if check_p2p_consent(
+            &self.local_privacy,
+            local_key_hash,
+            peer_config,
+            peer_key_hash,
+            is_friends,
+        ) {
+            PairRouting::DirectP2P
+        } else {
+            PairRouting::Relay
+        };
+        self.pair_routing.insert(peer_id, routing);
+        routing
+    }
+
+    /// Get the routing decision for a specific peer.
+    pub fn get_routing(&self, peer_id: &Uuid) -> PairRouting {
+        self.pair_routing
+            .get(peer_id)
+            .copied()
+            .unwrap_or(PairRouting::Relay)
+    }
+
+    /// Get all peers using a specific routing mode.
+    pub fn peers_by_routing(&self, routing: PairRouting) -> Vec<Uuid> {
+        self.pair_routing
+            .iter()
+            .filter(|(_, &r)| r == routing)
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     /// Add a peer to the mesh. Fails if MAX_P2P_PEERS would be exceeded.
@@ -929,5 +1086,165 @@ mod tests {
 
         let connected = session.peers_in_state(PeerConnectionState::Connected);
         assert_eq!(connected, vec![p1]);
+    }
+
+    // ── Voice Privacy & Consent tests ────────────────────────────────────
+
+    #[test]
+    fn test_default_privacy_is_always_relay() {
+        let config = VoicePrivacyConfig::default();
+        assert_eq!(config.mode, VoicePrivacyMode::AlwaysRelay);
+        assert!(!config.allows_p2p("somehash", true));
+        assert!(!config.allows_p2p("somehash", false));
+    }
+
+    #[test]
+    fn test_friends_only_mode() {
+        let config = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::FriendsOnly,
+            ..Default::default()
+        };
+        assert!(config.allows_p2p("friend_hash", true));
+        assert!(!config.allows_p2p("stranger_hash", false));
+    }
+
+    #[test]
+    fn test_whitelist_mode() {
+        let mut whitelist = HashSet::new();
+        whitelist.insert("allowed_hash".to_string());
+        let config = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::Whitelist,
+            p2p_whitelist: whitelist,
+            ..Default::default()
+        };
+        assert!(config.allows_p2p("allowed_hash", false));
+        assert!(!config.allows_p2p("other_hash", true));
+    }
+
+    #[test]
+    fn test_everyone_mode() {
+        let config = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::Everyone,
+            ..Default::default()
+        };
+        assert!(config.allows_p2p("anyone", false));
+    }
+
+    #[test]
+    fn test_blocklist_overrides_all_modes() {
+        let mut blocklist = HashSet::new();
+        blocklist.insert("blocked_hash".to_string());
+
+        for mode in [
+            VoicePrivacyMode::FriendsOnly,
+            VoicePrivacyMode::Everyone,
+            VoicePrivacyMode::Whitelist,
+        ] {
+            let mut whitelist = HashSet::new();
+            whitelist.insert("blocked_hash".to_string());
+            let config = VoicePrivacyConfig {
+                mode,
+                p2p_whitelist: whitelist,
+                p2p_blocklist: blocklist.clone(),
+            };
+            assert!(
+                !config.allows_p2p("blocked_hash", true),
+                "Blocklist should override mode {:?}",
+                config.mode,
+            );
+        }
+    }
+
+    #[test]
+    fn test_mutual_consent_both_allow() {
+        let config_a = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::Everyone,
+            ..Default::default()
+        };
+        let config_b = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::Everyone,
+            ..Default::default()
+        };
+        assert!(check_p2p_consent(&config_a, "a", &config_b, "b", false));
+    }
+
+    #[test]
+    fn test_mutual_consent_one_denies() {
+        let config_a = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::Everyone,
+            ..Default::default()
+        };
+        let config_b = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::AlwaysRelay,
+            ..Default::default()
+        };
+        assert!(!check_p2p_consent(&config_a, "a", &config_b, "b", false));
+    }
+
+    #[test]
+    fn test_mutual_consent_friends_only_symmetric() {
+        let config = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::FriendsOnly,
+            ..Default::default()
+        };
+        // Both friends → P2P
+        assert!(check_p2p_consent(&config, "a", &config, "b", true));
+        // Not friends → relay
+        assert!(!check_p2p_consent(&config, "a", &config, "b", false));
+    }
+
+    #[test]
+    fn test_hybrid_routing_in_session() {
+        let voice_key = test_voice_key();
+        let channel_id = Uuid::new_v4();
+        let local_id = Uuid::new_v4();
+
+        let privacy_everyone = VoicePrivacyConfig {
+            mode: VoicePrivacyMode::Everyone,
+            ..Default::default()
+        };
+        let privacy_relay = VoicePrivacyConfig::default();
+
+        let mut session = VoiceMeshSession::with_privacy(
+            channel_id,
+            local_id,
+            1000,
+            voice_key,
+            privacy_everyone.clone(),
+        );
+
+        let peer_p2p = Uuid::new_v4();
+        let peer_relay = Uuid::new_v4();
+
+        session.add_peer(peer_p2p, 2000).unwrap();
+        session.add_peer(peer_relay, 3000).unwrap();
+
+        // peer_p2p also has Everyone → mutual consent → P2P
+        let r1 = session.decide_routing(peer_p2p, &privacy_everyone, "local", "peer1", false);
+        assert_eq!(r1, PairRouting::DirectP2P);
+
+        // peer_relay has AlwaysRelay → no consent → Relay
+        let r2 = session.decide_routing(peer_relay, &privacy_relay, "local", "peer2", false);
+        assert_eq!(r2, PairRouting::Relay);
+
+        // Both peers exist in same session with different routing
+        assert_eq!(session.get_routing(&peer_p2p), PairRouting::DirectP2P);
+        assert_eq!(session.get_routing(&peer_relay), PairRouting::Relay);
+
+        let p2p_peers = session.peers_by_routing(PairRouting::DirectP2P);
+        assert_eq!(p2p_peers, vec![peer_p2p]);
+        let relay_peers = session.peers_by_routing(PairRouting::Relay);
+        assert_eq!(relay_peers, vec![peer_relay]);
+    }
+
+    #[test]
+    fn test_unknown_peer_defaults_to_relay() {
+        let session = test_session();
+        assert_eq!(session.get_routing(&Uuid::new_v4()), PairRouting::Relay);
+    }
+
+    #[test]
+    fn test_p2p_warning_constant() {
+        assert!(P2P_WARNING.contains("IP address"));
     }
 }

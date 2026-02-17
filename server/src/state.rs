@@ -1,7 +1,6 @@
 //! State management for the Accord relay server with SQLite persistence
 
 use crate::db::Database;
-use crate::federation::FederationState;
 use crate::files::FileHandler;
 use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
@@ -35,8 +34,6 @@ pub struct AppState {
     pub node_creation_policy: NodeCreationPolicy,
     /// Rate limiter
     pub rate_limiter: RateLimiter,
-    /// Federation state (None if federation is not configured)
-    pub federation: Option<FederationState>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -65,7 +62,6 @@ impl AppState {
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
             rate_limiter: RateLimiter::new(),
-            federation: None,
         })
     }
 
@@ -1264,5 +1260,188 @@ mod tests {
             .unwrap();
         let participants = state.get_voice_channel_participants(channel.id).await;
         assert_eq!(participants.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_friend_request_flow() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
+        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+
+        // Create a shared node
+        let node = state
+            .create_node("Shared".into(), user_a, None)
+            .await
+            .unwrap();
+        state.join_node(user_b, node.id).await.unwrap();
+
+        // Verify they share a node
+        assert!(state.db.share_a_node(user_a, user_b).await.unwrap());
+
+        // Send friend request
+        let req_id = state
+            .db
+            .create_friend_request(user_a, user_b, node.id, None)
+            .await
+            .unwrap();
+
+        // Check pending requests
+        let pending = state.db.get_pending_requests(user_b).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].from_user_id, user_a);
+
+        // Accept
+        assert!(state.db.accept_friend_request(req_id, None).await.unwrap());
+
+        // Verify friendship
+        let hash_a = state
+            .db
+            .get_user_public_key_hash(user_a)
+            .await
+            .unwrap()
+            .unwrap();
+        let hash_b = state
+            .db
+            .get_user_public_key_hash(user_b)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(state.db.are_friends(&hash_a, &hash_b).await.unwrap());
+
+        // List friends
+        let friends = state.db.get_friends(&hash_a).await.unwrap();
+        assert_eq!(friends.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_friend_request_rejection() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
+        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+
+        let node = state
+            .create_node("Node".into(), user_a, None)
+            .await
+            .unwrap();
+        state.join_node(user_b, node.id).await.unwrap();
+
+        let req_id = state
+            .db
+            .create_friend_request(user_a, user_b, node.id, None)
+            .await
+            .unwrap();
+
+        // Reject
+        assert!(state.db.reject_friend_request(req_id).await.unwrap());
+
+        // Not friends
+        let hash_a = state
+            .db
+            .get_user_public_key_hash(user_a)
+            .await
+            .unwrap()
+            .unwrap();
+        let hash_b = state
+            .db
+            .get_user_public_key_hash(user_b)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!state.db.are_friends(&hash_a, &hash_b).await.unwrap());
+
+        // Can't accept after rejection
+        assert!(!state.db.accept_friend_request(req_id, None).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_no_shared_node_no_friend_request() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
+        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+
+        // No shared node
+        assert!(!state.db.share_a_node(user_a, user_b).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_dm_requires_friendship() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
+        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+
+        // Not friends — check are_friends returns false
+        let hash_a = state
+            .db
+            .get_user_public_key_hash(user_a)
+            .await
+            .unwrap()
+            .unwrap();
+        let hash_b = state
+            .db
+            .get_user_public_key_hash(user_b)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!state.db.are_friends(&hash_a, &hash_b).await.unwrap());
+
+        // After becoming friends, DM should work
+        let node = state
+            .create_node("Node".into(), user_a, None)
+            .await
+            .unwrap();
+        state.join_node(user_b, node.id).await.unwrap();
+        let req_id = state
+            .db
+            .create_friend_request(user_a, user_b, node.id, None)
+            .await
+            .unwrap();
+        state.db.accept_friend_request(req_id, None).await.unwrap();
+
+        assert!(state.db.are_friends(&hash_a, &hash_b).await.unwrap());
+
+        // Friendship gate verified — are_friends now returns true,
+        // so the DM creation handler would allow it.
+    }
+
+    #[tokio::test]
+    async fn test_remove_friend() {
+        let state = AppState::new_in_memory().await.unwrap();
+
+        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
+        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+
+        let node = state
+            .create_node("Node".into(), user_a, None)
+            .await
+            .unwrap();
+        state.join_node(user_b, node.id).await.unwrap();
+
+        let req_id = state
+            .db
+            .create_friend_request(user_a, user_b, node.id, None)
+            .await
+            .unwrap();
+        state.db.accept_friend_request(req_id, None).await.unwrap();
+
+        let hash_a = state
+            .db
+            .get_user_public_key_hash(user_a)
+            .await
+            .unwrap()
+            .unwrap();
+        let hash_b = state
+            .db
+            .get_user_public_key_hash(user_b)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(state.db.are_friends(&hash_a, &hash_b).await.unwrap());
+        assert!(state.db.remove_friend(&hash_a, &hash_b).await.unwrap());
+        assert!(!state.db.are_friends(&hash_a, &hash_b).await.unwrap());
     }
 }

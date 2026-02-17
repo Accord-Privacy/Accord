@@ -4171,8 +4171,470 @@ pub async fn get_pinned_messages_handler(
 
 // ── Direct Message Handlers ──
 
-/// Create or get a DM channel with a specific user
-/// POST /dm/:user_id
+// ── Friend system endpoints ──
+
+/// Send a friend request (POST /friends/request)
+pub async fn send_friend_request_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::SendFriendRequestRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Cannot friend yourself
+    if user_id == request.to_user_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Cannot send friend request to yourself".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Check target user exists
+    if state
+        .db
+        .get_user_by_id(request.to_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .is_none()
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Target user not found".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    // Must share a node
+    let shared = state
+        .db
+        .share_a_node(user_id, request.to_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+    if !shared {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must share a Node to send a friend request".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Check not already friends
+    let user_hash = state
+        .db
+        .get_user_public_key_hash(user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "User not found".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let target_hash = state
+        .db
+        .get_user_public_key_hash(request.to_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Target user not found".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let already_friends = state
+        .db
+        .are_friends(&user_hash, &target_hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+    if already_friends {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "Already friends".into(),
+                code: 409,
+            }),
+        ));
+    }
+
+    let dm_key_bundle = request
+        .dm_key_bundle
+        .as_ref()
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok());
+
+    let request_id = state
+        .db
+        .create_friend_request(
+            user_id,
+            request.to_user_id,
+            request.node_id,
+            dm_key_bundle.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to create friend request: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    info!(
+        "Friend request {} from {} to {}",
+        request_id, user_id, request.to_user_id
+    );
+    Ok(Json(
+        serde_json::json!({ "status": "sent", "request_id": request_id }),
+    ))
+}
+
+/// Accept a friend request (POST /friends/accept)
+pub async fn accept_friend_request_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::AcceptFriendRequestRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Verify the request is addressed to this user
+    let fr = state
+        .db
+        .get_friend_request(request.request_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Friend request not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    if fr.to_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "This request is not addressed to you".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let proof_bytes = request
+        .friendship_proof
+        .as_ref()
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok());
+
+    let accepted = state
+        .db
+        .accept_friend_request(request.request_id, proof_bytes.as_deref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to accept: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !accepted {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Request already handled or not found".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    info!(
+        "Friend request {} accepted by {}",
+        request.request_id, user_id
+    );
+    Ok(Json(serde_json::json!({ "status": "accepted" })))
+}
+
+/// Reject a friend request (POST /friends/reject)
+pub async fn reject_friend_request_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::RejectFriendRequestRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Verify the request is addressed to this user
+    let fr = state
+        .db
+        .get_friend_request(request.request_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Friend request not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    if fr.to_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "This request is not addressed to you".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let rejected = state
+        .db
+        .reject_friend_request(request.request_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to reject: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !rejected {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Request already handled".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    Ok(Json(serde_json::json!({ "status": "rejected" })))
+}
+
+/// List friends (GET /friends)
+pub async fn list_friends_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let user_hash = state
+        .db
+        .get_user_public_key_hash(user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "User not found".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let friends = state.db.get_friends(&user_hash).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("DB error: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "friends": friends })))
+}
+
+/// List pending friend requests (GET /friends/requests)
+pub async fn list_friend_requests_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let requests = state.db.get_pending_requests(user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("DB error: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "requests": requests })))
+}
+
+/// Remove a friend (DELETE /friends/:user_id)
+pub async fn remove_friend_handler(
+    State(state): State<SharedState>,
+    Path(target_user_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let user_hash = state
+        .db
+        .get_user_public_key_hash(user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "User not found".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let target_hash = state
+        .db
+        .get_user_public_key_hash(target_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Target user not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    let removed = state
+        .db
+        .remove_friend(&user_hash, &target_hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !removed {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Friendship not found".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    Ok(Json(serde_json::json!({ "status": "removed" })))
+}
+
 pub async fn create_dm_channel_handler(
     State(state): State<SharedState>,
     Path(target_user_id): Path<String>,
@@ -4241,6 +4703,82 @@ pub async fn create_dm_channel_handler(
                 code: 400,
             }),
         ));
+    }
+
+    // Check if already have a DM channel (existing channels continue to work)
+    let existing = state
+        .db
+        .get_dm_channel_between_users(user_id, target_user_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to check existing DM channel: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check existing DM channel".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // If no existing DM channel, require friendship
+    if existing.is_none() {
+        let user_hash = state
+            .db
+            .get_user_public_key_hash(user_id)
+            .await
+            .map_err(|e| {
+                error!("DB error: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Internal error".into(),
+                        code: 500,
+                    }),
+                )
+            })?
+            .unwrap_or_default();
+
+        let target_hash = state
+            .db
+            .get_user_public_key_hash(target_user_id)
+            .await
+            .map_err(|e| {
+                error!("DB error: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Internal error".into(),
+                        code: 500,
+                    }),
+                )
+            })?
+            .unwrap_or_default();
+
+        let friends = state
+            .db
+            .are_friends(&user_hash, &target_hash)
+            .await
+            .map_err(|e| {
+                error!("DB error: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Internal error".into(),
+                        code: 500,
+                    }),
+                )
+            })?;
+
+        if !friends {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be friends to create a DM channel".into(),
+                    code: 403,
+                }),
+            ));
+        }
     }
 
     // Create or get DM channel

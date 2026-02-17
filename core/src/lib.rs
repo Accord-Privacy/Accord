@@ -15,6 +15,7 @@ pub mod crypto;
 pub mod device_fingerprint;
 pub mod double_ratchet;
 pub mod ffi;
+pub mod friendship_proof;
 pub mod invites;
 pub mod jitter_buffer;
 #[cfg(feature = "android")]

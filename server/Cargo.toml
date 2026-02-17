@@ -49,8 +49,6 @@ base64 = "0.21"
 # Cryptographic hashing
 sha2 = "0.10"
 
-# Ed25519 signatures for federation
-ed25519-dalek = { version = "2.0", features = ["rand_core"] }
 
 # Hex encoding
 hex = "0.4"
