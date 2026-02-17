@@ -4,12 +4,40 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// User information stored on the server
+///
+/// The relay identifies users by UUID and public_key_hash only.
+/// Usernames are a Node-level concept — the relay does not store human-readable names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: Uuid,
-    pub username: String,
+    /// SHA-256 hash of the user's public key (hex-encoded). Primary relay-level identifier.
+    pub public_key_hash: String,
     pub public_key: String,
     pub created_at: u64,
+}
+
+/// Per-Node user profile (encrypted, stored on the relay but opaque to it)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeUserProfile {
+    pub node_id: Uuid,
+    pub user_id: Uuid,
+    /// Encrypted with the Node metadata key — relay cannot read this
+    pub encrypted_display_name: Option<Vec<u8>>,
+    /// Encrypted with the Node metadata key — relay cannot read this
+    pub encrypted_avatar_url: Option<Vec<u8>>,
+    pub joined_at: u64,
+}
+
+/// Ban entry for a Node (keyed on public_key_hash for identity-based bans)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeBan {
+    pub node_id: Uuid,
+    pub public_key_hash: String,
+    pub banned_by: Uuid,
+    pub banned_at: u64,
+    /// Encrypted with the Node metadata key — relay cannot read the reason
+    pub reason_encrypted: Option<Vec<u8>>,
+    pub expires_at: Option<u64>,
 }
 
 /// Authentication token
@@ -193,9 +221,11 @@ pub struct WsMessage {
     pub timestamp: u64,
 }
 
-/// Registration request
+/// Registration request — keypair-only, no username at relay level
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
+    /// Deprecated: ignored by the relay. Kept for backward API compat.
+    #[serde(default)]
     pub username: String,
     pub public_key: String,
     #[serde(default)]
@@ -209,11 +239,19 @@ pub struct RegisterResponse {
     pub message: String,
 }
 
-/// Authentication request
+/// Authentication request — authenticate by public_key (or public_key_hash) + password
 #[derive(Debug, Deserialize)]
 pub struct AuthRequest {
+    /// Deprecated: use public_key or public_key_hash instead. Kept for backward compat.
+    #[serde(default)]
     pub username: String,
     pub password: String,
+    /// The user's public key — relay will compute SHA-256 hash to look up the user.
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// Alternatively, provide the hex-encoded SHA-256 hash directly.
+    #[serde(default)]
+    pub public_key_hash: Option<String>,
 }
 
 /// Authentication response
@@ -376,7 +414,8 @@ pub struct UserPresence {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemberWithProfile {
     pub user_id: Uuid,
-    pub username: String,
+    /// Public key hash (hex). No username at relay level.
+    pub public_key_hash: String,
     pub role: crate::node::NodeRole,
     pub joined_at: u64,
     pub profile: UserProfile,
@@ -388,7 +427,8 @@ pub struct MessageMetadata {
     pub id: Uuid,
     pub channel_id: Uuid,
     pub sender_id: Uuid,
-    pub sender_username: String,
+    /// Sender's public_key_hash (hex). Display name comes from Node-level profile.
+    pub sender_public_key_hash: String,
     pub encrypted_payload: String, // Base64 encoded encrypted content
     pub created_at: u64,
     pub edited_at: Option<u64>,
@@ -403,7 +443,8 @@ pub struct MessageMetadata {
 pub struct RepliedMessage {
     pub id: Uuid,
     pub sender_id: Uuid,
-    pub sender_username: String,
+    /// Sender's public_key_hash (hex). Display name comes from Node-level profile.
+    pub sender_public_key_hash: String,
     pub encrypted_payload: String, // Base64 encoded encrypted content (snippet)
     pub created_at: u64,
 }
@@ -436,7 +477,7 @@ pub struct SearchResult {
     pub channel_id: Uuid,
     pub channel_name: String,
     pub sender_id: Uuid,
-    pub sender_username: String,
+    pub sender_public_key_hash: String,
     pub created_at: u64,
     pub encrypted_payload: String, // Base64 encoded - content search must happen client-side
 }
@@ -668,10 +709,47 @@ pub struct AuditLogWithActor {
     pub id: Uuid,
     pub node_id: Uuid,
     pub actor_id: Uuid,
-    pub actor_username: String,
+    pub actor_public_key_hash: String,
     pub action: String,
     pub target_type: String,
     pub target_id: Option<Uuid>,
     pub details: Option<String>,
     pub created_at: u64,
+}
+
+/// Request to ban a user from a Node
+#[derive(Debug, Deserialize)]
+pub struct BanUserRequest {
+    /// The hex-encoded SHA-256 hash of the public key to ban
+    pub public_key_hash: String,
+    /// Encrypted reason (opaque to relay)
+    #[serde(default)]
+    pub reason_encrypted: Option<String>,
+    /// Optional expiration timestamp (Unix seconds)
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
+/// Request to unban a user from a Node
+#[derive(Debug, Deserialize)]
+pub struct UnbanUserRequest {
+    /// The hex-encoded SHA-256 hash of the public key to unban
+    pub public_key_hash: String,
+}
+
+/// Response for listing bans
+#[derive(Debug, Serialize)]
+pub struct NodeBansResponse {
+    pub bans: Vec<NodeBan>,
+}
+
+/// Request to set a per-Node user profile
+#[derive(Debug, Deserialize)]
+pub struct SetNodeUserProfileRequest {
+    /// Encrypted display name (base64, encrypted with Node metadata key)
+    #[serde(default)]
+    pub encrypted_display_name: Option<String>,
+    /// Encrypted avatar URL (base64, encrypted with Node metadata key)
+    #[serde(default)]
+    pub encrypted_avatar_url: Option<String>,
 }

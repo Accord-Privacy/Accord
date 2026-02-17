@@ -35,20 +35,11 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
     })
 }
 
-/// User registration endpoint
+/// User registration endpoint — keypair-only, no username at relay level
 pub async fn register_handler(
     State(state): State<SharedState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, (StatusCode, Json<ErrorResponse>)> {
-    if request.username.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Username cannot be empty".into(),
-                code: 400,
-            }),
-        ));
-    }
     if request.public_key.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -60,7 +51,7 @@ pub async fn register_handler(
     }
 
     match state
-        .register_user(request.username, request.public_key, request.password)
+        .register_user(request.public_key, request.password)
         .await
     {
         Ok(user_id) => {
@@ -80,13 +71,32 @@ pub async fn register_handler(
     }
 }
 
-/// User authentication endpoint
+/// User authentication endpoint — authenticate by public_key or public_key_hash + password
 pub async fn auth_handler(
     State(state): State<SharedState>,
     Json(request): Json<AuthRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Determine the public_key_hash to authenticate with
+    let public_key_hash = if let Some(ref pkh) = request.public_key_hash {
+        pkh.clone()
+    } else if let Some(ref pk) = request.public_key {
+        crate::db::compute_public_key_hash(pk)
+    } else if !request.username.is_empty() {
+        // Backward compat: treat username as public_key for old clients
+        // (they used to send the public key as "username" in some flows)
+        crate::db::compute_public_key_hash(&request.username)
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Must provide public_key or public_key_hash".into(),
+                code: 400,
+            }),
+        ));
+    };
+
     match state
-        .authenticate_user(request.username, request.password)
+        .authenticate_user(public_key_hash, request.password)
         .await
     {
         Ok(auth_token) => {
@@ -499,6 +509,335 @@ pub async fn use_invite_handler(
             }),
         )),
     }
+}
+
+// ── Node ban endpoints ──
+
+/// Ban a user from a Node (POST /nodes/:id/bans)
+pub async fn ban_user_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::BanUserRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check permissions (admin/mod only)
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::KickMembers) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions to ban users".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let reason_bytes = request
+        .reason_encrypted
+        .as_ref()
+        .and_then(|r| base64::engine::general_purpose::STANDARD.decode(r).ok());
+
+    state
+        .db
+        .ban_from_node(
+            node_id,
+            &request.public_key_hash,
+            user_id,
+            reason_bytes.as_deref(),
+            request.expires_at,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to ban user: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Also remove the banned user from the node if they're a member
+    if let Ok(Some(banned_user)) = state
+        .db
+        .get_user_by_public_key_hash(&request.public_key_hash)
+        .await
+    {
+        let _ = state.db.remove_node_member(node_id, banned_user.id).await;
+    }
+
+    info!(
+        "User with public_key_hash {} banned from node {} by {}",
+        &request.public_key_hash[..16.min(request.public_key_hash.len())],
+        node_id,
+        user_id
+    );
+
+    Ok(Json(serde_json::json!({
+        "status": "banned",
+        "node_id": node_id,
+        "public_key_hash": request.public_key_hash,
+    })))
+}
+
+/// Unban a user from a Node (DELETE /nodes/:id/bans)
+pub async fn unban_user_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::UnbanUserRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check permissions
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::KickMembers) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions to unban users".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let removed = state
+        .db
+        .unban_from_node(node_id, &request.public_key_hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to unban user: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if removed {
+        Ok(Json(serde_json::json!({
+            "status": "unbanned",
+            "node_id": node_id,
+            "public_key_hash": request.public_key_hash,
+        })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Ban not found".into(),
+                code: 404,
+            }),
+        ))
+    }
+}
+
+/// List bans for a Node (GET /nodes/:id/bans)
+pub async fn list_bans_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::NodeBansResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check membership
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::KickMembers) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions to view bans".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let bans = state.db.get_node_bans(node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get bans: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(crate::models::NodeBansResponse { bans }))
+}
+
+// ── Node user profile endpoints ──
+
+/// Set per-Node user profile (PUT /nodes/:id/profile)
+pub async fn set_node_user_profile_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::SetNodeUserProfileRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Must be a member
+    if !state
+        .is_node_member(user_id, node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must be a member of the node".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let enc_name = request
+        .encrypted_display_name
+        .as_ref()
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok());
+    let enc_avatar = request
+        .encrypted_avatar_url
+        .as_ref()
+        .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok());
+
+    state
+        .db
+        .set_node_user_profile(node_id, user_id, enc_name.as_deref(), enc_avatar.as_deref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to set node profile: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "status": "updated",
+        "node_id": node_id,
+        "user_id": user_id,
+    })))
+}
+
+/// Get per-Node user profiles (GET /nodes/:id/profiles)
+pub async fn get_node_user_profiles_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Must be a member
+    if !state
+        .is_node_member(user_id, node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must be a member of the node".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let profiles = state
+        .db
+        .get_node_user_profiles(node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get node profiles: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Encode encrypted fields as base64 for JSON transport
+    let profiles_json: Vec<serde_json::Value> = profiles
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "node_id": p.node_id,
+                "user_id": p.user_id,
+                "encrypted_display_name": p.encrypted_display_name.as_ref().map(|b| base64::engine::general_purpose::STANDARD.encode(b)),
+                "encrypted_avatar_url": p.encrypted_avatar_url.as_ref().map(|b| base64::engine::general_purpose::STANDARD.encode(b)),
+                "joined_at": p.joined_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "profiles": profiles_json })))
 }
 
 // ── Channel Category endpoints ──
@@ -1964,7 +2303,7 @@ async fn handle_ws_message(
                 "type": "typing_start",
                 "channel_id": channel_id,
                 "user_id": sender_user_id,
-                "username": user.username,
+                "public_key_hash": user.public_key_hash,
                 "timestamp": now_secs()
             });
 

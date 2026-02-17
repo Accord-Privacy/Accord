@@ -125,16 +125,10 @@ pub struct EncryptedMetadata {
 
 impl EncryptedMetadata {
     /// Encrypt a name and optional description.
-    pub fn encrypt(
-        key: &NodeMetadataKey,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<Self> {
+    pub fn encrypt(key: &NodeMetadataKey, name: &str, description: Option<&str>) -> Result<Self> {
         use base64::Engine;
         let enc_name = key.encrypt(name)?;
-        let enc_desc = description
-            .map(|d| key.encrypt(d))
-            .transpose()?;
+        let enc_desc = description.map(|d| key.encrypt(d)).transpose()?;
 
         Ok(Self {
             encrypted_name: Some(base64::engine::general_purpose::STANDARD.encode(&enc_name)),

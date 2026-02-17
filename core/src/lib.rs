@@ -16,9 +16,9 @@ pub mod double_ratchet;
 pub mod ffi;
 pub mod invites;
 pub mod jitter_buffer;
-pub mod metadata_crypto;
 #[cfg(feature = "android")]
 pub mod jni;
+pub mod metadata_crypto;
 pub mod p2p_voice;
 pub mod protocol;
 pub mod push_crypto;

@@ -76,14 +76,15 @@ impl AppState {
 
     // ── User operations ──
 
+    /// Register a user by public key. No username at the relay level.
     pub async fn register_user(
         &self,
-        username: String,
         public_key: String,
         password: String,
     ) -> Result<Uuid, String> {
-        match self.db.username_exists(&username).await {
-            Ok(true) => return Err("Username already exists".to_string()),
+        let public_key_hash = crate::db::compute_public_key_hash(&public_key);
+        match self.db.public_key_hash_exists(&public_key_hash).await {
+            Ok(true) => return Err("Public key already registered".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
             _ => {}
         }
@@ -100,22 +101,20 @@ impl AppState {
                 .to_string()
         };
 
-        match self
-            .db
-            .create_user(&username, &public_key, &password_hash)
-            .await
-        {
+        match self.db.create_user(&public_key, &password_hash).await {
             Ok(user) => Ok(user.id),
             Err(e) => Err(format!("Failed to create user: {}", e)),
         }
     }
 
+    /// Authenticate by public_key_hash (or public_key) + password.
+    /// For backward compat, also accepts username-based lookups (will be removed).
     pub async fn authenticate_user(
         &self,
-        username: String,
+        public_key_hash: String,
         password: String,
     ) -> Result<AuthToken, String> {
-        let user = match self.db.get_user_by_username(&username).await {
+        let user = match self.db.get_user_by_public_key_hash(&public_key_hash).await {
             Ok(Some(user)) => user,
             Ok(None) => return Err("User not found".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
@@ -124,7 +123,7 @@ impl AppState {
         // Verify password
         let stored_hash = self
             .db
-            .get_user_password_hash(&username)
+            .get_user_password_hash_by_pkh(&public_key_hash)
             .await
             .map_err(|e| format!("Database error: {}", e))?
             .unwrap_or_default();
@@ -248,6 +247,24 @@ impl AppState {
             Ok(None) => return Err("Node not found".to_string()),
             Err(e) => return Err(format!("Database error: {}", e)),
         }
+
+        // Check ban status
+        let public_key_hash = self
+            .db
+            .get_user_public_key_hash(user_id)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?
+            .ok_or_else(|| "User not found".to_string())?;
+
+        if self
+            .db
+            .is_banned_from_node(node_id, &public_key_hash)
+            .await
+            .unwrap_or(false)
+        {
+            return Err("You are banned from this node".to_string());
+        }
+
         // Check not already member
         if self
             .db
@@ -382,6 +399,23 @@ impl AppState {
             if invite.current_uses >= max_uses {
                 return Err("Invite has reached maximum uses".to_string());
             }
+        }
+
+        // Check ban status
+        let public_key_hash = self
+            .db
+            .get_user_public_key_hash(user_id)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?
+            .ok_or_else(|| "User not found".to_string())?;
+
+        if self
+            .db
+            .is_banned_from_node(invite.node_id, &public_key_hash)
+            .await
+            .unwrap_or(false)
+        {
+            return Err("You are banned from this node".to_string());
         }
 
         // Check if user is already a member
@@ -1095,14 +1129,8 @@ mod tests {
     #[tokio::test]
     async fn test_node_lifecycle() {
         let state = AppState::new_in_memory().await.unwrap();
-        let owner_id = state
-            .register_user("owner".into(), "key".into(), "".into())
-            .await
-            .unwrap();
-        let user_id = state
-            .register_user("user".into(), "key2".into(), "".into())
-            .await
-            .unwrap();
+        let owner_id = state.register_user("key".into(), "".into()).await.unwrap();
+        let user_id = state.register_user("key2".into(), "".into()).await.unwrap();
 
         // Create node
         let node = state
@@ -1133,14 +1161,8 @@ mod tests {
     #[tokio::test]
     async fn test_channel_requires_node_membership() {
         let state = AppState::new_in_memory().await.unwrap();
-        let owner_id = state
-            .register_user("owner".into(), "key".into(), "".into())
-            .await
-            .unwrap();
-        let outsider_id = state
-            .register_user("outsider".into(), "key2".into(), "".into())
-            .await
-            .unwrap();
+        let owner_id = state.register_user("key".into(), "".into()).await.unwrap();
+        let outsider_id = state.register_user("key2".into(), "".into()).await.unwrap();
 
         let node = state
             .create_node("Node".into(), owner_id, None)
@@ -1165,14 +1187,8 @@ mod tests {
     async fn test_join_channel_auto_create() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user1_id = state
-            .register_user("user1".into(), "key1".into(), "".into())
-            .await
-            .unwrap();
-        let user2_id = state
-            .register_user("user2".into(), "key2".into(), "".into())
-            .await
-            .unwrap();
+        let user1_id = state.register_user("key1".into(), "".into()).await.unwrap();
+        let user2_id = state.register_user("key2".into(), "".into()).await.unwrap();
 
         // Create a node first
         let node = state
@@ -1198,14 +1214,8 @@ mod tests {
     async fn test_voice_channel_operations() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user1_id = state
-            .register_user("user1".into(), "key1".into(), "".into())
-            .await
-            .unwrap();
-        let user2_id = state
-            .register_user("user2".into(), "key2".into(), "".into())
-            .await
-            .unwrap();
+        let user1_id = state.register_user("key1".into(), "".into()).await.unwrap();
+        let user2_id = state.register_user("key2".into(), "".into()).await.unwrap();
 
         // Create a node first
         let node = state

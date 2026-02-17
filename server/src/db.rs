@@ -37,12 +37,13 @@ impl Database {
 
     /// Run database migrations to create or update schema
     async fn run_migrations(&self) -> Result<()> {
-        // Create users table
+        // Create users table — relay-level identity is keypair only
+        // No username column: display names are a Node-level concept
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY NOT NULL,
-                username TEXT NOT NULL UNIQUE,
+                public_key_hash TEXT NOT NULL UNIQUE,
                 public_key TEXT NOT NULL,
                 password_hash TEXT NOT NULL DEFAULT '',
                 created_at INTEGER NOT NULL
@@ -316,9 +317,11 @@ impl Database {
         .context("Failed to create prekey_messages table")?;
 
         // Create indexes
+        // Legacy username index kept for backward compat migration
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)")
             .execute(&self.pool)
-            .await?;
+            .await
+            .ok();
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes (owner_id)")
             .execute(&self.pool)
             .await?;
@@ -530,25 +533,95 @@ impl Database {
             .await
             .ok();
 
+        // ── Zero-knowledge identity tables ──
+
+        // Migration: add public_key_hash column to existing users table
+        sqlx::query("ALTER TABLE users ADD COLUMN public_key_hash TEXT NOT NULL DEFAULT ''")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Migration: add username column for backward compat (will be empty for new users)
+        sqlx::query("ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Node-level user profiles (encrypted, opaque to relay)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS node_user_profiles (
+                node_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                encrypted_display_name BLOB,
+                encrypted_avatar_url BLOB,
+                joined_at INTEGER NOT NULL,
+                PRIMARY KEY (node_id, user_id),
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create node_user_profiles table")?;
+
+        // Node bans (keyed on public_key_hash for identity-based bans)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS node_bans (
+                node_id TEXT NOT NULL,
+                public_key_hash TEXT NOT NULL,
+                banned_by TEXT NOT NULL,
+                banned_at INTEGER NOT NULL,
+                reason_encrypted BLOB,
+                expires_at INTEGER,
+                PRIMARY KEY (node_id, public_key_hash),
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                FOREIGN KEY (banned_by) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create node_bans table")?;
+
+        // Indexes for zero-knowledge identity
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_users_public_key_hash ON users (public_key_hash)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_bans_node ON node_bans (node_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_bans_key ON node_bans (public_key_hash)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_user_profiles_node ON node_user_profiles (node_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_user_profiles_user ON node_user_profiles (user_id)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
     // ── User operations ──
 
-    pub async fn create_user(
-        &self,
-        username: &str,
-        public_key: &str,
-        password_hash: &str,
-    ) -> Result<User> {
+    /// Create a user identified by public_key. The relay computes the public_key_hash.
+    /// No username is stored at the relay level.
+    pub async fn create_user(&self, public_key: &str, password_hash: &str) -> Result<User> {
         let user_id = Uuid::new_v4();
         let created_at = now();
+        let public_key_hash = compute_public_key_hash(public_key);
 
         sqlx::query(
-            "INSERT INTO users (id, username, public_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO users (id, public_key_hash, public_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(user_id.to_string())
-        .bind(username)
+        .bind(&public_key_hash)
         .bind(public_key)
         .bind(password_hash)
         .bind(created_at as i64)
@@ -556,55 +629,231 @@ impl Database {
         .await
         .context("Failed to insert user")?;
 
-        // Create default user profile
-        self.create_user_profile(user_id, username).await?;
+        // Create default user profile (display_name = truncated public_key_hash)
+        let default_display = format!("user-{}", &public_key_hash[..8]);
+        self.create_user_profile(user_id, &default_display).await?;
 
         Ok(User {
             id: user_id,
-            username: username.to_string(),
+            public_key_hash,
             public_key: public_key.to_string(),
             created_at,
         })
     }
 
     pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<User>> {
-        let row =
-            sqlx::query("SELECT id, username, public_key, created_at FROM users WHERE id = ?")
-                .bind(user_id.to_string())
-                .fetch_optional(&self.pool)
-                .await
-                .context("Failed to query user by ID")?;
-
-        row.map(|r| parse_user(&r)).transpose()
-    }
-
-    pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, public_key, created_at FROM users WHERE username = ?",
+            "SELECT id, public_key_hash, public_key, created_at FROM users WHERE id = ?",
         )
-        .bind(username)
+        .bind(user_id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .context("Failed to query user by username")?;
+        .context("Failed to query user by ID")?;
 
         row.map(|r| parse_user(&r)).transpose()
     }
 
-    pub async fn get_user_password_hash(&self, username: &str) -> Result<Option<String>> {
-        let row = sqlx::query("SELECT password_hash FROM users WHERE username = ?")
-            .bind(username)
+    /// Look up user by public_key_hash (the primary relay-level identifier)
+    pub async fn get_user_by_public_key_hash(&self, public_key_hash: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            "SELECT id, public_key_hash, public_key, created_at FROM users WHERE public_key_hash = ?",
+        )
+        .bind(public_key_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query user by public_key_hash")?;
+
+        row.map(|r| parse_user(&r)).transpose()
+    }
+
+    pub async fn get_user_password_hash_by_pkh(
+        &self,
+        public_key_hash: &str,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT password_hash FROM users WHERE public_key_hash = ?")
+            .bind(public_key_hash)
             .fetch_optional(&self.pool)
             .await
             .context("Failed to query user password hash")?;
         Ok(row.map(|r| r.get::<String, _>("password_hash")))
     }
 
-    pub async fn username_exists(&self, username: &str) -> Result<bool> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM users WHERE username = ?")
-            .bind(username)
+    pub async fn public_key_hash_exists(&self, public_key_hash: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM users WHERE public_key_hash = ?")
+            .bind(public_key_hash)
             .fetch_one(&self.pool)
             .await?;
         Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    // ── Node ban operations ──
+
+    /// Ban a public_key_hash from a Node
+    pub async fn ban_from_node(
+        &self,
+        node_id: Uuid,
+        public_key_hash: &str,
+        banned_by: Uuid,
+        reason_encrypted: Option<&[u8]>,
+        expires_at: Option<u64>,
+    ) -> Result<()> {
+        let banned_at = now();
+        sqlx::query(
+            "INSERT OR REPLACE INTO node_bans (node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(node_id.to_string())
+        .bind(public_key_hash)
+        .bind(banned_by.to_string())
+        .bind(banned_at as i64)
+        .bind(reason_encrypted)
+        .bind(expires_at.map(|t| t as i64))
+        .execute(&self.pool)
+        .await
+        .context("Failed to ban user from node")?;
+        Ok(())
+    }
+
+    /// Remove a ban from a Node
+    pub async fn unban_from_node(&self, node_id: Uuid, public_key_hash: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM node_bans WHERE node_id = ? AND public_key_hash = ?")
+            .bind(node_id.to_string())
+            .bind(public_key_hash)
+            .execute(&self.pool)
+            .await
+            .context("Failed to unban user from node")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Check if a public_key_hash is banned from a Node (considering expiry)
+    pub async fn is_banned_from_node(&self, node_id: Uuid, public_key_hash: &str) -> Result<bool> {
+        let current_time = now() as i64;
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_bans WHERE node_id = ? AND public_key_hash = ? AND (expires_at IS NULL OR expires_at > ?)",
+        )
+        .bind(node_id.to_string())
+        .bind(public_key_hash)
+        .bind(current_time)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    /// List all bans for a Node
+    pub async fn get_node_bans(&self, node_id: Uuid) -> Result<Vec<crate::models::NodeBan>> {
+        let rows = sqlx::query(
+            "SELECT node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at FROM node_bans WHERE node_id = ? ORDER BY banned_at DESC",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query node bans")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::NodeBan> {
+                Ok(crate::models::NodeBan {
+                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                    public_key_hash: row.get("public_key_hash"),
+                    banned_by: Uuid::parse_str(&row.get::<String, _>("banned_by"))?,
+                    banned_at: row.get::<i64, _>("banned_at") as u64,
+                    reason_encrypted: row.get::<Option<Vec<u8>>, _>("reason_encrypted"),
+                    expires_at: row.get::<Option<i64>, _>("expires_at").map(|t| t as u64),
+                })
+            })
+            .collect()
+    }
+
+    // ── Node user profile operations ──
+
+    /// Set or update a per-Node user profile
+    pub async fn set_node_user_profile(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+        encrypted_display_name: Option<&[u8]>,
+        encrypted_avatar_url: Option<&[u8]>,
+    ) -> Result<()> {
+        let joined_at = now();
+        sqlx::query(
+            r#"
+            INSERT INTO node_user_profiles (node_id, user_id, encrypted_display_name, encrypted_avatar_url, joined_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(node_id, user_id) DO UPDATE SET
+                encrypted_display_name = COALESCE(excluded.encrypted_display_name, node_user_profiles.encrypted_display_name),
+                encrypted_avatar_url = COALESCE(excluded.encrypted_avatar_url, node_user_profiles.encrypted_avatar_url)
+            "#,
+        )
+        .bind(node_id.to_string())
+        .bind(user_id.to_string())
+        .bind(encrypted_display_name)
+        .bind(encrypted_avatar_url)
+        .bind(joined_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to set node user profile")?;
+        Ok(())
+    }
+
+    /// Get a user's profile in a specific Node
+    pub async fn get_node_user_profile(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<crate::models::NodeUserProfile>> {
+        let row = sqlx::query(
+            "SELECT node_id, user_id, encrypted_display_name, encrypted_avatar_url, joined_at FROM node_user_profiles WHERE node_id = ? AND user_id = ?",
+        )
+        .bind(node_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query node user profile")?;
+
+        row.map(|r| -> Result<crate::models::NodeUserProfile> {
+            Ok(crate::models::NodeUserProfile {
+                node_id: Uuid::parse_str(&r.get::<String, _>("node_id"))?,
+                user_id: Uuid::parse_str(&r.get::<String, _>("user_id"))?,
+                encrypted_display_name: r.get("encrypted_display_name"),
+                encrypted_avatar_url: r.get("encrypted_avatar_url"),
+                joined_at: r.get::<i64, _>("joined_at") as u64,
+            })
+        })
+        .transpose()
+    }
+
+    /// Get all user profiles for a Node
+    pub async fn get_node_user_profiles(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::NodeUserProfile>> {
+        let rows = sqlx::query(
+            "SELECT node_id, user_id, encrypted_display_name, encrypted_avatar_url, joined_at FROM node_user_profiles WHERE node_id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query node user profiles")?;
+
+        rows.iter()
+            .map(|r| -> Result<crate::models::NodeUserProfile> {
+                Ok(crate::models::NodeUserProfile {
+                    node_id: Uuid::parse_str(&r.get::<String, _>("node_id"))?,
+                    user_id: Uuid::parse_str(&r.get::<String, _>("user_id"))?,
+                    encrypted_display_name: r.get("encrypted_display_name"),
+                    encrypted_avatar_url: r.get("encrypted_avatar_url"),
+                    joined_at: r.get::<i64, _>("joined_at") as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Get the public_key_hash for a user by their UUID
+    pub async fn get_user_public_key_hash(&self, user_id: Uuid) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT public_key_hash FROM users WHERE id = ?")
+            .bind(user_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query user public_key_hash")?;
+        Ok(row.map(|r| r.get::<String, _>("public_key_hash")))
     }
 
     // ── Node operations ──
@@ -1248,8 +1497,8 @@ impl Database {
 
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
-                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 LEFT JOIN messages rm ON m.reply_to = rm.id
@@ -1265,8 +1514,8 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
-                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 LEFT JOIN messages rm ON m.reply_to = rm.id
@@ -1303,31 +1552,31 @@ impl Database {
         limit: u32,
     ) -> Result<Vec<crate::models::SearchResult>> {
         // Since messages are E2E encrypted, we can only search by metadata:
-        // - sender username
+        // - sender public_key_hash
         // - channel name
         // - timestamp (not implemented in query param, but could be)
 
         let base_query = if channel_id_filter.is_some() {
             r#"
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
-                       u.username as sender_username, c.name as channel_name
+                       u.public_key_hash as sender_public_key_hash, c.name as channel_name
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 JOIN channels c ON m.channel_id = c.id
                 WHERE c.node_id = ? AND c.id = ?
-                  AND (LOWER(u.username) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
+                  AND (LOWER(u.public_key_hash) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
                 ORDER BY m.created_at DESC
                 LIMIT ?
                 "#.to_string()
         } else {
             r#"
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
-                       u.username as sender_username, c.name as channel_name
+                       u.public_key_hash as sender_public_key_hash, c.name as channel_name
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 JOIN channels c ON m.channel_id = c.id
                 WHERE c.node_id = ?
-                  AND (LOWER(u.username) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
+                  AND (LOWER(u.public_key_hash) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
                 ORDER BY m.created_at DESC
                 LIMIT ?
                 "#.to_string()
@@ -1361,7 +1610,7 @@ impl Database {
                 let message_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
                 let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id"))?;
                 let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
-                let sender_username: String = row.get("sender_username");
+                let sender_public_key_hash: String = row.get("sender_public_key_hash");
                 let channel_name: String = row.get("channel_name");
                 let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
                 let created_at = row.get::<i64, _>("created_at") as u64;
@@ -1371,7 +1620,7 @@ impl Database {
                     channel_id,
                     channel_name,
                     sender_id,
-                    sender_username,
+                    sender_public_key_hash,
                     created_at,
                     encrypted_payload: base64::engine::general_purpose::STANDARD
                         .encode(&encrypted_payload),
@@ -1700,7 +1949,7 @@ impl Database {
             r#"
             SELECT
                 nm.user_id, nm.role, nm.joined_at,
-                u.username,
+                u.public_key_hash,
                 up.display_name, up.avatar_url, up.bio, up.status, up.custom_status
             FROM node_members nm
             JOIN users u ON nm.user_id = u.id
@@ -1927,8 +2176,8 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let rows = sqlx::query(
             r#"
-            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
-                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_username
             FROM messages m
             JOIN users u ON m.sender_id = u.id
             LEFT JOIN messages rm ON m.reply_to = rm.id
@@ -1957,8 +2206,8 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let rows = sqlx::query(
             r#"
-            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.username,
-                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.username as replied_username
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_username
             FROM messages m
             JOIN users u ON m.sender_id = u.id
             LEFT JOIN messages rm ON m.reply_to = rm.id
@@ -2054,7 +2303,7 @@ impl Database {
             r#"
             SELECT 
                 dm.id, dm.user1_id, dm.user2_id, dm.created_at,
-                u.id as other_user_id, u.username as other_username, u.public_key as other_public_key, u.created_at as other_user_created_at,
+                u.id as other_user_id, u.public_key_hash as other_public_key_hash, u.public_key as other_public_key, u.created_at as other_user_created_at,
                 up.display_name, up.avatar_url, up.bio, up.status, up.custom_status, up.updated_at
             FROM dm_channels dm
             JOIN users u ON (
@@ -2091,7 +2340,7 @@ impl Database {
 
             let other_user = crate::models::User {
                 id: Uuid::parse_str(&row.get::<String, _>("other_user_id"))?,
-                username: row.get("other_username"),
+                public_key_hash: row.get("other_public_key_hash"),
                 public_key: row.get("other_public_key"),
                 created_at: row.get::<i64, _>("other_user_created_at") as u64,
             };
@@ -2100,7 +2349,7 @@ impl Database {
                 user_id: other_user.id,
                 display_name: row
                     .get::<Option<String>, _>("display_name")
-                    .unwrap_or_else(|| other_user.username.clone()),
+                    .unwrap_or_else(|| format!("user-{}", &other_user.public_key_hash[..8])),
                 avatar_url: row.get("avatar_url"),
                 bio: row.get("bio"),
                 status: row
@@ -2222,7 +2471,7 @@ impl Database {
 
             sqlx::query(
                 r#"
-                SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, u.username
+                SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, u.public_key_hash
                 FROM audit_log a
                 JOIN users u ON a.actor_id = u.id
                 WHERE a.node_id = ? AND a.created_at < ?
@@ -2236,7 +2485,7 @@ impl Database {
         } else {
             sqlx::query(
                 r#"
-                SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, u.username
+                SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, u.public_key_hash
                 FROM audit_log a
                 JOIN users u ON a.actor_id = u.id
                 WHERE a.node_id = ?
@@ -2259,7 +2508,7 @@ impl Database {
                 let audit_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
                 let node_id = Uuid::parse_str(&row.get::<String, _>("node_id"))?;
                 let actor_id = Uuid::parse_str(&row.get::<String, _>("actor_id"))?;
-                let actor_username: String = row.get("username");
+                let actor_public_key_hash: String = row.get("public_key_hash");
                 let action: String = row.get("action");
                 let target_type: String = row.get("target_type");
                 let target_id = row
@@ -2272,7 +2521,7 @@ impl Database {
                     id: audit_id,
                     node_id,
                     actor_id,
-                    actor_username,
+                    actor_public_key_hash,
                     action,
                     target_type,
                     target_id,
@@ -2555,7 +2804,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
     let message_id = Uuid::parse_str(&row.get::<String, _>("id"))?;
     let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id"))?;
     let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
-    let sender_username: String = row.get("username");
+    let sender_public_key_hash: String = row.get("public_key_hash");
     let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
     let created_at = row.get::<i64, _>("created_at") as u64;
     let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
@@ -2572,7 +2821,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
             Some(crate::models::RepliedMessage {
                 id: Uuid::parse_str(&replied_id)?,
                 sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))?,
-                sender_username: row.get("replied_username"),
+                sender_public_key_hash: row.get("replied_public_key_hash"),
                 encrypted_payload: base64::engine::general_purpose::STANDARD
                     .encode(row.get::<Vec<u8>, _>("replied_payload")),
                 created_at: row.get::<i64, _>("replied_created_at") as u64,
@@ -2585,7 +2834,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
         id: message_id,
         channel_id,
         sender_id,
-        sender_username,
+        sender_public_key_hash,
         encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
         created_at,
         edited_at,
@@ -2599,10 +2848,17 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
 fn parse_user(row: &sqlx::sqlite::SqliteRow) -> Result<User> {
     Ok(User {
         id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-        username: row.get("username"),
+        public_key_hash: row.get("public_key_hash"),
         public_key: row.get("public_key"),
         created_at: row.get::<i64, _>("created_at") as u64,
     })
+}
+
+/// Compute the SHA-256 hash of a public key, returned as a hex string.
+pub fn compute_public_key_hash(public_key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(public_key.as_bytes());
+    hex::encode(hash)
 }
 
 fn parse_node(row: &sqlx::sqlite::SqliteRow) -> Result<Node> {
@@ -2656,16 +2912,19 @@ fn parse_member_with_profile(
     use crate::node::NodeRole;
 
     let role_str: String = row.get("role");
+    let public_key_hash: String = row.get("public_key_hash");
     Ok(crate::models::MemberWithProfile {
         user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
-        username: row.get("username"),
+        public_key_hash: public_key_hash.clone(),
         role: NodeRole::from_str(&role_str).unwrap_or(NodeRole::Member),
         joined_at: row.get::<i64, _>("joined_at") as u64,
         profile: crate::models::UserProfile {
             user_id: Uuid::parse_str(&row.get::<String, _>("user_id"))?,
             display_name: row
                 .get::<Option<String>, _>("display_name")
-                .unwrap_or_else(|| row.get::<String, _>("username")),
+                .unwrap_or_else(|| {
+                    format!("user-{}", &public_key_hash[..8.min(public_key_hash.len())])
+                }),
             avatar_url: row.get("avatar_url"),
             bio: row.get("bio"),
             status: row
@@ -2705,27 +2964,29 @@ mod tests {
     async fn test_user_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db
-            .create_user("test_user", "test_public_key", "")
-            .await
-            .unwrap();
-        assert_eq!(user.username, "test_user");
+        let user = db.create_user("test_public_key", "").await.unwrap();
+        let expected_hash = compute_public_key_hash("test_public_key");
+        assert_eq!(user.public_key_hash, expected_hash);
 
         let found = db.get_user_by_id(user.id).await.unwrap().unwrap();
-        assert_eq!(found.username, "test_user");
+        assert_eq!(found.public_key_hash, expected_hash);
 
-        let found = db.get_user_by_username("test_user").await.unwrap().unwrap();
+        let found = db
+            .get_user_by_public_key_hash(&expected_hash)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, user.id);
 
-        assert!(db.username_exists("test_user").await.unwrap());
-        assert!(!db.username_exists("nonexistent").await.unwrap());
+        assert!(db.public_key_hash_exists(&expected_hash).await.unwrap());
+        assert!(!db.public_key_hash_exists("nonexistent").await.unwrap());
     }
 
     #[tokio::test]
     async fn test_node_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("node_owner", "key", "").await.unwrap();
+        let user = db.create_user("key", "").await.unwrap();
         let node = db
             .create_node("Test Node", user.id, Some("A test node"))
             .await
@@ -2744,7 +3005,7 @@ mod tests {
         assert_eq!(channels[0].name, "general");
 
         // Add another member
-        let user2 = db.create_user("member", "key2", "").await.unwrap();
+        let user2 = db.create_user("key2", "").await.unwrap();
         db.add_node_member(node.id, user2.id, NodeRole::Member)
             .await
             .unwrap();
@@ -2759,7 +3020,7 @@ mod tests {
     async fn test_channel_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("test_user", "test_key", "").await.unwrap();
+        let user = db.create_user("test_key", "").await.unwrap();
         let node = db.create_node("Test Node", user.id, None).await.unwrap();
 
         let channel = db
@@ -2773,7 +3034,7 @@ mod tests {
         let found = db.get_channel(channel.id).await.unwrap().unwrap();
         assert_eq!(found.name, "test_channel");
 
-        let user2 = db.create_user("test_user2", "test_key2", "").await.unwrap();
+        let user2 = db.create_user("test_key2", "").await.unwrap();
         db.add_user_to_channel(channel.id, user2.id).await.unwrap();
         let members = db.get_channel_members(channel.id).await.unwrap();
         assert_eq!(members.len(), 2);
@@ -2789,7 +3050,7 @@ mod tests {
     async fn test_message_operations() {
         let db = Database::new(":memory:").await.unwrap();
 
-        let user = db.create_user("test_user", "test_key", "").await.unwrap();
+        let user = db.create_user("test_key", "").await.unwrap();
         let node = db.create_node("Test Node", user.id, None).await.unwrap();
         let channel = db
             .create_channel("test_channel", node.id, user.id)

@@ -470,7 +470,7 @@ mod tests {
     #[tokio::test]
     async fn test_device_token_db_roundtrip() {
         let db = Database::new(":memory:").await.unwrap();
-        let user = db.create_user("push_user", "key123", "").await.unwrap();
+        let user = db.create_user("key123", "").await.unwrap();
 
         // Register token
         let token_id = db

@@ -22,8 +22,9 @@ use uuid::Uuid;
 // Import the server modules
 use accord_server::{
     handlers::{
-        auth_handler, fetch_key_bundle_handler, get_prekey_messages_handler, health_handler,
-        publish_key_bundle_handler, register_handler, store_prekey_message_handler, ws_handler,
+        auth_handler, ban_user_handler, create_node_handler, fetch_key_bundle_handler,
+        get_prekey_messages_handler, health_handler, join_node_handler, publish_key_bundle_handler,
+        register_handler, store_prekey_message_handler, ws_handler,
     },
     state::{AppState, SharedState},
 };
@@ -52,6 +53,10 @@ impl TestServer {
             .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
             .route("/keys/prekey-message", post(store_prekey_message_handler))
             .route("/keys/prekey-messages", get(get_prekey_messages_handler))
+            // Node endpoints
+            .route("/nodes", post(create_node_handler))
+            .route("/nodes/:id/join", post(join_node_handler))
+            .route("/nodes/:id/bans", post(ban_user_handler))
             // WebSocket endpoint
             .route("/ws", get(ws_handler))
             // Add shared state
@@ -99,12 +104,11 @@ impl TestServer {
     }
 
     /// Register a user and return the user_id
-    async fn register_user(&self, username: &str, public_key: &str) -> Uuid {
+    async fn register_user(&self, _username: &str, public_key: &str) -> Uuid {
         let response = self
             .client
             .post(&self.url("/register"))
             .json(&json!({
-                "username": username,
                 "public_key": public_key
             }))
             .send()
@@ -116,26 +120,34 @@ impl TestServer {
         Uuid::parse_str(body["user_id"].as_str().unwrap()).unwrap()
     }
 
-    /// Register a user and authenticate, returning the token
+    /// Register a user and authenticate, returning the token.
+    /// The "username" arg is kept for test compat but used as a unique public key.
     async fn register_and_auth(&self, username: &str) -> String {
-        self.register_user(username, "fake_public_key").await;
-        self.auth_user(username, "").await
+        // Use username as a unique public key for tests
+        let public_key = format!("fake_public_key_{}", username);
+        self.register_user(username, &public_key).await;
+        self.auth_user_by_pk(&public_key, "").await
     }
 
-    /// Authenticate a user and return the token
-    async fn auth_user(&self, username: &str, password: &str) -> String {
+    /// Authenticate a user by public_key and return the token
+    async fn auth_user_by_pk(&self, public_key: &str, password: &str) -> String {
         let response = self
             .client
             .post(&self.url("/auth"))
             .json(&json!({
-                "username": username,
+                "public_key": public_key,
                 "password": password
             }))
             .send()
             .await
             .unwrap();
 
-        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response.status(),
+            200,
+            "Auth failed for public_key: {}",
+            public_key
+        );
         let body: Value = response.json().await.unwrap();
         body["token"].as_str().unwrap().to_string()
     }
@@ -188,7 +200,7 @@ async fn test_user_registration_success() {
 }
 
 #[tokio::test]
-async fn test_user_registration_duplicate_username() {
+async fn test_user_registration_duplicate_public_key() {
     let server = TestServer::new().await;
 
     // Register first user
@@ -196,7 +208,6 @@ async fn test_user_registration_duplicate_username() {
         .client
         .post(&server.url("/register"))
         .json(&json!({
-            "username": "duplicate_test",
             "public_key": "fake_public_key_123"
         }))
         .send()
@@ -204,13 +215,12 @@ async fn test_user_registration_duplicate_username() {
         .unwrap();
     assert_eq!(response.status(), 200);
 
-    // Try to register with the same username
+    // Try to register with the same public key
     let response = server
         .client
         .post(&server.url("/register"))
         .json(&json!({
-            "username": "duplicate_test",
-            "public_key": "different_public_key_456"
+            "public_key": "fake_public_key_123"
         }))
         .send()
         .await
@@ -218,7 +228,7 @@ async fn test_user_registration_duplicate_username() {
 
     assert_eq!(response.status(), 409); // Conflict
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"], "Username already exists");
+    assert_eq!(body["error"], "Public key already registered");
     assert_eq!(body["code"], 409);
 }
 
@@ -226,28 +236,11 @@ async fn test_user_registration_duplicate_username() {
 async fn test_user_registration_empty_fields() {
     let server = TestServer::new().await;
 
-    // Test empty username
-    let response = server
-        .client
-        .post(&server.url("/register"))
-        .json(&json!({
-            "username": "",
-            "public_key": "fake_public_key_123"
-        }))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 400);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["error"], "Username cannot be empty");
-
     // Test empty public key
     let response = server
         .client
         .post(&server.url("/register"))
         .json(&json!({
-            "username": "testuser",
             "public_key": ""
         }))
         .send()
@@ -268,13 +261,13 @@ async fn test_authentication_success() {
         .register_user("auth_test_user", "fake_public_key")
         .await;
 
-    // Now authenticate
+    // Now authenticate by public_key
     let response = server
         .client
         .post(&server.url("/auth"))
         .json(&json!({
-            "username": "auth_test_user",
-            "password": "any_password_for_now"
+            "public_key": "fake_public_key",
+            "password": ""
         }))
         .send()
         .await
@@ -296,12 +289,12 @@ async fn test_authentication_success() {
 async fn test_authentication_failure() {
     let server = TestServer::new().await;
 
-    // Try to authenticate with non-existent user
+    // Try to authenticate with non-existent public key
     let response = server
         .client
         .post(&server.url("/auth"))
         .json(&json!({
-            "username": "nonexistent_user",
+            "public_key": "nonexistent_public_key",
             "password": "any_password"
         }))
         .send()
@@ -321,9 +314,9 @@ async fn test_websocket_connection_with_valid_token() {
 
     // Register and authenticate a user
     server
-        .register_user("ws_test_user", "fake_public_key")
+        .register_user("ws_test_user", "fake_public_key_ws")
         .await;
-    let token = server.auth_user("ws_test_user", "password").await;
+    let token = server.auth_user_by_pk("fake_public_key_ws", "").await;
 
     // Connect via WebSocket with the token
     let ws_url = format!("{}?token={}", server.ws_url("/ws"), token);
@@ -389,8 +382,8 @@ async fn test_message_routing_between_two_clients() {
     let user1_id = server.register_user("user1", "public_key_1").await;
     let user2_id = server.register_user("user2", "public_key_2").await;
 
-    let token1 = server.auth_user("user1", "password").await;
-    let token2 = server.auth_user("user2", "password").await;
+    let token1 = server.auth_user_by_pk("public_key_1", "").await;
+    let token2 = server.auth_user_by_pk("public_key_2", "").await;
 
     // Connect both users via WebSocket
     let ws_url1 = format!("{}?token={}", server.ws_url("/ws"), token1);
@@ -448,11 +441,15 @@ async fn test_channel_join_leave_and_messaging() {
     let server = TestServer::new().await;
 
     // Register and authenticate two users
-    let user1_id = server.register_user("channel_user1", "public_key_1").await;
-    let user2_id = server.register_user("channel_user2", "public_key_2").await;
+    let user1_id = server
+        .register_user("channel_user1", "ch_public_key_1")
+        .await;
+    let user2_id = server
+        .register_user("channel_user2", "ch_public_key_2")
+        .await;
 
-    let token1 = server.auth_user("channel_user1", "password").await;
-    let token2 = server.auth_user("channel_user2", "password").await;
+    let token1 = server.auth_user_by_pk("ch_public_key_1", "").await;
+    let token2 = server.auth_user_by_pk("ch_public_key_2", "").await;
 
     // Connect both users via WebSocket
     let ws_url1 = format!("{}?token={}", server.ws_url("/ws"), token1);
@@ -666,7 +663,9 @@ async fn test_key_bundle_publish_and_fetch() {
     let bob_user = server
         .state
         .db
-        .get_user_by_username("bob")
+        .get_user_by_public_key_hash(&accord_server::db::compute_public_key_hash(
+            "fake_public_key_bob",
+        ))
         .await
         .unwrap()
         .unwrap();
@@ -756,7 +755,9 @@ async fn test_prekey_message_store_and_retrieve() {
     let bob_user = server
         .state
         .db
-        .get_user_by_username("bob")
+        .get_user_by_public_key_hash(&accord_server::db::compute_public_key_hash(
+            "fake_public_key_bob",
+        ))
         .await
         .unwrap()
         .unwrap();
@@ -831,14 +832,18 @@ async fn test_double_ratchet_e2e_via_server() {
     let alice_user = server
         .state
         .db
-        .get_user_by_username("alice")
+        .get_user_by_public_key_hash(&accord_server::db::compute_public_key_hash(
+            "fake_public_key_alice",
+        ))
         .await
         .unwrap()
         .unwrap();
     let bob_user = server
         .state
         .db
-        .get_user_by_username("bob")
+        .get_user_by_public_key_hash(&accord_server::db::compute_public_key_hash(
+            "fake_public_key_bob",
+        ))
         .await
         .unwrap()
         .unwrap();
@@ -997,6 +1002,90 @@ async fn test_double_ratchet_e2e_via_server() {
             .unwrap();
         assert_eq!(dec, format!("Bob msg {i}").as_bytes());
     }
+}
+
+/// Test that a banned user cannot rejoin a node
+#[tokio::test]
+async fn test_ban_enforcement() {
+    let server = TestServer::new().await;
+
+    // Register and authenticate two users
+    let owner_pk = "ban_test_owner_pk";
+    let banned_pk = "ban_test_banned_pk";
+
+    server.register_user("owner", owner_pk).await;
+    server.register_user("banned_user", banned_pk).await;
+
+    let owner_token = server.auth_user_by_pk(owner_pk, "").await;
+    let banned_token = server.auth_user_by_pk(banned_pk, "").await;
+
+    // Owner creates a node via REST
+    let create_resp = server
+        .client
+        .post(&format!("{}/nodes?token={}", server.base_url, owner_token))
+        .json(&json!({
+            "name": "Ban Test Node",
+            "description": "Testing ban enforcement"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), 200);
+    let create_body: Value = create_resp.json().await.unwrap();
+    let node_id = create_body["id"].as_str().unwrap();
+
+    // Banned user joins the node
+    let join_resp = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/join?token={}",
+            server.base_url, node_id, banned_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(join_resp.status(), 200);
+
+    // Owner bans the user by public_key_hash
+    let banned_pk_hash = accord_server::db::compute_public_key_hash(banned_pk);
+    let ban_resp = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/bans?token={}",
+            server.base_url, node_id, owner_token
+        ))
+        .json(&json!({
+            "public_key_hash": banned_pk_hash
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ban_resp.status(), 200);
+
+    // Banned user tries to rejoin — should fail
+    let rejoin_resp = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/join?token={}",
+            server.base_url, node_id, banned_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(
+        rejoin_resp.status(),
+        200,
+        "Banned user should not be able to rejoin"
+    );
+    let rejoin_body: Value = rejoin_resp.json().await.unwrap();
+    assert!(
+        rejoin_body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("banned"),
+        "Error should mention ban: {:?}",
+        rejoin_body
+    );
 }
 
 use base64::Engine as _;
