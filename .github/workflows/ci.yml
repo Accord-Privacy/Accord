@@ -45,6 +45,54 @@ jobs:
     - name: Run tests
       run: cargo test -p accord-core -p accord-core-minimal -p accord-server
 
+  clippy:
+    name: Clippy Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          pkg-config \
+          libssl-dev \
+          libgtk-3-dev \
+          libwebkit2gtk-4.1-dev \
+          libjavascriptcoregtk-4.1-dev \
+          libsoup-3.0-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libsoup2.4-dev
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run clippy
+      run: cargo clippy --workspace -- -D warnings
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install and run cargo-audit
+      run: cargo install cargo-audit && cargo audit
+
   format:
     name: Format Check
     runs-on: ubuntu-latest

@@ -955,7 +955,7 @@ impl AppState {
             .map_err(|e| format!("Database error: {}", e))?;
 
         // For now, all node members can access all channels in the node
-        // TODO: Implement per-channel permissions if needed
+        // TODO(permissions): Per-channel permission overrides — currently all members share node-level permissions
         Ok(is_node_member)
     }
 

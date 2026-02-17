@@ -127,7 +127,6 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       setVoiceState(prev => ({ ...prev, isCapturingAudio: true }));
       startVAD();
 
-      console.log('Audio initialized successfully');
     } catch (error) {
       console.error('Failed to initialize audio:', error);
       alert('Failed to access microphone. Please check permissions.');

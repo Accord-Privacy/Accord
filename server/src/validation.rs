@@ -50,7 +50,7 @@ pub fn validate_node_name(name: &str) -> Result<(), String> {
         return Err("Node name cannot be empty".to_string());
     }
 
-    if trimmed.len() > 100 {
+    if trimmed.chars().count() > 100 {
         return Err("Node name must not exceed 100 characters".to_string());
     }
 
@@ -90,7 +90,7 @@ pub fn validate_channel_name(name: &str) -> Result<(), String> {
 /// Requirements:
 /// - Maximum 500 characters
 pub fn validate_bio(bio: &str) -> Result<(), String> {
-    if bio.len() > 500 {
+    if bio.chars().count() > 500 {
         return Err("Bio must not exceed 500 characters".to_string());
     }
 
@@ -107,7 +107,7 @@ pub fn validate_display_name(name: &str) -> Result<(), String> {
         return Err("Display name cannot be empty".to_string());
     }
 
-    if name.len() > 50 {
+    if name.chars().count() > 50 {
         return Err("Display name must not exceed 50 characters".to_string());
     }
 
@@ -136,7 +136,7 @@ pub fn validate_emoji(emoji: &str) -> Result<(), String> {
         return Err("Emoji cannot be empty".to_string());
     }
 
-    if emoji.len() > 32 {
+    if emoji.chars().count() > 32 {
         return Err("Emoji must not exceed 32 characters".to_string());
     }
 

@@ -105,7 +105,6 @@ export class AccordWebSocket {
     if (!this.ws) return;
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
       this.isConnected = true;
       this.reconnectAttempts = 0;
       this.reconnectDelay = 1000;
@@ -127,7 +126,6 @@ export class AccordWebSocket {
     this.ws.onmessage = (event) => {
       try {
         const message: WsIncomingMessage = JSON.parse(event.data);
-        console.log('Received WebSocket message:', message);
         
         // Emit general message event
         this.emit('message', message);
@@ -143,7 +141,6 @@ export class AccordWebSocket {
     };
 
     this.ws.onclose = (event) => {
-      console.log('WebSocket disconnected:', event.code, event.reason);
       this.isConnected = false;
       this.stopPingInterval();
       
@@ -176,7 +173,6 @@ export class AccordWebSocket {
       this.maxReconnectDelay
     );
 
-    console.log(`Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
 
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;

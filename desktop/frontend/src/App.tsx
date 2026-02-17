@@ -205,7 +205,6 @@ function App() {
       const available = await api.testConnection();
       setServerAvailable(available);
       if (!available) {
-        console.log("Server unavailable, using mock data");
       }
     };
     checkServer();
@@ -214,17 +213,14 @@ function App() {
   // WebSocket event handlers
   const setupWebSocketHandlers = useCallback((socket: AccordWebSocket) => {
     socket.on('connected', () => {
-      console.log('WebSocket connected');
       setAppState(prev => ({ ...prev, isConnected: true }));
     });
 
     socket.on('disconnected', () => {
-      console.log('WebSocket disconnected');
       setAppState(prev => ({ ...prev, isConnected: false }));
     });
 
-    socket.on('message', (msg: WsIncomingMessage) => {
-      console.log('WebSocket message:', msg);
+    socket.on('message', (_msg: WsIncomingMessage) => {
     });
 
     socket.on('channel_message', async (data) => {
@@ -321,7 +317,6 @@ function App() {
 
     // Handle message edit events
     socket.on('message_edit', async (data) => {
-      console.log('Message edit event:', data);
       
       try {
         // Try to decrypt the new content if we have encryption enabled
@@ -367,7 +362,6 @@ function App() {
 
     // Handle message delete events
     socket.on('message_delete', (data) => {
-      console.log('Message delete event:', data);
       
       setAppState(prev => ({
         ...prev,
@@ -379,7 +373,6 @@ function App() {
 
     // Handle reaction add events
     socket.on('reaction_add', (data) => {
-      console.log('Reaction add event:', data);
       
       setAppState(prev => ({
         ...prev,
@@ -393,7 +386,6 @@ function App() {
 
     // Handle reaction remove events
     socket.on('reaction_remove', (data) => {
-      console.log('Reaction remove event:', data);
       
       setAppState(prev => ({
         ...prev,
@@ -407,7 +399,6 @@ function App() {
 
     // Handle message pin events
     socket.on('message_pin', (data) => {
-      console.log('Message pin event:', data);
       
       setAppState(prev => ({
         ...prev,
@@ -421,7 +412,6 @@ function App() {
 
     // Handle message unpin events
     socket.on('message_unpin', (data) => {
-      console.log('Message unpin event:', data);
       
       setAppState(prev => ({
         ...prev,
@@ -435,7 +425,6 @@ function App() {
 
     // Handle typing start events
     socket.on('typing_start', (data: TypingStartMessage) => {
-      console.log('Typing start event:', data);
       
       const typingUser: TypingUser = {
         user_id: data.user_id,
@@ -884,7 +873,7 @@ function App() {
   }, []);
 
   // Handle navigation to search result message
-  const handleNavigateToMessage = useCallback((channelId: string, messageId: string) => {
+  const handleNavigateToMessage = useCallback((channelId: string, _messageId: string) => {
     // First, navigate to the channel if not already selected
     if (channelId !== selectedChannelId) {
       const channel = channels.find(ch => ch.id === channelId);
@@ -895,7 +884,6 @@ function App() {
     
     // TODO: Scroll to the specific message once loaded
     // For now, just navigating to the channel
-    console.log(`Navigating to message ${messageId} in channel ${channelId}`);
   }, [selectedChannelId, channels, handleChannelSelect]);
 
   // Mark channel as read when new messages are loaded
@@ -940,7 +928,6 @@ function App() {
         if (encryptionEnabled) {
           let existingKeyPair = await loadKeyFromStorage();
           if (!existingKeyPair) {
-            console.log('No existing keys found, generating new keypair');
             existingKeyPair = await generateKeyPair();
             await saveKeyToStorage(existingKeyPair);
           }
