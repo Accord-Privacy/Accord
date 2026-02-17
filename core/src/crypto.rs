@@ -50,6 +50,12 @@ pub struct CryptoManager {
     session_keys: HashMap<String, SessionKey>,
 }
 
+impl Default for CryptoManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CryptoManager {
     /// Create a new crypto manager
     pub fn new() -> Self {

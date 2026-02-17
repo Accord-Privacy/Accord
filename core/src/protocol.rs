@@ -360,6 +360,12 @@ pub struct MessageBuilder {
     sender_id: Option<Uuid>,
 }
 
+impl Default for MessageBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageBuilder {
     pub fn new() -> Self {
         Self { sender_id: None }

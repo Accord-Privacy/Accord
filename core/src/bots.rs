@@ -192,6 +192,12 @@ pub struct BotManager {
     interactions: Vec<BotInteraction>,
 }
 
+impl Default for BotManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BotManager {
     pub fn new() -> Self {
         Self {

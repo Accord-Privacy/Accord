@@ -630,7 +630,7 @@ impl Database {
         .await
         .context("Failed to query node members")?;
 
-        rows.iter().map(|r| parse_node_member(r)).collect()
+        rows.iter().map(parse_node_member).collect()
     }
 
     pub async fn get_node_member(
@@ -668,7 +668,7 @@ impl Database {
         .await
         .context("Failed to query user nodes")?;
 
-        rows.iter().map(|r| parse_node(r)).collect()
+        rows.iter().map(parse_node).collect()
     }
 
     pub async fn count_node_channels(&self, node_id: Uuid) -> Result<u64> {
@@ -1176,7 +1176,7 @@ impl Database {
 
         let messages: Vec<_> = rows
             .iter()
-            .map(|row| parse_message_metadata(row))
+            .map(parse_message_metadata)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(messages)
@@ -1196,9 +1196,8 @@ impl Database {
         // - channel name
         // - timestamp (not implemented in query param, but could be)
 
-        let base_query = if let Some(channel_filter) = channel_id_filter {
-            format!(
-                r#"
+        let base_query = if channel_id_filter.is_some() {
+            r#"
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
                        u.username as sender_username, c.name as channel_name
                 FROM messages m
@@ -1208,11 +1207,9 @@ impl Database {
                   AND (LOWER(u.username) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
                 ORDER BY m.created_at DESC
                 LIMIT ?
-                "#
-            )
+                "#.to_string()
         } else {
-            format!(
-                r#"
+            r#"
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
                        u.username as sender_username, c.name as channel_name
                 FROM messages m
@@ -1222,16 +1219,15 @@ impl Database {
                   AND (LOWER(u.username) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
                 ORDER BY m.created_at DESC
                 LIMIT ?
-                "#
-            )
+                "#.to_string()
         };
 
         let search_pattern = format!("%{}%", query.to_lowercase());
 
-        let query_builder = if channel_id_filter.is_some() {
+        let query_builder = if let Some(channel_filter) = channel_id_filter {
             sqlx::query(&base_query)
                 .bind(node_id.to_string())
-                .bind(channel_id_filter.unwrap().to_string())
+                .bind(channel_filter.to_string())
                 .bind(&search_pattern)
                 .bind(&search_pattern)
                 .bind(limit as i64)
@@ -1456,7 +1452,7 @@ impl Database {
             .await
             .context("Failed to query node invites")?;
 
-        rows.iter().map(|r| parse_node_invite(r)).collect()
+        rows.iter().map(parse_node_invite).collect()
     }
 
     pub async fn increment_invite_usage(&self, invite_code: &str) -> Result<()> {
@@ -1606,12 +1602,13 @@ impl Database {
         .await
         .context("Failed to query node members with profiles")?;
 
-        rows.iter().map(|r| parse_member_with_profile(r)).collect()
+        rows.iter().map(parse_member_with_profile).collect()
     }
 
     // ── File Operations ──
 
     /// Store file metadata in the database
+    #[allow(clippy::too_many_arguments)]
     pub async fn store_file_metadata(
         &self,
         file_id: Uuid,
@@ -1678,7 +1675,7 @@ impl Database {
         .await
         .context("Failed to query channel files")?;
 
-        rows.iter().map(|r| parse_file_metadata(r)).collect()
+        rows.iter().map(parse_file_metadata).collect()
     }
 
     /// Delete file metadata from database
@@ -1760,7 +1757,7 @@ impl Database {
 
             reaction_map
                 .entry(emoji)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push((user_id, created_at));
         }
 
@@ -1836,7 +1833,7 @@ impl Database {
 
         let messages: Vec<_> = rows
             .iter()
-            .map(|row| parse_message_metadata(row))
+            .map(parse_message_metadata)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(messages)
@@ -1866,7 +1863,7 @@ impl Database {
 
         let messages: Vec<_> = rows
             .iter()
-            .map(|row| parse_message_metadata(row))
+            .map(parse_message_metadata)
             .collect::<Result<Vec<_>>>()?;
 
         Ok(messages)
@@ -2210,7 +2207,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
                 sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))?,
                 sender_username: row.get("replied_username"),
                 encrypted_payload: base64::engine::general_purpose::STANDARD
-                    .encode(&row.get::<Vec<u8>, _>("replied_payload")),
+                    .encode(row.get::<Vec<u8>, _>("replied_payload")),
                 created_at: row.get::<i64, _>("replied_created_at") as u64,
             })
         } else {

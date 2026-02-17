@@ -1205,6 +1205,7 @@ async fn extract_user_from_header_or_token(
 }
 
 /// Helper to check if user has permission for a Node operation
+#[allow(dead_code)]
 async fn check_node_permission(
     state: &SharedState,
     user_id: Uuid,
@@ -1392,7 +1393,7 @@ async fn handle_ws_message(
                 "channel_id": channel.id
             });
             log_audit_event(
-                &state,
+                state,
                 node_id,
                 sender_user_id,
                 "channel_create",
@@ -1407,9 +1408,9 @@ async fn handle_ws_message(
         }
 
         WsMessageType::UpdateChannel {
-            channel_id,
-            category_id,
-            position,
+            channel_id: _,
+            category_id: _,
+            position: _,
         } => {
             // This would be handled by the REST endpoint, but we can include it for completeness
             let resp = serde_json::json!({
@@ -1775,7 +1776,7 @@ async fn handle_ws_message(
                 "channel_id": channel_id
             });
             log_audit_event(
-                &state,
+                state,
                 channel.node_id,
                 sender_user_id,
                 "message_pin",
@@ -1866,7 +1867,7 @@ async fn handle_ws_message(
                 "channel_id": channel_id
             });
             log_audit_event(
-                &state,
+                state,
                 channel.node_id,
                 sender_user_id,
                 "message_unpin",

@@ -111,6 +111,12 @@ impl UserPermissions {
     }
 }
 
+impl Default for ChannelManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChannelManager {
     /// Create new channel manager
     pub fn new() -> Self {
@@ -160,7 +166,7 @@ impl ChannelManager {
         // Add to user memberships
         self.user_memberships
             .entry(creator_id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(channel_id);
 
         channel_id
@@ -212,7 +218,7 @@ impl ChannelManager {
                 // Add to user memberships
                 self.user_memberships
                     .entry(user_id)
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(channel_id);
 
                 Ok(())
@@ -317,7 +323,7 @@ impl ChannelManager {
             // Add to user memberships
             self.user_memberships
                 .entry(user_id)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(channel_id);
 
             Ok(())

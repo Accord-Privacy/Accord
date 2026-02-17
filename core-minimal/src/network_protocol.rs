@@ -128,6 +128,12 @@ pub struct MessageRouter {
     active_connections: std::collections::HashMap<Uuid, String>, // user_id -> connection_info
 }
 
+impl Default for MessageRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageRouter {
     pub fn new() -> Self {
         Self {

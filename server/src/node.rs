@@ -25,6 +25,7 @@ impl NodeRole {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "admin" => Some(NodeRole::Admin),
@@ -36,23 +37,18 @@ impl NodeRole {
 }
 
 /// Policy for who can create Nodes on this server
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeCreationPolicy {
     /// Only server admin can create Nodes
     AdminOnly,
     /// Anyone can create a Node
+    #[default]
     Open,
     /// Nodes require approval from server admin
     Approval,
     /// Nodes can only be created via invite
     Invite,
-}
-
-impl Default for NodeCreationPolicy {
-    fn default() -> Self {
-        NodeCreationPolicy::Open
-    }
 }
 
 /// A Node (community space)

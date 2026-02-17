@@ -52,11 +52,14 @@ impl std::fmt::Display for RateLimitError {
 
 impl std::error::Error for RateLimitError {}
 
+/// Window map type alias for rate limiter
+type WindowMap = HashMap<(Uuid, ActionType), VecDeque<Instant>>;
+
 /// Rate limiter using sliding window algorithm
 #[derive(Debug)]
 pub struct RateLimiter {
     /// Tracks timestamps of actions per (user_id, action_type)
-    windows: Arc<RwLock<HashMap<(Uuid, ActionType), VecDeque<Instant>>>>,
+    windows: Arc<RwLock<WindowMap>>,
 }
 
 impl RateLimiter {

@@ -18,6 +18,12 @@ pub struct AccordDemo {
     pub channel_managers: HashMap<Uuid, ChannelManager>, // server_id -> channel_manager
 }
 
+impl Default for AccordDemo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AccordDemo {
     /// Create a new demo instance
     pub fn new() -> Self {

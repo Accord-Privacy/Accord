@@ -3,6 +3,7 @@
 //! Completely self-contained demonstration of Accord concepts
 //! Uses only Rust standard library - no external dependencies
 
+#![allow(dead_code)]
 use std::collections::HashMap;
 use std::io::{self, Write};
 

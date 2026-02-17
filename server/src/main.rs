@@ -3,12 +3,16 @@
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
+#[allow(dead_code)]
 mod db;
+#[allow(dead_code)]
 mod files;
 mod handlers;
+#[allow(dead_code)]
 mod models;
 mod node;
 mod permissions;
+#[allow(dead_code)]
 mod rate_limit;
 mod state;
 

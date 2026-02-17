@@ -11,7 +11,6 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use serde_json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -47,6 +46,7 @@ impl std::fmt::Debug for AppState {
     }
 }
 
+#[allow(dead_code)]
 impl AppState {
     /// Create new application state with database connection
     pub async fn new(db_path: &str) -> Result<Self> {

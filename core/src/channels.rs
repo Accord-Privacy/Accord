@@ -75,6 +75,12 @@ pub struct ChannelManager {
     user_channels: HashMap<Uuid, HashSet<Uuid>>, // user_id -> channel_ids
 }
 
+impl Default for ChannelManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChannelManager {
     pub fn new() -> Self {
         Self {
@@ -129,7 +135,7 @@ impl ChannelManager {
         // Add to user's channel list
         self.user_channels
             .entry(creator_id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(channel_id);
 
         Ok(channel_id)
@@ -169,7 +175,7 @@ impl ChannelManager {
                 // Add to user's channel list
                 self.user_channels
                     .entry(user_id)
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(channel_id);
 
                 Ok(())
@@ -276,10 +282,7 @@ impl ChannelManager {
             );
 
             // Add to user's channel list
-            self.user_channels
-                .entry(user_id)
-                .or_insert_with(HashSet::new)
-                .insert(cid);
+            self.user_channels.entry(user_id).or_default().insert(cid);
 
             Ok(())
         } else {

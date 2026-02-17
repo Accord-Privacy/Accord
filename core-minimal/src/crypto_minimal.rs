@@ -27,6 +27,7 @@ pub struct EncryptedEnvelope {
 /// Minimal crypto manager for demonstration
 pub struct SimpleCrypto {
     user_id: Uuid,
+    #[allow(dead_code)]
     private_key: SimpleKey,
     public_key_fingerprint: String,
     session_keys: HashMap<Uuid, SimpleKey>,
@@ -129,7 +130,7 @@ impl SimpleCrypto {
 
         // Simplified encryption (XOR with key + nonce hash)
         let mut hasher = Sha256::new();
-        hasher.update(&session_key.key_material);
+        hasher.update(session_key.key_material);
         hasher.update(&nonce);
         let key_stream = hasher.finalize();
 
@@ -159,7 +160,7 @@ impl SimpleCrypto {
 
         // Reconstruct key stream
         let mut hasher = Sha256::new();
-        hasher.update(&session_key.key_material);
+        hasher.update(session_key.key_material);
         hasher.update(&envelope.nonce);
         let key_stream = hasher.finalize();
 
@@ -229,8 +230,8 @@ impl SimpleCrypto {
         let timestamp = parts[1].parse::<i64>().map_err(|_| "Invalid timestamp")?;
         let creator_id = Uuid::parse_str(parts[2]).map_err(|_| "Invalid creator ID")?;
 
-        let expires_at = chrono::DateTime::from_timestamp(timestamp, 0)
-            .ok_or_else(|| "Invalid expiration time")?;
+        let expires_at =
+            chrono::DateTime::from_timestamp(timestamp, 0).ok_or("Invalid expiration time")?;
 
         if chrono::Utc::now() > expires_at {
             return Err("Invite has expired".to_string());

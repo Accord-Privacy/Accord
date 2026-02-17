@@ -52,7 +52,7 @@ pub enum AccessLevel {
 }
 
 /// Quality control gates for invite acceptance
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct QualityGates {
     /// Require account age minimum
     pub min_account_age_days: Option<u32>,
@@ -144,6 +144,12 @@ pub struct InviteManager {
     pending_joins: HashMap<Uuid, PendingJoin>,
 }
 
+impl Default for InviteManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InviteManager {
     pub fn new() -> Self {
         Self {
@@ -220,13 +226,10 @@ impl InviteManager {
         }
 
         // Verification requirement
-        if invite.quality_gates.require_verification {
-            match user_info.verification_status {
-                VerificationStatus::Unverified => {
-                    failed_reasons.push("Account verification required".to_string());
-                }
-                _ => {} // Some level of verification exists
-            }
+        if invite.quality_gates.require_verification
+            && user_info.verification_status == VerificationStatus::Unverified
+        {
+            failed_reasons.push("Account verification required".to_string());
         }
 
         if !failed_reasons.is_empty() {
@@ -416,7 +419,7 @@ impl InviteManager {
             .filter(|pending| {
                 self.invites
                     .get(&pending.invite_code)
-                    .map_or(false, |invite| invite.server_id == server_id)
+                    .is_some_and(|invite| invite.server_id == server_id)
             })
             .collect()
     }
@@ -455,7 +458,7 @@ impl InviteManager {
 
         // Remove expired invites
         self.invites
-            .retain(|_, invite| invite.expires_at.map_or(true, |expires| expires > now));
+            .retain(|_, invite| invite.expires_at.is_none_or(|expires| expires > now));
 
         // Remove old pending joins (older than 7 days)
         let week_ago = now - Duration::days(7);
@@ -484,18 +487,6 @@ pub struct InviteInfo {
     pub custom_message: Option<String>,
     pub requires_approval: bool,
     pub verification_questions: Vec<VerificationQuestion>,
-}
-
-impl Default for QualityGates {
-    fn default() -> Self {
-        Self {
-            min_account_age_days: None,
-            require_verification: false,
-            require_approval: false,
-            require_referral: None,
-            verification_questions: Vec::new(),
-        }
-    }
 }
 
 #[cfg(test)]
