@@ -169,6 +169,16 @@ pub enum WsMessageType {
     /// Retrieve pending prekey messages
     GetPrekeyMessages,
 
+    // ── P2P Voice Signaling ──
+    /// P2P voice signaling: relay ICE candidates and offer/answer between peers.
+    /// The server forwards this opaquely — it cannot interpret the content.
+    P2PSignal {
+        channel_id: Uuid,
+        target_user_id: Uuid,
+        /// JSON-serialized P2PSignal from accord_core::p2p_voice
+        signal_data: String,
+    },
+
     /// Heartbeat
     Ping,
     /// Response to ping

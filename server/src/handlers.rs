@@ -2273,6 +2273,23 @@ async fn handle_ws_message(
             state
                 .send_to_voice_channel(channel_id, sender_user_id, relay.to_string())
                 .await?;
+        }
+        WsMessageType::P2PSignal {
+            channel_id,
+            target_user_id,
+            signal_data,
+        } => {
+            // Relay P2P signaling message to the target peer — server cannot interpret content
+            let relay = serde_json::json!({
+                "type": "p2p_signal",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "signal_data": signal_data,
+                "timestamp": ws_message.timestamp
+            });
+            state
+                .send_to_user(target_user_id, relay.to_string())
+                .await?;
         } // WsMessageType::UpdateChannel is handled above
     }
 

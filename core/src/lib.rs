@@ -13,6 +13,8 @@ pub mod channels;
 pub mod crypto;
 pub mod double_ratchet;
 pub mod invites;
+pub mod jitter_buffer;
+pub mod p2p_voice;
 pub mod protocol;
 pub mod session_manager;
 pub mod srtp;
