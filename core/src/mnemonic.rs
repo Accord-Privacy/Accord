@@ -119,7 +119,10 @@ pub fn restore_sync_bundle(mnemonic: &Mnemonic, bundle: &EncryptedBundle) -> Res
     let cipher = Aes256Gcm::new_from_slice(&key).expect("valid 256-bit key");
 
     if bundle.nonce.len() != NONCE_LEN {
-        bail!("invalid nonce length: expected {NONCE_LEN}, got {}", bundle.nonce.len());
+        bail!(
+            "invalid nonce length: expected {NONCE_LEN}, got {}",
+            bundle.nonce.len()
+        );
     }
     let nonce = Nonce::from_slice(&bundle.nonce);
 

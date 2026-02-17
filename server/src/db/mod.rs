@@ -2,6 +2,16 @@
 //!
 //! Provides persistent storage for users, nodes, channels, and messages while maintaining
 //! zero-knowledge properties for encrypted content.
+//!
+//! Sub-modules for per-Node database isolation (WIP migration):
+pub mod migration;
+pub mod node_db;
+pub mod relay;
+
+#[allow(unused_imports)] // WIP: will be wired in during migration from single-DB
+pub use node_db::NodeDatabase;
+#[allow(unused_imports)] // WIP: will be wired in during migration from single-DB
+pub use relay::RelayDatabase;
 
 use crate::models::{Channel, FileMetadata, NodeInvite, User};
 use crate::node::{Node, NodeMember, NodeRole};

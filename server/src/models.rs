@@ -793,6 +793,57 @@ pub struct RejectFriendRequestRequest {
     pub request_id: Uuid,
 }
 
+// ── Raw types for per-Node DB layer (without relay-level joins) ──
+
+/// Raw message metadata from per-Node DB (no public_key_hash — needs relay lookup)
+#[derive(Debug, Clone)]
+pub struct MessageMetadataRaw {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub sender_id: Uuid,
+    pub encrypted_payload: Vec<u8>,
+    pub created_at: u64,
+    pub edited_at: Option<u64>,
+    pub pinned_at: Option<u64>,
+    pub pinned_by: Option<Uuid>,
+    pub reply_to: Option<Uuid>,
+    pub replied_message: Option<RepliedMessageRaw>,
+    pub _node_id: Uuid,
+}
+
+/// Raw replied message (no public_key_hash)
+#[derive(Debug, Clone)]
+pub struct RepliedMessageRaw {
+    pub id: Uuid,
+    pub sender_id: Uuid,
+    pub encrypted_payload: Vec<u8>,
+    pub created_at: u64,
+}
+
+/// Raw search result from per-Node DB
+#[derive(Debug, Clone)]
+pub struct SearchResultRaw {
+    pub message_id: Uuid,
+    pub channel_id: Uuid,
+    pub channel_name: String,
+    pub sender_id: Uuid,
+    pub created_at: u64,
+    pub encrypted_payload: Vec<u8>,
+}
+
+/// Raw audit log entry from per-Node DB (no actor public_key_hash)
+#[derive(Debug, Clone)]
+pub struct AuditLogRaw {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub actor_id: Uuid,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: Option<Uuid>,
+    pub details: Option<String>,
+    pub created_at: u64,
+}
+
 /// Request to set a per-Node user profile
 #[derive(Debug, Deserialize)]
 pub struct SetNodeUserProfileRequest {
