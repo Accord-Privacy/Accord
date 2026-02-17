@@ -15,6 +15,7 @@ pub mod double_ratchet;
 pub mod invites;
 pub mod protocol;
 pub mod session_manager;
+pub mod srtp;
 pub mod voice;
 
 use anyhow::Result;

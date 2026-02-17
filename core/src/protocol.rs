@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::bots::{BotCommand, BotResponse};
 use crate::session_manager::{PublishableKeyBundle, X3DHInitialMessage};
+use crate::srtp::SrtpPacket;
 use crate::voice::VoicePacket;
 
 /// Protocol version for compatibility checking
@@ -52,6 +53,8 @@ pub enum MessageType {
     VoiceLeave,
     VoicePacket,
     VoiceSpeaking,
+    VoiceKeyExchange,
+    EncryptedVoicePacket,
 
     // Channel Management
     ChannelJoin,
@@ -101,6 +104,10 @@ pub enum MessagePayload {
     VoiceLeave(VoiceLeavePayload),
     VoicePacket(VoicePacketPayload),
     VoiceSpeaking(VoiceSpeakingPayload),
+
+    // SRTP Voice Messages
+    VoiceKeyExchange(VoiceKeyExchangePayload),
+    EncryptedVoicePacket(EncryptedVoicePacketPayload),
 
     // Channel Messages
     ChannelJoin(ChannelJoinPayload),
@@ -223,6 +230,27 @@ pub struct VoicePacketPayload {
 pub struct VoiceSpeakingPayload {
     pub is_speaking: bool,
     pub channel_id: Uuid,
+}
+
+/// Voice key exchange for SRTP session establishment
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoiceKeyExchangePayload {
+    pub channel_id: Uuid,
+    /// The encrypted voice session key (wrapped for each recipient)
+    pub wrapped_key: Vec<u8>,
+    /// Target user ID (for 1:1) or None (broadcast to channel)
+    pub target_user_id: Option<Uuid>,
+    /// SSRC the sender will use
+    pub sender_ssrc: u32,
+    /// Key generation number
+    pub key_generation: u32,
+}
+
+/// An SRTP-encrypted voice packet with full header fields
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncryptedVoicePacketPayload {
+    pub channel_id: Uuid,
+    pub packet: SrtpPacket,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

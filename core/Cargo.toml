@@ -33,6 +33,12 @@ chrono = { version = "0.4", features = ["serde"] }
 hkdf = "0.12"
 sha2 = "0.10"
 
+# SRTP voice encryption
+aes = { version = "0.8", features = ["zeroize"] }
+ctr = "0.9"
+hmac = "0.12"
+sha1 = "0.10"
+
 # Random generation
 rand = "0.8"
 

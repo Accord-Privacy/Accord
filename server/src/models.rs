@@ -136,6 +136,21 @@ pub enum WsMessageType {
         user_id: Uuid,
         speaking: bool,
     },
+    /// SRTP voice key exchange (opaque to server)
+    VoiceKeyExchange {
+        channel_id: Uuid,
+        /// Base64-encoded wrapped key data
+        wrapped_key: String,
+        target_user_id: Option<Uuid>,
+        sender_ssrc: u32,
+        key_generation: u32,
+    },
+    /// SRTP encrypted voice packet (opaque to server)
+    SrtpVoicePacket {
+        channel_id: Uuid,
+        /// Base64-encoded SrtpPacket
+        packet_data: String,
+    },
 
     // ── Key exchange operations (Double Ratchet / X3DH) ──
     /// Publish prekey bundle

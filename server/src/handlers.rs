@@ -2228,6 +2228,51 @@ async fn handle_ws_message(
             state
                 .send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string())
                 .await?;
+        }
+
+        WsMessageType::VoiceKeyExchange {
+            channel_id,
+            wrapped_key,
+            target_user_id,
+            sender_ssrc,
+            key_generation,
+        } => {
+            // Relay voice key exchange opaquely — server cannot decrypt
+            let relay = serde_json::json!({
+                "type": "voice_key_exchange",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "wrapped_key": wrapped_key,
+                "sender_ssrc": sender_ssrc,
+                "key_generation": key_generation,
+                "timestamp": ws_message.timestamp
+            });
+            if let Some(target) = target_user_id {
+                // 1:1 key exchange
+                state.send_to_user(target, relay.to_string()).await?;
+            } else {
+                // Broadcast to voice channel
+                state
+                    .send_to_voice_channel(channel_id, sender_user_id, relay.to_string())
+                    .await?;
+            }
+        }
+
+        WsMessageType::SrtpVoicePacket {
+            channel_id,
+            packet_data,
+        } => {
+            // Relay SRTP packet opaquely — server cannot decrypt
+            let relay = serde_json::json!({
+                "type": "srtp_voice_packet",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "packet_data": packet_data,
+                "timestamp": ws_message.timestamp
+            });
+            state
+                .send_to_voice_channel(channel_id, sender_user_id, relay.to_string())
+                .await?;
         } // WsMessageType::UpdateChannel is handled above
     }
 
