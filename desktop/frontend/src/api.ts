@@ -1,9 +1,7 @@
 // API client module for REST endpoints
 
 import {
-  RegisterRequest,
   RegisterResponse,
-  AuthRequest,
   AuthResponse,
   CreateNodeRequest,
   NodeInfo,
@@ -24,17 +22,32 @@ import {
   AuditLogResponse,
 } from './types';
 
-// Configuration - check for environment variable or use localhost as default
-// For cross-machine connectivity, set VITE_ACCORD_SERVER_URL in .env or environment
-const DEFAULT_BASE_URL = (typeof window !== 'undefined' && (window as any).__ACCORD_SERVER_URL__) 
-  || import.meta.env.VITE_ACCORD_SERVER_URL 
-  || 'http://localhost:8080';
+// Configuration - check for environment variable or use localStorage or default
+function getDefaultBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    // Check localStorage for saved server URL
+    const saved = localStorage.getItem('accord_server_url');
+    if (saved) return saved;
+    // Check runtime override
+    if ((window as any).__ACCORD_SERVER_URL__) return (window as any).__ACCORD_SERVER_URL__;
+  }
+  return import.meta.env.VITE_ACCORD_SERVER_URL || 'http://localhost:8080';
+}
 
 export class AccordApi {
   private baseUrl: string;
 
-  constructor(baseUrl: string = DEFAULT_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl || getDefaultBaseUrl();
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  setBaseUrl(url: string) {
+    this.baseUrl = url;
+    localStorage.setItem('accord_server_url', url);
   }
 
   private async request<T>(
@@ -66,29 +79,25 @@ export class AccordApi {
     return this.request<HealthResponse>('/health');
   }
 
-  // User registration
-  async register(username: string, publicKey: string): Promise<RegisterResponse> {
-    const request: RegisterRequest = {
-      username,
-      publicKey,
-    };
-
+  // User registration — keypair-only, no username
+  async register(publicKey: string, password: string): Promise<RegisterResponse> {
     return this.request<RegisterResponse>('/register', {
       method: 'POST',
-      body: JSON.stringify(request),
+      body: JSON.stringify({
+        public_key: publicKey,
+        password: password,
+      }),
     });
   }
 
-  // User authentication
-  async login(username: string, password: string): Promise<AuthResponse> {
-    const request: AuthRequest = {
-      username,
-      password,
-    };
-
+  // User authentication — by public_key + password
+  async login(publicKey: string, password: string): Promise<AuthResponse> {
     return this.request<AuthResponse>('/auth', {
       method: 'POST',
-      body: JSON.stringify(request),
+      body: JSON.stringify({
+        public_key: publicKey,
+        password: password,
+      }),
     });
   }
 
@@ -335,7 +344,7 @@ export class AccordApi {
       channel_id: string; 
       channel_name: string;
       sender_id: string;
-      sender_username: string;
+      sender_public_key_hash: string;
       timestamp: number;
     }>;
     note?: string;
@@ -350,7 +359,7 @@ export class AccordApi {
         channel_id: string; 
         channel_name: string;
         sender_id: string;
-        sender_username: string;
+        sender_public_key_hash: string;
         timestamp: number;
       }>;
       note?: string;
@@ -498,8 +507,6 @@ export class AccordApi {
 export const api = new AccordApi();
 
 // Export functions for backward compatibility
-export const register = api.register.bind(api);
-export const login = api.login.bind(api);
 export const createNode = api.createNode.bind(api);
 export const getNodeInfo = api.getNodeInfo.bind(api);
 export const joinNode = api.joinNode.bind(api);

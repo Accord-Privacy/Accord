@@ -17,9 +17,17 @@ anyhow.workspace = true
 # Tauri dependencies
 tauri = "2.0"
 
+# HTTP client for connectivity testing
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+
+# Cryptography
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+rand = { workspace = true }
+hex = "0.4"
+
 # Desktop integration
 dirs = "5.0"
-keyring = "2.0"
+keyring = { version = "3", features = ["linux-native"] }
 
 [build-dependencies] 
 tauri-build = "2.0"

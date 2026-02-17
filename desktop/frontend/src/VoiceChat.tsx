@@ -362,7 +362,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           ...prev.connectedUsers.filter(u => u.userId !== message.user_id),
           {
             userId: message.user_id,
-            username: message.username || `User ${message.user_id}`,
+            displayName: message.public_key_hash?.slice(0, 16) || `User ${message.user_id?.slice(0, 8)}`,
             isSpeaking: false,
             audioLevel: 0
           }
@@ -551,9 +551,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
                 fontSize: '12px',
                 color: '#fff'
               }}>
-                {user.username[0]?.toUpperCase()}
+                {user.displayName[0]?.toUpperCase()}
               </div>
-              <span style={{ fontSize: '12px', color: '#dcddde' }}>{user.username}</span>
+              <span style={{ fontSize: '12px', color: '#dcddde' }}>{user.displayName}</span>
             </div>
           ))}
         </div>

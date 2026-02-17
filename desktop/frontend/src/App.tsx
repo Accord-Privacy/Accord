@@ -22,26 +22,39 @@ import { notificationManager, NotificationPreferences } from "./notifications";
 import { NotificationSettings } from "./NotificationSettings";
 import { Settings } from "./Settings";
 
-// Mock data as fallback
-const MOCK_SERVERS = ["Accord Dev", "Gaming", "Music"];
-const MOCK_CHANNELS = ["# general", "# random", "# dev", "# off-topic"];
-const MOCK_USERS = ["Alice", "Bob", "Charlie", "Diana", "Eve"];
-const MOCK_MESSAGES = [
-  { id: "1", author: "Alice", content: "Hey everyone! Welcome to Accord 👋", time: "12:01 PM", timestamp: Date.now() },
-  { id: "2", author: "Bob", content: "This is looking great so far!", time: "12:02 PM", timestamp: Date.now() },
-  { id: "3", author: "Charlie", content: "Can't wait for E2EE to land", time: "12:03 PM", timestamp: Date.now() },
-  { id: "4", author: "Diana", content: "The UI is giving me good vibes", time: "12:05 PM", timestamp: Date.now() },
-  { id: "5", author: "Alice", content: "We're building something special here", time: "12:06 PM", timestamp: Date.now() },
-];
+// Helper: compute SHA-256 hex hash of a string (for public key -> public_key_hash)
+async function sha256Hex(input: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Helper: truncate a public key hash to a short fingerprint for display
+function fingerprint(publicKeyHash: string): string {
+  if (!publicKeyHash || publicKeyHash.length < 16) return publicKeyHash || 'unknown';
+  return publicKeyHash.substring(0, 8) + '...' + publicKeyHash.substring(publicKeyHash.length - 8);
+}
 
 function App() {
+  // Server connection state
+  const [serverUrl, setServerUrl] = useState(() => 
+    localStorage.getItem('accord_server_url') || 'http://localhost:8080'
+  );
+  const [_serverConnected, setServerConnected] = useState(false);
+  const [showServerScreen, setShowServerScreen] = useState(() => !localStorage.getItem('accord_server_url'));
+  const [serverConnecting, setServerConnecting] = useState(false);
+  const [serverVersion, setServerVersion] = useState("");
+
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoginMode, setIsLoginMode] = useState(true);
-  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [publicKey, setPublicKey] = useState("");
   const [authError, setAuthError] = useState("");
+  const [showKeyBackup, setShowKeyBackup] = useState(false);
+  const [publicKeyHash, setPublicKeyHash] = useState("");
 
   // Encryption state
   const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
@@ -51,7 +64,7 @@ function App() {
   const [appState, setAppState] = useState<AppState>({
     isAuthenticated: false,
     nodes: [],
-    messages: MOCK_MESSAGES,
+    messages: [],
     isConnected: false,
   });
 
@@ -191,12 +204,12 @@ function App() {
   }, [ws, typingIndicatorsEnabled, lastTypingSent]);
 
   const formatTypingUsers = useCallback((channelId: string): string => {
-    const users = typingUsers.get(channelId) || [];
+    const tusers = typingUsers.get(channelId) || [];
     
-    if (users.length === 0) return '';
-    if (users.length === 1) return `${users[0].username} is typing...`;
-    if (users.length === 2) return `${users[0].username} and ${users[1].username} are typing...`;
-    return `${users[0].username}, ${users[1].username} and ${users.length - 2} other${users.length > 3 ? 's' : ''} are typing...`;
+    if (tusers.length === 0) return '';
+    if (tusers.length === 1) return `${tusers[0].displayName} is typing...`;
+    if (tusers.length === 2) return `${tusers[0].displayName} and ${tusers[1].displayName} are typing...`;
+    return `${tusers[0].displayName}, ${tusers[1].displayName} and ${tusers.length - 2} other${tusers.length > 3 ? 's' : ''} are typing...`;
   }, [typingUsers]);
 
   // Check server availability on mount
@@ -252,10 +265,10 @@ function App() {
         replied_message: data.replied_message ? {
           id: data.replied_message.id,
           sender_id: data.replied_message.sender_id,
-          sender_username: data.replied_message.sender_username,
+          sender_public_key_hash: data.replied_message.sender_public_key_hash || '',
           encrypted_payload: data.replied_message.encrypted_payload,
           created_at: data.replied_message.created_at,
-          content: data.replied_message.content, // This would need to be decrypted on the client
+          content: data.replied_message.content,
         } : undefined,
       };
 
@@ -428,7 +441,7 @@ function App() {
       
       const typingUser: TypingUser = {
         user_id: data.user_id,
-        username: data.username,
+        displayName: data.public_key_hash ? fingerprint(data.public_key_hash) : data.user_id.substring(0, 8),
         startedAt: Date.now(),
       };
 
@@ -895,6 +908,25 @@ function App() {
     }
   }, [selectedNodeId]);
 
+  // Handle server connection
+  const handleServerConnect = async () => {
+    setServerConnecting(true);
+    setAuthError("");
+    try {
+      api.setBaseUrl(serverUrl);
+      const health = await api.health();
+      setServerConnected(true);
+      setServerAvailable(true);
+      setServerVersion(health.version);
+      setShowServerScreen(false);
+    } catch (error) {
+      setAuthError(`Cannot connect to ${serverUrl}`);
+      setServerConnected(false);
+    } finally {
+      setServerConnecting(false);
+    }
+  };
+
   // Handle authentication
   const handleAuth = async () => {
     if (!serverAvailable) {
@@ -904,6 +936,9 @@ function App() {
           const newKeyPair = await generateKeyPair();
           await saveKeyToStorage(newKeyPair);
           setKeyPair(newKeyPair);
+          const pk = await exportPublicKey(newKeyPair.publicKey);
+          setPublicKey(pk);
+          setPublicKeyHash(await sha256Hex(pk));
         } catch (error) {
           console.warn('Failed to generate demo keys:', error);
         }
@@ -917,33 +952,52 @@ function App() {
     
     try {
       if (isLoginMode) {
-        // Login
-        const response = await api.login(username, password);
+        // Login — need keypair loaded from storage + password
+        let pkToUse = publicKey.trim();
+        
+        // Try to load from storage if not provided
+        if (!pkToUse && encryptionEnabled) {
+          const existingKeyPair = await loadKeyFromStorage();
+          if (existingKeyPair) {
+            pkToUse = await exportPublicKey(existingKeyPair.publicKey);
+            setKeyPair(existingKeyPair);
+            setPublicKey(pkToUse);
+          }
+        }
+        
+        if (!pkToUse) {
+          setAuthError("No keypair found. Import your key or register a new account.");
+          return;
+        }
+
+        // Login with public_key + password (server computes hash)
+        const response = await api.login(pkToUse, password);
         
         // Store token and user info
         storeToken(response.token);
         localStorage.setItem('accord_user_id', response.user_id);
 
-        // Load existing keys or generate new ones
-        if (encryptionEnabled) {
-          let existingKeyPair = await loadKeyFromStorage();
-          if (!existingKeyPair) {
-            existingKeyPair = await generateKeyPair();
-            await saveKeyToStorage(existingKeyPair);
+        // Ensure keypair is loaded
+        if (encryptionEnabled && !keyPair) {
+          const existingKeyPair = await loadKeyFromStorage();
+          if (existingKeyPair) {
+            setKeyPair(existingKeyPair);
           }
-          setKeyPair(existingKeyPair);
         }
+
+        const pkHash = await sha256Hex(pkToUse);
+        setPublicKeyHash(pkHash);
         
         setAppState(prev => ({
           ...prev,
           isAuthenticated: true,
           token: response.token,
-          user: { id: response.user_id, username, public_key: "", created_at: 0 }
+          user: { id: response.user_id, public_key_hash: pkHash, public_key: pkToUse, created_at: 0, display_name: fingerprint(pkHash) }
         }));
         setIsAuthenticated(true);
 
-        // Set username for notification system
-        notificationManager.setCurrentUsername(username);
+        // Set display name for notification system (use fingerprint)
+        notificationManager.setCurrentUsername(fingerprint(pkHash));
 
         // Initialize WebSocket connection
         const socket = new AccordWebSocket(response.token);
@@ -958,19 +1012,15 @@ function App() {
         }, 100);
 
       } else {
-        // Register — validate password strength
+        // Register — validate password
         if (password.length < 8) {
           setAuthError("Password must be at least 8 characters long");
           return;
         }
-        if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
-          setAuthError("Password must contain at least one uppercase letter, one lowercase letter, and one number");
-          return;
-        }
         
+        // Auto-generate keypair
         let publicKeyToUse = publicKey.trim();
         
-        // Auto-generate keypair if no public key provided and crypto is supported
         if (!publicKeyToUse && encryptionEnabled) {
           try {
             const newKeyPair = await generateKeyPair();
@@ -985,18 +1035,17 @@ function App() {
         }
         
         if (!publicKeyToUse) {
-          setAuthError("Public key is required for registration");
+          setAuthError("Public key generation failed. Crypto may not be supported.");
           return;
         }
         
-        await api.register(username, publicKeyToUse);
+        await api.register(publicKeyToUse, password);
         
-        // After successful registration, switch to login
-        setIsLoginMode(true);
-        setPassword("");
-        setPublicKey("");
-        setAuthError("");
-        alert("Registration successful with E2EE enabled! Please log in.");
+        const pkHash = await sha256Hex(publicKeyToUse);
+        setPublicKeyHash(pkHash);
+        
+        // Show key backup prompt
+        setShowKeyBackup(true);
       }
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed");
@@ -1028,13 +1077,13 @@ function App() {
     setAppState({
       isAuthenticated: false,
       nodes: [],
-      messages: MOCK_MESSAGES,
+      messages: [],
       isConnected: false,
     });
     
-    setUsername("");
     setPassword("");
     setPublicKey("");
+    setPublicKeyHash("");
   };
 
   // Handle sending messages
@@ -1067,7 +1116,7 @@ function App() {
         // Add to local messages for immediate display
         const newMessage: Message = {
           id: Math.random().toString(),
-          author: appState.user?.username || "You",
+          author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
           content: message, // Show original plaintext locally
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestamp: Date.now(),
@@ -1076,8 +1125,8 @@ function App() {
           reply_to: replyingTo?.id,
           replied_message: replyingTo ? {
             id: replyingTo.id,
-            sender_id: replyingTo.author, // Note: this maps to username, not ID
-            sender_username: replyingTo.author,
+            sender_id: replyingTo.author,
+            sender_public_key_hash: '',
             encrypted_payload: "",
             created_at: replyingTo.timestamp,
             content: replyingTo.content,
@@ -1104,7 +1153,7 @@ function App() {
       // Add to local messages as fallback
       const newMessage: Message = {
         id: Math.random().toString(),
-        author: appState.user?.username || "You",
+        author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
         content: message,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: Date.now(),
@@ -1212,10 +1261,11 @@ function App() {
     if (!appState.user || !selectedNodeId) return false;
     
     // Author can always delete their own messages
-    if (message.author === appState.user.username) return true;
+    if (message.author === (appState.user.display_name || fingerprint(appState.user.public_key_hash))) return true;
     
     // Check if user is admin/mod of the current node
-    const member = members.find(m => m.user.id === appState.user?.id);
+    const currentUserId = localStorage.getItem('accord_user_id');
+    const member = members.find(m => m.user_id === currentUserId);
     return member ? (member.role === 'admin' || member.role === 'moderator') : false;
   };
 
@@ -1375,18 +1425,28 @@ function App() {
       
       if (token && userId && serverAvailable) {
         // Load existing keys if available
+        let existingKeyPair: CryptoKeyPair | null = null;
         if (encryptionEnabled) {
-          const existingKeyPair = await loadKeyFromStorage();
+          existingKeyPair = await loadKeyFromStorage();
           if (existingKeyPair) {
             setKeyPair(existingKeyPair);
           }
+        }
+
+        // Compute public key hash if we have a key
+        let pkHash = '';
+        if (existingKeyPair) {
+          const pk = await exportPublicKey(existingKeyPair.publicKey);
+          pkHash = await sha256Hex(pk);
+          setPublicKeyHash(pkHash);
+          setPublicKey(pk);
         }
 
         setAppState(prev => ({
           ...prev,
           isAuthenticated: true,
           token,
-          user: { id: userId, username: "User", public_key: "", created_at: 0 }
+          user: { id: userId, public_key_hash: pkHash, public_key: '', created_at: 0, display_name: fingerprint(pkHash) }
         }));
         setIsAuthenticated(true);
 
@@ -1451,161 +1511,55 @@ function App() {
     };
   }, [ws]);
 
-  // Render authentication screen
-  if (!isAuthenticated) {
+  // Key backup modal
+  if (showKeyBackup) {
     return (
       <div className="app">
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center', 
-          height: '100vh',
-          background: '#2c2f33',
-          color: '#ffffff'
-        }}>
-          <div style={{
-            background: '#36393f',
-            padding: '2rem',
-            borderRadius: '8px',
-            width: '400px',
-            maxWidth: '90vw'
-          }}>
-            <h2 style={{ textAlign: 'center', marginBottom: '2rem' }}>
-              {isLoginMode ? 'Login to Accord' : 'Register for Accord'}
-            </h2>
-            
-            {!serverAvailable && (
-              <div style={{ 
-                background: '#faa61a', 
-                color: '#000', 
-                padding: '0.5rem', 
-                borderRadius: '4px', 
-                marginBottom: '1rem',
-                fontSize: '0.9rem'
-              }}>
-                ⚠️ Server unavailable - click Login to use demo mode
-              </div>
-            )}
-
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
+          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '500px', maxWidth: '90vw' }}>
+            <h2 style={{ textAlign: 'center', marginBottom: '1rem' }}>🔑 Backup Your Key</h2>
+            <p style={{ color: '#b9bbbe', marginBottom: '1rem', fontSize: '0.9rem' }}>
+              Your identity is your keypair. If you lose it, you lose access to your account forever. 
+              <strong style={{ color: '#faa61a' }}> There is no recovery.</strong>
+            </p>
             <div style={{ marginBottom: '1rem' }}>
-              <input
-                type="text"
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.8rem',
-                  borderRadius: '4px',
-                  border: 'none',
-                  background: '#40444b',
-                  color: '#ffffff',
-                  fontSize: '1rem'
-                }}
+              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Your Public Key Fingerprint:</label>
+              <div style={{ background: '#40444b', padding: '0.6rem', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.85rem', wordBreak: 'break-all' }}>
+                {publicKeyHash || 'computing...'}
+              </div>
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Public Key (share this):</label>
+              <textarea
+                readOnly
+                value={publicKey}
+                rows={3}
+                style={{ width: '100%', background: '#40444b', color: '#ffffff', border: 'none', borderRadius: '4px', padding: '0.6rem', fontFamily: 'monospace', fontSize: '0.75rem', resize: 'none' }}
               />
             </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <input
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '0.8rem',
-                  borderRadius: '4px',
-                  border: 'none',
-                  background: '#40444b',
-                  color: '#ffffff',
-                  fontSize: '1rem'
-                }}
-              />
-              {!isLoginMode && password && password.length < 8 && (
-                <div style={{ fontSize: '0.8rem', color: '#f04747', marginTop: '0.3rem' }}>
-                  Password must be at least 8 characters
-                </div>
-              )}
-              {!isLoginMode && password.length >= 8 && !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password) && (
-                <div style={{ fontSize: '0.8rem', color: '#faa61a', marginTop: '0.3rem' }}>
-                  Recommended: include uppercase, lowercase, and a number
-                </div>
-              )}
-            </div>
-
-            {!isLoginMode && (
-              <div style={{ marginBottom: '1rem' }}>
-                <input
-                  type="text"
-                  placeholder={encryptionEnabled ? "Public Key (leave empty to auto-generate)" : "Public Key (for E2EE)"}
-                  value={publicKey}
-                  onChange={(e) => setPublicKey(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.8rem',
-                    borderRadius: '4px',
-                    border: 'none',
-                    background: '#40444b',
-                    color: '#ffffff',
-                    fontSize: '1rem'
-                  }}
-                />
-                {encryptionEnabled && (
-                  <div style={{ 
-                    fontSize: '0.8rem', 
-                    color: '#b9bbbe', 
-                    marginTop: '0.5rem' 
-                  }}>
-                    🔐 E2EE supported - keys will be auto-generated if empty
-                  </div>
-                )}
-              </div>
-            )}
-
-            {authError && (
-              <div style={{ 
-                color: '#f04747', 
-                marginBottom: '1rem', 
-                fontSize: '0.9rem' 
-              }}>
-                {authError}
-              </div>
-            )}
-
-            <button
-              onClick={handleAuth}
-              style={{
-                width: '100%',
-                padding: '0.8rem',
-                borderRadius: '4px',
-                border: 'none',
-                background: '#7289da',
-                color: '#ffffff',
-                fontSize: '1rem',
-                cursor: 'pointer',
-                marginBottom: '1rem'
-              }}
-            >
-              {isLoginMode ? 'Login' : 'Register'}
-            </button>
-
-            <div style={{ textAlign: 'center' }}>
+            <p style={{ color: '#43b581', fontSize: '0.85rem', marginBottom: '1rem' }}>
+              ✅ Your keypair is saved in this browser's storage. To use Accord on another device, you'll need to export and import your key.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => {
-                  setIsLoginMode(!isLoginMode);
-                  setAuthError("");
-                  setPassword("");
-                  setPublicKey("");
+                  navigator.clipboard.writeText(publicKey).catch(() => {});
+                  alert('Public key copied to clipboard!');
                 }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#7289da',
-                  cursor: 'pointer',
-                  textDecoration: 'underline'
-                }}
+                style={{ flex: 1, padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#43b581', color: '#ffffff', fontSize: '1rem', cursor: 'pointer' }}
               >
-                {isLoginMode ? 'Need to register?' : 'Already have an account?'}
+                Copy Public Key
+              </button>
+              <button
+                onClick={() => {
+                  setShowKeyBackup(false);
+                  setIsLoginMode(true);
+                  setPassword("");
+                  setAuthError("");
+                }}
+                style={{ flex: 1, padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer' }}
+              >
+                Continue to Login
               </button>
             </div>
           </div>
@@ -1614,10 +1568,140 @@ function App() {
     );
   }
 
-  // Use server data if available, fallback to mock data
-  const servers = nodes.length > 0 ? nodes.map(n => n.name) : MOCK_SERVERS;
-  const channelList = channels.length > 0 ? channels.map(ch => `# ${ch.name}`) : MOCK_CHANNELS;
-  const users = members.length > 0 ? members.map(m => m.user.username) : MOCK_USERS;
+  // Server connection screen
+  if (showServerScreen || !serverAvailable) {
+    return (
+      <div className="app">
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
+          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '400px', maxWidth: '90vw' }}>
+            <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Accord</h2>
+            <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.9rem' }}>Connect to a relay server</p>
+            
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Server URL</label>
+              <input
+                type="text"
+                placeholder="http://localhost:8080"
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+              />
+            </div>
+
+            {authError && (
+              <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>
+            )}
+
+            {serverVersion && (
+              <div style={{ color: '#43b581', marginBottom: '1rem', fontSize: '0.85rem' }}>✅ Connected — server v{serverVersion}</div>
+            )}
+
+            <button
+              onClick={handleServerConnect}
+              disabled={serverConnecting}
+              style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', marginBottom: '0.5rem', opacity: serverConnecting ? 0.6 : 1 }}
+            >
+              {serverConnecting ? 'Connecting...' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render authentication screen
+  if (!isAuthenticated) {
+    return (
+      <div className="app">
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
+          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '450px', maxWidth: '90vw' }}>
+            <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
+              {isLoginMode ? 'Login to Accord' : 'Create Identity'}
+            </h2>
+            <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+              {isLoginMode 
+                ? 'Authenticate with your keypair and password' 
+                : 'A new keypair will be generated automatically'}
+            </p>
+            
+            <div style={{ background: '#2f3136', padding: '0.6rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.8rem', color: '#b9bbbe' }}>
+              🔗 {serverUrl} {serverAvailable && <span style={{ color: '#43b581' }}>● connected</span>}
+              <button onClick={() => { setShowServerScreen(true); setAuthError(''); }} style={{ float: 'right', background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.8rem' }}>Change</button>
+            </div>
+
+            {isLoginMode && (
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>
+                  Key Status
+                </label>
+                <div style={{ background: '#40444b', padding: '0.6rem', borderRadius: '4px', fontSize: '0.85rem' }}>
+                  {keyPair || publicKey ? (
+                    <span style={{ color: '#43b581' }}>🔑 Keypair loaded from browser storage</span>
+                  ) : (
+                    <span style={{ color: '#faa61a' }}>⚠️ No keypair found — register or import</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Password</label>
+              <input
+                type="password"
+                placeholder={isLoginMode ? "Enter your password" : "Choose a password (min 8 chars)"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAuth(); }}
+                style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+              />
+              {!isLoginMode && password && password.length < 8 && (
+                <div style={{ fontSize: '0.8rem', color: '#f04747', marginTop: '0.3rem' }}>
+                  Password must be at least 8 characters
+                </div>
+              )}
+            </div>
+
+            {!isLoginMode && encryptionEnabled && (
+              <div style={{ marginBottom: '1rem', background: '#2f3136', padding: '0.6rem', borderRadius: '4px' }}>
+                <div style={{ fontSize: '0.8rem', color: '#43b581' }}>
+                  🔐 A new ECDH P-256 keypair will be generated for your identity
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#b9bbbe', marginTop: '0.3rem' }}>
+                  No username needed — you are identified by your public key hash
+                </div>
+              </div>
+            )}
+
+            {authError && (
+              <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>
+            )}
+
+            <button
+              onClick={handleAuth}
+              style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', marginBottom: '1rem' }}
+            >
+              {isLoginMode ? 'Login' : 'Create Identity & Register'}
+            </button>
+
+            <div style={{ textAlign: 'center' }}>
+              <button
+                onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(""); setPassword(""); }}
+                style={{ background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                {isLoginMode ? 'Need to create an identity?' : 'Already have a keypair? Login'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Use server data — no mock fallback
+  const servers = nodes.map(n => n.name);
+  const channelList = channels.map(ch => `# ${ch.name}`);
+  const displayName = (u: User) => u.display_name || fingerprint(u.public_key_hash);
+  const users = members.map(m => displayName(m.user));
 
   return (
     <div className="app">
@@ -2061,10 +2145,10 @@ function App() {
         
         <div className="user-panel">
           <div className="user-avatar">
-            {appState.user?.username?.[0] || "U"}
+            {(appState.user?.display_name || fingerprint(appState.user?.public_key_hash || ''))?.[0] || "U"}
           </div>
           <div className="user-info">
-            <div className="username">{appState.user?.username || "You"}</div>
+            <div className="username">{appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You"}</div>
             <div className="user-status">
               {appState.isConnected ? "Online" : "Offline"}
             </div>
@@ -2246,7 +2330,7 @@ function App() {
                 <div className="reply-preview" onClick={() => scrollToMessage(msg.reply_to!)}>
                   <div className="reply-bar"></div>
                   <div className="reply-content">
-                    <span className="reply-author">Replying to {msg.replied_message.sender_username}</span>
+                    <span className="reply-author">Replying to {fingerprint(msg.replied_message.sender_public_key_hash)}</span>
                     <span className="reply-snippet">{msg.replied_message.content || msg.replied_message.encrypted_payload.substring(0, 50) + '...'}</span>
                   </div>
                 </div>
@@ -2304,7 +2388,7 @@ function App() {
                       >
                         💬
                       </button>
-                      {msg.author === appState.user.username && (
+                      {msg.author === (appState.user.display_name || fingerprint(appState.user.public_key_hash)) && (
                         <button
                           onClick={() => handleStartEdit(msg.id, msg.content)}
                           className="message-action-btn"
@@ -2313,7 +2397,7 @@ function App() {
                           ✏️
                         </button>
                       )}
-                      {(msg.author === appState.user.username || canDeleteMessage(msg)) && (
+                      {(msg.author === (appState.user.display_name || fingerprint(appState.user.public_key_hash)) || canDeleteMessage(msg)) && (
                         <button
                           onClick={() => setShowDeleteConfirm(msg.id)}
                           className="message-action-btn"
@@ -2544,9 +2628,9 @@ function App() {
             return (
               <div key={member.user.id} className="member" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                  <div className="member-avatar">{member.user.username[0]}</div>
+                  <div className="member-avatar">{displayName(member.user)[0]}</div>
                   <span className="member-name" style={{ marginLeft: '8px' }}>
-                    {member.user.username}
+                    {displayName(member.user)}
                   </span>
                   <span 
                     style={{ 
@@ -2596,7 +2680,7 @@ function App() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleKickMember(member.user_id, member.user.username);
+                        handleKickMember(member.user_id, displayName(member.user));
                       }}
                       style={{
                         background: '#f04747',
@@ -2619,24 +2703,11 @@ function App() {
               </div>
             );
           })
-        ) : (
-          users.map((u) => (
-            <div key={u} className="member">
-              <div className="member-avatar">{u[0]}</div>
-              <span className="member-name">{u}</span>
-              <span 
-                className="member-status"
-                style={{ 
-                  marginLeft: 'auto', 
-                  fontSize: '12px',
-                  color: '#43b581'
-                }}
-              >
-                ●
-              </span>
-            </div>
-          ))
-        )}
+        ) : members.length === 0 ? (
+          <div style={{ padding: '16px', color: '#8e9297', fontSize: '13px', textAlign: 'center' }}>
+            {nodes.length === 0 ? 'Join or create a node to see members' : 'No members loaded'}
+          </div>
+        ) : null}
       </div>
 
       {/* Error Message */}
@@ -3028,11 +3099,11 @@ function App() {
                         color: '#ffffff'
                       }}
                     >
-                      {member.user.username[0].toUpperCase()}
+                      {displayName(member.user)[0].toUpperCase()}
                     </div>
                     <div>
                       <div style={{ color: '#ffffff', fontSize: '14px', fontWeight: '500' }}>
-                        {member.user.username}
+                        {displayName(member.user)}
                       </div>
                       <div style={{ color: '#b9bbbe', fontSize: '12px' }}>
                         {getRoleBadge(member.role)} {member.role}

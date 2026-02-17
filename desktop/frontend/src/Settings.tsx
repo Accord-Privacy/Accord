@@ -36,7 +36,11 @@ interface SettingsProps {
   onClose: () => void;
   currentUser?: {
     id: string;
-    username: string;
+    public_key_hash: string;
+    public_key: string;
+    created_at: number;
+    display_name?: string;
+    username?: string;
     displayName?: string;
     bio?: string;
     status?: string;
@@ -108,7 +112,7 @@ export const Settings: React.FC<SettingsProps> = ({
           setAccountSettings({ ...defaultAccountSettings, ...JSON.parse(savedAccount) });
         } else if (currentUser) {
           setAccountSettings({
-            displayName: currentUser.displayName || currentUser.username,
+            displayName: currentUser.displayName || currentUser.display_name || currentUser.username || currentUser.public_key_hash.slice(0, 16),
             bio: currentUser.bio || '',
             status: (currentUser.status as any) || 'online'
           });

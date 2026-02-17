@@ -163,6 +163,7 @@ pub fn verify_proof(
 mod tests {
     use super::*;
     use ring::signature::{Ed25519KeyPair, KeyPair};
+    use sha2::{Digest, Sha256};
 
     fn gen_keypair() -> ([u8; 32], [u8; 32]) {
         let rng = ring::rand::SystemRandom::new();

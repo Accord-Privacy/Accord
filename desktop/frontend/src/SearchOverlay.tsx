@@ -7,7 +7,7 @@ interface SearchResult {
   channel_id: string;
   channel_name: string;
   sender_id: string;
-  sender_username: string;
+  sender_public_key_hash: string;
   timestamp: number;
 }
 
@@ -198,7 +198,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
               >
                 <div className="search-result-header">
                   <span className="search-result-sender">
-                    {result.sender_username}
+                    {result.sender_public_key_hash?.slice(0, 16) || 'Unknown'}
                   </span>
                   <span className="search-result-channel">
                     #{result.channel_name}

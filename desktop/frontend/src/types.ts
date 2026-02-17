@@ -3,9 +3,12 @@
 // User and authentication types
 export interface User {
   id: string;
-  username: string;
+  /** SHA-256 hash of public key (hex). Primary relay-level identifier. */
+  public_key_hash: string;
   public_key: string;
   created_at: number;
+  /** Display name is a client-side / per-Node concept, not stored at relay level */
+  display_name?: string;
 }
 
 export interface AuthToken {
@@ -15,8 +18,8 @@ export interface AuthToken {
 }
 
 export interface RegisterRequest {
-  username: string;
-  publicKey: string;
+  public_key: string;
+  password: string;
 }
 
 export interface RegisterResponse {
@@ -25,7 +28,7 @@ export interface RegisterResponse {
 }
 
 export interface AuthRequest {
-  username: string;
+  public_key: string;
   password: string;
 }
 
@@ -47,6 +50,7 @@ export interface Node {
 export interface NodeMember {
   node_id: string;
   user_id: string;
+  public_key_hash: string;
   role: 'admin' | 'moderator' | 'member';
   joined_at: number;
   profile?: UserProfile;
@@ -192,7 +196,7 @@ export interface Message {
 export interface RepliedMessage {
   id: string;
   sender_id: string;
-  sender_username: string;
+  sender_public_key_hash: string;
   encrypted_payload: string;
   created_at: number;
   content?: string; // Decrypted content for display
@@ -246,7 +250,7 @@ export interface VoiceState {
 
 export interface VoiceUser {
   userId: string;
-  username: string;
+  displayName: string;
   isSpeaking: boolean;
   audioLevel: number;
   isMuted?: boolean;
@@ -257,7 +261,7 @@ export interface VoiceJoinMessage {
   type: 'voice_join';
   channel_id: string;
   user_id: string;
-  username?: string;
+  public_key_hash?: string;
 }
 
 export interface VoiceLeaveMessage {
@@ -323,13 +327,13 @@ export interface TypingStartMessage {
   type: 'typing_start';
   channel_id: string;
   user_id: string;
-  username: string;
+  public_key_hash: string;
   timestamp: number;
 }
 
 export interface TypingUser {
   user_id: string;
-  username: string;
+  displayName: string;
   startedAt: number;
 }
 
@@ -361,7 +365,7 @@ export interface AuditLogEntry {
   id: string;
   node_id: string;
   actor_id: string;
-  actor_username: string;
+  actor_public_key_hash: string;
   action: string;
   target_type: string;
   target_id?: string;

@@ -818,7 +818,7 @@ export function NodeSettings({
                         <div style={{ flex: 1 }}>
                           <div style={{ marginBottom: '4px', fontSize: '14px' }}>
                             <span style={{ fontWeight: '600', color: '#ffffff' }}>
-                              {entry.actor_username}
+                              {entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
                             </span>{' '}
                             <span style={{ color: '#b9bbbe' }}>
                               {getActionDescription(entry)}
