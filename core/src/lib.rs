@@ -21,6 +21,7 @@ pub mod jitter_buffer;
 #[cfg(feature = "android")]
 pub mod jni;
 pub mod metadata_crypto;
+pub mod mnemonic;
 pub mod p2p_voice;
 pub mod protocol;
 pub mod push_crypto;

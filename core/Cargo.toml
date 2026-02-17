@@ -29,6 +29,12 @@ flate2 = "1.0"
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# BIP39 mnemonic generation
+bip39 = "2.1"
+
+# Ed25519 signatures
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+
 # Key derivation
 hkdf = "0.12"
 sha2 = "0.10"
