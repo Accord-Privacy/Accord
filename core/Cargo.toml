@@ -47,6 +47,13 @@ x25519-dalek = { workspace = true }
 aes-gcm = { workspace = true }
 zeroize = { workspace = true }
 
+# JNI for Android
+jni = { version = "0.21", optional = true }
+
+[features]
+default = []
+android = ["jni"]
+
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 

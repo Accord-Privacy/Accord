@@ -15,6 +15,8 @@ pub mod double_ratchet;
 pub mod ffi;
 pub mod invites;
 pub mod jitter_buffer;
+#[cfg(feature = "android")]
+pub mod jni;
 pub mod p2p_voice;
 pub mod protocol;
 pub mod session_manager;

@@ -35,6 +35,7 @@ dependencies = [
  "flate2",
  "hkdf",
  "hmac",
+ "jni",
  "quinn",
  "rand 0.8.5",
  "ring",

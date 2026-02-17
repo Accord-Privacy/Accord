@@ -109,6 +109,100 @@ let plaintext = try session.decrypt(
 )
 ```
 
+---
+
+## Android
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│  Kotlin UI (Jetpack Compose — future)       │
+├─────────────────────────────────────────────┤
+│  AccordCore.kt  (safe Kotlin wrapper)       │
+├─────────────────────────────────────────────┤
+│  JNI bridge     (core/src/jni.rs)           │
+├─────────────────────────────────────────────┤
+│  accord-core    (Rust shared library)       │
+│  - X3DH key agreement                       │
+│  - Double Ratchet sessions                  │
+│  - AES-256-GCM encryption                   │
+│  - Session management                       │
+└─────────────────────────────────────────────┘
+```
+
+### Directory Structure
+
+```
+mobile/android/
+├── build-rust.sh                              # Cross-compile script
+└── app/src/main/
+    ├── java/com/accord/core/
+    │   └── AccordCore.kt                      # Kotlin wrapper + native declarations
+    └── jniLibs/                               # Generated .so files (per ABI)
+        ├── arm64-v8a/libaccord_core.so
+        ├── armeabi-v7a/libaccord_core.so
+        └── x86_64/libaccord_core.so
+```
+
+### JNI Design
+
+- **Opaque pointers as `Long`**: Native pointers are passed as `jlong` values. Kotlin classes (`KeyMaterial`, `SessionManager`) implement `AutoCloseable` for RAII-style cleanup.
+- **Byte arrays**: All binary data (keys, bundles, ciphertext) crosses JNI as `ByteArray`.
+- **Error handling**: Rust throws Java `RuntimeException` on failures. Kotlin wrapper validates pointer liveness with `check()`.
+- **Thread safety**: Each `SessionManager` / `KeyMaterial` instance is NOT thread-safe. Use one per thread or synchronize externally.
+
+### Prerequisites
+
+```bash
+# Install Android targets
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+# Set NDK path (or let the script auto-detect)
+export ANDROID_NDK_HOME=/path/to/android-ndk
+```
+
+### Build
+
+```bash
+cd mobile/android
+./build-rust.sh release    # or debug
+```
+
+This produces `.so` files in `app/src/main/jniLibs/<abi>/`.
+
+### Usage (Kotlin)
+
+```kotlin
+import com.accord.core.*
+
+// Generate keys
+KeyMaterial(oneTimePrekeys = 10).use { keys ->
+    val identityKey = keys.identityKey      // ByteArray (32 bytes)
+    val bundle = keys.publishableBundle     // ByteArray (upload to server)
+
+    // Establish session (Alice side)
+    SessionManager().use { session ->
+        val initialMsg = session.initiateSession(
+            keyMaterial = keys,
+            peerUserId = "bob",
+            channelId = "general",
+            theirBundle = bobBundleData,
+            firstMessage = "Hello Bob!".toByteArray()
+        )
+        // Send initialMsg to Bob...
+
+        // Encrypt subsequent messages
+        val encrypted = session.encrypt("bob", "general", "How are you?".toByteArray())
+
+        // Decrypt received messages
+        val plaintext = session.decrypt("bob", "general", receivedData)
+    }
+}
+```
+
+---
+
 ## Security Notes
 
 - All key material is zeroized on drop (Rust side uses `zeroize` crate)
