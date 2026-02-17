@@ -437,6 +437,127 @@ pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeSessionManag
     }
 }
 
+// ─── Background Voice ────────────────────────────────────────────────────────
+
+use crate::background_voice::{BackgroundVoiceConfig, BackgroundVoiceSession, VoiceLifecycleState};
+
+/// Create a new background voice session. Returns opaque pointer as jlong.
+#[no_mangle]
+pub extern "system" fn Java_com_accord_core_AccordCore_nativeBackgroundVoiceNew(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    let session = crate::background_voice::create_shared_session(BackgroundVoiceConfig::default());
+    // Store the Arc as a raw pointer
+    let ptr = std::sync::Arc::into_raw(session);
+    ptr as jlong
+}
+
+/// Free a background voice session.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeBackgroundVoiceFree(
+    _env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) {
+    if ptr != 0 {
+        drop(std::sync::Arc::from_raw(
+            ptr as *const BackgroundVoiceSession,
+        ));
+    }
+}
+
+/// Notify app entered background. Returns true on success.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeVoiceEnterBackground(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    now_ms: jlong,
+) -> jboolean {
+    if ptr == 0 {
+        throw_accord_exception(&mut env, "Null background voice pointer");
+        return JNI_FALSE;
+    }
+    let session = &*(ptr as *const BackgroundVoiceSession);
+    match session.enter_background(now_ms as u64) {
+        Some(_) => JNI_TRUE,
+        None => JNI_FALSE,
+    }
+}
+
+/// Notify app entered foreground. Returns true on success.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeVoiceEnterForeground(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    now_ms: jlong,
+) -> jboolean {
+    if ptr == 0 {
+        throw_accord_exception(&mut env, "Null background voice pointer");
+        return JNI_FALSE;
+    }
+    let session = &*(ptr as *const BackgroundVoiceSession);
+    match session.enter_foreground(now_ms as u64) {
+        Some(_) => JNI_TRUE,
+        None => JNI_FALSE,
+    }
+}
+
+/// Check if voice session is active (not suspended).
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeVoiceIsActive(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) -> jboolean {
+    if ptr == 0 {
+        throw_accord_exception(&mut env, "Null background voice pointer");
+        return JNI_FALSE;
+    }
+    let session = &*(ptr as *const BackgroundVoiceSession);
+    if session.is_active() {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
+/// Get voice stats as a JSON-encoded byte array.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeVoiceGetStats(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) -> jbyteArray {
+    if ptr == 0 {
+        throw_accord_exception(&mut env, "Null background voice pointer");
+        return JObject::null().into_raw();
+    }
+    let session = &*(ptr as *const BackgroundVoiceSession);
+    let stats = session.stats();
+
+    // Encode stats as simple JSON for Kotlin consumption
+    let json = format!(
+        r#"{{"total_background_ms":{},"packets_received_in_background":{},"keepalives_sent":{},"reconnection_count":{},"failed_reconnections":{},"frames_dropped":{},"current_state":"{}"}}"#,
+        stats.total_background_ms,
+        stats.packets_received_in_background,
+        stats.keepalives_sent,
+        stats.reconnection_count,
+        stats.failed_reconnections,
+        stats.frames_dropped,
+        match stats.current_state {
+            Some(VoiceLifecycleState::Active) => "active",
+            Some(VoiceLifecycleState::Backgrounded) => "backgrounded",
+            Some(VoiceLifecycleState::Reconnecting) => "reconnecting",
+            Some(VoiceLifecycleState::Suspended) => "suspended",
+            None => "unknown",
+        }
+    );
+    vec_to_jbytearray(&mut env, json.as_bytes())
+}
+
 /// Serialize a PreKeyBundle from component keys.
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativePreKeyBundleSerialize(

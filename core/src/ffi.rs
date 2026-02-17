@@ -446,6 +446,132 @@ pub unsafe extern "C" fn accord_prekey_bundle_serialize(
     }
 }
 
+// ─── Background Voice ────────────────────────────────────────────────────────
+
+use crate::background_voice::{
+    BackgroundVoiceConfig, SharedBackgroundVoiceSession, VoiceLifecycleState,
+};
+
+/// Opaque handle to a background voice session.
+pub struct AccordBackgroundVoice(SharedBackgroundVoiceSession);
+
+/// Create a new background voice session with default configuration.
+#[no_mangle]
+pub extern "C" fn accord_background_voice_new() -> *mut AccordBackgroundVoice {
+    let session = crate::background_voice::create_shared_session(BackgroundVoiceConfig::default());
+    Box::into_raw(Box::new(AccordBackgroundVoice(session)))
+}
+
+/// Free a background voice session.
+///
+/// # Safety
+/// `handle` must be valid or null.
+#[no_mangle]
+pub unsafe extern "C" fn accord_background_voice_free(handle: *mut AccordBackgroundVoice) {
+    if !handle.is_null() {
+        drop(Box::from_raw(handle));
+    }
+}
+
+/// Notify that the app has entered the background.
+/// `now_ms` is a monotonic timestamp in milliseconds.
+/// Returns 0 on success, negative on invalid transition.
+///
+/// # Safety
+/// `handle` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn accord_voice_enter_background(
+    handle: *mut AccordBackgroundVoice,
+    now_ms: u64,
+) -> AccordResult {
+    null_check!(handle, ACCORD_ERR_NULL_PTR);
+    match (*handle).0.enter_background(now_ms) {
+        Some(_) => ACCORD_OK,
+        None => -10, // invalid state transition
+    }
+}
+
+/// Notify that the app has entered the foreground.
+/// `now_ms` is a monotonic timestamp in milliseconds.
+/// Returns 0 on success, negative on invalid transition.
+///
+/// # Safety
+/// `handle` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn accord_voice_enter_foreground(
+    handle: *mut AccordBackgroundVoice,
+    now_ms: u64,
+) -> AccordResult {
+    null_check!(handle, ACCORD_ERR_NULL_PTR);
+    match (*handle).0.enter_foreground(now_ms) {
+        Some(_) => ACCORD_OK,
+        None => -10,
+    }
+}
+
+/// Check if the voice session is still active (not suspended).
+/// Returns 1 if active, 0 if suspended/inactive, negative on error.
+///
+/// # Safety
+/// `handle` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn accord_voice_is_active(handle: *const AccordBackgroundVoice) -> i32 {
+    null_check!(handle, ACCORD_ERR_NULL_PTR);
+    if (*handle).0.is_active() {
+        1
+    } else {
+        0
+    }
+}
+
+/// FFI-safe stats structure.
+#[repr(C)]
+pub struct AccordVoiceStats {
+    pub total_background_ms: u64,
+    pub packets_received_in_background: u64,
+    pub keepalives_sent: u64,
+    pub reconnection_count: u32,
+    pub failed_reconnections: u32,
+    pub frames_dropped: u64,
+    /// 0=Active, 1=Backgrounded, 2=Reconnecting, 3=Suspended
+    pub current_state: i32,
+}
+
+fn state_to_int(s: Option<VoiceLifecycleState>) -> i32 {
+    match s {
+        Some(VoiceLifecycleState::Active) => 0,
+        Some(VoiceLifecycleState::Backgrounded) => 1,
+        Some(VoiceLifecycleState::Reconnecting) => 2,
+        Some(VoiceLifecycleState::Suspended) => 3,
+        None => -1,
+    }
+}
+
+/// Get voice session statistics.
+/// Writes stats to `out`. Returns 0 on success.
+///
+/// # Safety
+/// `handle` and `out` must be valid pointers.
+#[no_mangle]
+pub unsafe extern "C" fn accord_voice_get_stats(
+    handle: *const AccordBackgroundVoice,
+    out: *mut AccordVoiceStats,
+) -> AccordResult {
+    null_check!(handle, ACCORD_ERR_NULL_PTR);
+    null_check!(out, ACCORD_ERR_NULL_PTR);
+    let stats = (*handle).0.stats();
+    *out = AccordVoiceStats {
+        total_background_ms: stats.total_background_ms,
+        packets_received_in_background: stats.packets_received_in_background,
+        keepalives_sent: stats.keepalives_sent,
+        reconnection_count: stats.reconnection_count,
+        failed_reconnections: stats.failed_reconnections,
+        frames_dropped: stats.frames_dropped,
+        current_state: state_to_int(stats.current_state),
+    };
+    ACCORD_OK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

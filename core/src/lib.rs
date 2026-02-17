@@ -8,6 +8,7 @@
 //! - Key management and rotation
 //! - Network protocols for secure message relay
 
+pub mod background_voice;
 pub mod bots;
 pub mod channels;
 pub mod crypto;
