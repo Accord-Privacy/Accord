@@ -1,5 +1,6 @@
 // API client module for REST endpoints
 
+import type { ParsedInviteLink } from './types';
 import {
   RegisterResponse,
   AuthResponse,
@@ -501,6 +502,64 @@ export class AccordApi {
       return false;
     }
   }
+}
+
+// Invite link parser
+// Supports: accord://host:port/invite/CODE, https://host:port/invite/CODE, http://host:port/invite/CODE
+export function parseInviteLink(input: string): ParsedInviteLink | null {
+  const trimmed = input.trim();
+
+  // Try accord:// scheme
+  const accordMatch = trimmed.match(/^accord:\/\/([^/]+)\/invite\/([^/?#]+)/);
+  if (accordMatch) {
+    const relayHost = accordMatch[1];
+    return {
+      relayHost,
+      relayUrl: `http://${relayHost}`,
+      inviteCode: accordMatch[2],
+    };
+  }
+
+  // Try http(s):// scheme
+  const httpMatch = trimmed.match(/^(https?):\/\/([^/]+)\/invite\/([^/?#]+)/);
+  if (httpMatch) {
+    const scheme = httpMatch[1];
+    const relayHost = httpMatch[2];
+    return {
+      relayHost,
+      relayUrl: `${scheme}://${relayHost}`,
+      inviteCode: httpMatch[3],
+    };
+  }
+
+  return null;
+}
+
+// Multi-relay credential helpers
+export function getRelayKeys(relayHost: string): { publicKey: string; privateKeyJwk: string } | null {
+  const raw = localStorage.getItem(`accord_keys_${relayHost}`);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+export function storeRelayKeys(relayHost: string, publicKey: string, privateKeyJwk: string) {
+  localStorage.setItem(`accord_keys_${relayHost}`, JSON.stringify({ publicKey, privateKeyJwk }));
+}
+
+export function getRelayToken(relayHost: string): string | null {
+  return localStorage.getItem(`accord_token_${relayHost}`);
+}
+
+export function storeRelayToken(relayHost: string, token: string) {
+  localStorage.setItem(`accord_token_${relayHost}`, token);
+}
+
+export function getRelayUserId(relayHost: string): string | null {
+  return localStorage.getItem(`accord_user_${relayHost}`);
+}
+
+export function storeRelayUserId(relayHost: string, userId: string) {
+  localStorage.setItem(`accord_user_${relayHost}`, userId);
 }
 
 // Default API instance

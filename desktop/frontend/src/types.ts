@@ -360,6 +360,13 @@ export interface DmChannelsResponse {
   dm_channels: DmChannelWithInfo[];
 }
 
+// Invite link types
+export interface ParsedInviteLink {
+  relayHost: string;   // e.g. "192.168.1.100:8080"
+  relayUrl: string;    // e.g. "http://192.168.1.100:8080"
+  inviteCode: string;  // e.g. "abc123def"
+}
+
 // Audit log types
 export interface AuditLogEntry {
   id: string;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { api } from "./api";
+import { api, parseInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId } from "./api";
 import { AccordWebSocket } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -43,9 +43,21 @@ function App() {
     localStorage.getItem('accord_server_url') || 'http://localhost:8080'
   );
   const [_serverConnected, setServerConnected] = useState(false);
-  const [showServerScreen, setShowServerScreen] = useState(() => !localStorage.getItem('accord_server_url'));
+  const [showServerScreen, setShowServerScreen] = useState(false);
   const [serverConnecting, setServerConnecting] = useState(false);
   const [serverVersion, setServerVersion] = useState("");
+
+  // Welcome / Invite flow state
+  const [showWelcomeScreen, setShowWelcomeScreen] = useState(() => !localStorage.getItem('accord_server_url'));
+  const [welcomeMode, setWelcomeMode] = useState<'choose' | 'invite' | 'admin'>('choose');
+  const [inviteLinkInput, setInviteLinkInput] = useState("");
+  const [parsedInvite, setParsedInvite] = useState<ParsedInviteLink | null>(null);
+  const [inviteError, setInviteError] = useState("");
+  const [inviteConnecting, setInviteConnecting] = useState(false);
+  const [inviteRelayVersion, setInviteRelayVersion] = useState("");
+  const [inviteNeedsRegister, setInviteNeedsRegister] = useState(false);
+  const [invitePassword, setInvitePassword] = useState("");
+  const [inviteJoining, setInviteJoining] = useState(false);
 
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -908,7 +920,166 @@ function App() {
     }
   }, [selectedNodeId]);
 
-  // Handle server connection
+  // Handle invite link submission
+  const handleInviteLinkSubmit = async () => {
+    setInviteError("");
+    const parsed = parseInviteLink(inviteLinkInput);
+    if (!parsed) {
+      setInviteError("Invalid invite link. Expected format: accord://host:port/invite/CODE or https://host:port/invite/CODE");
+      return;
+    }
+    setParsedInvite(parsed);
+    setInviteConnecting(true);
+
+    try {
+      // Connect to the relay extracted from the invite link
+      api.setBaseUrl(parsed.relayUrl);
+      const health = await api.health();
+      setServerConnected(true);
+      setServerAvailable(true);
+      setInviteRelayVersion(health.version);
+      setServerUrl(parsed.relayUrl);
+
+      // Check if we already have credentials for this relay
+      const existingToken = getRelayToken(parsed.relayHost);
+      const existingUserId = getRelayUserId(parsed.relayHost);
+
+      if (existingToken && existingUserId) {
+        // Auto-login: try using existing credentials
+        try {
+          storeToken(existingToken);
+          localStorage.setItem('accord_user_id', existingUserId);
+
+          // Load existing keys
+          let pkHash = '';
+          if (encryptionEnabled) {
+            const existingKeyPair = await loadKeyFromStorage();
+            if (existingKeyPair) {
+              setKeyPair(existingKeyPair);
+              const pk = await exportPublicKey(existingKeyPair.publicKey);
+              pkHash = await sha256Hex(pk);
+              setPublicKeyHash(pkHash);
+              setPublicKey(pk);
+            }
+          }
+
+          setAppState(prev => ({
+            ...prev,
+            isAuthenticated: true,
+            token: existingToken,
+            user: { id: existingUserId, public_key_hash: pkHash, public_key: '', created_at: 0, display_name: fingerprint(pkHash) }
+          }));
+          setIsAuthenticated(true);
+
+          // Join node via invite code
+          try {
+            await api.joinNodeByInvite(parsed.inviteCode, existingToken);
+          } catch (_e) {
+            // May already be a member, that's fine
+          }
+
+          // Initialize WebSocket
+          const socket = new AccordWebSocket(existingToken);
+          setupWebSocketHandlers(socket);
+          setWs(socket);
+          socket.connect();
+
+          setShowWelcomeScreen(false);
+          setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
+          return;
+        } catch (_e) {
+          // Token expired or invalid, fall through to register/login
+        }
+      }
+
+      // No existing credentials - need to register
+      setInviteNeedsRegister(true);
+    } catch (_error) {
+      setInviteError(`Cannot connect to relay at ${parsed.relayUrl}`);
+      setParsedInvite(null);
+    } finally {
+      setInviteConnecting(false);
+    }
+  };
+
+  // Handle registration via invite flow
+  const handleInviteRegister = async () => {
+    if (!parsedInvite) return;
+    setInviteError("");
+
+    if (invitePassword.length < 8) {
+      setInviteError("Password must be at least 8 characters");
+      return;
+    }
+
+    setInviteJoining(true);
+    try {
+      // Auto-generate keypair
+      let publicKeyToUse = '';
+      if (encryptionEnabled) {
+        const newKeyPair = await generateKeyPair();
+        publicKeyToUse = await exportPublicKey(newKeyPair.publicKey);
+        await saveKeyToStorage(newKeyPair);
+        setKeyPair(newKeyPair);
+        setPublicKey(publicKeyToUse);
+      }
+
+      if (!publicKeyToUse) {
+        setInviteError("Failed to generate encryption keys");
+        setInviteJoining(false);
+        return;
+      }
+
+      // Register
+      await api.register(publicKeyToUse, invitePassword);
+      const pkHash = await sha256Hex(publicKeyToUse);
+      setPublicKeyHash(pkHash);
+
+      // Login
+      const response = await api.login(publicKeyToUse, invitePassword);
+      storeToken(response.token);
+      localStorage.setItem('accord_user_id', response.user_id);
+
+      // Store per-relay credentials
+      storeRelayToken(parsedInvite.relayHost, response.token);
+      storeRelayUserId(parsedInvite.relayHost, response.user_id);
+
+      // Join node via invite
+      try {
+        await api.joinNodeByInvite(parsedInvite.inviteCode, response.token);
+      } catch (_e) {
+        // May already be a member
+      }
+
+      setAppState(prev => ({
+        ...prev,
+        isAuthenticated: true,
+        token: response.token,
+        user: { id: response.user_id, public_key_hash: pkHash, public_key: publicKeyToUse, created_at: 0, display_name: fingerprint(pkHash) }
+      }));
+      setIsAuthenticated(true);
+
+      notificationManager.setCurrentUsername(fingerprint(pkHash));
+
+      // Initialize WebSocket
+      const socket = new AccordWebSocket(response.token);
+      setupWebSocketHandlers(socket);
+      setWs(socket);
+      socket.connect();
+
+      // Show key backup, then land in app
+      setShowKeyBackup(true);
+      setShowWelcomeScreen(false);
+
+      setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : "Registration failed");
+    } finally {
+      setInviteJoining(false);
+    }
+  };
+
+  // Handle server connection (admin/manual mode)
   const handleServerConnect = async () => {
     setServerConnecting(true);
     setAuthError("");
@@ -919,6 +1090,7 @@ function App() {
       setServerAvailable(true);
       setServerVersion(health.version);
       setShowServerScreen(false);
+      setShowWelcomeScreen(false);
     } catch (error) {
       setAuthError(`Cannot connect to ${serverUrl}`);
       setServerConnected(false);
@@ -1084,6 +1256,15 @@ function App() {
     setPassword("");
     setPublicKey("");
     setPublicKeyHash("");
+    
+    // Reset welcome/invite state for re-entry
+    setShowWelcomeScreen(true);
+    setWelcomeMode('choose');
+    setInviteLinkInput("");
+    setParsedInvite(null);
+    setInviteError("");
+    setInviteNeedsRegister(false);
+    setInvitePassword("");
   };
 
   // Handle sending messages
@@ -1424,6 +1605,7 @@ function App() {
       const userId = localStorage.getItem('accord_user_id');
       
       if (token && userId && serverAvailable) {
+        setShowWelcomeScreen(false);
         // Load existing keys if available
         let existingKeyPair: CryptoKeyPair | null = null;
         if (encryptionEnabled) {
@@ -1568,14 +1750,160 @@ function App() {
     );
   }
 
-  // Server connection screen
-  if (showServerScreen || !serverAvailable) {
+  // Welcome / Invite link screen
+  if (showWelcomeScreen) {
+    return (
+      <div className="app">
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
+          <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '450px', maxWidth: '90vw' }}>
+            
+            {welcomeMode === 'choose' && (
+              <>
+                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Welcome to Accord</h2>
+                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '2rem', fontSize: '0.9rem' }}>
+                  Private, encrypted communication
+                </p>
+                
+                <button
+                  onClick={() => setWelcomeMode('invite')}
+                  style={{ width: '100%', padding: '1rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', marginBottom: '0.75rem' }}
+                >
+                  I have an invite link
+                </button>
+                
+                <button
+                  onClick={() => setWelcomeMode('admin')}
+                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: '1px solid #4f545c', background: 'transparent', color: '#b9bbbe', fontSize: '0.9rem', cursor: 'pointer' }}
+                >
+                  Set up a new relay (admin)
+                </button>
+              </>
+            )}
+
+            {welcomeMode === 'invite' && !inviteNeedsRegister && (
+              <>
+                <button onClick={() => { setWelcomeMode('choose'); setInviteError(''); setInviteLinkInput(''); setParsedInvite(null); setInviteRelayVersion(''); }} style={{ background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.85rem', marginBottom: '1rem' }}>← Back</button>
+                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Join via Invite</h2>
+                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                  Paste the invite link you received
+                </p>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <input
+                    type="text"
+                    placeholder="accord://host:port/invite/CODE or https://..."
+                    value={inviteLinkInput}
+                    onChange={(e) => setInviteLinkInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleInviteLinkSubmit(); }}
+                    style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '0.95rem' }}
+                  />
+                </div>
+
+                {inviteError && (
+                  <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{inviteError}</div>
+                )}
+
+                {inviteRelayVersion && (
+                  <div style={{ color: '#43b581', marginBottom: '1rem', fontSize: '0.85rem' }}>✅ Connected to relay v{inviteRelayVersion}</div>
+                )}
+
+                <button
+                  onClick={handleInviteLinkSubmit}
+                  disabled={inviteConnecting || !inviteLinkInput.trim()}
+                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', opacity: (inviteConnecting || !inviteLinkInput.trim()) ? 0.6 : 1 }}
+                >
+                  {inviteConnecting ? 'Connecting to relay...' : 'Join'}
+                </button>
+              </>
+            )}
+
+            {welcomeMode === 'invite' && inviteNeedsRegister && (
+              <>
+                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Create Your Identity</h2>
+                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                  Connected to relay — now set a password to create your identity
+                </p>
+                <div style={{ background: '#2f3136', padding: '0.6rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.8rem', color: '#43b581' }}>
+                  🔐 A keypair will be auto-generated. No username needed.
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Password (min 8 characters)</label>
+                  <input
+                    type="password"
+                    placeholder="Choose a password"
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleInviteRegister(); }}
+                    style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+                  />
+                </div>
+
+                {inviteError && (
+                  <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{inviteError}</div>
+                )}
+
+                <button
+                  onClick={handleInviteRegister}
+                  disabled={inviteJoining || invitePassword.length < 8}
+                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#43b581', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', opacity: (inviteJoining || invitePassword.length < 8) ? 0.6 : 1 }}
+                >
+                  {inviteJoining ? 'Creating identity & joining...' : 'Create Identity & Join'}
+                </button>
+              </>
+            )}
+
+            {welcomeMode === 'admin' && (
+              <>
+                <button onClick={() => { setWelcomeMode('choose'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.85rem', marginBottom: '1rem' }}>← Back</button>
+                <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Connect to Relay</h2>
+                <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                  Enter the relay server URL (admin/power-user)
+                </p>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Server URL</label>
+                  <input
+                    type="text"
+                    placeholder="http://localhost:8080"
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleServerConnect(); }}
+                    style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+                  />
+                </div>
+
+                {authError && (
+                  <div style={{ color: '#f04747', marginBottom: '1rem', fontSize: '0.9rem' }}>{authError}</div>
+                )}
+
+                {serverVersion && (
+                  <div style={{ color: '#43b581', marginBottom: '1rem', fontSize: '0.85rem' }}>✅ Connected — server v{serverVersion}</div>
+                )}
+
+                <button
+                  onClick={handleServerConnect}
+                  disabled={serverConnecting}
+                  style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#7289da', color: '#ffffff', fontSize: '1rem', cursor: 'pointer', opacity: serverConnecting ? 0.6 : 1 }}
+                >
+                  {serverConnecting ? 'Connecting...' : 'Connect'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Legacy server connection screen (from Settings → Advanced)
+  if (showServerScreen) {
     return (
       <div className="app">
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#2c2f33', color: '#ffffff' }}>
           <div style={{ background: '#36393f', padding: '2rem', borderRadius: '8px', width: '400px', maxWidth: '90vw' }}>
-            <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Accord</h2>
-            <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.9rem' }}>Connect to a relay server</p>
+            <h2 style={{ textAlign: 'center', marginBottom: '0.5rem' }}>Connect to Relay</h2>
+            <p style={{ textAlign: 'center', color: '#b9bbbe', marginBottom: '1.5rem', fontSize: '0.9rem' }}>Manual relay connection</p>
             
             <div style={{ marginBottom: '1rem' }}>
               <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '0.3rem' }}>Server URL</label>
@@ -1584,6 +1912,7 @@ function App() {
                 placeholder="http://localhost:8080"
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleServerConnect(); }}
                 style={{ width: '100%', padding: '0.8rem', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
               />
             </div>
@@ -1626,7 +1955,7 @@ function App() {
             
             <div style={{ background: '#2f3136', padding: '0.6rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.8rem', color: '#b9bbbe' }}>
               🔗 {serverUrl} {serverAvailable && <span style={{ color: '#43b581' }}>● connected</span>}
-              <button onClick={() => { setShowServerScreen(true); setAuthError(''); }} style={{ float: 'right', background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.8rem' }}>Change</button>
+              <button onClick={() => { setShowWelcomeScreen(true); setWelcomeMode('choose'); setAuthError(''); }} style={{ float: 'right', background: 'none', border: 'none', color: '#7289da', cursor: 'pointer', fontSize: '0.8rem' }}>Change</button>
             </div>
 
             {isLoginMode && (
