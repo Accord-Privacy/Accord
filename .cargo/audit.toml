@@ -12,6 +12,13 @@ ignore = [
     # but it exists in compiled code via Tauri's GTK3 dependency chain.
     # TRACKING: Check monthly for Tauri 3.0 release with GTK4 support.
     "RUSTSEC-2024-0429",
+
+    # rsa 0.9.10: Marvin Attack (RUSTSEC-2023-0071)
+    # Present in Cargo.lock via sqlx-mysql (transitive dep of sqlx 0.8 optional backend)
+    # but NOT compiled — we use sqlx with default-features=false, sqlite only.
+    # Confirmed: `cargo tree --target all | grep rsa` shows nothing.
+    # No attack surface — code never compiled into our binary.
+    "RUSTSEC-2023-0071",
 ]
 
 # Don't fail on unmaintained crates (Tauri's GTK3 bindings — resolves with GTK4 migration)
