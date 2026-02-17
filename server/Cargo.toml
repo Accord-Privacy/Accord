@@ -27,7 +27,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # Database (optional - could use SQLite for persistence)
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "sqlite", "uuid", "chrono", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "uuid", "chrono", "migrate"] }
 
 # WebSocket support
 axum-extra = { version = "0.9", features = ["typed-header"] }
