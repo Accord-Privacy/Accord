@@ -102,14 +102,15 @@ function App() {
   const [oldestMessageCursor, setOldestMessageCursor] = useState<string | undefined>(undefined);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Message editing state (temporary stubs to fix build)
-  const [editingMessageId] = useState<string | null>(null);
-  const [editingContent] = useState("");
-  const [showDeleteConfirm] = useState<string | null>(null);
-  const setEditingMessageId = (_: string | null) => {}; // stub
-  const setEditingContent = (_: string) => {}; // stub  
-  const setShowDeleteConfirm = (_: string | null) => {}; // stub
-  const handleStartEdit = (_: string, __: string) => {}; // stub
+  // Message editing state
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+
+  const handleStartEdit = (messageId: string, content: string) => {
+    setEditingMessageId(messageId);
+    setEditingContent(content);
+  };
 
   // Role-based permission state
   const [userRoles, setUserRoles] = useState<Record<string, 'admin' | 'moderator' | 'member'>>({});
@@ -152,6 +153,12 @@ function App() {
   const [dmChannels, setDmChannels] = useState<DmChannelWithInfo[]>([]);
   const [selectedDmChannel, setSelectedDmChannel] = useState<DmChannelWithInfo | null>(null);
   const [showDmChannelCreate, setShowDmChannelCreate] = useState(false);
+
+  // Node creation state
+  const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
+  const [newNodeName, setNewNodeName] = useState("");
+  const [newNodeDescription, setNewNodeDescription] = useState("");
+  const [creatingNode, setCreatingNode] = useState(false);
 
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
@@ -839,7 +846,16 @@ function App() {
     
     try {
       const response = await api.createInviteWithOptions(selectedNodeId, appState.token);
-      setGeneratedInvite(response.invite_code);
+      // Construct full invite link from the current relay URL
+      const baseUrl = api.getBaseUrl();
+      try {
+        const url = new URL(baseUrl);
+        const host = url.host; // includes port
+        setGeneratedInvite(`accord://${host}/invite/${response.invite_code}`);
+      } catch {
+        // Fallback to just the code if URL parsing fails
+        setGeneratedInvite(response.invite_code);
+      }
       setShowInviteModal(true);
     } catch (error) {
       console.error('Failed to generate invite:', error);
@@ -888,7 +904,35 @@ function App() {
     }
   };
 
-  // Removed unused node handlers
+  // Handle creating a new node
+  const handleCreateNode = async () => {
+    if (!appState.token || !newNodeName.trim()) return;
+    setCreatingNode(true);
+    try {
+      const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
+      // Auto-create a #general channel
+      try {
+        await api.createChannel(newNode.id, 'general', 'text', appState.token);
+      } catch (e) {
+        console.warn('Failed to auto-create #general channel:', e);
+      }
+      // Reload nodes and auto-select the new one
+      await loadNodes();
+      setSelectedNodeId(newNode.id);
+      setActiveServer(nodes.length); // will be the last index after reload
+      setShowCreateNodeModal(false);
+      setNewNodeName("");
+      setNewNodeDescription("");
+      // Load channels for the new node
+      await loadChannels(newNode.id);
+      await loadMembers(newNode.id);
+    } catch (error) {
+      console.error('Failed to create node:', error);
+      handleApiError(error);
+    } finally {
+      setCreatingNode(false);
+    }
+  };
 
   // Handle notification preferences update
   const handleNotificationPreferencesChange = useCallback((preferences: NotificationPreferences) => {
@@ -2067,7 +2111,9 @@ function App() {
         })}
         <div 
           className="server-icon add-server" 
-          title="Add Server"
+          title="Create Node"
+          onClick={() => setShowCreateNodeModal(true)}
+          style={{ cursor: 'pointer' }}
         >
           +
         </div>
@@ -3072,6 +3118,72 @@ function App() {
         </div>
       )}
 
+      {/* Create Node Modal */}
+      {showCreateNodeModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1001
+        }}>
+          <div style={{
+            background: '#36393f',
+            padding: '24px',
+            borderRadius: '8px',
+            maxWidth: '400px',
+            width: '90%',
+            color: '#ffffff'
+          }}>
+            <h3 style={{ margin: '0 0 16px 0' }}>Create a Node</h3>
+            <p style={{ margin: '0 0 16px 0', color: '#b9bbbe', fontSize: '0.9rem' }}>
+              A Node is your community space. A #general channel will be created automatically.
+            </p>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '4px' }}>Node Name</label>
+              <input
+                type="text"
+                placeholder="My Community"
+                value={newNodeName}
+                onChange={(e) => setNewNodeName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateNode(); }}
+                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '1rem' }}
+              />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ fontSize: '0.8rem', color: '#b9bbbe', display: 'block', marginBottom: '4px' }}>Description (optional)</label>
+              <input
+                type="text"
+                placeholder="What's this node about?"
+                value={newNodeDescription}
+                onChange={(e) => setNewNodeDescription(e.target.value)}
+                style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#ffffff', fontSize: '0.95rem' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={handleCreateNode}
+                disabled={creatingNode || !newNodeName.trim()}
+                style={{ background: '#43b581', border: 'none', color: '#ffffff', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', opacity: (creatingNode || !newNodeName.trim()) ? 0.6 : 1 }}
+              >
+                {creatingNode ? 'Creating...' : 'Create Node'}
+              </button>
+              <button
+                onClick={() => { setShowCreateNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }}
+                style={{ background: '#747f8d', border: 'none', color: '#ffffff', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Invite Modal */}
       {showInviteModal && (
         <div style={{
@@ -3094,9 +3206,9 @@ function App() {
             width: '90%',
             color: '#ffffff'
           }}>
-            <h3 style={{ margin: '0 0 16px 0', color: '#ffffff' }}>Invite Generated</h3>
+            <h3 style={{ margin: '0 0 16px 0', color: '#ffffff' }}>Invite Link Generated</h3>
             <p style={{ margin: '0 0 16px 0', color: '#b9bbbe' }}>
-              Share this invite code with others to let them join this node:
+              Share this invite link with others to let them join this node:
             </p>
             <div style={{
               background: '#40444b',
