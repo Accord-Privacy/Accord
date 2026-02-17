@@ -82,7 +82,6 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     
     steps:
     - name: Checkout code

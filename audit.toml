@@ -1,0 +1,21 @@
+# cargo-audit configuration
+# https://github.com/rustsec/rustsec/tree/main/cargo-audit
+
+[advisories]
+# Advisories we've reviewed and accepted the risk for
+ignore = [
+    # ring 0.16.20 AES panic — transitive dep (via older rustls/webpki chain in tauri).
+    # Our direct dep is ring 0.17.14 which is not affected. Can't control transitive.
+    "RUSTSEC-2025-0009",
+    
+    # rsa Marvin timing attack — transitive dep via sqlx -> rustls -> webpki.
+    # We don't use RSA directly. Risk is in TLS layer which uses it safely.
+    "RUSTSEC-2023-0071",
+    
+    # sqlx binary protocol cast — affects MySQL binary protocol, we use SQLite only.
+    # No exposure. Will upgrade sqlx when 0.8 stabilizes.
+    "RUSTSEC-2024-0363",
+]
+
+# Don't fail on unmaintained crates (Tauri's GTK3 bindings)
+informational_warnings = ["unmaintained"]
