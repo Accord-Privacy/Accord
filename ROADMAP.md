@@ -21,29 +21,73 @@
 - [x] CI/CD pipeline, Docker support
 - [x] Core crypto: X25519 key agreement, AES-256-GCM, forward secrecy
 
-### 🔧 Phase 2: Integration & Polish — IN PROGRESS
-- [ ] Wire E2E encryption into client message flow (crypto exists but not connected)
-- [ ] Frontend: real Node/channel navigation with live server data
-- [ ] Frontend: file upload/download UI
-- [ ] Frontend: user profiles and presence indicators
-- [ ] Permissions system enforcement in frontend
-- [ ] Message history loading and scroll-back
-- [ ] Docker deployment guide for self-hosting
+### ✅ Phase 2: Integration & Polish — COMPLETE
+- [x] Wire E2E encryption into client message flow
+- [x] Frontend: real Node/channel navigation with live server data
+- [x] Frontend: file upload/download UI
+- [x] Frontend: user profiles and presence indicators
+- [x] Permissions system enforcement in frontend
+- [x] Message history loading and scroll-back
+- [x] Docker deployment guide for self-hosting
+- [x] Desktop UI: configurable server URL for cross-machine connectivity
+- [x] Windows build pipeline (NSIS/MSI installers, GitHub Actions)
+- [x] Startup scripts (Linux/Windows)
 
-### 📋 Phase 3: Voice & Real-Time (Next)
-- [ ] Client-side audio capture (browser/Tauri)
-- [ ] Opus codec integration
-- [ ] Real-time voice UI (mute, deafen, speaking indicators)
+### ✅ Phase 3: Voice & Real-Time — COMPLETE (partial)
+- [x] Client-side audio capture (browser/Tauri)
+- [x] Opus codec integration
+- [x] Real-time voice UI (mute, deafen, speaking indicators)
+- [x] Server-relayed voice for groups
+- [x] Voice packet encryption (placeholder, pending WebRTC/SRTP)
 - [ ] P2P voice for small groups (≤4)
-- [ ] Server-relayed voice for larger groups
 - [ ] Jitter buffer and packet loss handling
 
-### 📋 Phase 4: Hardening
-- [ ] Security audit (internal, then third-party)
+### ✅ Phase 2.5: Security Audit & Hardening — COMPLETE (Feb 17, 2026)
+Full codebase audit: 7 CRITICAL, 16 HIGH, 26 MEDIUM, 24 LOW findings across Rust, frontend, and infra.
+
+**CRITICAL fixes applied:**
+- [x] Argon2 password hashing (registration + login)
+- [x] Proper token validation (no more hardcoded UUIDs)
+- [x] Safe crypto (removed unsafe `array_ref!` macro, TryInto)
+- [x] REST endpoints validate tokens server-side (no client-supplied user_id)
+- [x] XSS prevention (DOMPurify sanitization)
+- [x] Improved E2E key derivation (user-specific, not just channel ID)
+
+**HIGH fixes applied:**
+- [x] HKDF key derivation with separate session/chain keys
+- [x] Key ratcheting for forward secrecy
+- [x] Token cleanup (expired token removal)
+- [x] Auth tokens via Authorization: Bearer header
+- [x] CORS restricted to configurable allowlist
+- [x] File path canonicalization (traversal prevention)
+- [x] Voice key rotation
+- [x] Secure token storage with expiry (frontend)
+- [x] Private key encryption at rest (PBKDF2 + AES-GCM)
+- [x] WebSocket auth handshake (token out of URL)
+- [x] Password strength validation
+- [x] Tightened Tauri CSP
+
+**Remaining (MEDIUM/LOW):**
+- [ ] Fix `get_channel_category` nil UUID bug (M7)
+- [ ] Wire up rate limiting to endpoints (L9)
+- [ ] Replace `println!` with structured logging in bots (L1)
+- [ ] Fix `delete_channel` / `update_node` stubs (M10/M11)
+- [ ] Add clippy + `cargo audit` to CI
+- [ ] Fix duplicate `PROTOCOL_VERSION` constants (M3)
+- [ ] Bounded bot interactions vector (M4)
+- [ ] Division-by-zero guard in `calculate_energy` (M5)
+- [ ] Grapheme-aware validation lengths (M6)
+- [ ] `unwrap()` → `?` in DB row parsing (M9)
+- [ ] Error boundary for React frontend
+- [ ] Remove console.log spam from production builds
+
+### 📋 Phase 4: Hardening (Next)
+- [ ] Internal security audit pass on remaining MEDIUM/LOW items
 - [ ] Penetration testing
 - [ ] Reproducible builds
-- [ ] Self-hosting documentation
 - [ ] Performance benchmarking (10k+ concurrent users target)
+- [ ] Full Double Ratchet protocol (replace current simplified ratchet)
+- [ ] WebRTC/SRTP for voice encryption
 
 ### 📋 Phase 5: Mobile
 - [ ] iOS app (Swift + Rust FFI)
@@ -64,10 +108,11 @@
 |-----------|-----------|---------|
 | Key agreement | X25519 ECDH | Per-session between clients |
 | Message encryption | AES-256-GCM | Unique nonce per message |
-| Forward secrecy | Double ratchet | Keys rotate per message |
-| Voice encryption | AES-256-GCM | Per-packet, rekey every 30s |
+| Forward secrecy | HKDF ratchet | Chain key advances per message |
+| Voice encryption | AES-256-GCM | Per-packet, key rotation supported |
 | Identity keys | Ed25519 | Long-term identity verification |
-| Key derivation | HKDF-SHA256 | For deriving session keys |
+| Key derivation | HKDF-SHA256 | Separate info strings per key type |
+| Password hashing | Argon2id | Server-side registration/login |
 
 ### Performance Targets
 | Metric | Target |
