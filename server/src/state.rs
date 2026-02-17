@@ -1,6 +1,7 @@
 //! State management for the Accord relay server with SQLite persistence
 
 use crate::db::Database;
+use crate::federation::FederationState;
 use crate::files::FileHandler;
 use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
@@ -34,6 +35,8 @@ pub struct AppState {
     pub node_creation_policy: NodeCreationPolicy,
     /// Rate limiter
     pub rate_limiter: RateLimiter,
+    /// Federation state (None if federation is not configured)
+    pub federation: Option<FederationState>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -62,6 +65,7 @@ impl AppState {
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
             rate_limiter: RateLimiter::new(),
+            federation: None,
         })
     }
 
@@ -978,6 +982,84 @@ impl AppState {
 
     pub fn uptime(&self) -> u64 {
         now() - self.start_time
+    }
+
+    // ── Bot operations ──
+    // NOTE: These are in-memory stubs. Production would use the database.
+    // For now, bot state lives only in memory for the initial API framework.
+
+    pub async fn register_bot(&self, _bot: crate::bot_api::Bot) -> Result<(), String> {
+        // TODO: Persist to database
+        Ok(())
+    }
+
+    pub async fn get_bot(&self, _bot_id: Uuid) -> Result<crate::bot_api::Bot, String> {
+        Err("Bot not found (bot persistence not yet implemented)".into())
+    }
+
+    pub async fn update_bot(
+        &self,
+        _bot_id: Uuid,
+        _request: crate::bot_api::UpdateBotRequest,
+    ) -> Result<(), String> {
+        Err("Bot not found".into())
+    }
+
+    pub async fn delete_bot(&self, _bot_id: Uuid) -> Result<(), String> {
+        Err("Bot not found".into())
+    }
+
+    pub async fn update_bot_token_hash(
+        &self,
+        _bot_id: Uuid,
+        _new_hash: String,
+    ) -> Result<(), String> {
+        Err("Bot not found".into())
+    }
+
+    pub async fn validate_bot_token(&self, _token_hash: &str) -> Option<crate::bot_api::Bot> {
+        None
+    }
+
+    pub async fn add_bot_to_channel(
+        &self,
+        _bot_id: Uuid,
+        _channel_id: Uuid,
+        _node_id: Uuid,
+        _added_by: Uuid,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub async fn remove_bot_from_channel(
+        &self,
+        _bot_id: Uuid,
+        _channel_id: Uuid,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub async fn is_bot_in_channel(&self, _bot_id: Uuid, _channel_id: Uuid) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    pub async fn check_bot_rate_limit(&self, _bot_id: Uuid, _action: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub async fn broadcast_to_channel(
+        &self,
+        channel_id: Uuid,
+        message: String,
+    ) -> Result<(), String> {
+        self.send_to_channel(channel_id, message).await
+    }
+
+    pub async fn get_channel_bots(
+        &self,
+        _channel_id: Uuid,
+    ) -> Result<Vec<crate::bot_api::BotInfo>, String> {
+        Ok(vec![])
     }
 }
 

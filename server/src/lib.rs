@@ -2,7 +2,10 @@
 //!
 //! Exposes modules for testing and reuse
 
+pub mod bot_api;
 pub mod db;
+pub mod federation;
+pub mod federation_models;
 pub mod files;
 pub mod handlers;
 pub mod models;

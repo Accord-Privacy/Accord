@@ -3,8 +3,11 @@
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
+mod bot_api;
 #[allow(dead_code)]
 mod db;
+mod federation;
+mod federation_models;
 #[allow(dead_code)]
 mod files;
 mod handlers;
@@ -243,11 +246,23 @@ async fn main() -> Result<()> {
             "/push/preferences",
             axum::routing::put(update_push_preferences_handler),
         )
+        // Bot API endpoints
+        .route("/bots", post(bot_api::register_bot_handler))
+        .route("/bots/:id", get(bot_api::get_bot_handler))
+        .route("/bots/:id", axum::routing::patch(bot_api::update_bot_handler))
+        .route("/bots/:id", delete(bot_api::delete_bot_handler))
+        .route("/bots/:id/regenerate-token", post(bot_api::regenerate_bot_token_handler))
+        .route("/bots/invite", post(bot_api::invite_bot_to_channel_handler))
+        .route("/bots/:bot_id/channels/:channel_id", delete(bot_api::remove_bot_from_channel_handler))
+        .route("/bot/channels/:channel_id/messages", post(bot_api::bot_send_message_handler))
+        .route("/channels/:id/bots", get(bot_api::list_channel_bots_handler))
         // Direct Message endpoints
         .route("/dm/:user_id", post(create_dm_channel_handler))
         .route("/dm", get(get_dm_channels_handler))
         // WebSocket endpoint
         .route("/ws", get(ws_handler))
+        // Federation endpoints
+        .merge(federation::federation_routes())
         // Add shared state
         .with_state(state.clone())
         // Add middleware
