@@ -1,0 +1,46 @@
+name: Reproducible Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  reproducible-server:
+    name: Reproducible Server Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: false
+
+    - name: Run reproducible build (server only)
+      run: |
+        chmod +x scripts/reproducible-build.sh
+        ./scripts/reproducible-build.sh --server-only
+
+    - name: Upload hashes
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-hashes
+        path: build-hashes.sha256
+
+    - name: Upload server binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: accord-server-linux-x64
+        path: target/release/accord-server
+
+    - name: Print hashes for logs
+      run: cat build-hashes.sha256
