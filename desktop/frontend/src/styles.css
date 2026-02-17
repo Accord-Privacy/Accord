@@ -2597,3 +2597,175 @@ input, textarea, select, button {
 
 .message-pin-btn:hover { color: var(--yellow); background: rgba(240, 178, 50, 0.1); }
 .message-pin-btn.pinned { color: var(--yellow); }
+
+/* =================== Unread Channel Indicators =================== */
+.channel.unread {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.unread-badge {
+  background: var(--text-muted);
+  color: var(--bg-darkest);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+/* =================== Keyboard Shortcuts Modal =================== */
+.shortcuts-modal {
+  max-width: 480px;
+}
+
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-darkest);
+  border-radius: var(--radius-sm);
+}
+
+.shortcut-row kbd {
+  background: var(--bg-input);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.shortcut-row span {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* =================== Presence Dots =================== */
+.member-avatar-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.presence-dot {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-dark);
+}
+
+.presence-online { background: var(--green); }
+.presence-idle { background: var(--yellow); }
+.presence-dnd { background: var(--red); }
+.presence-offline { background: var(--text-faint); }
+
+.member-offline {
+  opacity: 0.5;
+}
+
+/* =================== Context Menu =================== */
+.context-menu {
+  position: fixed;
+  z-index: 2000;
+  background: var(--bg-dark);
+  border: 1px solid var(--bg-input);
+  border-radius: var(--radius-md);
+  padding: 6px 0;
+  min-width: 200px;
+  max-width: 280px;
+  box-shadow: var(--shadow-high);
+}
+
+.context-menu-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.context-menu-item:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.context-menu-profile-header {
+  cursor: default;
+  padding: 10px 12px;
+}
+
+.context-menu-profile-header:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 8px;
+}
+
+/* =================== Typing Indicator (polished) =================== */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  font-size: 13px;
+  color: var(--text-faint);
+  min-height: 24px;
+  flex-shrink: 0;
+}
+
+.typing-text {
+  opacity: 0.9;
+  font-weight: 500;
+}
+
+.typing-dots-animated {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.typing-dots-animated span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  animation: typing-pulse 1.4s infinite ease-in-out;
+}
+
+.typing-dots-animated span:nth-child(1) { animation-delay: 0s; }
+.typing-dots-animated span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots-animated span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* =================== Message Input Textarea =================== */
+.message-input {
+  resize: none;
+  overflow-y: auto;
+  max-height: 200px;
+  line-height: 1.375;
+}

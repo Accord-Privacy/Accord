@@ -164,6 +164,21 @@ function App() {
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
 
+  // Display name prompt state
+  const [showDisplayNamePrompt, setShowDisplayNamePrompt] = useState(false);
+  const [displayNameInput, setDisplayNameInput] = useState("");
+  const [displayNameSaving, setDisplayNameSaving] = useState(false);
+
+  // Keyboard shortcuts help state
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Presence state
+  const [presenceMap, setPresenceMap] = useState<Map<string, import('./types').PresenceStatus>>(new Map());
+  const [lastMessageTimes, setLastMessageTimes] = useState<Map<string, number>>(new Map());
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; userId: string; publicKeyHash: string; displayName: string; bio?: string; user?: User } | null>(null);
+
   // Typing indicators state
   const [typingUsers, setTypingUsers] = useState<Map<string, TypingUser[]>>(new Map());
   const [typingTimeouts, setTypingTimeouts] = useState<Map<string, number>>(new Map());
@@ -225,12 +240,24 @@ function App() {
 
   const formatTypingUsers = useCallback((channelId: string): string => {
     const tusers = typingUsers.get(channelId) || [];
+    // Filter out current user
+    const currentUserId = localStorage.getItem('accord_user_id');
+    const filtered = tusers.filter(u => u.user_id !== currentUserId);
     
-    if (tusers.length === 0) return '';
-    if (tusers.length === 1) return `${tusers[0].displayName} is typing...`;
-    if (tusers.length === 2) return `${tusers[0].displayName} and ${tusers[1].displayName} are typing...`;
-    return `${tusers[0].displayName}, ${tusers[1].displayName} and ${tusers.length - 2} other${tusers.length > 3 ? 's' : ''} are typing...`;
-  }, [typingUsers]);
+    if (filtered.length === 0) return '';
+    
+    // Resolve display names from members list
+    const getName = (tu: TypingUser) => {
+      const member = members.find(m => m.user_id === tu.user_id);
+      if (member?.user?.display_name) return member.user.display_name;
+      if (member?.profile?.display_name) return member.profile.display_name;
+      return tu.displayName;
+    };
+    
+    if (filtered.length === 1) return `${getName(filtered[0])} is typing`;
+    if (filtered.length === 2) return `${getName(filtered[0])} and ${getName(filtered[1])} are typing`;
+    return 'Several people are typing';
+  }, [typingUsers, members]);
 
   // Check server availability on mount
   useEffect(() => {
@@ -301,6 +328,15 @@ function App() {
           content: data.replied_message.content,
         } : undefined,
       };
+
+      // Track last message time for presence heuristic
+      if (data.from) {
+        setLastMessageTimes(prev => {
+          const newMap = new Map(prev);
+          newMap.set(data.from, Date.now());
+          return newMap;
+        });
+      }
 
       // Check if this is a DM message
       const isDm = data.is_dm || dmChannels.some(dm => dm.id === data.channel_id);
@@ -527,6 +563,17 @@ function App() {
         newMap.set(timeoutKey, timeout);
         return newMap;
       });
+    });
+
+    // Handle presence updates
+    socket.on('presence_update', (data: any) => {
+      if (data.user_id && data.status) {
+        setPresenceMap(prev => {
+          const newMap = new Map(prev);
+          newMap.set(data.user_id, data.status);
+          return newMap;
+        });
+      }
     });
 
     socket.on('error', (error: Error) => {
@@ -776,6 +823,7 @@ function App() {
     setSelectedNodeId(null);
     setSelectedChannelId(null);
     setSelectedDmChannel(dmChannel);
+    notificationManager.setActiveChannel(dmChannel.id);
     
     // Reset pagination state
     setIsLoadingOlderMessages(false);
@@ -804,11 +852,33 @@ function App() {
     }
   }, [createDmChannel, loadDmChannels, dmChannels, handleDmChannelSelect]);
 
+  // Save display name
+  const handleSaveDisplayName = async () => {
+    if (!displayNameInput.trim() || !appState.token) return;
+    setDisplayNameSaving(true);
+    try {
+      await api.updateProfile({ display_name: displayNameInput.trim() }, appState.token);
+      // Update local state
+      setAppState(prev => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, display_name: displayNameInput.trim() } : prev.user,
+      }));
+      notificationManager.setCurrentUsername(displayNameInput.trim());
+      setShowDisplayNamePrompt(false);
+      setDisplayNameInput("");
+    } catch (error) {
+      console.error('Failed to update display name:', error);
+    } finally {
+      setDisplayNameSaving(false);
+    }
+  };
+
   // Handle channel selection
   const handleChannelSelect = useCallback((channelId: string, channelName: string) => {
     setSelectedChannelId(channelId);
     setActiveChannel(channelName);
     setAppState(prev => ({ ...prev, activeChannel: channelId }));
+    notificationManager.setActiveChannel(channelId);
     
     // Mark channel as read in notification system
     if (selectedNodeId) {
@@ -817,6 +887,8 @@ function App() {
         appState.messages[appState.messages.length - 1] : null;
       
       notificationManager.markChannelAsRead(selectedNodeId, channelId, latestMessage?.id);
+      // Store last-read timestamp per channel in localStorage
+      localStorage.setItem(`accord_lastread_${channelId}`, Date.now().toString());
       setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
     }
     
@@ -971,6 +1043,7 @@ function App() {
     if (selectedNodeId && messages.length > 0) {
       const latestMessage = messages[messages.length - 1];
       notificationManager.markChannelAsRead(selectedNodeId, channelId, latestMessage.id);
+      localStorage.setItem(`accord_lastread_${channelId}`, Date.now().toString());
       setForceUpdate(prev => prev + 1);
     }
   }, [selectedNodeId]);
@@ -1126,6 +1199,9 @@ function App() {
       setShowKeyBackup(true);
       setShowWelcomeScreen(false);
 
+      // Prompt for display name after first join
+      setTimeout(() => { setShowDisplayNamePrompt(true); }, 500);
+
       setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : "Registration failed");
@@ -1273,6 +1349,9 @@ function App() {
         
         // Show key backup prompt
         setShowKeyBackup(true);
+
+        // Prompt for display name after registration
+        setTimeout(() => { setShowDisplayNamePrompt(true); }, 500);
       }
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed");
@@ -1719,17 +1798,35 @@ function App() {
     }
   }, [selectedChannelId, appState.token, serverAvailable, loadMessages]);
 
-  // Keyboard shortcuts for search and settings
+  // Keyboard shortcuts for search, settings, help, and escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey && (e.key === 'k' || e.key === 'f')) || 
-          (e.metaKey && (e.key === 'k' || e.key === 'f'))) {
+      // Ctrl+K / Cmd+K: open search
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'f')) {
         e.preventDefault();
         setShowSearchOverlay(true);
       }
-      if ((e.ctrlKey && e.key === ',') || (e.metaKey && e.key === ',')) {
+      // Ctrl+, / Cmd+,: open settings
+      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         setShowSettings(true);
+      }
+      // Ctrl+/ / Cmd+/: keyboard shortcuts help
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setShowShortcutsHelp(prev => !prev);
+      }
+      // Escape: close modals / cancel editing
+      if (e.key === 'Escape') {
+        if (showShortcutsHelp) { setShowShortcutsHelp(false); return; }
+        if (showSearchOverlay) { setShowSearchOverlay(false); return; }
+        if (showSettings) { setShowSettings(false); return; }
+        if (showNotificationSettings) { setShowNotificationSettings(false); return; }
+        if (showCreateNodeModal) { setShowCreateNodeModal(false); return; }
+        if (showInviteModal) { setShowInviteModal(false); return; }
+        if (showDisplayNamePrompt) { setShowDisplayNamePrompt(false); return; }
+        if (editingMessageId) { handleCancelEdit(); return; }
+        if (replyingTo) { handleCancelReply(); return; }
       }
     };
 
@@ -1737,7 +1834,7 @@ function App() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showCreateNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -2039,6 +2136,51 @@ function App() {
     );
   }
 
+  // Presence helper: determine effective status for a member
+  const getPresenceStatus = useCallback((userId: string): import('./types').PresenceStatus => {
+    // Check explicit presence from server
+    const explicit = presenceMap.get(userId);
+    if (explicit) return explicit;
+    
+    // Heuristic: user sent a message in the last 5 minutes = online
+    const lastMsg = lastMessageTimes.get(userId);
+    if (lastMsg && Date.now() - lastMsg < 5 * 60 * 1000) {
+      return 'online' as import('./types').PresenceStatus;
+    }
+    
+    // Check member profile status
+    const member = members.find(m => m.user_id === userId);
+    if (member?.status) return member.status;
+    if (member?.profile?.status) return member.profile.status;
+    
+    return 'offline' as import('./types').PresenceStatus;
+  }, [presenceMap, lastMessageTimes, members]);
+
+  // Sort members: online > idle > dnd > offline
+  const sortedMembers = React.useMemo(() => {
+    const order: Record<string, number> = { online: 0, idle: 1, dnd: 2, offline: 3 };
+    return [...members].sort((a, b) => {
+      const sa = order[getPresenceStatus(a.user_id)] ?? 3;
+      const sb = order[getPresenceStatus(b.user_id)] ?? 3;
+      return sa - sb;
+    });
+  }, [members, getPresenceStatus]);
+
+  // Context menu handler
+  const handleContextMenu = useCallback((e: React.MouseEvent, userId: string, publicKeyHash: string, name: string, bio?: string, user?: User) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, userId, publicKeyHash, displayName: name, bio, user });
+  }, []);
+
+  // Close context menu on click anywhere
+  useEffect(() => {
+    const handler = () => setContextMenu(null);
+    if (contextMenu) {
+      document.addEventListener('click', handler);
+      return () => document.removeEventListener('click', handler);
+    }
+  }, [contextMenu]);
+
   // Use server data — no mock fallback
   const servers = nodes.map(n => n.name);
   const channelList = channels.map(ch => `# ${ch.name}`);
@@ -2138,11 +2280,12 @@ function App() {
             const channelUnreads = selectedNodeId && channel ? 
               notificationManager.getChannelUnreads(selectedNodeId, channel.id) : 
               { count: 0, mentions: 0 };
+            const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
             
             return (
               <div
                 key={channel?.id || ch}
-                className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""}`}
+                className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
               >
                 <div
                   onClick={() => {
@@ -2187,11 +2330,9 @@ function App() {
                     </div>
                   )}
                   {channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
-                    channelUnreads.count > 9 ? (
-                      <div className="notification-badge">9+</div>
-                    ) : (
-                      <div className="notification-dot" />
-                    )
+                    <div className="unread-badge">
+                      {channelUnreads.count > 99 ? '99+' : channelUnreads.count}
+                    </div>
                   )}
                   
                   {canDeleteChannel && channel && (
@@ -2399,7 +2540,13 @@ function App() {
               <div className="message-avatar">{msg.author[0]}</div>
               <div className="message-body">
                 <div className="message-header">
-                  <span className="message-author">{msg.author}</span>
+                  <span className="message-author" onContextMenu={(e) => {
+                    // Find the member who authored this message
+                    const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
+                    if (authorMember) {
+                      handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
+                    }
+                  }}>{msg.author}</span>
                   <span className="message-time">{msg.time}</span>
                   {msg.edited_at && (
                     <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
@@ -2571,18 +2718,16 @@ function App() {
             </div>
           ))}
           
-          {/* Typing indicator */}
-          {selectedChannelId && formatTypingUsers(selectedChannelId) && (
-            <div className="typing-indicator">
-              <span className="typing-text">{formatTypingUsers(selectedChannelId)}</span>
-              <span className="typing-dots">
-                <span>.</span>
-                <span>.</span>
-                <span>.</span>
-              </span>
-            </div>
-          )}
         </div>
+        {/* Typing indicator */}
+        {selectedChannelId && formatTypingUsers(selectedChannelId) && (
+          <div className="typing-indicator">
+            <div className="typing-dots-animated">
+              <span></span><span></span><span></span>
+            </div>
+            <span className="typing-text">{formatTypingUsers(selectedChannelId)}</span>
+          </div>
+        )}
         <div className="message-input-container">
           {/* Reply preview bar */}
           {replyingTo && (
@@ -2605,22 +2750,27 @@ function App() {
               encryptionEnabled={encryptionEnabled}
             />
           )}
-          <input
+          <textarea
             className="message-input"
-            type="text"
             placeholder={`Message ${activeChannel}`}
             value={message}
+            rows={1}
             onChange={(e) => {
               setMessage(e.target.value);
+              // Auto-resize textarea
+              e.target.style.height = 'auto';
+              e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
               // Send typing indicator when user types (throttled)
               if (selectedChannelId) {
                 sendTypingIndicator(selectedChannelId);
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
                 handleSendMessage();
               }
+              // Shift+Enter: default behavior (newline in textarea)
             }}
           />
           {/* File list button */}
@@ -2652,19 +2802,24 @@ function App() {
       {/* Member sidebar */}
       <div className="member-sidebar">
         <div className="member-header">Members — {users.length}</div>
-        {members.length > 0 ? (
-          members.map((member) => {
+        {sortedMembers.length > 0 ? (
+          sortedMembers.map((member) => {
             const currentUserId = localStorage.getItem('accord_user_id');
             const isCurrentUser = member.user_id === currentUserId;
+            const presence = getPresenceStatus(member.user_id);
             const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers') && !isCurrentUser;
             
             return (
-              <div key={member.user.id} className="member">
-                <div className="member-avatar">{displayName(member.user)[0]}</div>
+              <div key={member.user.id} className={`member ${presence === 'offline' ? 'member-offline' : ''}`}
+                onContextMenu={(e) => handleContextMenu(e, member.user_id, member.public_key_hash, displayName(member.user), member.profile?.bio, member.user)}
+              >
+                <div className="member-avatar-wrapper">
+                  <div className="member-avatar">{displayName(member.user)[0]}</div>
+                  <span className={`presence-dot presence-${presence}`} title={presence}></span>
+                </div>
                 <span className="member-name">{displayName(member.user)}</span>
                 <span className="member-role-badge" title={member.role}>{getRoleBadge(member.role)}</span>
                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span className="member-status-dot">●</span>
                   {!isCurrentUser && (
                     <button onClick={(e) => { e.stopPropagation(); openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>
                   )}
@@ -2959,7 +3114,94 @@ function App() {
         </div>
       )}
 
-      {/* Removed non-existent dialog components */}
+      {/* Display Name Prompt Modal */}
+      {showDisplayNamePrompt && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3>Set Your Display Name</h3>
+            <p>Choose a name that others will see instead of your fingerprint.</p>
+            <div className="form-group">
+              <label className="form-label">Display Name</label>
+              <input
+                type="text"
+                placeholder="Enter a display name..."
+                value={displayNameInput}
+                onChange={(e) => setDisplayNameInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDisplayName(); }}
+                className="form-input"
+                autoFocus
+                maxLength={32}
+              />
+            </div>
+            <div className="modal-actions">
+              <button
+                onClick={handleSaveDisplayName}
+                disabled={displayNameSaving || !displayNameInput.trim()}
+                className="btn btn-green"
+                style={{ width: 'auto' }}
+              >
+                {displayNameSaving ? 'Saving...' : 'Save'}
+              </button>
+              <button
+                onClick={() => setShowDisplayNamePrompt(false)}
+                className="btn btn-outline"
+                style={{ width: 'auto' }}
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <div className="context-menu-item context-menu-profile-header">
+            <div style={{ fontWeight: 600, fontSize: '14px' }}>{contextMenu.displayName}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{fingerprint(contextMenu.publicKeyHash)}</div>
+            {contextMenu.bio && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{contextMenu.bio}</div>}
+          </div>
+          <div className="context-menu-separator"></div>
+          <div className="context-menu-item" onClick={() => {
+            // View profile - show alert with details for now
+            const info = `Display Name: ${contextMenu.displayName}\nFingerprint: ${fingerprint(contextMenu.publicKeyHash)}\nFull Hash: ${contextMenu.publicKeyHash}${contextMenu.bio ? `\nBio: ${contextMenu.bio}` : ''}`;
+            alert(info);
+            setContextMenu(null);
+          }}>👤 View Profile</div>
+          {contextMenu.user && contextMenu.userId !== localStorage.getItem('accord_user_id') && (
+            <div className="context-menu-item" onClick={() => {
+              if (contextMenu.user) openDmWithUser(contextMenu.user);
+              setContextMenu(null);
+            }}>💬 Send DM</div>
+          )}
+          <div className="context-menu-separator"></div>
+          <div className="context-menu-item" onClick={() => {
+            navigator.clipboard.writeText(contextMenu.publicKeyHash).catch(() => {});
+            setContextMenu(null);
+          }}>📋 Copy Public Key Hash</div>
+        </div>
+      )}
+
+      {/* Keyboard Shortcuts Help Modal */}
+      {showShortcutsHelp && (
+        <div className="modal-overlay" onClick={() => setShowShortcutsHelp(false)}>
+          <div className="modal-card shortcuts-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>⌨️ Keyboard Shortcuts</h3>
+            <div className="shortcuts-list">
+              <div className="shortcut-row"><kbd>Enter</kbd><span>Send message</span></div>
+              <div className="shortcut-row"><kbd>Shift + Enter</kbd><span>New line in message</span></div>
+              <div className="shortcut-row"><kbd>Escape</kbd><span>Close modal / Cancel edit</span></div>
+              <div className="shortcut-row"><kbd>Ctrl + K</kbd><span>Open search</span></div>
+              <div className="shortcut-row"><kbd>Ctrl + /</kbd><span>Show this help</span></div>
+              <div className="shortcut-row"><kbd>Ctrl + ,</kbd><span>Open settings</span></div>
+            </div>
+            <div className="modal-actions" style={{ marginTop: '16px' }}>
+              <button onClick={() => setShowShortcutsHelp(false)} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

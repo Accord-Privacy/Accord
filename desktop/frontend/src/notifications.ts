@@ -32,6 +32,7 @@ export class NotificationManager {
   private unreads: NodeUnreads = {};
   private currentUsername = '';
   private windowFocused = true;
+  private activeChannelId: string | null = null;
   private audioContext: AudioContext | null = null;
 
   constructor() {
@@ -92,6 +93,10 @@ export class NotificationManager {
     if (typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined') {
       this.audioContext = new (AudioContext || (window as any).webkitAudioContext)();
     }
+  }
+
+  public setActiveChannel(channelId: string | null): void {
+    this.activeChannelId = channelId;
   }
 
   public setCurrentUsername(username: string): void {
@@ -263,7 +268,8 @@ export class NotificationManager {
   }
 
   private handleMessageNotification(message: Message, channelId: string, isMention: boolean): void {
-    if (!this.preferences.enabled || this.windowFocused) {
+    // Don't notify for the channel the user is currently viewing
+    if (!this.preferences.enabled || (this.windowFocused && this.activeChannelId === channelId)) {
       return;
     }
 
