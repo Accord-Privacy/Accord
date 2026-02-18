@@ -52,7 +52,7 @@ use handlers::{
     unban_user_handler, unpin_message_handler, update_channel_category_handler,
     update_channel_handler, update_node_handler, update_push_preferences_handler,
     update_role_handler, update_user_profile_handler, upload_file_handler, use_invite_handler,
-    ws_handler,
+    import_discord_template_handler, ws_handler,
 };
 use state::{AppState, SharedState};
 use std::sync::Arc;
@@ -252,6 +252,11 @@ async fn main() -> Result<()> {
         .route(
             "/nodes/:id/roles/:role_id",
             axum::routing::patch(update_role_handler).delete(delete_role_handler),
+        )
+        // ── Discord template import ──
+        .route(
+            "/nodes/:id/import-discord-template",
+            post(import_discord_template_handler),
         )
         // ── Member role endpoints ──
         .route(

@@ -5726,3 +5726,320 @@ pub async fn get_effective_permissions_handler(
         "user_id": user_id,
     })))
 }
+
+// ── Discord Template Import ──
+
+/// Request body for importing a Discord server template.
+#[derive(Debug, serde::Deserialize)]
+pub struct ImportDiscordTemplateRequest {
+    /// A Discord template code (e.g. "RHzsRPA9xrRW"). If provided, the server
+    /// fetches the template JSON from Discord's API.
+    pub template_code: Option<String>,
+    /// Pre-fetched template JSON. Use this when the caller already has the data.
+    pub template_json: Option<serde_json::Value>,
+}
+
+/// Summary returned after a successful template import.
+#[derive(Debug, serde::Serialize)]
+pub struct ImportTemplateSummary {
+    pub roles_created: u32,
+    pub roles_updated: u32,
+    pub roles_skipped: u32,
+    pub categories_created: u32,
+    pub text_channels_created: u32,
+    pub voice_channels_created: u32,
+    pub overwrites_created: u32,
+    pub unsupported_permissions_stripped: Vec<String>,
+}
+
+/// Discord permission bit names for bits we do NOT support (for the import summary).
+fn discord_bit_name(bit: u32) -> &'static str {
+    match bit {
+        7 => "Use Application Commands (bit 7)",
+        8 => "View Audit Log (bit 8)",
+        9 => "Priority Speaker (bit 9)",
+        12 => "Send TTS Messages (bit 12)",
+        18 => "Use External Emojis (bit 18)",
+        19 => "View Guild Insights (bit 19)",
+        25 => "Use VAD (bit 25)",
+        26 => "Change Nickname (bit 26)",
+        27 => "Manage Nicknames (bit 27)",
+        29 => "Manage Webhooks (bit 29)",
+        30 => "Manage Emojis (bit 30)",
+        31 => "Use Slash Commands (bit 31)",
+        32 => "Request To Speak (bit 32)",
+        33 => "Manage Events (bit 33)",
+        34 => "Manage Threads (bit 34)",
+        35 => "Create Public Threads (bit 35)",
+        36 => "Create Private Threads (bit 36)",
+        37 => "Use External Stickers (bit 37)",
+        38 => "Send Messages In Threads (bit 38)",
+        39 => "Use Embedded Activities (bit 39)",
+        40 => "Moderate Members (bit 40)",
+        _ => "Unknown",
+    }
+}
+
+/// POST /api/nodes/{node_id}/import-discord-template
+///
+/// Imports channels, roles, and permission overwrites from a Discord server template.
+/// Requires ADMINISTRATOR or MANAGE_NODE permission.
+pub async fn import_discord_template_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<ImportDiscordTemplateRequest>,
+) -> Result<Json<ImportTemplateSummary>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Permission check: require Admin (ManageNode implies admin-level)
+    let user_role = state.get_user_role_in_node(user_id, node_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("Permission check failed: {e}"), code: 500 }))
+    })?;
+    if !has_permission(user_role, Permission::ManageNode) {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse {
+            error: format!("Permission denied. Required: ManageNode, Your role: {:?}", user_role),
+            code: 403,
+        })));
+    }
+
+    // Resolve template JSON
+    let template_json = if let Some(json) = request.template_json {
+        json
+    } else if let Some(code) = request.template_code {
+        let url = format!("https://discord.com/api/v10/guilds/templates/{}", code);
+        let resp = reqwest::get(&url).await.map_err(|e| {
+            (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: format!("Failed to fetch template: {e}"), code: 502 }))
+        })?;
+        if !resp.status().is_success() {
+            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+                error: format!("Discord returned status {} for template code '{}'", resp.status(), code),
+                code: 400,
+            })));
+        }
+        resp.json::<serde_json::Value>().await.map_err(|e| {
+            (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: format!("Invalid JSON from Discord: {e}"), code: 502 }))
+        })?
+    } else {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            error: "Provide either template_code or template_json".into(), code: 400,
+        })));
+    };
+
+    // Extract serialized_source_guild
+    let guild = template_json.get("serialized_source_guild")
+        .unwrap_or(&template_json); // allow passing guild directly
+
+    let mut summary = ImportTemplateSummary {
+        roles_created: 0,
+        roles_updated: 0,
+        roles_skipped: 0,
+        categories_created: 0,
+        text_channels_created: 0,
+        voice_channels_created: 0,
+        overwrites_created: 0,
+        unsupported_permissions_stripped: Vec::new(),
+    };
+
+    let supported_mask = crate::models::permission_bits::ALL_PERMISSIONS;
+
+    // Track stripped bits across the whole import (deduplicated)
+    let mut stripped_bits_seen = std::collections::HashSet::<u32>::new();
+
+    // Helper to mask permissions and track stripped bits
+    let mut mask_perms = |raw: u64| -> u64 {
+        let unsupported = raw & !supported_mask;
+        if unsupported != 0 {
+            for bit in 0..64 {
+                if unsupported & (1u64 << bit) != 0 {
+                    stripped_bits_seen.insert(bit);
+                }
+            }
+        }
+        raw & supported_mask
+    };
+
+    // ── 1. Import roles ──
+    // Map Discord template role IDs (integers) → new Accord role UUIDs
+    let mut role_id_map: HashMap<u64, Uuid> = HashMap::new();
+
+    let roles = guild.get("roles").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    // Get the existing @everyone role for this node
+    let everyone_role = state.db.get_everyone_role(node_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    for role_val in &roles {
+        let discord_id = role_val.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let name = role_val.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+        let raw_perms_str = role_val.get("permissions").and_then(|v| v.as_str()).unwrap_or("0");
+        let raw_perms: u64 = raw_perms_str.parse().unwrap_or(0);
+        let masked_perms = mask_perms(raw_perms);
+        let color = role_val.get("color").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let hoist = role_val.get("hoist").and_then(|v| v.as_bool()).unwrap_or(false);
+        let mentionable = role_val.get("mentionable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let unicode_emoji = role_val.get("unicode_emoji").and_then(|v| v.as_str());
+
+        if discord_id == 0 {
+            // Update the existing @everyone role
+            if let Some(ref ev) = everyone_role {
+                role_id_map.insert(0, ev.id);
+                state.db.update_role(ev.id, None, None, Some(masked_perms), None, None, None).await.map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+                })?;
+                summary.roles_updated += 1;
+            }
+            continue;
+        }
+
+        // Determine position (use array index as approximation, offset by 1 since @everyone=0)
+        let position = state.db.next_role_position(node_id).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        })?;
+
+        let new_role = state.db.create_role(
+            node_id,
+            name,
+            color,
+            masked_perms,
+            position,
+            hoist,
+            mentionable,
+            unicode_emoji,
+        ).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        })?;
+
+        role_id_map.insert(discord_id, new_role.id);
+        summary.roles_created += 1;
+    }
+
+    // ── 2. Import channels ──
+    let channels = guild.get("channels").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    // Map Discord channel IDs → Accord channel UUIDs
+    let mut channel_id_map: HashMap<u64, Uuid> = HashMap::new();
+
+    // First pass: create categories (type=4)
+    for ch in &channels {
+        let ch_type = ch.get("type").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
+        if ch_type != 4 { continue; }
+
+        let discord_ch_id = ch.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let name = ch.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+        let position = ch.get("position").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let icon_emoji_val = ch.get("icon_emoji");
+        let icon_emoji = icon_emoji_val
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str());
+
+        let new_id = state.db.create_channel_full(
+            name, node_id, user_id, ch_type, None, position, None, false, icon_emoji,
+        ).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        })?;
+
+        channel_id_map.insert(discord_ch_id, new_id);
+        summary.categories_created += 1;
+    }
+
+    // Second pass: create text (0) and voice (2) channels
+    for ch in &channels {
+        let ch_type = ch.get("type").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
+        if ch_type == 4 { continue; }
+
+        // We support types 0 (text) and 2 (voice)
+        if ch_type != 0 && ch_type != 2 {
+            info!("Skipping unsupported channel type {} for channel {:?}", ch_type, ch.get("name"));
+            continue;
+        }
+
+        let discord_ch_id = ch.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let name = ch.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+        let position = ch.get("position").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let topic = ch.get("topic").and_then(|v| v.as_str());
+        let nsfw = ch.get("nsfw").and_then(|v| v.as_bool()).unwrap_or(false);
+        let icon_emoji_val = ch.get("icon_emoji");
+        let icon_emoji = icon_emoji_val
+            .and_then(|v| v.get("name"))
+            .and_then(|v| v.as_str());
+
+        // Resolve parent_id (Discord integer → Accord UUID)
+        let parent_id = ch.get("parent_id")
+            .and_then(|v| v.as_u64())
+            .and_then(|pid| channel_id_map.get(&pid).copied());
+
+        let new_id = state.db.create_channel_full(
+            name, node_id, user_id, ch_type, parent_id, position, topic, nsfw, icon_emoji,
+        ).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        })?;
+
+        channel_id_map.insert(discord_ch_id, new_id);
+        if ch_type == 0 {
+            summary.text_channels_created += 1;
+        } else {
+            summary.voice_channels_created += 1;
+        }
+    }
+
+    // ── 3. Import permission overwrites ──
+    for ch in &channels {
+        let discord_ch_id = ch.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+        let accord_ch_id = match channel_id_map.get(&discord_ch_id) {
+            Some(id) => *id,
+            None => continue, // channel was skipped
+        };
+
+        let overwrites = ch.get("permission_overwrites").and_then(|v| v.as_array());
+        if let Some(overwrites) = overwrites {
+            for ow in overwrites {
+                // type 0 = role overwrite (we only support role overwrites for now)
+                let ow_type = ow.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
+                if ow_type != 0 { continue; }
+
+                let discord_role_id = ow.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                let accord_role_id = match role_id_map.get(&discord_role_id) {
+                    Some(id) => *id,
+                    None => continue, // role not mapped (skipped)
+                };
+
+                let allow_str = ow.get("allow").and_then(|v| v.as_str()).unwrap_or("0");
+                let deny_str = ow.get("deny").and_then(|v| v.as_str()).unwrap_or("0");
+                let allow: u64 = allow_str.parse().unwrap_or(0);
+                let deny: u64 = deny_str.parse().unwrap_or(0);
+
+                let masked_allow = mask_perms(allow);
+                let masked_deny = mask_perms(deny);
+
+                state.db.set_channel_overwrite(accord_ch_id, accord_role_id, masked_allow, masked_deny).await.map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+                })?;
+                summary.overwrites_created += 1;
+            }
+        }
+    }
+
+    // Build stripped bits summary
+    let mut stripped: Vec<String> = stripped_bits_seen.iter()
+        .map(|&bit| {
+            let name = discord_bit_name(bit);
+            if name == "Unknown" {
+                format!("Unknown (bit {})", bit)
+            } else {
+                name.to_string()
+            }
+        })
+        .collect();
+    stripped.sort();
+    summary.unsupported_permissions_stripped = stripped;
+
+    info!(
+        "Discord template imported into node {}: {} roles, {} categories, {} text, {} voice, {} overwrites",
+        node_id, summary.roles_created, summary.categories_created,
+        summary.text_channels_created, summary.voice_channels_created, summary.overwrites_created
+    );
+
+    Ok(Json(summary))
+}

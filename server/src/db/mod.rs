@@ -1424,6 +1424,49 @@ impl Database {
             .await
     }
 
+    /// Create a channel with all fields (channel_type, parent_id, position, topic, nsfw, icon_emoji).
+    /// Used by the Discord template importer.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_channel_full(
+        &self,
+        name: &str,
+        node_id: Uuid,
+        created_by: Uuid,
+        channel_type: i32,
+        parent_id: Option<Uuid>,
+        position: i32,
+        topic: Option<&str>,
+        nsfw: bool,
+        icon_emoji: Option<&str>,
+    ) -> Result<Uuid> {
+        let channel_id = Uuid::new_v4();
+        let created_at = now();
+        sqlx::query(
+            "INSERT INTO channels (id, name, node_id, created_by, created_at, position, channel_type, parent_id, topic, nsfw, icon_emoji) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(channel_id.to_string())
+        .bind(name)
+        .bind(node_id.to_string())
+        .bind(created_by.to_string())
+        .bind(created_at as i64)
+        .bind(position as i64)
+        .bind(channel_type as i64)
+        .bind(parent_id.map(|id| id.to_string()))
+        .bind(topic)
+        .bind(nsfw)
+        .bind(icon_emoji)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert channel (full)")?;
+
+        // Add creator as first member (skip for categories)
+        if channel_type != 4 {
+            self.add_user_to_channel(channel_id, created_by).await?;
+        }
+
+        Ok(channel_id)
+    }
+
     pub async fn create_channel_with_id(
         &self,
         channel_id: Uuid,
