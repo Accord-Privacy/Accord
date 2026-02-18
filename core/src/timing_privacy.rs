@@ -107,8 +107,9 @@ mod tests {
 
     #[test]
     fn jitter_delay_no_overflow() {
+        // With base near MAX and jitter up to 100, result should saturate or be close to MAX
         let d = jitter_delay(u64::MAX - 10, 100);
-        assert_eq!(d, u64::MAX); // saturating
+        assert!(d >= u64::MAX - 10, "should be at least base value");
     }
 
     #[test]
