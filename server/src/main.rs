@@ -154,8 +154,10 @@ struct Args {
     config: Option<String>,
 
     /// Allowed CORS origins (comma-separated). Use '*' for any (dev only).
-    #[arg(long, default_value = "http://localhost:3000,http://localhost:5173")]
-    cors_origins: String,
+    /// CORS allowed origins (comma-separated, or "*" for any). Defaults to "*" when
+    /// binding to 0.0.0.0, or "http://localhost:3000,http://localhost:5173" for localhost.
+    #[arg(long)]
+    cors_origins: Option<String>,
 
     /// Database file path
     #[arg(short = 'd', long, default_value = "accord.db")]
@@ -246,7 +248,9 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
 
     apply!(host, "0.0.0.0");
     apply!(port, 8080);
-    apply!(cors_origins, "http://localhost:3000,http://localhost:5173");
+    if args.cors_origins.is_none() {
+        args.cors_origins = cfg.cors_origins;
+    }
     apply!(database, "accord.db");
     apply!(database_encryption, true);
     apply!(metadata_mode, "standard");
@@ -609,12 +613,18 @@ async fn main() -> Result<()> {
             .layer(TraceLayer::new_for_http())
             .layer({
                 let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
-                if args.cors_origins.trim() == "*" {
-                    warn!("CORS: allowing ANY origin — only use in development!");
+                let effective_cors = args.cors_origins.clone().unwrap_or_else(|| {
+                    if args.host == "0.0.0.0" || args.host == "::" {
+                        "*".to_string()
+                    } else {
+                        "http://localhost:3000,http://localhost:5173".to_string()
+                    }
+                });
+                if effective_cors.trim() == "*" {
+                    info!("CORS: allowing any origin (bind address: {})", args.host);
                     cors.allow_origin(Any)
                 } else {
-                    let origins: Vec<_> = args
-                        .cors_origins
+                    let origins: Vec<_> = effective_cors
                         .split(',')
                         .filter_map(|o| o.trim().parse().ok())
                         .collect();
