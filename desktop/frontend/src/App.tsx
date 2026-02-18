@@ -165,6 +165,12 @@ function App() {
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
 
+  // Server hello / trust indicator state
+  const [serverBuildHash, setServerBuildHash] = useState<string>("");
+  const [serverHelloVersion, setServerHelloVersion] = useState<string>("");
+  const [connectedSince, setConnectedSince] = useState<number | null>(null);
+  const [showConnectionInfo, setShowConnectionInfo] = useState(false);
+
   // Node settings state
   const [showNodeSettings, setShowNodeSettings] = useState(false);
 
@@ -290,10 +296,17 @@ function App() {
     socket.on('connected', () => {
       setAppState(prev => ({ ...prev, isConnected: true }));
       setConnectionInfo({ status: 'connected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
+      setConnectedSince(Date.now());
+    });
+
+    socket.on('hello' as any, (data: any) => {
+      if (data.server_version) setServerHelloVersion(data.server_version);
+      if (data.server_build_hash) setServerBuildHash(data.server_build_hash);
     });
 
     socket.on('disconnected', () => {
       setAppState(prev => ({ ...prev, isConnected: false }));
+      setConnectedSince(null);
     });
 
     socket.on('connection_status', (info: ConnectionInfo) => {
@@ -2499,6 +2512,15 @@ function App() {
             </div>
           </div>
           <button
+            onClick={() => setShowConnectionInfo(true)}
+            className="user-panel-settings connection-indicator"
+            title={appState.isConnected
+              ? `Connected${serverHelloVersion ? ` — v${serverHelloVersion}` : ''}${serverBuildHash ? ` (${serverBuildHash.slice(0, 8)})` : ''}`
+              : 'Disconnected'}
+          >
+            {appState.isConnected ? '🟢' : '🔴'}
+          </button>
+          <button
             onClick={() => setShowNotificationSettings(true)}
             className="user-panel-settings"
             title="Notification Settings"
@@ -3113,6 +3135,13 @@ function App() {
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         currentUser={appState.user}
+        serverInfo={{
+          version: serverHelloVersion,
+          buildHash: serverBuildHash,
+          connectedSince,
+          relayAddress: api.getBaseUrl(),
+          isConnected: appState.isConnected,
+        }}
         onUserUpdate={(updates) => {
           // Update user state if needed
           if (appState.user) {
@@ -3126,6 +3155,62 @@ function App() {
           }
         }}
       />
+
+      {/* Connection Info Modal */}
+      {showConnectionInfo && (
+        <div className="settings-overlay" onClick={() => setShowConnectionInfo(false)}>
+          <div
+            className="connection-info-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="connection-info-header">
+              <h3>Connection Info</h3>
+              <button className="settings-close" onClick={() => setShowConnectionInfo(false)}>×</button>
+            </div>
+            <div className="connection-info-body">
+              <div className="connection-info-row">
+                <span className="connection-info-label">Status</span>
+                <span className="connection-info-value">
+                  {appState.isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                </span>
+              </div>
+              {serverHelloVersion && (
+                <div className="connection-info-row">
+                  <span className="connection-info-label">Server Version</span>
+                  <span className="connection-info-value">{serverHelloVersion}</span>
+                </div>
+              )}
+              {serverBuildHash && (
+                <div className="connection-info-row">
+                  <span className="connection-info-label">Build Hash</span>
+                  <span
+                    className="connection-info-value copyable"
+                    title="Click to copy"
+                    onClick={() => { navigator.clipboard.writeText(serverBuildHash); }}
+                  >
+                    <code>{serverBuildHash}</code>
+                    <span className="copy-hint">📋</span>
+                  </span>
+                </div>
+              )}
+              {connectedSince && (
+                <div className="connection-info-row">
+                  <span className="connection-info-label">Connected Since</span>
+                  <span className="connection-info-value">
+                    {new Date(connectedSince).toLocaleString()}
+                  </span>
+                </div>
+              )}
+              <div className="connection-info-row">
+                <span className="connection-info-label">Relay Address</span>
+                <span className="connection-info-value">
+                  <code>{api.getBaseUrl()}</code>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pinned Messages Panel */}
       {showPinnedPanel && (

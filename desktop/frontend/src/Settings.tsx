@@ -32,6 +32,14 @@ interface PrivacySettings {
   blockedUsers: string[];
 }
 
+interface ServerInfo {
+  version: string;
+  buildHash: string;
+  connectedSince: number | null;
+  relayAddress: string;
+  isConnected: boolean;
+}
+
 interface SettingsProps {
   isOpen: boolean;
   onClose: () => void;
@@ -47,9 +55,10 @@ interface SettingsProps {
     status?: string;
   };
   onUserUpdate?: (updates: Partial<AccountSettings>) => void;
+  serverInfo?: ServerInfo;
 }
 
-type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'about';
+type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'server' | 'about';
 
 // Default settings
 const defaultAccountSettings: AccountSettings = {
@@ -85,7 +94,8 @@ export const Settings: React.FC<SettingsProps> = ({
   isOpen,
   onClose,
   currentUser,
-  onUserUpdate
+  onUserUpdate,
+  serverInfo
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
   
@@ -421,6 +431,12 @@ export const Settings: React.FC<SettingsProps> = ({
               onClick={() => setActiveTab('advanced')}
             >
               ⚙️ Advanced
+            </button>
+            <button
+              className={`settings-nav-item ${activeTab === 'server' ? 'active' : ''}`}
+              onClick={() => setActiveTab('server')}
+            >
+              🖥️ Server Info
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'about' ? 'active' : ''}`}
@@ -1008,6 +1024,57 @@ export const Settings: React.FC<SettingsProps> = ({
                   )}
                   <div className="settings-help">
                     Removes all locally stored settings, keys, and tokens. This cannot be undone.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* =================== SERVER INFO =================== */}
+            {activeTab === 'server' && (
+              <div className="settings-section">
+                <h3>Server Info</h3>
+
+                <div className="settings-group">
+                  <label className="settings-label">Connection Status</label>
+                  <div className="settings-info">
+                    {serverInfo?.isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                  </div>
+                </div>
+
+                {serverInfo?.version && (
+                  <div className="settings-group">
+                    <label className="settings-label">Server Version</label>
+                    <div className="settings-info">{serverInfo.version}</div>
+                  </div>
+                )}
+
+                {serverInfo?.buildHash && (
+                  <div className="settings-group">
+                    <label className="settings-label">Server Build Hash</label>
+                    <div
+                      className="settings-info copyable"
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: 13, cursor: 'pointer' }}
+                      title="Click to copy"
+                      onClick={() => { navigator.clipboard.writeText(serverInfo.buildHash); }}
+                    >
+                      {serverInfo.buildHash} 📋
+                    </div>
+                  </div>
+                )}
+
+                {serverInfo?.connectedSince && (
+                  <div className="settings-group">
+                    <label className="settings-label">Connected Since</label>
+                    <div className="settings-info">
+                      {new Date(serverInfo.connectedSince).toLocaleString()}
+                    </div>
+                  </div>
+                )}
+
+                <div className="settings-group">
+                  <label className="settings-label">Relay Address</label>
+                  <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                    {serverInfo?.relayAddress || api.getBaseUrl()}
                   </div>
                 </div>
               </div>
