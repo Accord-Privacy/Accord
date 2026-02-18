@@ -5073,6 +5073,73 @@ pub async fn get_message_thread_handler(
     }))
 }
 
+/// Get thread starters in a channel (GET /channels/:id/threads)
+pub async fn get_channel_threads_handler(
+    Path(channel_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let channel_id = Uuid::parse_str(&channel_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid channel ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check membership
+    let channel_members = state
+        .db
+        .get_channel_members(channel_id)
+        .await
+        .map_err(|e| {
+            error!("Failed to get channel members: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel access".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !channel_members.contains(&user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "You must be a member of this channel to view threads".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let limit = params
+        .get("limit")
+        .and_then(|l| l.parse::<u32>().ok())
+        .unwrap_or(50);
+
+    let threads = state
+        .db
+        .get_channel_threads(channel_id, limit)
+        .await
+        .map_err(|e| {
+            error!("Failed to get channel threads: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to get channel threads".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({ "threads": threads })))
+}
+
 // ── Message Pinning endpoints ──
 
 /// Pin a message (PUT /messages/:id/pin)

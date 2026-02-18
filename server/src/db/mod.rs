@@ -2326,7 +2326,8 @@ impl Database {
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
                        nup.encrypted_display_name as sender_encrypted_display_name,
                        rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
-                       rnup.encrypted_display_name as replied_encrypted_display_name
+                       rnup.encrypted_display_name as replied_encrypted_display_name,
+                       (SELECT COUNT(*) FROM messages r WHERE r.reply_to = m.id) as reply_count
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 JOIN channels c ON m.channel_id = c.id
@@ -2348,7 +2349,8 @@ impl Database {
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
                        nup.encrypted_display_name as sender_encrypted_display_name,
                        rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
-                       rnup.encrypted_display_name as replied_encrypted_display_name
+                       rnup.encrypted_display_name as replied_encrypted_display_name,
+                       (SELECT COUNT(*) FROM messages r WHERE r.reply_to = m.id) as reply_count
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 JOIN channels c ON m.channel_id = c.id
@@ -3108,11 +3110,17 @@ impl Database {
         let rows = sqlx::query(
             r#"
             SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
-                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_username
+                   nup.encrypted_display_name as sender_encrypted_display_name,
+                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
+                   rnup.encrypted_display_name as replied_encrypted_display_name,
+                   (SELECT COUNT(*) FROM messages r WHERE r.reply_to = m.id) as reply_count
             FROM messages m
             JOIN users u ON m.sender_id = u.id
+            JOIN channels c ON m.channel_id = c.id
+            LEFT JOIN node_user_profiles nup ON nup.user_id = m.sender_id AND nup.node_id = c.node_id
             LEFT JOIN messages rm ON m.reply_to = rm.id
             LEFT JOIN users ru ON rm.sender_id = ru.id
+            LEFT JOIN node_user_profiles rnup ON rnup.user_id = rm.sender_id AND rnup.node_id = c.node_id
             WHERE m.reply_to = ?
             ORDER BY m.created_at ASC
             "#,
@@ -3121,6 +3129,45 @@ impl Database {
         .fetch_all(&self.pool)
         .await
         .context("Failed to query message thread")?;
+
+        let messages: Vec<_> = rows
+            .iter()
+            .map(parse_message_metadata)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(messages)
+    }
+
+    /// Get thread starters in a channel (messages that have replies), with reply count
+    pub async fn get_channel_threads(
+        &self,
+        channel_id: Uuid,
+        limit: u32,
+    ) -> Result<Vec<crate::models::MessageMetadata>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                   nup.encrypted_display_name as sender_encrypted_display_name,
+                   rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
+                   rnup.encrypted_display_name as replied_encrypted_display_name,
+                   (SELECT COUNT(*) FROM messages r WHERE r.reply_to = m.id) as reply_count
+            FROM messages m
+            JOIN users u ON m.sender_id = u.id
+            JOIN channels c ON m.channel_id = c.id
+            LEFT JOIN node_user_profiles nup ON nup.user_id = m.sender_id AND nup.node_id = c.node_id
+            LEFT JOIN messages rm ON m.reply_to = rm.id
+            LEFT JOIN users ru ON rm.sender_id = ru.id
+            LEFT JOIN node_user_profiles rnup ON rnup.user_id = rm.sender_id AND rnup.node_id = c.node_id
+            WHERE m.channel_id = ? AND (SELECT COUNT(*) FROM messages r WHERE r.reply_to = m.id) > 0
+            ORDER BY m.created_at DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(channel_id.to_string())
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channel threads")?;
 
         let messages: Vec<_> = rows
             .iter()
@@ -4603,6 +4650,8 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
             None
         };
 
+    let reply_count: Option<u32> = row.try_get::<i64, _>("reply_count").ok().map(|c| c as u32);
+
     Ok(crate::models::MessageMetadata {
         id: message_id,
         channel_id,
@@ -4617,6 +4666,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
         pinned_by,
         reply_to,
         replied_message,
+        reply_count,
     })
 }
 

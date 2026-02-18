@@ -783,6 +783,8 @@ pub struct MessageMetadata {
     pub pinned_by: Option<Uuid>,
     pub reply_to: Option<Uuid>,
     pub replied_message: Option<RepliedMessage>, // Preview of the message being replied to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_count: Option<u32>,
 }
 
 /// Preview of a replied-to message

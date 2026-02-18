@@ -227,6 +227,7 @@ export interface Message {
   reactions?: MessageReaction[];
   reply_to?: string;
   replied_message?: RepliedMessage;
+  reply_count?: number;
   files?: FileMetadata[];
   sender_public_key_hash?: string;
   sender_id?: string;

@@ -3827,6 +3827,14 @@ function App() {
                   <LinkPreview content={msg.content} token={appState.token || ''} />
                 )}
 
+                {/* Thread reply count */}
+                {msg.reply_count && msg.reply_count > 0 && (
+                  <div className="thread-indicator" onClick={() => {/* Could open thread panel in the future */}}>
+                    <span className="thread-icon">💬</span>
+                    <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
+                  </div>
+                )}
+
                 {/* File Attachments */}
                 {msg.files && msg.files.length > 0 && (
                   <div className="message-attachments">

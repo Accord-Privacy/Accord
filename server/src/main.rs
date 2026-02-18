@@ -40,11 +40,11 @@ use handlers::{
     delete_file_handler, delete_message_handler, delete_role_handler,
     deregister_push_token_handler, download_file_handler, edit_message_handler,
     fetch_key_bundle_handler, get_build_allowlist_handler, get_channel_messages_handler,
-    get_dm_channels_handler, get_effective_permissions_handler, get_member_roles_handler,
-    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
-    get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
-    get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
-    get_user_avatar_handler, get_user_profile_handler, health_handler,
+    get_channel_threads_handler, get_dm_channels_handler, get_effective_permissions_handler,
+    get_member_roles_handler, get_message_reactions_handler, get_message_thread_handler,
+    get_node_audit_log_handler, get_node_handler, get_node_icon_handler, get_node_members_handler,
+    get_node_presence_handler, get_node_user_profiles_handler, get_pinned_messages_handler,
+    get_prekey_messages_handler, get_user_avatar_handler, get_user_profile_handler, health_handler,
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
     link_preview_handler, list_bans_handler, list_channel_files_handler,
     list_channel_overwrites_handler, list_friend_requests_handler, list_friends_handler,
@@ -587,6 +587,7 @@ async fn main() -> Result<()> {
         .route("/messages/:id", axum::routing::patch(edit_message_handler))
         .route("/messages/:id", delete(delete_message_handler))
         // ── Message threading ──
+        .route("/channels/:id/threads", get(get_channel_threads_handler))
         .route("/messages/:id/thread", get(get_message_thread_handler))
         // ── Message reactions ──
         .route(

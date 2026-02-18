@@ -1688,6 +1688,33 @@ input, textarea, select, button {
   white-space: nowrap;
 }
 
+/* Thread reply count indicator */
+.thread-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+  width: fit-content;
+}
+
+.thread-indicator:hover {
+  background: var(--bg-hover);
+}
+
+.thread-icon {
+  font-size: 12px;
+}
+
+.thread-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
 /* Highlight effect for scrolled-to messages */
 .highlight-message {
   background: rgba(88, 101, 242, 0.08) !important;
