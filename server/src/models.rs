@@ -89,6 +89,97 @@ pub mod permission_bits {
             _ => "UNKNOWN",
         }
     }
+
+    /// Map Discord permission bitmask values to Accord permission bits.
+    ///
+    /// Although Accord's bit positions were designed to match Discord for the
+    /// supported subset, this function makes the mapping explicit and logs
+    /// warnings for any Discord permission bits that have no Accord equivalent.
+    pub fn map_discord_permissions(discord_bits: u64) -> u64 {
+        // Discord bit → Accord constant (same positions by design, but explicit)
+        const MAPPING: &[(u64, u64, &str)] = &[
+            (0x1, CREATE_INVITE, "CREATE_INSTANT_INVITE"),
+            (0x2, KICK_MEMBERS, "KICK_MEMBERS"),
+            (0x4, BAN_MEMBERS, "BAN_MEMBERS"),
+            (0x8, ADMINISTRATOR, "ADMINISTRATOR"),
+            (0x10, MANAGE_CHANNELS, "MANAGE_CHANNELS"),
+            (0x20, MANAGE_NODE, "MANAGE_GUILD"),
+            (0x40, ADD_REACTIONS, "ADD_REACTIONS"),
+            (0x400, VIEW_CHANNEL, "VIEW_CHANNEL"),
+            (0x800, SEND_MESSAGES, "SEND_MESSAGES"),
+            (0x2000, MANAGE_MESSAGES, "MANAGE_MESSAGES"),
+            (0x4000, EMBED_LINKS, "EMBED_LINKS"),
+            (0x8000, ATTACH_FILES, "ATTACH_FILES"),
+            (0x10000, READ_MESSAGE_HISTORY, "READ_MESSAGE_HISTORY"),
+            (0x20000, MENTION_EVERYONE, "MENTION_EVERYONE"),
+            (0x100000, CONNECT, "CONNECT"),
+            (0x200000, SPEAK, "SPEAK"),
+            (0x400000, MUTE_MEMBERS, "MUTE_MEMBERS"),
+            (0x800000, DEAFEN_MEMBERS, "DEAFEN_MEMBERS"),
+            (0x1000000, MOVE_MEMBERS, "MOVE_MEMBERS"),
+            (0x10000000, MANAGE_ROLES, "MANAGE_ROLES"),
+        ];
+
+        let mut accord_bits: u64 = 0;
+        let mut mapped_mask: u64 = 0;
+
+        for &(discord_bit, accord_bit, _name) in MAPPING {
+            mapped_mask |= discord_bit;
+            if discord_bits & discord_bit != 0 {
+                accord_bits |= accord_bit;
+            }
+        }
+
+        // Warn about unmapped bits
+        let unmapped = discord_bits & !mapped_mask;
+        if unmapped != 0 {
+            for bit in 0..64 {
+                if unmapped & (1u64 << bit) != 0 {
+                    tracing::warn!(
+                        "Unmapped Discord permission bit {bit} (0x{:X}) has no Accord equivalent",
+                        1u64 << bit
+                    );
+                }
+            }
+        }
+
+        accord_bits
+    }
+
+    /// Compute effective channel permissions using the Discord cascade model.
+    ///
+    /// 1. Start with the user's node-level permissions (union of all role perms)
+    /// 2. Apply category-level overwrites (deny removes bits, allow adds bits)
+    /// 3. Apply channel-level overwrites (deny removes bits, allow adds bits)
+    ///
+    /// Channel overwrites take precedence over category overwrites, which take
+    /// precedence over base role permissions.
+    pub fn compute_channel_permissions(
+        node_perms: u64,
+        category_overwrites: Option<(u64, u64)>,
+        channel_overwrites: Option<(u64, u64)>,
+    ) -> u64 {
+        // ADMINISTRATOR bypasses all overwrites
+        if node_perms & ADMINISTRATOR != 0 {
+            return ALL_PERMISSIONS;
+        }
+
+        let mut perms = node_perms;
+
+        // Apply category overwrites: (allow, deny)
+        if let Some((allow, deny)) = category_overwrites {
+            perms &= !deny;
+            perms |= allow;
+        }
+
+        // Apply channel overwrites: (allow, deny)
+        if let Some((allow, deny)) = channel_overwrites {
+            perms &= !deny;
+            perms |= allow;
+        }
+
+        perms
+    }
 }
 
 /// Channel type enum (Discord-compatible integer values)

@@ -1153,9 +1153,18 @@ impl AppState {
             .await
             .map_err(|e| format!("Database error: {}", e))?;
 
-        // For now, all node members can access all channels in the node
-        // TODO(permissions): Per-channel permission overrides — currently all members share node-level permissions
-        Ok(is_node_member)
+        if !is_node_member {
+            return Ok(false);
+        }
+
+        // Check VIEW_CHANNEL permission via channel permission cascade
+        let perms = self
+            .db
+            .compute_channel_permissions(channel.node_id, user_id, channel_id)
+            .await
+            .map_err(|e| format!("Permission compute error: {}", e))?;
+
+        Ok(perms & crate::models::permission_bits::VIEW_CHANNEL != 0)
     }
 
     /// Check if user is a member of a node

@@ -565,6 +565,51 @@ export class AccordApi {
     return [];
   }
 
+  // Create a role
+  async createRole(nodeId: string, token: string, data: { name: string; color?: string; hoist?: boolean; permissions?: number; mentionable?: boolean }): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/roles?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Update a role
+  async updateRole(nodeId: string, roleId: string, token: string, data: { name?: string; color?: string | null; hoist?: boolean; permissions?: number; mentionable?: boolean; position?: number }): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Delete a role
+  async deleteRole(nodeId: string, roleId: string, token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Get member's roles
+  async getMemberRoles(nodeId: string, userId: string, token: string): Promise<any[]> {
+    const result = await this.request<any>(`/nodes/${nodeId}/members/${userId}/roles?token=${encodeURIComponent(token)}`);
+    if (result && Array.isArray(result.roles)) return result.roles;
+    if (Array.isArray(result)) return result;
+    return [];
+  }
+
+  // Assign a role to a member
+  async assignMemberRole(nodeId: string, userId: string, roleId: string, token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/members/${userId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+    });
+  }
+
+  // Remove a role from a member
+  async removeMemberRole(nodeId: string, userId: string, roleId: string, token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/members/${userId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Import Discord template
   async importDiscordTemplate(nodeId: string, templateCode: string, token: string): Promise<any> {
     return this.request<any>(`/nodes/${nodeId}/import-discord-template?token=${encodeURIComponent(token)}`, {

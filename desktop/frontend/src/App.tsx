@@ -267,6 +267,9 @@ function App() {
   const [showNodeSettings, setShowNodeSettings] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [nodeRoles, setNodeRoles] = useState<Role[]>([]);
+  // Map of userId -> Role[] for the current node
+  const [memberRolesMap, setMemberRolesMap] = useState<Record<string, Role[]>>({});
+  const [showRolePopup, setShowRolePopup] = useState<{ userId: string; x: number; y: number } | null>(null);
   const [showTemplateImport, setShowTemplateImport] = useState(false);
   const [templateInput, setTemplateInput] = useState('');
   const [templateImporting, setTemplateImporting] = useState(false);
@@ -837,6 +840,9 @@ function App() {
       }));
       setMembers(nodeMembers);
       
+      // Load member role assignments
+      loadAllMemberRoles(nodeId, nodeMembers);
+      
       // Find current user's role in this node
       const currentUserId = localStorage.getItem('accord_user_id');
       if (currentUserId && nodeMembers.length > 0) {
@@ -866,6 +872,58 @@ function App() {
       setNodeRoles([]);
     }
   }, [appState.token, serverAvailable]);
+
+  // Load all member roles for the current node
+  const loadAllMemberRoles = useCallback(async (nodeId: string, memberList: Array<NodeMember & { user: User }>) => {
+    if (!appState.token || !serverAvailable) return;
+    const map: Record<string, Role[]> = {};
+    await Promise.all(memberList.map(async (m) => {
+      try {
+        const roles = await api.getMemberRoles(nodeId, m.user_id, appState.token!);
+        map[m.user_id] = Array.isArray(roles) ? roles : [];
+      } catch {
+        map[m.user_id] = [];
+      }
+    }));
+    setMemberRolesMap(map);
+  }, [appState.token, serverAvailable]);
+
+  // Get highest hoisted role color for a user
+  const getMemberRoleColor = useCallback((userId: string): string | undefined => {
+    const userRolesList = memberRolesMap[userId];
+    if (!userRolesList || userRolesList.length === 0) return undefined;
+    // Sort by position descending, find highest hoisted role with a color
+    const sorted = [...userRolesList].sort((a, b) => b.position - a.position);
+    const hoisted = sorted.find(r => r.hoist && r.color);
+    if (hoisted) return hoisted.color!;
+    // Fallback: highest role with a color
+    const withColor = sorted.find(r => r.color);
+    return withColor?.color || undefined;
+  }, [memberRolesMap]);
+
+  // Get highest hoisted role for a user (for member list grouping)
+  const getMemberHighestHoistedRole = useCallback((userId: string): Role | undefined => {
+    const userRolesList = memberRolesMap[userId];
+    if (!userRolesList || userRolesList.length === 0) return undefined;
+    return [...userRolesList].sort((a, b) => b.position - a.position).find(r => r.hoist);
+  }, [memberRolesMap]);
+
+  // Toggle role assignment for a member
+  const toggleMemberRole = useCallback(async (userId: string, roleId: string, hasRole: boolean) => {
+    if (!selectedNodeId || !appState.token) return;
+    try {
+      if (hasRole) {
+        await api.removeMemberRole(selectedNodeId, userId, roleId, appState.token);
+      } else {
+        await api.assignMemberRole(selectedNodeId, userId, roleId, appState.token);
+      }
+      // Reload that member's roles
+      const roles = await api.getMemberRoles(selectedNodeId, userId, appState.token);
+      setMemberRolesMap(prev => ({ ...prev, [userId]: Array.isArray(roles) ? roles : [] }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update role');
+    }
+  }, [selectedNodeId, appState.token]);
 
   // Load message history for selected channel (initial load)
   const loadMessages = useCallback(async (channelId: string) => {
@@ -3630,7 +3688,7 @@ function App() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span className="member-name">{displayName(member.user)}</span>
+                    <span className="member-name" style={{ color: getMemberRoleColor(member.user_id) || undefined }}>{displayName(member.user)}</span>
                     <span className="member-role-badge" title={member.role}>{getRoleBadge(member.role)}</span>
                   </div>
                   {member.profile?.custom_status && (

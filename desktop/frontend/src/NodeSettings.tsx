@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api } from './api';
-import { Node, AuditLogEntry } from './types';
+import { Node, AuditLogEntry, Role } from './types';
 
 interface Invite {
   code: string;
@@ -29,7 +29,7 @@ export function NodeSettings({
   onNodeUpdated,
   onLeaveNode 
 }: NodeSettingsProps) {
-  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'members' | 'audit'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [error, setError] = useState('');
@@ -53,8 +53,25 @@ export function NodeSettings({
   const [expiresHours, setExpiresHours] = useState<string>('');
   const [creatingInvite, setCreatingInvite] = useState(false);
 
+  // Roles state
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [loadingRoles, setLoadingRoles] = useState(false);
+  const [editingRole, setEditingRole] = useState<Role | null>(null);
+  const [showCreateRole, setShowCreateRole] = useState(false);
+  const [newRoleName, setNewRoleName] = useState('New Role');
+  const [newRoleColor, setNewRoleColor] = useState('#99aab5');
+  const [newRoleHoist, setNewRoleHoist] = useState(false);
+  const [newRoleMentionable, setNewRoleMentionable] = useState(false);
+  const [editRoleName, setEditRoleName] = useState('');
+  const [editRoleColor, setEditRoleColor] = useState('#99aab5');
+  const [editRoleHoist, setEditRoleHoist] = useState(false);
+  const [editRoleMentionable, setEditRoleMentionable] = useState(false);
+  const [editRolePermissions, setEditRolePermissions] = useState(0);
+  const [savingRole, setSavingRole] = useState(false);
+
   const isAdmin = userRole === 'admin';
   const canManageInvites = userRole === 'admin' || userRole === 'moderator';
+  const canManageRoles = userRole === 'admin';
   const canViewAuditLog = userRole === 'admin' || userRole === 'moderator';
 
   const loadInvites = useCallback(async () => {
@@ -71,6 +88,115 @@ export function NodeSettings({
       setLoadingInvites(false);
     }
   }, [node.id, token, canManageInvites]);
+
+  // Role management functions
+  const loadRoles = useCallback(async () => {
+    if (!canManageRoles) return;
+    setLoadingRoles(true);
+    try {
+      const nodeRoles = await api.getRoles(node.id, token);
+      setRoles((Array.isArray(nodeRoles) ? nodeRoles : []).sort((a: Role, b: Role) => b.position - a.position));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load roles');
+    } finally {
+      setLoadingRoles(false);
+    }
+  }, [node.id, token, canManageRoles]);
+
+  const handleCreateRole = useCallback(async () => {
+    setSavingRole(true);
+    setError('');
+    try {
+      await api.createRole(node.id, token, {
+        name: newRoleName,
+        color: newRoleColor,
+        hoist: newRoleHoist,
+        mentionable: newRoleMentionable,
+      });
+      setSuccess('Role created!');
+      setShowCreateRole(false);
+      setNewRoleName('New Role');
+      setNewRoleColor('#99aab5');
+      setNewRoleHoist(false);
+      setNewRoleMentionable(false);
+      await loadRoles();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create role');
+    } finally {
+      setSavingRole(false);
+    }
+  }, [node.id, token, newRoleName, newRoleColor, newRoleHoist, newRoleMentionable, loadRoles]);
+
+  const handleSaveRole = useCallback(async () => {
+    if (!editingRole) return;
+    setSavingRole(true);
+    setError('');
+    try {
+      await api.updateRole(node.id, editingRole.id, token, {
+        name: editRoleName,
+        color: editRoleColor,
+        hoist: editRoleHoist,
+        mentionable: editRoleMentionable,
+        permissions: editRolePermissions,
+      });
+      setSuccess('Role updated!');
+      setEditingRole(null);
+      await loadRoles();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update role');
+    } finally {
+      setSavingRole(false);
+    }
+  }, [node.id, token, editingRole, editRoleName, editRoleColor, editRoleHoist, editRoleMentionable, editRolePermissions, loadRoles]);
+
+  const handleDeleteRole = useCallback(async (roleId: string) => {
+    if (!confirm('Delete this role? Members will lose it.')) return;
+    try {
+      await api.deleteRole(node.id, roleId, token);
+      setSuccess('Role deleted!');
+      if (editingRole?.id === roleId) setEditingRole(null);
+      await loadRoles();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete role');
+    }
+  }, [node.id, token, editingRole, loadRoles]);
+
+  const handleMoveRole = useCallback(async (roleId: string, direction: 'up' | 'down') => {
+    const idx = roles.findIndex(r => r.id === roleId);
+    if (idx < 0) return;
+    // roles sorted by position desc, so "up" means higher position
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= roles.length) return;
+    try {
+      const thisRole = roles[idx];
+      const otherRole = roles[swapIdx];
+      await api.updateRole(node.id, thisRole.id, token, { position: otherRole.position });
+      await api.updateRole(node.id, otherRole.id, token, { position: thisRole.position });
+      await loadRoles();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reorder roles');
+    }
+  }, [node.id, token, roles, loadRoles]);
+
+  const startEditRole = useCallback((role: Role) => {
+    setEditingRole(role);
+    setEditRoleName(role.name);
+    setEditRoleColor(role.color || '#99aab5');
+    setEditRoleHoist(role.hoist);
+    setEditRoleMentionable(role.mentionable);
+    setEditRolePermissions(role.permissions);
+  }, []);
+
+  // Permission bit definitions
+  const PERMISSIONS = [
+    { bit: 1, label: 'Manage Channels' },
+    { bit: 2, label: 'Manage Members' },
+    { bit: 4, label: 'Kick Members' },
+    { bit: 8, label: 'Manage Invites' },
+    { bit: 16, label: 'Manage Node' },
+    { bit: 32, label: 'Manage Roles' },
+    { bit: 64, label: 'Manage Messages' },
+  ];
 
   const handleCreateInvite = useCallback(async () => {
     setCreatingInvite(true);
@@ -260,6 +386,13 @@ export function NodeSettings({
     return !!(invite.max_uses && invite.uses >= invite.max_uses);
   };
 
+  // Load roles when opening the roles tab
+  useEffect(() => {
+    if (isOpen && activeTab === 'roles' && canManageRoles) {
+      loadRoles();
+    }
+  }, [isOpen, activeTab, canManageRoles, loadRoles]);
+
   // Load invites when opening the invites tab
   useEffect(() => {
     if (isOpen && activeTab === 'invites' && canManageInvites) {
@@ -359,6 +492,22 @@ export function NodeSettings({
           >
             General
           </button>
+          {canManageRoles && (
+            <button
+              onClick={() => setActiveTab('roles')}
+              style={{
+                background: activeTab === 'roles' ? '#40444b' : 'transparent',
+                border: 'none',
+                color: activeTab === 'roles' ? '#ffffff' : '#b9bbbe',
+                padding: '12px 20px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Roles
+            </button>
+          )}
           {canManageInvites && (
             <button
               onClick={() => setActiveTab('invites')}
@@ -585,6 +734,138 @@ export function NodeSettings({
                   {isAdmin ? 'Delete Node' : 'Leave Node'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Roles Tab */}
+          {activeTab === 'roles' && canManageRoles && (
+            <div>
+              {editingRole ? (
+                /* Role Editor */
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+                    <button onClick={() => setEditingRole(null)} style={{ background: 'none', border: 'none', color: '#b9bbbe', cursor: 'pointer', fontSize: '18px' }}>←</button>
+                    <h4 style={{ margin: 0, fontSize: '16px' }}>Edit Role</h4>
+                  </div>
+
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe', fontWeight: 600 }}>Role Name</label>
+                    <input type="text" value={editRoleName} onChange={e => setEditRoleName(e.target.value)} maxLength={32}
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#fff', fontSize: '14px' }} />
+                  </div>
+
+                  <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe', fontWeight: 600 }}>Color</label>
+                      <input type="color" value={editRoleColor} onChange={e => setEditRoleColor(e.target.value)}
+                        style={{ width: '48px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editRoleHoist} onChange={e => setEditRoleHoist(e.target.checked)} /> Display separately in member list
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editRoleMentionable} onChange={e => setEditRoleMentionable(e.target.checked)} /> Allow anyone to @mention this role
+                      </label>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '12px', color: '#b9bbbe', fontWeight: 600 }}>Permissions</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {PERMISSIONS.map(p => (
+                        <label key={p.bit} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={(editRolePermissions & p.bit) !== 0}
+                            onChange={e => setEditRolePermissions(prev => e.target.checked ? prev | p.bit : prev & ~p.bit)} />
+                          {p.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={handleSaveRole} disabled={savingRole}
+                      style={{ background: '#43b581', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
+                      {savingRole ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    <button onClick={() => handleDeleteRole(editingRole.id)}
+                      style={{ background: '#f04747', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+                      Delete Role
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Role List */
+                <div>
+                  <div style={{ marginBottom: '16px' }}>
+                    {!showCreateRole ? (
+                      <button onClick={() => setShowCreateRole(true)}
+                        style={{ background: '#7289da', border: 'none', color: '#fff', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>
+                        ➕ Create Role
+                      </button>
+                    ) : (
+                      <div style={{ background: '#40444b', padding: '16px', borderRadius: '8px' }}>
+                        <h4 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>New Role</h4>
+                        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe' }}>Name</label>
+                            <input type="text" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} maxLength={32}
+                              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#36393f', color: '#fff', fontSize: '14px' }} />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe' }}>Color</label>
+                            <input type="color" value={newRoleColor} onChange={e => setNewRoleColor(e.target.value)}
+                              style={{ width: '48px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }} />
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={newRoleHoist} onChange={e => setNewRoleHoist(e.target.checked)} /> Hoisted
+                          </label>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={newRoleMentionable} onChange={e => setNewRoleMentionable(e.target.checked)} /> Mentionable
+                          </label>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={handleCreateRole} disabled={savingRole}
+                            style={{ background: '#43b581', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
+                            {savingRole ? 'Creating...' : 'Create'}
+                          </button>
+                          <button onClick={() => setShowCreateRole(false)}
+                            style={{ background: '#4f545c', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {loadingRoles ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#b9bbbe' }}>Loading roles...</div>
+                  ) : roles.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px', color: '#72767d' }}>No roles created yet</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      {roles.map((role, idx) => (
+                        <div key={role.id} style={{ background: '#40444b', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: role.color || '#99aab5', flexShrink: 0 }} />
+                          <span style={{ flex: 1, fontSize: '14px', color: role.color || '#dcddde', fontWeight: 500, cursor: 'pointer' }}
+                            onClick={() => startEditRole(role)}>
+                            {role.name}
+                          </span>
+                          {role.hoist && <span style={{ fontSize: '11px', color: '#72767d', background: '#2f3136', padding: '1px 6px', borderRadius: '3px' }}>hoisted</span>}
+                          <div style={{ display: 'flex', gap: '2px' }}>
+                            <button onClick={() => handleMoveRole(role.id, 'up')} disabled={idx === 0}
+                              style={{ background: 'none', border: 'none', color: idx === 0 ? '#4f545c' : '#b9bbbe', cursor: idx === 0 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▲</button>
+                            <button onClick={() => handleMoveRole(role.id, 'down')} disabled={idx === roles.length - 1}
+                              style={{ background: 'none', border: 'none', color: idx === roles.length - 1 ? '#4f545c' : '#b9bbbe', cursor: idx === roles.length - 1 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▼</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

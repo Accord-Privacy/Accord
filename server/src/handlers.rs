@@ -2658,6 +2658,22 @@ async fn handle_ws_message(
             encrypted_data,
             reply_to,
         } => {
+            // Check SEND_MESSAGES permission
+            if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
+                if let Ok(perms) = state
+                    .db
+                    .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)
+                    .await
+                {
+                    if perms & crate::models::permission_bits::SEND_MESSAGES == 0 {
+                        return Err(
+                            "Permission denied: you do not have SEND_MESSAGES in this channel"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+
             // Decode and store the message
             let encrypted_payload = base64::engine::general_purpose::STANDARD
                 .decode(&encrypted_data)
@@ -6474,14 +6490,34 @@ pub async fn import_discord_template_handler(
         unsupported_permissions_stripped: Vec::new(),
     };
 
-    let supported_mask = crate::models::permission_bits::ALL_PERMISSIONS;
-
     // Track stripped bits across the whole import (deduplicated)
     let mut stripped_bits_seen = std::collections::HashSet::<u32>::new();
 
-    // Helper to mask permissions and track stripped bits
+    // Helper to map Discord permissions to Accord and track any stripped bits
     let mut mask_perms = |raw: u64| -> u64 {
-        let unsupported = raw & !supported_mask;
+        let mapped = crate::models::permission_bits::map_discord_permissions(raw);
+        // Track Discord bits that have no Accord equivalent for the summary
+        let supported_discord_mask: u64 = 0x10000000
+            | 0x1000000
+            | 0x800000
+            | 0x400000
+            | 0x200000
+            | 0x100000
+            | 0x20000
+            | 0x10000
+            | 0x8000
+            | 0x4000
+            | 0x2000
+            | 0x800
+            | 0x400
+            | 0x40
+            | 0x20
+            | 0x10
+            | 0x8
+            | 0x4
+            | 0x2
+            | 0x1;
+        let unsupported = raw & !supported_discord_mask;
         if unsupported != 0 {
             for bit in 0..64 {
                 if unsupported & (1u64 << bit) != 0 {
@@ -6489,7 +6525,7 @@ pub async fn import_discord_template_handler(
                 }
             }
         }
-        raw & supported_mask
+        mapped
     };
 
     // ── 1. Import roles ──
