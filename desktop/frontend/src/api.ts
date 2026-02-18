@@ -734,6 +734,71 @@ function inferScheme(host: string): 'https' | 'http' {
   return 'http';
 }
 
+/**
+ * Normalize a user-provided server address into a full URL.
+ * If the input already has a protocol prefix (http:// or https://), respect it.
+ * Otherwise, infer the scheme from the port.
+ */
+export function normalizeServerUrl(input: string): string {
+  const trimmed = input.trim().replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return `${inferScheme(trimmed)}://${trimmed}`;
+}
+
+/**
+ * Try to connect to a server URL. Attempts the given URL first,
+ * then falls back to the opposite scheme if it fails.
+ * Returns the working URL or throws with a descriptive error.
+ */
+export async function probeServerUrl(url: string): Promise<string> {
+  const tryHealth = async (candidate: string): Promise<boolean> => {
+    try {
+      const resp = await fetch(`${candidate}/health`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        return data && (data.status === 'healthy' || data.status === 'ok');
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  // Try the URL as given
+  if (await tryHealth(url)) return url;
+
+  // Try the opposite scheme as fallback
+  let fallback: string;
+  if (url.startsWith('https://')) {
+    fallback = url.replace(/^https:\/\//, 'http://');
+  } else if (url.startsWith('http://')) {
+    fallback = url.replace(/^http:\/\//, 'https://');
+  } else {
+    throw new Error(`Connection failed: Could not reach server at ${url}`);
+  }
+
+  if (await tryHealth(fallback)) return fallback;
+
+  // Both failed — try to give a helpful error
+  try {
+    await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+  } catch (e: any) {
+    const msg = e?.message || '';
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      throw new Error(`Connection refused — server at ${url} is not reachable. Check the address and ensure the server is running.`);
+    }
+    if (msg.includes('SSL') || msg.includes('certificate') || msg.includes('ERR_CERT')) {
+      throw new Error(`SSL/TLS error connecting to ${url}. The server may be using plain HTTP — try http:// instead of https://.`);
+    }
+    throw new Error(`Connection failed: ${msg}`);
+  }
+  throw new Error(`Server at ${url} is not responding as an Accord relay. Check the address.`);
+}
+
 // Invite link parser
 // Supports:
 //   accord://BASE64HOST/CODE (new compact format)
@@ -751,7 +816,7 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
       if (relayHost.includes('.') || relayHost.includes(':')) {
         return {
           relayHost,
-          relayUrl: `${inferScheme(relayHost)}://${relayHost}`,
+          relayUrl: normalizeServerUrl(relayHost),
           inviteCode: compactMatch[2],
         };
       }
@@ -764,7 +829,7 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
     const relayHost = accordMatch[1];
     return {
       relayHost,
-      relayUrl: `${inferScheme(relayHost)}://${relayHost}`,
+      relayUrl: normalizeServerUrl(relayHost),
       inviteCode: accordMatch[2],
     };
   }

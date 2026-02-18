@@ -175,6 +175,7 @@ function App() {
   const [serverAvailable, setServerAvailable] = useState(false);
   const [ws, setWs] = useState<AccordWebSocket | null>(null);
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo>({ status: 'disconnected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
+  const [lastConnectionError, setLastConnectionError] = useState<string>("");
 
   // Reply state
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -549,6 +550,7 @@ function App() {
     socket.on('connected', () => {
       setAppState(prev => ({ ...prev, isConnected: true }));
       setConnectionInfo({ status: 'connected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
+      setLastConnectionError("");
       setConnectedSince(Date.now());
       // Reload nodes on reconnect to prevent stale/missing node list
       loadNodesRef.current?.();
@@ -566,6 +568,10 @@ function App() {
 
     socket.on('connection_status', (info: ConnectionInfo) => {
       setConnectionInfo(info);
+    });
+
+    socket.on('error', (err: Error) => {
+      setLastConnectionError(err.message || 'Connection error');
     });
 
     socket.on('auth_error', async () => {
@@ -3182,7 +3188,12 @@ function App() {
                     {connectionInfo.status === 'disconnected' && !appState.isConnected && 'Disconnected'}
                   </span>
                   {connectionInfo.status === 'disconnected' && !appState.isConnected && ws && (
-                    <button className="connection-retry-btn" onClick={() => ws.retry()}>Retry</button>
+                    <button className="connection-retry-btn" onClick={() => { setLastConnectionError(""); ws.retry(); }}>Retry</button>
+                  )}
+                  {lastConnectionError && connectionInfo.status !== 'connected' && (
+                    <span className="connection-error-detail" title={lastConnectionError} style={{ fontSize: 11, color: 'var(--error, #f04747)', display: 'block', marginTop: 2 }}>
+                      {lastConnectionError.length > 60 ? lastConnectionError.substring(0, 57) + '...' : lastConnectionError}
+                    </span>
                   )}
                 </span>
               )}

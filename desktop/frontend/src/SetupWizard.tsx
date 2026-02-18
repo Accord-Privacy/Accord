@@ -8,7 +8,7 @@ import {
   saveKeyWithPassword,
   setActiveIdentity,
 } from "./crypto";
-import { parseInviteLink } from "./api";
+import { parseInviteLink, normalizeServerUrl, probeServerUrl } from "./api";
 
 export interface SetupResult {
   keyPair: CryptoKeyPair;
@@ -129,19 +129,13 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onSkip }) 
     if (useInviteLink && inviteLinkInput.trim()) {
       const parsed = parseInviteLink(inviteLinkInput.trim());
       if (!parsed) {
-        setConnectError("Invalid invite link format");
+        setConnectError("Invalid invite link format. Expected: accord://host/CODE, https://host/invite/CODE, or similar.");
         return;
       }
       relayUrl = parsed.relayUrl;
       inviteCode = parsed.inviteCode;
     } else if (relayAddress.trim()) {
-      // Build URL from address
-      const addr = relayAddress.trim();
-      if (addr.startsWith("http://") || addr.startsWith("https://")) {
-        relayUrl = addr;
-      } else {
-        relayUrl = `https://${addr}`;
-      }
+      relayUrl = normalizeServerUrl(relayAddress.trim());
     } else {
       setConnectError("Please enter a relay address or invite link");
       return;
@@ -151,18 +145,21 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onSkip }) 
     setConnectError("");
 
     try {
+      // Probe the server — tries both HTTP and HTTPS, returns the working URL
+      const verifiedUrl = await probeServerUrl(relayUrl);
+
       onComplete({
         keyPair,
         publicKey,
         publicKeyHash,
         password,
         mnemonic: generatedMnemonic || mnemonic,
-        relayUrl,
+        relayUrl: verifiedUrl,
         inviteCode,
         meshEnabled,
       });
     } catch (e: any) {
-      setConnectError(e.message || "Failed to connect");
+      setConnectError(e.message || "Failed to connect to relay server");
       setConnecting(false);
     }
   }, [keyPair, publicKey, publicKeyHash, password, generatedMnemonic, mnemonic, relayAddress, inviteLinkInput, useInviteLink, meshEnabled, onComplete]);
@@ -441,14 +438,34 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onSkip }) 
                 )}
               </div>
 
-              {connectError && <div className="auth-error">{connectError}</div>}
+              {connectError && (
+                <div className="auth-error" style={{ textAlign: "left", lineHeight: 1.5 }}>
+                  <div style={{ marginBottom: 8 }}>⚠️ {connectError}</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      className="btn btn-outline"
+                      style={{ fontSize: 12, padding: "4px 12px" }}
+                      onClick={() => { setConnectError(""); handleConnect(); }}
+                    >
+                      🔄 Retry
+                    </button>
+                    <button
+                      className="btn btn-outline"
+                      style={{ fontSize: 12, padding: "4px 12px" }}
+                      onClick={() => { setConnectError(""); }}
+                    >
+                      ✏️ Edit Address
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <button
                 className="btn btn-primary"
                 disabled={connecting || (!relayAddress.trim() && !inviteLinkInput.trim())}
                 onClick={handleConnect}
               >
-                {connecting ? "Connecting..." : "Connect"}
+                {connecting ? "Checking server..." : "Connect"}
               </button>
               <button className="btn-ghost" style={{ fontSize: 13, marginTop: 8, opacity: 0.6 }} onClick={onSkip}>
                 Skip setup
