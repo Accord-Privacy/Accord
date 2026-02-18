@@ -2996,6 +2996,14 @@ async fn websocket_handler_with_auth(
 
     info!("WebSocket authenticated for user: {}", user_id);
 
+    // Send authentication confirmation so the client knows auth succeeded
+    // before considering the connection fully established.
+    let auth_confirm = serde_json::json!({
+        "type": "authenticated",
+        "user_id": user_id,
+    });
+    let _ = sender.send(Message::Text(auth_confirm.to_string())).await;
+
     // Continue with the normal handler, passing the already-split halves
     websocket_handler_inner(sender, receiver, user_id, state, client_hash).await;
 }

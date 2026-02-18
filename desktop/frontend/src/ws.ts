@@ -12,6 +12,7 @@ export interface ConnectionInfo {
 }
 
 export interface WsEvents {
+  authenticated: (data: { user_id: string }) => void;
   connected: () => void;
   disconnected: () => void;
   reconnecting: (info: { attempt: number; maxAttempts: number }) => void;
@@ -188,18 +189,10 @@ export class AccordWebSocket {
         return;
       }
 
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-      this.reconnectDelay = 1000;
-      
-      // Start ping interval
-      this.startPingInterval();
-      
-      // Flush offline message queue
-      this.flushMessageQueue();
-      
-      this.setConnectionStatus('connected');
-      this.emit('connected');
+      // NOTE: We do NOT set isConnected = true here.
+      // Wait for the server's "authenticated" message to confirm auth succeeded.
+      // This prevents the client from thinking it's connected when auth may fail.
+      this.setConnectionStatus('reconnecting'); // Still pending auth
     };
 
     this.ws.onmessage = (event) => {
@@ -210,6 +203,19 @@ export class AccordWebSocket {
         if (message.type === 'error' && (message as any).code === 'auth_failed') {
           this.emit('auth_error');
           this.isDestroyed = true; // Stop reconnecting on auth failure
+          return;
+        }
+
+        // Handle server auth confirmation — NOW we're truly connected
+        if (message.type === 'authenticated') {
+          this.isConnected = true;
+          this.reconnectAttempts = 0;
+          this.reconnectDelay = 1000;
+          this.startPingInterval();
+          this.flushMessageQueue();
+          this.setConnectionStatus('connected');
+          this.emit('authenticated', message as any);
+          this.emit('connected');
           return;
         }
         
@@ -258,24 +264,26 @@ export class AccordWebSocket {
   private scheduleReconnect(): void {
     if (this.isDestroyed || this.reconnectTimeout) return;
     
-    // Check browser online status
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      this.setConnectionStatus('disconnected');
-      return; // Will reconnect via online event listener
-    }
-    
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      this.setConnectionStatus('disconnected');
-      this.emit('error', new Error('Max reconnection attempts reached'));
-      return;
-    }
+    // If browser reports offline, use a slow retry interval as fallback
+    // (navigator.onLine can be unreliable — don't fully trust it)
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
     this.reconnectAttempts++;
-    const delay = Math.min(
-      this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
-      this.maxReconnectDelay
-    );
+
+    let delay: number;
+    if (isOffline) {
+      // Slow retry when offline — the online event listener will also trigger reconnect
+      delay = 30000;
+    } else {
+      // Exponential backoff with jitter to prevent thundering herd
+      const baseDelay = Math.min(
+        this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+        this.maxReconnectDelay
+      );
+      // Add random jitter: ±25% of the base delay
+      const jitter = baseDelay * 0.25 * (Math.random() * 2 - 1);
+      delay = Math.max(500, baseDelay + jitter);
+    }
 
     this.setConnectionStatus('reconnecting');
     this.emit('reconnecting', { attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts });

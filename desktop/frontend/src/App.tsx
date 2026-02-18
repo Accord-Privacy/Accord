@@ -4134,37 +4134,12 @@ function App() {
         </div>
       )}
 
-      {/* Create/Join Node Modal */}
+      {/* Join/Create Node Modal — Join is primary, Create is secondary */}
       {showCreateNodeModal && !showJoinNodeModal && (
         <div className="modal-overlay">
           <div className="modal-card">
-            <h3>Create a Node</h3>
-            <p>A Node is your community space. A #general channel will be created automatically.</p>
-            <div className="form-group">
-              <label className="form-label">Node Name</label>
-              <input type="text" placeholder="My Community" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleCreateNode(); }} className="form-input" />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Description (optional)</label>
-              <input type="text" placeholder="What's this node about?" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="form-input" />
-            </div>
-            <div className="modal-actions">
-              <button onClick={handleCreateNode} disabled={creatingNode || !newNodeName.trim()} className="btn btn-green">{creatingNode ? 'Creating...' : 'Create Node'}</button>
-              <button onClick={() => { setShowCreateNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
-            </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
-              <button onClick={() => setShowJoinNodeModal(true)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Join Node Modal */}
-      {showJoinNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
             <h3>Join a Node</h3>
-            <p>Enter an invite code or link to join an existing Node.</p>
+            <p>Enter an invite link to join an existing community.</p>
             <div className="form-group">
               <label className="form-label">Invite Code or Link</label>
               <input type="text" placeholder="accord://host/invite/CODE or just the code" value={joinInviteCode} onChange={(e) => setJoinInviteCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && joinInviteCode.trim()) handleJoinNode(); }} className="form-input" />
@@ -4172,10 +4147,54 @@ function App() {
             {joinError && <div className="auth-error">{joinError}</div>}
             <div className="modal-actions">
               <button onClick={handleJoinNode} disabled={joiningNode || !joinInviteCode.trim()} className="btn btn-primary">{joiningNode ? 'Joining...' : 'Join Node'}</button>
-              <button onClick={() => { setShowJoinNodeModal(false); setShowCreateNodeModal(false); setJoinInviteCode(""); setJoinError(""); }} className="btn btn-outline">Cancel</button>
+              <button onClick={() => { setShowCreateNodeModal(false); setJoinInviteCode(""); setJoinError(""); }} className="btn btn-outline">Cancel</button>
             </div>
             <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
-              <button onClick={() => setShowJoinNodeModal(false)} className="btn-ghost">Want to create your own? <strong>Create a Node</strong></button>
+              <p style={{ fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>Or create your own community</p>
+              <button onClick={() => setShowJoinNodeModal(true)} className="btn-ghost"><strong>Create a New Node</strong></button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Node Modal (secondary) */}
+      {showJoinNodeModal && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3>Create a Node</h3>
+            <p>Start a new community and invite others. A #general channel will be created automatically.</p>
+            <div className="form-group">
+              <label className="form-label">Node Name</label>
+              <input type="text" placeholder="My Community" value={newNodeName} onChange={(e) => {
+                const val = e.target.value;
+                setNewNodeName(val);
+                // Detect if user pasted an invite link into the create form
+                if (val.includes('invite/') || val.includes('accord://') || val.match(/^[A-Za-z0-9]{6,}$/)) {
+                  const parsed = parseInviteLink(val);
+                  if (parsed) {
+                    // Switch to join flow with the detected invite
+                    setNewNodeName("");
+                    setJoinInviteCode(val);
+                    setShowJoinNodeModal(false); // Go back to join modal
+                  }
+                }
+              }} onKeyDown={(e) => { if (e.key === 'Enter') handleCreateNode(); }} className="form-input" />
+              {newNodeName && parseInviteLink(newNodeName) && (
+                <p style={{ color: 'var(--accent)', fontSize: '12px', marginTop: '4px' }}>
+                  💡 This looks like an invite link — <button className="btn-ghost" style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { setJoinInviteCode(newNodeName); setNewNodeName(""); setShowJoinNodeModal(false); }}>switch to Join?</button>
+                </p>
+              )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">Description (optional)</label>
+              <input type="text" placeholder="What's this node about?" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="form-input" />
+            </div>
+            <div className="modal-actions">
+              <button onClick={handleCreateNode} disabled={creatingNode || !newNodeName.trim()} className="btn btn-green">{creatingNode ? 'Creating...' : 'Create Node'}</button>
+              <button onClick={() => { setShowJoinNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
+            </div>
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
+              <button onClick={() => setShowJoinNodeModal(false)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
             </div>
           </div>
         </div>

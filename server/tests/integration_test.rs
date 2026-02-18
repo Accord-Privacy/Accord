@@ -331,13 +331,22 @@ async fn test_websocket_connection_with_valid_token() {
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
-    // Consume the server hello message first
-    let hello = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
-    assert!(hello.is_ok(), "Should receive hello message");
-    if let Some(Ok(WsMessage::Text(text))) = hello.unwrap() {
-        let data: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(data["type"], "hello");
+    // Consume the server authenticated + hello messages
+    // With post-upgrade auth, server sends "authenticated" first, then "hello"
+    // With legacy query-param auth, it may send "authenticated" then "hello" or just "hello"
+    let mut got_hello = false;
+    for _ in 0..3 {
+        let msg = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+        if let Ok(Some(Ok(WsMessage::Text(text)))) = msg {
+            let data: Value = serde_json::from_str(&text).unwrap();
+            if data["type"] == "hello" {
+                got_hello = true;
+                break;
+            }
+            // Skip "authenticated" and other messages
+        }
     }
+    assert!(got_hello, "Should receive hello message");
 
     sink.send(WsMessage::Text(ping_message.to_string()))
         .await
@@ -493,9 +502,13 @@ async fn test_channel_join_leave_and_messaging() {
     let (mut sink1, mut stream1) = ws_stream1.split();
     let (mut sink2, mut stream2) = ws_stream2.split();
 
-    // Consume hello messages from both connections
-    let _ = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
-    let _ = tokio::time::timeout(Duration::from_secs(5), stream2.next()).await;
+    // Consume authenticated + hello messages from both connections
+    for _ in 0..3 {
+        let _ = tokio::time::timeout(Duration::from_millis(500), stream1.next()).await;
+    }
+    for _ in 0..3 {
+        let _ = tokio::time::timeout(Duration::from_millis(500), stream2.next()).await;
+    }
 
     // Create a Node via WebSocket (user1 creates it)
     let create_node_msg = json!({
