@@ -893,7 +893,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 <div className="settings-group">
                   <label className="settings-label">Notification Mode</label>
                   <div className="notification-mode-buttons">
-                    {(['all', 'mentions', 'none'] as const).map(mode => (
+                    {(['all', 'mentions', 'dms', 'none'] as const).map(mode => (
                       <button
                         key={mode}
                         className={`notification-button ${notificationPreferences.mode === mode ? 'active' : ''}`}
@@ -903,7 +903,8 @@ export const Settings: React.FC<SettingsProps> = ({
                         })}
                       >
                         {mode === 'all' ? 'All Messages' : 
-                         mode === 'mentions' ? 'Mentions Only' : 
+                         mode === 'mentions' ? 'Mentions Only' :
+                         mode === 'dms' ? 'DMs & Mentions' :
                          'None'}
                       </button>
                     ))}

@@ -16,7 +16,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
 }) => {
   if (!isOpen) return null;
 
-  const handleModeChange = (mode: 'all' | 'mentions' | 'none') => {
+  const handleModeChange = (mode: 'all' | 'mentions' | 'dms' | 'none') => {
     const newPreferences = { ...preferences, mode };
     onPreferencesChange(newPreferences);
   };
@@ -95,6 +95,12 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
               onClick={() => handleModeChange('mentions')}
             >
               Mentions
+            </button>
+            <button
+              className={`notification-toggle ${preferences.mode === 'dms' ? 'active' : ''}`}
+              onClick={() => handleModeChange('dms')}
+            >
+              DMs
             </button>
             <button
               className={`notification-toggle ${preferences.mode === 'none' ? 'active' : ''}`}

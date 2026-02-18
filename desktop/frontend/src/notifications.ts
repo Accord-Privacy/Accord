@@ -4,7 +4,7 @@ import { Message } from './types';
 
 export interface NotificationPreferences {
   enabled: boolean;
-  mode: 'all' | 'mentions' | 'none';
+  mode: 'all' | 'mentions' | 'dms' | 'none';
   sounds: boolean;
 }
 
@@ -177,7 +177,7 @@ export class NotificationManager {
     this.saveUnreads();
   }
 
-  public addMessage(nodeId: string, channelId: string, message: Message): void {
+  public addMessage(nodeId: string, channelId: string, message: Message, isDm: boolean = false): void {
     // Don't count our own messages as unread
     if (message.author === this.currentUsername) {
       return;
@@ -222,7 +222,7 @@ export class NotificationManager {
       this.saveUnreads();
 
       // Handle desktop notification and sound
-      this.handleMessageNotification(message, channelId, isMention);
+      this.handleMessageNotification(message, channelId, isMention, isDm);
     }
   }
 
@@ -267,7 +267,7 @@ export class NotificationManager {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  private handleMessageNotification(message: Message, channelId: string, isMention: boolean): void {
+  private handleMessageNotification(message: Message, channelId: string, isMention: boolean, isDm: boolean = false): void {
     // Don't notify for the channel the user is currently viewing
     if (!this.preferences.enabled || (this.windowFocused && this.activeChannelId === channelId)) {
       return;
@@ -275,20 +275,22 @@ export class NotificationManager {
 
     const shouldNotify = 
       this.preferences.mode === 'all' || 
-      (this.preferences.mode === 'mentions' && isMention);
+      (this.preferences.mode === 'mentions' && isMention) ||
+      (this.preferences.mode === 'dms' && (isDm || isMention));
 
     if (shouldNotify) {
-      this.showDesktopNotification(message, channelId, isMention);
+      this.showDesktopNotification(message, channelId, isMention, isDm);
       
-      if (this.preferences.sounds) {
+      // Play sound for mentions and DMs (or all if sounds enabled)
+      if (this.preferences.sounds && (isMention || isDm)) {
         this.playNotificationSound();
       }
     }
   }
 
-  private showDesktopNotification(message: Message, channelId: string, isMention: boolean): void {
+  private showDesktopNotification(message: Message, channelId: string, isMention: boolean, isDm: boolean = false): void {
     if ('Notification' in window && Notification.permission === 'granted') {
-      const title = isMention ? `${message.author} mentioned you` : `${message.author}`;
+      const title = isMention ? `${message.author} mentioned you` : isDm ? `DM from ${message.author}` : `${message.author}`;
       const body = message.content.length > 100 ? 
         message.content.substring(0, 100) + '...' : 
         message.content;

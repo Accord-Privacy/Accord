@@ -683,7 +683,7 @@ function App() {
         // Add to notifications for DM
         const dmChannel = dmChannels.find(dm => dm.id === data.channel_id);
         if (dmChannel) {
-          notificationManager.addMessage(`dm-${dmChannel.id}`, data.channel_id, newMessage);
+          notificationManager.addMessage(`dm-${dmChannel.id}`, data.channel_id, newMessage, true);
           setForceUpdate(prev => prev + 1);
         }
       } else {
