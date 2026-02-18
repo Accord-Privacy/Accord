@@ -398,6 +398,77 @@ export function NodeSettings({
           {/* General Tab */}
           {activeTab === 'general' && (
             <div>
+              {/* Node Icon Upload */}
+              <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div 
+                  onClick={() => {
+                    if (!isAdmin) return;
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+                    input.onchange = async (e) => {
+                      const file = (e.target as HTMLInputElement).files?.[0];
+                      if (!file) return;
+                      if (file.size > 256 * 1024) {
+                        setError('Icon must be under 256KB');
+                        return;
+                      }
+                      try {
+                        setError('');
+                        const result = await api.uploadNodeIcon(node.id, file, token);
+                        setSuccess('Node icon updated!');
+                        if (onNodeUpdated) {
+                          onNodeUpdated({ ...node, icon_hash: result.icon_hash });
+                        }
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'Failed to upload icon');
+                      }
+                    };
+                    input.click();
+                  }}
+                  style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: '#40444b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: isAdmin ? 'pointer' : 'default',
+                    overflow: 'hidden',
+                    fontSize: '32px',
+                    color: '#b9bbbe',
+                    flexShrink: 0,
+                    position: 'relative',
+                  }}
+                  title={isAdmin ? 'Click to upload icon' : 'Node icon'}
+                >
+                  {node.icon_hash ? (
+                    <img 
+                      src={`${api.getNodeIconUrl(node.id)}?v=${node.icon_hash}`}
+                      alt={node.name[0]}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : node.name[0]}
+                  {isAdmin && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      background: 'rgba(0,0,0,0.6)',
+                      fontSize: '10px',
+                      textAlign: 'center',
+                      padding: '2px',
+                      color: '#fff',
+                    }}>EDIT</div>
+                  )}
+                </div>
+                <div style={{ color: '#b9bbbe', fontSize: '13px' }}>
+                  {isAdmin ? 'Click the icon to upload a new one (PNG, JPEG, GIF, WebP — max 256KB)' : 'Node icon'}
+                </div>
+              </div>
+
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ 
                   display: 'block', 

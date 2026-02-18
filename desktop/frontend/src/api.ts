@@ -573,6 +573,46 @@ export class AccordApi {
     });
   }
 
+  // Upload node icon
+  async uploadNodeIcon(nodeId: string, file: File, token: string): Promise<{ status: string; icon_hash: string }> {
+    const formData = new FormData();
+    formData.append('icon', file);
+    const response = await fetch(`${this.baseUrl}/nodes/${nodeId}/icon?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  // Get node icon URL
+  getNodeIconUrl(nodeId: string): string {
+    return `${this.baseUrl}/nodes/${nodeId}/icon`;
+  }
+
+  // Upload user avatar
+  async uploadUserAvatar(file: File, token: string): Promise<{ status: string; avatar_hash: string }> {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    const response = await fetch(`${this.baseUrl}/users/me/avatar?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  // Get user avatar URL
+  getUserAvatarUrl(userId: string): string {
+    return `${this.baseUrl}/users/${userId}/avatar`;
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

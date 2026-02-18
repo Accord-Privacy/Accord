@@ -2722,7 +2722,14 @@ function App() {
               }}
               title={s}
             >
-              {s[0]}
+              {nodes[i]?.icon_hash ? (
+                <img 
+                  src={`${api.getNodeIconUrl(nodes[i].id)}?v=${nodes[i].icon_hash}`}
+                  alt={s[0]}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = s[0]; }}
+                />
+              ) : s[0]}
               {nodeUnreads.totalMentions > 0 && (
                 <div className="server-notification mention">
                   {nodeUnreads.totalMentions > 9 ? '9+' : nodeUnreads.totalMentions}
@@ -2954,7 +2961,14 @@ function App() {
         
         <div className="user-panel">
           <div className="user-avatar">
-            {(appState.user?.display_name || fingerprint(appState.user?.public_key_hash || ''))?.[0] || "U"}
+            {appState.user?.id ? (
+              <img 
+                src={`${api.getUserAvatarUrl(appState.user.id)}`}
+                alt={(appState.user?.display_name || "U")[0]}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (appState.user?.display_name || fingerprint(appState.user?.public_key_hash || ''))?.[0] || "U"; }}
+              />
+            ) : ((appState.user?.display_name || fingerprint(appState.user?.public_key_hash || ''))?.[0] || "U")}
           </div>
           <div className="user-info">
             <div className="username">{appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You"}</div>
@@ -3126,7 +3140,16 @@ function App() {
                   </div>
                 </div>
               )}
-              {!isGrouped && <div className="message-avatar">{(msg.author || "?")[0]}</div>}
+              {!isGrouped && <div className="message-avatar">
+                {msg.sender_id ? (
+                  <img 
+                    src={`${api.getUserAvatarUrl(msg.sender_id)}`}
+                    alt={(msg.author || "?")[0]}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (msg.author || "?")[0]; }}
+                  />
+                ) : (msg.author || "?")[0]}
+              </div>}
               {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
               <div className="message-body">
                 {!isGrouped && (
@@ -3440,7 +3463,14 @@ function App() {
                 onContextMenu={(e) => handleContextMenu(e, member.user_id, member.public_key_hash, displayName(member.user), member.profile?.bio, member.user)}
               >
                 <div className="member-avatar-wrapper">
-                  <div className="member-avatar">{displayName(member.user)[0]}</div>
+                  <div className="member-avatar">
+                    <img 
+                      src={`${api.getUserAvatarUrl(member.user_id)}`}
+                      alt={displayName(member.user)[0]}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = displayName(member.user)[0]; }}
+                    />
+                  </div>
                   <span className={`presence-dot presence-${presence}`} title={presence}></span>
                 </div>
                 <span className="member-name">{displayName(member.user)}</span>

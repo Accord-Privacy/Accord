@@ -548,6 +548,74 @@ export const Settings: React.FC<SettingsProps> = ({
               <div className="settings-section">
                 <h3>Profile</h3>
 
+                {/* Avatar Upload */}
+                <div className="settings-group" style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+                  <div 
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+                      input.onchange = async (e) => {
+                        const file = (e.target as HTMLInputElement).files?.[0];
+                        if (!file) return;
+                        if (file.size > 256 * 1024) {
+                          setProfileSaveMsg('Avatar must be under 256KB');
+                          return;
+                        }
+                        try {
+                          const token = localStorage.getItem('accord_auth_token') || '';
+                          await api.uploadUserAvatar(file, token);
+                          setProfileSaveMsg('Avatar updated!');
+                          // Force re-render by setting a timestamp
+                          setProfileDirty(false);
+                        } catch (err) {
+                          setProfileSaveMsg(err instanceof Error ? err.message : 'Failed to upload avatar');
+                        }
+                      };
+                      input.click();
+                    }}
+                    style={{
+                      width: '80px',
+                      height: '80px',
+                      borderRadius: '50%',
+                      background: '#40444b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      overflow: 'hidden',
+                      fontSize: '32px',
+                      color: '#b9bbbe',
+                      flexShrink: 0,
+                      position: 'relative',
+                    }}
+                    title="Click to upload avatar"
+                  >
+                    {currentUser?.id ? (
+                      <img 
+                        src={`${api.getUserAvatarUrl(currentUser.id)}?t=${Date.now()}`}
+                        alt={(currentUser?.display_name || "U")[0]}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (currentUser?.display_name || "U")[0]; }}
+                      />
+                    ) : (currentUser?.display_name || "U")[0]}
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      background: 'rgba(0,0,0,0.6)',
+                      fontSize: '10px',
+                      textAlign: 'center',
+                      padding: '2px',
+                      color: '#fff',
+                    }}>EDIT</div>
+                  </div>
+                  <div style={{ color: '#b9bbbe', fontSize: '13px' }}>
+                    Click to upload avatar (PNG, JPEG, GIF, WebP — max 256KB)
+                  </div>
+                </div>
+
                 {/* Fingerprint */}
                 {currentUser?.public_key_hash && (
                   <div className="settings-group">
