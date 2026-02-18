@@ -16,11 +16,13 @@ pub mod crypto;
 pub mod device_fingerprint;
 pub mod double_ratchet;
 pub mod ffi;
+pub mod friendship_privacy;
 pub mod friendship_proof;
 pub mod invites;
 pub mod jitter_buffer;
 #[cfg(feature = "android")]
 pub mod jni;
+pub mod membership_privacy;
 pub mod metadata_crypto;
 pub mod mnemonic;
 pub mod p2p_voice;
@@ -28,6 +30,7 @@ pub mod protocol;
 pub mod push_crypto;
 pub mod session_manager;
 pub mod srtp;
+pub mod timing_privacy;
 pub mod voice;
 
 use anyhow::Result;
