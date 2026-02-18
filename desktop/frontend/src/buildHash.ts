@@ -12,7 +12,7 @@ export interface KnownBuild {
 }
 
 /** Trust levels for a build */
-export type BuildTrust = 'verified' | 'unknown' | 'revoked';
+export type BuildTrust = 'verified' | 'unknown' | 'unverified' | 'revoked';
 
 /** Trust indicator display info */
 export interface TrustIndicator {
@@ -48,21 +48,34 @@ const VERIFIED_HASHES = new Set<string>(
   KNOWN_HASHES.filter(h => !h.revoked).map(h => h.hash)
 );
 
-/** Verify a single build hash against known hashes */
-export function verifyBuildHash(hash: string): BuildTrust {
+/** Verify a single build hash against known hashes (static + fetched) */
+export function verifyBuildHash(hash: string, fetchedHashes?: KnownBuild[] | null): BuildTrust {
   if (!hash || hash === 'dev') return 'unknown';
   if (REVOKED_HASHES.has(hash)) return 'revoked';
   if (VERIFIED_HASHES.has(hash)) return 'verified';
+  // Also check dynamically fetched hashes
+  if (fetchedHashes) {
+    for (const entry of fetchedHashes) {
+      if (entry.hash === hash) {
+        return entry.revoked ? 'revoked' : 'verified';
+      }
+    }
+    // We have a hash list but this hash isn't in it
+    return 'unverified';
+  }
+  // No fetched data available — can't determine
   return 'unknown';
 }
 
 /** Get combined trust level from client and server hashes */
-export function getCombinedTrust(clientHash: string, serverHash: string): BuildTrust {
-  const clientTrust = verifyBuildHash(clientHash);
-  const serverTrust = verifyBuildHash(serverHash);
+export function getCombinedTrust(clientHash: string, serverHash: string, fetchedHashes?: KnownBuild[] | null): BuildTrust {
+  const clientTrust = verifyBuildHash(clientHash, fetchedHashes);
+  const serverTrust = verifyBuildHash(serverHash, fetchedHashes);
 
   // If either is revoked, the whole thing is revoked
   if (clientTrust === 'revoked' || serverTrust === 'revoked') return 'revoked';
+  // If either is unverified (hash not in known list), flag it
+  if (clientTrust === 'unverified' || serverTrust === 'unverified') return 'unverified';
   // Both must be verified for combined verified
   if (clientTrust === 'verified' && serverTrust === 'verified') return 'verified';
   return 'unknown';
@@ -73,6 +86,8 @@ export function getTrustIndicator(trust: BuildTrust): TrustIndicator {
   switch (trust) {
     case 'verified':
       return { level: 'verified', emoji: '🟢', label: 'Verified', color: '#43b581' };
+    case 'unverified':
+      return { level: 'unverified', emoji: '🔴', label: 'Unverified Build', color: '#f04747' };
     case 'revoked':
       return { level: 'revoked', emoji: '🔴', label: 'Modified Build', color: '#f04747' };
     case 'unknown':

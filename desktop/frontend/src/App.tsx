@@ -32,6 +32,7 @@ const NotificationSettings = React.lazy(() => import("./NotificationSettings").t
 const Settings = React.lazy(() => import("./Settings").then(m => ({ default: m.Settings })));
 import { LoadingSpinner } from "./LoadingSpinner";
 import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
+import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -262,6 +263,14 @@ function App() {
   // Server hello / trust indicator state
   const [serverBuildHash, setServerBuildHash] = useState<string>("");
   const [serverHelloVersion, setServerHelloVersion] = useState<string>("");
+  const [knownHashes, setKnownHashes] = useState(getKnownHashes());
+
+  // Initialize hash verifier on mount
+  useEffect(() => {
+    initHashVerifier();
+    return onHashListUpdate(() => setKnownHashes(getKnownHashes()));
+  }, []);
+
   const [connectedSince, setConnectedSince] = useState<number | null>(null);
   const [showConnectionInfo, setShowConnectionInfo] = useState(false);
 
@@ -3157,10 +3166,10 @@ function App() {
             onClick={() => setShowConnectionInfo(true)}
             className="user-panel-settings connection-indicator"
             title={appState.isConnected
-              ? `Connected${serverHelloVersion ? ` — v${serverHelloVersion}` : ''}${serverBuildHash ? ` (${serverBuildHash.slice(0, 8)})` : ''}\nTrust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash)).label}`
+              ? `Connected${serverHelloVersion ? ` — v${serverHelloVersion}` : ''}${serverBuildHash ? ` (${serverBuildHash.slice(0, 8)})` : ''}\nTrust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash, knownHashes)).label}`
               : 'Disconnected'}
           >
-            {appState.isConnected ? getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash)).emoji : '🔴'}
+            {appState.isConnected ? getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash, knownHashes)).emoji : '🔴'}
           </button>
           <button
             onClick={() => setShowNotificationSettings(true)}
@@ -4051,6 +4060,7 @@ function App() {
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         currentUser={appState.user}
+        knownHashes={knownHashes}
         serverInfo={{
           version: serverHelloVersion,
           buildHash: serverBuildHash,

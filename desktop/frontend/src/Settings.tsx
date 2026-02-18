@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { notificationManager, NotificationPreferences } from './notifications';
 import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
-import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator } from './buildHash';
+import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 
@@ -47,6 +47,7 @@ interface ServerInfo {
 interface SettingsProps {
   isOpen: boolean;
   onClose: () => void;
+  knownHashes?: KnownBuild[] | null;
   currentUser?: {
     id: string;
     public_key_hash: string;
@@ -99,7 +100,8 @@ export const Settings: React.FC<SettingsProps> = ({
   onClose,
   currentUser,
   onUserUpdate,
-  serverInfo
+  serverInfo,
+  knownHashes
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
   
@@ -1377,10 +1379,10 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== ABOUT =================== */}
             {activeTab === 'about' && (() => {
-              const clientTrust = verifyBuildHash(CLIENT_BUILD_HASH);
-              const serverTrust = serverInfo?.buildHash ? verifyBuildHash(serverInfo.buildHash) : null;
+              const clientTrust = verifyBuildHash(CLIENT_BUILD_HASH, knownHashes);
+              const serverTrust = serverInfo?.buildHash ? verifyBuildHash(serverInfo.buildHash, knownHashes) : null;
               const combinedTrust = serverInfo?.buildHash
-                ? getCombinedTrust(CLIENT_BUILD_HASH, serverInfo.buildHash)
+                ? getCombinedTrust(CLIENT_BUILD_HASH, serverInfo.buildHash, knownHashes)
                 : clientTrust;
               const indicator = getTrustIndicator(combinedTrust);
 
