@@ -2826,16 +2826,15 @@ function App() {
     return (
       <SetupWizard
         onComplete={handleSetupComplete}
-        onSkip={() => {
-          setShowSetupWizard(false);
-          setShowWelcomeScreen(true);
-        }}
       />
     );
   }
 
-  // Welcome / Invite link screen
-  if (showWelcomeScreen) {
+  // Guard: if user has identity but no relay URL, block access to main UI
+  const needsRelayUrl = !showSetupWizard && !localStorage.getItem('accord_server_url') && hasStoredKeyPair();
+
+  // Welcome / Invite link screen (also shown when identity exists but no relay URL)
+  if (showWelcomeScreen || needsRelayUrl) {
     return (
       <div className="app">
         <div className="auth-page">
@@ -4414,6 +4413,22 @@ function App() {
                 ...updates
               }
             }));
+          }
+        }}
+        onRelayChange={async (newUrl) => {
+          // Disconnect existing WS and reconnect to new relay
+          if (ws) {
+            ws.disconnect();
+          }
+          setServerUrl(newUrl);
+          api.setBaseUrl(newUrl);
+          const token = appState.token || await getToken();
+          if (token) {
+            const wsBaseUrl = newUrl.replace(/^http/, 'ws');
+            const socket = new AccordWebSocket(token, wsBaseUrl);
+            setupWebSocketHandlers(socket);
+            setWs(socket);
+            socket.connect();
           }
         }}
       />

@@ -62,6 +62,8 @@ interface SettingsProps {
   };
   onUserUpdate?: (updates: Partial<AccountSettings>) => void;
   serverInfo?: ServerInfo;
+  /** Called when the user changes the relay URL from Advanced settings */
+  onRelayChange?: (newUrl: string) => void;
 }
 
 type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'server' | 'about';
@@ -103,7 +105,8 @@ export const Settings: React.FC<SettingsProps> = ({
   currentUser,
   onUserUpdate,
   serverInfo,
-  knownHashes
+  knownHashes,
+  onRelayChange
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
   
@@ -558,15 +561,55 @@ export const Settings: React.FC<SettingsProps> = ({
   };
 
   // Advanced: connect to manual relay
-  const handleConnectManualRelay = () => {
+  const [relayConnecting, setRelayConnecting] = useState(false);
+  const [relayConnectMsg, setRelayConnectMsg] = useState('');
+
+  const handleConnectManualRelay = async () => {
     if (!manualRelayUrl.trim()) return;
     let url = manualRelayUrl.trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       url = 'http://' + url;
     }
-    api.setBaseUrl(url);
-    alert(`Relay URL set to ${url}. You may need to re-authenticate.`);
-    setManualRelayUrl('');
+    // Remove trailing slash
+    url = url.replace(/\/+$/, '');
+
+    setRelayConnecting(true);
+    setRelayConnectMsg('');
+    try {
+      // Probe the server to verify it's reachable
+      const resp = await fetch(`${url}/api/version`, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+
+      // Save to localStorage and update API base
+      localStorage.setItem('accord_server_url', url);
+      api.setBaseUrl(url);
+
+      setRelayConnectMsg(`✅ Connected to ${url}`);
+      setManualRelayUrl('');
+
+      // Notify parent to trigger WS reconnection
+      if (onRelayChange) onRelayChange(url);
+    } catch (e: any) {
+      // Try HTTPS fallback
+      const httpsUrl = url.replace(/^http:/, 'https:');
+      if (httpsUrl !== url) {
+        try {
+          const resp2 = await fetch(`${httpsUrl}/api/version`, { signal: AbortSignal.timeout(8000) });
+          if (resp2.ok) {
+            localStorage.setItem('accord_server_url', httpsUrl);
+            api.setBaseUrl(httpsUrl);
+            setRelayConnectMsg(`✅ Connected to ${httpsUrl}`);
+            setManualRelayUrl('');
+            if (onRelayChange) onRelayChange(httpsUrl);
+            setRelayConnecting(false);
+            return;
+          }
+        } catch {}
+      }
+      setRelayConnectMsg(`❌ Failed to connect: ${e.message || 'Server unreachable'}`);
+    } finally {
+      setRelayConnecting(false);
+    }
   };
 
   // Format fingerprint
@@ -1249,13 +1292,18 @@ export const Settings: React.FC<SettingsProps> = ({
                       className="btn btn-primary"
                       style={{ width: 'auto', padding: '10px 16px', whiteSpace: 'nowrap' }}
                       onClick={handleConnectManualRelay}
-                      disabled={!manualRelayUrl.trim()}
+                      disabled={!manualRelayUrl.trim() || relayConnecting}
                     >
-                      Connect
+                      {relayConnecting ? 'Connecting...' : 'Connect'}
                     </button>
                   </div>
+                  {relayConnectMsg && (
+                    <div style={{ fontSize: 13, marginTop: 4, color: relayConnectMsg.startsWith('✅') ? 'var(--green, #4caf50)' : 'var(--red, #f44)' }}>
+                      {relayConnectMsg}
+                    </div>
+                  )}
                   <div className="settings-help">
-                    Enter a relay server address to connect to a different server.
+                    Enter a relay server address to connect to a different server. This will save the URL and reconnect.
                   </div>
                 </div>
 

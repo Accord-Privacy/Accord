@@ -23,13 +23,12 @@ export interface SetupResult {
 
 interface SetupWizardProps {
   onComplete: (result: SetupResult) => void;
-  onSkip: () => void;
 }
 
 type Step = 1 | 2 | 3;
 type IdentityMode = "create" | "recover";
 
-export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onSkip }) => {
+export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
   const [step, setStep] = useState<Step>(1);
 
   // Step 2 state
@@ -211,9 +210,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onSkip }) 
               </div>
               <button className="btn btn-primary" style={{ marginTop: 24 }} onClick={() => setStep(2)}>
                 Get Started
-              </button>
-              <button className="btn-ghost" style={{ fontSize: 13, marginTop: 8, opacity: 0.6 }} onClick={onSkip}>
-                Skip setup
               </button>
             </>
           )}
@@ -466,9 +462,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete, onSkip }) 
                 onClick={handleConnect}
               >
                 {connecting ? "Checking server..." : "Connect"}
-              </button>
-              <button className="btn-ghost" style={{ fontSize: 13, marginTop: 8, opacity: 0.6 }} onClick={onSkip}>
-                Skip setup
               </button>
             </>
           )}
