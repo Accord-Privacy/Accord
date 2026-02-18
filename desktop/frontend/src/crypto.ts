@@ -739,43 +739,48 @@ export function getStoredPublicKey(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// E2EE — Double Ratchet for Direct Messages
+// E2EE (Double Ratchet) — delegates to the e2ee/ module
 // ---------------------------------------------------------------------------
 
-import { createE2EEManager, type IdentityKeyPair, type E2EESessionManager } from './e2ee';
+import { E2EEManager } from './e2ee';
 
-let e2eeManager: E2EESessionManager | null = null;
+/** Singleton E2EE manager instance */
+let e2eeManager: E2EEManager | null = null;
 
 /**
- * Initialize the E2EE manager with an X25519 identity keypair.
- * Must be called once after login/registration before using encryptE2EE/decryptE2EE.
+ * Get or create the E2EE manager singleton.
+ * Must be initialized before use via initE2EE().
  */
-export function initE2EE(identityKeyPair: IdentityKeyPair): E2EESessionManager {
-  e2eeManager = createE2EEManager(identityKeyPair);
+export function getE2EEManager(): E2EEManager {
+  if (!e2eeManager) {
+    e2eeManager = new E2EEManager();
+  }
   return e2eeManager;
 }
 
 /**
- * Get the current E2EE manager, or null if not initialized.
+ * Encrypt a message for a specific recipient using Double Ratchet E2EE.
+ * Requires an active session with the recipient (established via X3DH).
+ *
+ * @param recipientId - Recipient's user ID or public key hash
+ * @param plaintext - Message to encrypt
+ * @returns Opaque base64 string (JSON-encoded DoubleRatchetMessage)
  */
-export function getE2EEManager(): E2EESessionManager | null {
-  return e2eeManager;
+export function encryptE2EE(recipientId: string, plaintext: string): string {
+  const mgr = getE2EEManager();
+  if (!mgr.isInitialized) throw new Error('E2EE not initialized');
+  return mgr.encrypt(recipientId, plaintext);
 }
 
 /**
- * Encrypt a DM plaintext for a recipient using the Double Ratchet.
- * Requires an active session with the recipient (call initSession first).
+ * Decrypt a message from a specific sender using Double Ratchet E2EE.
+ *
+ * @param senderId - Sender's user ID or public key hash
+ * @param ciphertext - Opaque string from encryptE2EE()
+ * @returns Decrypted plaintext
  */
-export async function encryptE2EE(recipientId: string, plaintext: string): Promise<string> {
-  if (!e2eeManager) throw new Error('E2EE not initialized — call initE2EE() first');
-  return e2eeManager.encrypt(recipientId, plaintext);
-}
-
-/**
- * Decrypt a DM ciphertext from a sender using the Double Ratchet.
- * Requires an active session with the sender (call receiveSession first).
- */
-export async function decryptE2EE(senderId: string, ciphertext: string): Promise<string> {
-  if (!e2eeManager) throw new Error('E2EE not initialized — call initE2EE() first');
-  return e2eeManager.decrypt(senderId, ciphertext);
+export function decryptE2EE(senderId: string, ciphertext: string): string {
+  const mgr = getE2EEManager();
+  if (!mgr.isInitialized) throw new Error('E2EE not initialized');
+  return mgr.decrypt(senderId, ciphertext);
 }
