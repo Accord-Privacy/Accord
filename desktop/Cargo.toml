@@ -15,7 +15,7 @@ uuid.workspace = true
 anyhow.workspace = true
 
 # Tauri dependencies
-tauri = "2.0"
+tauri = { version = "2.0", features = [] }
 
 # HTTP client for connectivity testing
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
@@ -30,4 +30,4 @@ dirs = "5.0"
 keyring = { version = "3", features = ["linux-native"] }
 
 [build-dependencies] 
-tauri-build = "2.0"
+tauri-build = { version = "2.0", features = [] }
