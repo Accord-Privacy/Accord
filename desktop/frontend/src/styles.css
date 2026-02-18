@@ -912,6 +912,15 @@ input, textarea, select, button {
   font-weight: 600;
   color: #fff;
   flex-shrink: 0;
+  position: relative;
+}
+
+.dm-avatar .presence-dot {
+  width: 8px;
+  height: 8px;
+  bottom: -2px;
+  right: -2px;
+  border-width: 1.5px;
 }
 
 .dm-name {

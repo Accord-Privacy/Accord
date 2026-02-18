@@ -201,6 +201,8 @@ pub struct AppState {
     pub mesh_handle: RwLock<Option<crate::relay_mesh::service::MeshHandle>>,
     /// Link preview cache (url -> (result_json, fetched_at))
     pub link_preview_cache: RwLock<HashMap<String, (serde_json::Value, u64)>>,
+    /// Last activity timestamp per user (for idle detection)
+    pub last_activity: RwLock<HashMap<Uuid, u64>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -240,6 +242,7 @@ impl AppState {
             build_hash_enforcement: BuildHashEnforcementMode::default(),
             mesh_handle: RwLock::new(None),
             link_preview_cache: RwLock::new(HashMap::new()),
+            last_activity: RwLock::new(HashMap::new()),
         })
     }
 
@@ -1091,7 +1094,11 @@ impl AppState {
 
     // ── Presence tracking ──
 
+    /// Idle timeout in seconds (5 minutes)
+    const IDLE_TIMEOUT_SECS: u64 = 300;
+
     pub async fn set_user_online(&self, user_id: Uuid) -> Result<(), String> {
+        self.last_activity.write().await.insert(user_id, now());
         self.db
             .update_user_status(user_id, "online")
             .await
@@ -1100,11 +1107,119 @@ impl AppState {
     }
 
     pub async fn set_user_offline(&self, user_id: Uuid) -> Result<(), String> {
+        self.last_activity.write().await.remove(&user_id);
         self.db
             .update_user_status(user_id, "offline")
             .await
             .map_err(|e| e.to_string())?;
         self.broadcast_presence_update(user_id).await
+    }
+
+    /// Record user activity (resets idle timer, promotes idle→online)
+    pub async fn record_user_activity(&self, user_id: Uuid) -> Result<(), String> {
+        self.last_activity.write().await.insert(user_id, now());
+        // If user was idle, promote back to online
+        if let Ok(Some(profile)) = self.get_user_profile(user_id).await {
+            if profile.status == "idle" {
+                self.db
+                    .update_user_status(user_id, "online")
+                    .await
+                    .map_err(|e| e.to_string())?;
+                self.broadcast_presence_update(user_id).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Check all connected users for idle timeout and transition them
+    pub async fn check_idle_users(&self) -> Result<(), String> {
+        let current_time = now();
+        let activity = self.last_activity.read().await;
+        let connections = self.connections.read().await;
+        let mut idle_users = Vec::new();
+
+        for (user_id, last) in activity.iter() {
+            if connections.contains_key(user_id)
+                && current_time.saturating_sub(*last) >= Self::IDLE_TIMEOUT_SECS
+            {
+                idle_users.push(*user_id);
+            }
+        }
+        drop(activity);
+        drop(connections);
+
+        for user_id in idle_users {
+            // Only transition online→idle (don't override dnd or already idle)
+            if let Ok(Some(profile)) = self.get_user_profile(user_id).await {
+                if profile.status == "online" {
+                    self.db
+                        .update_user_status(user_id, "idle")
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    self.broadcast_presence_update(user_id).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get presence status for all members of a node
+    pub async fn get_node_presence(&self, node_id: Uuid) -> Result<Vec<serde_json::Value>, String> {
+        let members = self
+            .db
+            .get_node_members(node_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let connections = self.connections.read().await;
+        let mut result = Vec::new();
+
+        for member in members {
+            let status = if let Ok(Some(profile)) = self.get_user_profile(member.user_id).await {
+                if connections.contains_key(&member.user_id) {
+                    profile.status
+                } else {
+                    "offline".to_string()
+                }
+            } else {
+                "offline".to_string()
+            };
+
+            result.push(serde_json::json!({
+                "user_id": member.user_id,
+                "status": status,
+            }));
+        }
+
+        Ok(result)
+    }
+
+    /// Send current presence state for all of a user's nodes
+    pub async fn send_initial_presence(&self, user_id: Uuid) -> Result<(), String> {
+        let user_nodes = self
+            .db
+            .get_user_nodes(user_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let connections = self.connections.read().await;
+        let sender = match connections.get(&user_id) {
+            Some(s) => s.clone(),
+            None => return Ok(()),
+        };
+        drop(connections);
+
+        for node in user_nodes {
+            let presence = self.get_node_presence(node.id).await?;
+            let msg = serde_json::json!({
+                "type": "presence_bulk",
+                "node_id": node.id,
+                "members": presence,
+            });
+            let _ = sender.send(msg.to_string());
+        }
+
+        Ok(())
     }
 
     async fn broadcast_presence_update(&self, user_id: Uuid) -> Result<(), String> {

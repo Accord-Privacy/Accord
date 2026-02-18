@@ -30,6 +30,7 @@ export interface WsEvents {
   message_edit: (data: any) => void;
   message_delete: (data: any) => void;
   presence_update: (data: any) => void;
+  presence_bulk: (data: any) => void;
   pong: (data: any) => void;
   voice_join: (data: any) => void;
   voice_leave: (data: any) => void;

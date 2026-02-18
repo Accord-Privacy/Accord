@@ -26,6 +26,41 @@ use tokio::sync::broadcast;
 use tracing::{error, info};
 use uuid::Uuid;
 
+/// Get presence status for all members of a node
+pub async fn get_node_presence_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Must be a member of the node
+    if !state
+        .is_node_member(user_id, node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must be a member of the node".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    match state.get_node_presence(node_id).await {
+        Ok(presence) => Ok(Json(serde_json::json!({ "members": presence }))),
+        Err(err) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get presence: {}", err),
+                code: 500,
+            }),
+        )),
+    }
+}
+
 /// Health check endpoint
 pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResponse> {
     // Database connectivity check
@@ -3108,6 +3143,11 @@ async fn websocket_handler_inner(
         error!("Failed to set user online: {}", err);
     }
 
+    // Send current presence state for all user's nodes
+    if let Err(err) = state.send_initial_presence(user_id).await {
+        error!("Failed to send initial presence: {}", err);
+    }
+
     let outgoing_task = tokio::spawn(async move {
         while let Ok(message) = rx.recv().await {
             if sender.send(Message::Text(message)).await.is_err() {
@@ -3119,6 +3159,8 @@ async fn websocket_handler_inner(
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
+                // Record activity for idle detection
+                let _ = state.record_user_activity(user_id).await;
                 if let Err(err) = handle_ws_message(&text, user_id, &state).await {
                     error!("Error handling WebSocket message: {}", err);
                     let error_msg = serde_json::json!({ "error": err, "type": "error" });

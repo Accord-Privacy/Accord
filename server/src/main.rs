@@ -42,7 +42,7 @@ use handlers::{
     fetch_key_bundle_handler, get_build_allowlist_handler, get_channel_messages_handler,
     get_dm_channels_handler, get_effective_permissions_handler, get_member_roles_handler,
     get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
-    get_node_handler, get_node_icon_handler, get_node_members_handler,
+    get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
     get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
     get_user_avatar_handler, get_user_profile_handler, health_handler,
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
@@ -520,6 +520,7 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/bans", delete(unban_user_handler))
         .route("/nodes/:id/bans", get(list_bans_handler))
         .route("/nodes/:id/ban-check", get(ban_check_handler))
+        .route("/api/presence/:id", get(get_node_presence_handler))
         // Build hash allowlist
         .route(
             "/nodes/:id/build-allowlist",
@@ -789,6 +790,20 @@ async fn main() -> Result<()> {
                 let removed = cleanup_state.cleanup_expired_tokens().await;
                 if removed > 0 {
                     info!("Cleaned up {} expired auth tokens", removed);
+                }
+            }
+        });
+    }
+
+    // Idle detection background task (check every 60 seconds)
+    {
+        let idle_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Err(err) = idle_state.check_idle_users().await {
+                    tracing::warn!("Idle check error: {}", err);
                 }
             }
         });

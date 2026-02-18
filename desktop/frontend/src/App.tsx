@@ -938,6 +938,21 @@ function App() {
       }
     });
 
+    // Handle bulk presence (sent on connect)
+    socket.on('presence_bulk', (data: any) => {
+      if (data.members && Array.isArray(data.members)) {
+        setPresenceMap(prev => {
+          const newMap = new Map(prev);
+          for (const m of data.members) {
+            if (m.user_id && m.status) {
+              newMap.set(m.user_id, m.status);
+            }
+          }
+          return newMap;
+        });
+      }
+    });
+
     socket.on('error', (error: Error) => {
       console.error('WebSocket error:', error);
     });
@@ -3437,6 +3452,7 @@ function App() {
                 >
                   <div className="dm-avatar">
                     {(dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+                    <span className={`presence-dot presence-${getPresenceStatus(dmChannel.other_user?.id || '')}`} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="dm-name">{dmChannel.other_user_profile.display_name}</div>
