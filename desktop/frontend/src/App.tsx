@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { api, parseInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
+import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink } from "./types";
 import { 
@@ -19,6 +19,7 @@ import {
   loadKeyWithPassword,
   hasStoredKeyPair,
   getStoredPublicKey,
+  setActiveIdentity,
 } from "./crypto";
 import { storeToken, getToken, clearToken } from "./tokenStorage";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./FileManager";
@@ -47,8 +48,20 @@ function App() {
   const [serverVersion, setServerVersion] = useState("");
 
   // Welcome / Invite flow state
-  const [showWelcomeScreen, setShowWelcomeScreen] = useState(() => !localStorage.getItem('accord_server_url'));
-  const [welcomeMode, setWelcomeMode] = useState<'choose' | 'invite' | 'admin'>('choose');
+  const [showWelcomeScreen, setShowWelcomeScreen] = useState(() => {
+    // Skip welcome if we already know a server URL or if served from a relay
+    const savedUrl = localStorage.getItem('accord_server_url');
+    if (savedUrl) return false;
+    // Check if current origin looks like a relay (not a dev server)
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    if (origin && !origin.includes(':1420') && !origin.includes(':5173') && !origin.includes(':3000')) {
+      // Optimistically set server URL to current origin and skip welcome
+      localStorage.setItem('accord_server_url', origin);
+      return false;
+    }
+    return true;
+  });
+  const [welcomeMode, setWelcomeMode] = useState<'choose' | 'invite' | 'admin' | 'recover'>('choose');
   const [inviteLinkInput, setInviteLinkInput] = useState("");
   const [parsedInvite, setParsedInvite] = useState<ParsedInviteLink | null>(null);
   const [inviteError, setInviteError] = useState("");
@@ -169,6 +182,10 @@ function App() {
 
   // Node creation state
   const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
+  const [showJoinNodeModal, setShowJoinNodeModal] = useState(false);
+  const [joinInviteCode, setJoinInviteCode] = useState("");
+  const [joiningNode, setJoiningNode] = useState(false);
+  const [joinError, setJoinError] = useState("");
   const [newNodeName, setNewNodeName] = useState("");
   const [newNodeDescription, setNewNodeDescription] = useState("");
   const [creatingNode, setCreatingNode] = useState(false);
@@ -737,6 +754,7 @@ function App() {
       // Format messages for display
       const formattedMessages = response.messages.map(msg => ({
         ...msg,
+        author: msg.author || fingerprint(msg.sender_public_key_hash || '' ) || 'Unknown',
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
       
@@ -795,6 +813,7 @@ function App() {
       // Format messages for display
       const formattedMessages = response.messages.map(msg => ({
         ...msg,
+        author: msg.author || fingerprint(msg.sender_public_key_hash || '' ) || 'Unknown',
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
       
@@ -1045,7 +1064,7 @@ function App() {
       try {
         const url = new URL(baseUrl);
         const host = url.host; // includes port
-        setGeneratedInvite(`accord://${host}/invite/${response.invite_code}`);
+        setGeneratedInvite(generateInviteLink(host, response.invite_code));
       } catch {
         // Fallback to just the code if URL parsing fails
         setGeneratedInvite(response.invite_code);
@@ -1095,6 +1114,29 @@ function App() {
   };
 
   // Handle creating a new node
+  const handleJoinNode = async () => {
+    if (!appState.token || !joinInviteCode.trim()) return;
+    setJoiningNode(true);
+    setJoinError("");
+    try {
+      // Parse invite link or use as raw code
+      const input = joinInviteCode.trim();
+      const parsed = parseInviteLink(input);
+      const code = parsed ? parsed.inviteCode : input;
+      
+      await api.joinNodeByInvite(code, appState.token);
+      setShowJoinNodeModal(false);
+      setShowCreateNodeModal(false);
+      setJoinInviteCode("");
+      // Reload nodes to show the new one
+      await loadNodes();
+    } catch (error: any) {
+      setJoinError(error.message || "Failed to join node");
+    } finally {
+      setJoiningNode(false);
+    }
+  };
+
   const handleCreateNode = async () => {
     if (!appState.token || !newNodeName.trim()) return;
     setCreatingNode(true);
@@ -1196,7 +1238,7 @@ function App() {
               setKeyPair(existingKeyPair);
               const pk = await exportPublicKey(existingKeyPair.publicKey);
               pkHash = await sha256Hex(pk);
-              setPublicKeyHash(pkHash);
+              setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
               setPublicKey(pk);
             }
           }
@@ -1255,11 +1297,14 @@ function App() {
     try {
       // Auto-generate keypair
       let publicKeyToUse = '';
+      let pkHash = '';
       if (encryptionEnabled) {
         const newKeyPair = await generateKeyPair();
         publicKeyToUse = await exportPublicKey(newKeyPair.publicKey);
-        await saveKeyWithPassword(newKeyPair, invitePassword);
-        await saveKeyToStorage(newKeyPair);
+        pkHash = await sha256Hex(publicKeyToUse);
+        setActiveIdentity(pkHash);
+        await saveKeyToStorage(newKeyPair, pkHash);
+        await saveKeyWithPassword(newKeyPair, invitePassword, pkHash);
         setKeyPair(newKeyPair);
         setPublicKey(publicKeyToUse);
         // Generate mnemonic for backup
@@ -1276,8 +1321,7 @@ function App() {
       // Register
       await api.register(publicKeyToUse, invitePassword);
       passwordRef.current = invitePassword;
-      const pkHash = await sha256Hex(publicKeyToUse);
-      setPublicKeyHash(pkHash);
+      setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
 
       // Login
       const response = await api.login(publicKeyToUse, invitePassword);
@@ -1332,7 +1376,10 @@ function App() {
     setServerConnecting(true);
     setAuthError("");
     try {
-      api.setBaseUrl(serverUrl);
+      const cleanUrl = serverUrl.replace(/\/+$/, '');
+      setServerUrl(cleanUrl);
+      api.setBaseUrl(cleanUrl);
+      localStorage.setItem('accord_server_url', cleanUrl);
       const health = await api.health();
       setServerConnected(true);
       setServerAvailable(true);
@@ -1377,6 +1424,9 @@ function App() {
         
         // Try to load from storage if not provided
         if (!pkToUse && encryptionEnabled) {
+          // Set active identity from stored hash for key lookup
+          const storedHash = localStorage.getItem('accord_public_key_hash');
+          if (storedHash) setActiveIdentity(storedHash);
           // Try password-based decryption first
           let existingKeyPair = await loadKeyWithPassword(password);
           if (!existingKeyPair) {
@@ -1391,10 +1441,23 @@ function App() {
             const storedPk = getStoredPublicKey();
             if (storedPk) pkToUse = storedPk;
           }
+          // Last try: unencrypted public key saved from previous login
+          if (!pkToUse) {
+            const plainPk = localStorage.getItem('accord_public_key_plain');
+            if (plainPk) pkToUse = plainPk;
+          }
         }
         
+        // Last resort: check if we have the public key stored separately
         if (!pkToUse) {
-          setAuthError("No keypair found. Import your key, register a new account, or recover with your phrase.");
+          const savedPkHash = localStorage.getItem('accord_public_key_hash');
+          if (savedPkHash) {
+            // We have the hash but not the full public key — try auth by hash
+            // Server needs to support this, for now show better error
+            setAuthError("Keypair not found in this browser. Use 'Recover with recovery phrase' to restore your identity, or register a new account.");
+            return;
+          }
+          setAuthError("No identity found. Create a new identity or recover with your recovery phrase.");
           return;
         }
 
@@ -1406,22 +1469,25 @@ function App() {
         localStorage.setItem('accord_user_id', response.user_id);
         passwordRef.current = password;
 
+        const pkHash = await sha256Hex(pkToUse);
+        setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
+
         // Try loading key with password first, then fall back to token-based
         if (encryptionEnabled && !keyPair) {
-          let existingKeyPair = await loadKeyWithPassword(password);
+          let existingKeyPair = await loadKeyWithPassword(password, pkHash);
           if (!existingKeyPair) {
-            existingKeyPair = await loadKeyFromStorage();
+            existingKeyPair = await loadKeyFromStorage(pkHash);
           }
           if (existingKeyPair) {
             setKeyPair(existingKeyPair);
             // Re-save with password for future logins
-            await saveKeyWithPassword(existingKeyPair, password);
+            await saveKeyWithPassword(existingKeyPair, password, pkHash);
           }
         }
-
-        const pkHash = await sha256Hex(pkToUse);
-        setPublicKeyHash(pkHash);
         setHasExistingKey(true);
+        // Save public key unencrypted so we can identify the user after logout
+        localStorage.setItem('accord_public_key_plain', pkToUse);
+        localStorage.setItem('accord_public_key_hash', pkHash);
         
         setAppState(prev => ({
           ...prev,
@@ -1460,8 +1526,10 @@ function App() {
           try {
             const newKeyPair = await generateKeyPair();
             publicKeyToUse = await exportPublicKey(newKeyPair.publicKey);
-            await saveKeyWithPassword(newKeyPair, password);
-            await saveKeyToStorage(newKeyPair);
+            const earlyHash = await sha256Hex(publicKeyToUse);
+            setActiveIdentity(earlyHash);
+            await saveKeyToStorage(newKeyPair, earlyHash);
+            await saveKeyWithPassword(newKeyPair, password, earlyHash);
             setKeyPair(newKeyPair);
             setPublicKey(publicKeyToUse);
             // Generate mnemonic for backup
@@ -1482,7 +1550,10 @@ function App() {
         passwordRef.current = password;
         
         const pkHash = await sha256Hex(publicKeyToUse);
-        setPublicKeyHash(pkHash);
+        setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
+        // Save public key unencrypted for future logins
+        localStorage.setItem('accord_public_key_plain', publicKeyToUse);
+        localStorage.setItem('accord_public_key_hash', pkHash);
         
         // Show mnemonic backup modal (replaces old key backup)
         setShowMnemonicModal(true);
@@ -1508,15 +1579,16 @@ function App() {
       // Authenticate with server
       const response = await api.login(pk, recoverPassword);
       
-      // Save keys
-      await saveKeyWithPassword(recoveredKeyPair, recoverPassword);
-      await saveKeyToStorage(recoveredKeyPair);
+      // Save keys (compute hash first for namespacing)
+      const pkHash = await sha256Hex(pk);
+      setActiveIdentity(pkHash);
+      await saveKeyToStorage(recoveredKeyPair, pkHash);
+      await saveKeyWithPassword(recoveredKeyPair, recoverPassword, pkHash);
       setKeyPair(recoveredKeyPair);
       setPublicKey(pk);
       passwordRef.current = recoverPassword;
       
-      const pkHash = await sha256Hex(pk);
-      setPublicKeyHash(pkHash);
+      setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
       
       storeToken(response.token);
       localStorage.setItem('accord_user_id', response.user_id);
@@ -1947,7 +2019,7 @@ function App() {
         if (existingKeyPair) {
           const pk = await exportPublicKey(existingKeyPair.publicKey);
           pkHash = await sha256Hex(pk);
-          setPublicKeyHash(pkHash);
+          setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
           setPublicKey(pk);
         }
 
@@ -2281,15 +2353,34 @@ function App() {
                 </div>
                 <p className="auth-tagline">Privacy-first community communications</p>
                 <div className="auth-buttons-stack">
-                  <button onClick={() => setWelcomeMode('invite')} className="btn btn-primary">
-                    I have an invite link
-                  </button>
-                  <button onClick={() => setWelcomeMode('admin')} className="btn btn-outline">
-                    Set up a new relay (admin)
-                  </button>
-                  <button onClick={() => { setWelcomeMode('admin'); }} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
-                    🔄 Recover identity (connect to relay first)
-                  </button>
+                  {serverAvailable ? (
+                    <>
+                      <button onClick={() => { setShowWelcomeScreen(false); setIsLoginMode(true); }} className="btn btn-primary">
+                        Log in
+                      </button>
+                      <button onClick={() => { setShowWelcomeScreen(false); setIsLoginMode(false); }} className="btn btn-outline">
+                        Create new identity
+                      </button>
+                      <button onClick={() => setWelcomeMode('invite')} className="btn btn-outline">
+                        I have an invite link
+                      </button>
+                      <button onClick={() => { setShowWelcomeScreen(false); setShowRecoverModal(true); setRecoverError(""); }} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
+                        🔄 Recover identity with recovery phrase
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => setWelcomeMode('invite')} className="btn btn-primary">
+                        I have an invite link
+                      </button>
+                      <button onClick={() => setWelcomeMode('admin')} className="btn btn-outline">
+                        Set up a new relay (admin)
+                      </button>
+                      <button onClick={() => setWelcomeMode('recover')} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
+                        🔄 Recover identity (connect to relay first)
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}
@@ -2454,9 +2545,11 @@ function App() {
                 <label className="form-label">Key Status</label>
                 <div className="auth-info-box">
                   {keyPair || publicKey || hasExistingKey ? (
-                    <span className="accent">🔑 Keypair found in browser storage — enter your password to sign back in</span>
+                    <span className="accent">🔑 Keypair found — enter your password to sign back in</span>
+                  ) : localStorage.getItem('accord_public_key_plain') ? (
+                    <span className="accent">🔑 Identity remembered — enter your password to log in</span>
                   ) : (
-                    <span style={{ color: 'var(--yellow)' }}>⚠️ No keypair found — register, import, or recover with phrase</span>
+                    <span style={{ color: 'var(--yellow)' }}>⚠️ No identity found on this device — create a new one or recover with your phrase</span>
                   )}
                 </div>
               </div>
@@ -2499,15 +2592,17 @@ function App() {
               >
                 {isLoginMode ? 'Need to create an identity?' : 'Already have a keypair? Login'}
               </button>
-              {isLoginMode && (
+              
+              <div style={{ borderTop: '1px solid var(--border)', width: '100%', paddingTop: '12px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', opacity: 0.6 }}>Lost access to your keypair?</span>
                 <button
                   onClick={() => { setShowRecoverModal(true); setRecoverError(""); }}
-                  className="btn-ghost"
-                  style={{ fontSize: '12px', opacity: 0.8 }}
+                  className="btn btn-outline"
+                  style={{ width: '100%' }}
                 >
-                  🔄 Recover identity with recovery phrase
+                  🔄 Recover with recovery phrase
                 </button>
-              )}
+              </div>
             </div>
           </div>
         </div>
@@ -2556,7 +2651,7 @@ function App() {
         })}
         <div 
           className="server-icon add-server" 
-          title="Create Node"
+          title="Join or Create Node"
           onClick={() => setShowCreateNodeModal(true)}
           style={{ cursor: 'pointer' }}
         >
@@ -2730,7 +2825,7 @@ function App() {
                   onClick={() => handleDmChannelSelect(dmChannel)}
                 >
                   <div className="dm-avatar">
-                    {dmChannel.other_user_profile.display_name[0].toUpperCase()}
+                    {(dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="dm-name">{dmChannel.other_user_profile.display_name}</div>
@@ -2811,7 +2906,7 @@ function App() {
               <>
                 <div style={{ display: 'flex', alignItems: 'center' }}>
                   <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '8px' }}>
-                    {selectedDmChannel.other_user_profile.display_name[0].toUpperCase()}
+                    {(selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
                   </div>
                   <span className="chat-channel-name">{selectedDmChannel.other_user_profile.display_name}</span>
                 </div>
@@ -2934,7 +3029,7 @@ function App() {
                   </div>
                 </div>
               )}
-              {!isGrouped && <div className="message-avatar">{msg.author[0]}</div>}
+              {!isGrouped && <div className="message-avatar">{(msg.author || "?")[0]}</div>}
               {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
               <div className="message-body">
                 {!isGrouped && (
@@ -3279,8 +3374,8 @@ function App() {
         </div>
       )}
 
-      {/* Create Node Modal */}
-      {showCreateNodeModal && (
+      {/* Create/Join Node Modal */}
+      {showCreateNodeModal && !showJoinNodeModal && (
         <div className="modal-overlay">
           <div className="modal-card">
             <h3>Create a Node</h3>
@@ -3297,6 +3392,31 @@ function App() {
               <button onClick={handleCreateNode} disabled={creatingNode || !newNodeName.trim()} className="btn btn-green">{creatingNode ? 'Creating...' : 'Create Node'}</button>
               <button onClick={() => { setShowCreateNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
             </div>
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
+              <button onClick={() => setShowJoinNodeModal(true)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Join Node Modal */}
+      {showJoinNodeModal && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h3>Join a Node</h3>
+            <p>Enter an invite code or link to join an existing Node.</p>
+            <div className="form-group">
+              <label className="form-label">Invite Code or Link</label>
+              <input type="text" placeholder="accord://host/invite/CODE or just the code" value={joinInviteCode} onChange={(e) => setJoinInviteCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && joinInviteCode.trim()) handleJoinNode(); }} className="form-input" />
+            </div>
+            {joinError && <div className="auth-error">{joinError}</div>}
+            <div className="modal-actions">
+              <button onClick={handleJoinNode} disabled={joiningNode || !joinInviteCode.trim()} className="btn btn-primary">{joiningNode ? 'Joining...' : 'Join Node'}</button>
+              <button onClick={() => { setShowJoinNodeModal(false); setShowCreateNodeModal(false); setJoinInviteCode(""); setJoinError(""); }} className="btn btn-outline">Cancel</button>
+            </div>
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
+              <button onClick={() => setShowJoinNodeModal(false)} className="btn-ghost">Want to create your own? <strong>Create a Node</strong></button>
+            </div>
           </div>
         </div>
       )}
@@ -3306,8 +3426,8 @@ function App() {
         <div className="modal-overlay">
           <div className="modal-card">
             <h3>Invite Link Generated</h3>
-            <p>Share this invite link with others to let them join this node:</p>
-            <div className="modal-code-block">{generatedInvite}</div>
+            <p>Share this link to invite others to your node. The relay address is encoded for privacy.</p>
+            <div className="modal-code-block" style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.85em' }}>{generatedInvite}</div>
             <div className="modal-actions">
               <button
                 onClick={() => {
@@ -3575,7 +3695,7 @@ function App() {
                           marginRight: '8px',
                         }}
                       >
-                        {msg.author[0]}
+                        {(msg.author || "?")[0]}
                       </div>
                       <span style={{ fontWeight: 600, marginRight: '8px' }}>
                         {msg.author}

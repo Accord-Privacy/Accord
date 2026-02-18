@@ -63,7 +63,7 @@ export class AccordApi {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl || getDefaultBaseUrl();
+    this.baseUrl = (baseUrl || getDefaultBaseUrl()).replace(/\/+$/, '');
   }
 
   getBaseUrl(): string {
@@ -71,7 +71,7 @@ export class AccordApi {
   }
 
   setBaseUrl(url: string) {
-    this.baseUrl = url;
+    this.baseUrl = url.replace(/\/+$/, '');
     localStorage.setItem('accord_server_url', url);
   }
 
@@ -536,12 +536,46 @@ export class AccordApi {
   }
 }
 
+// Compact invite encoding — base64url of host:port to obscure relay address
+function encodeRelayHost(host: string): string {
+  return btoa(host).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeRelayHost(encoded: string): string {
+  let b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  return atob(b64);
+}
+
+export function generateInviteLink(host: string, inviteCode: string): string {
+  return `accord://${encodeRelayHost(host)}/${inviteCode}`;
+}
+
 // Invite link parser
-// Supports: accord://host:port/invite/CODE, https://host:port/invite/CODE, http://host:port/invite/CODE
+// Supports:
+//   accord://BASE64HOST/CODE (new compact format)
+//   accord://host:port/invite/CODE (legacy)
+//   https://host:port/invite/CODE
 export function parseInviteLink(input: string): ParsedInviteLink | null {
   const trimmed = input.trim();
 
-  // Try accord:// scheme
+  // Try new compact format: accord://BASE64/CODE
+  const compactMatch = trimmed.match(/^accord:\/\/([A-Za-z0-9_-]+)\/([^/?#]+)$/);
+  if (compactMatch) {
+    try {
+      const relayHost = decodeRelayHost(compactMatch[1]);
+      // Verify it looks like host:port (contains a dot or colon)
+      if (relayHost.includes('.') || relayHost.includes(':')) {
+        return {
+          relayHost,
+          relayUrl: `http://${relayHost}`,
+          inviteCode: compactMatch[2],
+        };
+      }
+    } catch { /* not valid base64, try other formats */ }
+  }
+
+  // Try legacy accord:// scheme: accord://host:port/invite/CODE
   const accordMatch = trimmed.match(/^accord:\/\/([^/]+)\/invite\/([^/?#]+)/);
   if (accordMatch) {
     const relayHost = accordMatch[1];

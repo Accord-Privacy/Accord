@@ -192,6 +192,8 @@ export interface Message {
   reply_to?: string;
   replied_message?: RepliedMessage;
   files?: FileMetadata[];
+  sender_public_key_hash?: string;
+  sender_id?: string;
 }
 
 export interface RepliedMessage {

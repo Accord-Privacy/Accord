@@ -25,6 +25,30 @@ function randomBytes(n: number): Uint8Array {
 
 import { BIP39_WORDLIST } from './bip39wordlist';
 
+// Storage keys are namespaced by identity (public key hash) to support
+// multiple accounts in the same browser without overwriting each other.
+// Legacy un-namespaced keys are tried as fallback during migration.
+function storageKeys(pkHash?: string) {
+  const suffix = pkHash ? `_${pkHash.slice(0, 16)}` : '';
+  return {
+    PRIVATE_KEY: `accord_private_key${suffix}`,
+    PUBLIC_KEY: `accord_public_key${suffix}`,
+    CHANNEL_KEYS: `accord_channel_keys${suffix}`,
+  };
+}
+
+// Active identity hash — set after login/registration
+let activeIdentityHash: string | undefined;
+
+export function setActiveIdentity(pkHash: string) {
+  activeIdentityHash = pkHash;
+}
+
+function STORAGE_KEYS_FOR(pkHash?: string) {
+  return storageKeys(pkHash || activeIdentityHash);
+}
+
+// Legacy compat
 const STORAGE_KEYS = {
   PRIVATE_KEY: 'accord_private_key',
   PUBLIC_KEY: 'accord_public_key',
@@ -314,7 +338,7 @@ export async function exportPublicKey(publicKey: CryptoKey): Promise<string> {
 // ---------------------------------------------------------------------------
 // Save/Load keypair to/from localStorage
 // ---------------------------------------------------------------------------
-export async function saveKeyToStorage(keyPair: CryptoKeyPair): Promise<void> {
+export async function saveKeyToStorage(keyPair: CryptoKeyPair, pkHash?: string): Promise<void> {
   let privateKeyData: ArrayBuffer;
   let publicKeyData: ArrayBuffer;
 
@@ -331,14 +355,21 @@ export async function saveKeyToStorage(keyPair: CryptoKeyPair): Promise<void> {
   const passphrase = getKeyPassphrase();
   const encryptedPrivateKey = await encryptWithPassphrase(privateKeyData, passphrase);
 
-  localStorage.setItem(STORAGE_KEYS.PRIVATE_KEY, encryptedPrivateKey);
-  localStorage.setItem(STORAGE_KEYS.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
+  const keys = STORAGE_KEYS_FOR(pkHash);
+  localStorage.setItem(keys.PRIVATE_KEY, encryptedPrivateKey);
+  localStorage.setItem(keys.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
 }
 
-export async function loadKeyFromStorage(): Promise<CryptoKeyPair | null> {
+export async function loadKeyFromStorage(pkHash?: string): Promise<CryptoKeyPair | null> {
   try {
-    const privateKeyEncrypted = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
-    const publicKeyB64 = localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
+    const namespacedKeys = STORAGE_KEYS_FOR(pkHash);
+    let privateKeyEncrypted = localStorage.getItem(namespacedKeys.PRIVATE_KEY);
+    let publicKeyB64 = localStorage.getItem(namespacedKeys.PUBLIC_KEY);
+    // Fallback to legacy
+    if (!privateKeyEncrypted || !publicKeyB64) {
+      privateKeyEncrypted = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
+      publicKeyB64 = localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
+    }
 
     if (!privateKeyEncrypted || !publicKeyB64) return null;
 
@@ -371,9 +402,8 @@ export async function loadKeyFromStorage(): Promise<CryptoKeyPair | null> {
       publicKey: { _nobleRaw: pubPoint, _nobleSpki: spki } as unknown as CryptoKey,
     } as unknown as CryptoKeyPair;
   } catch (error) {
-    console.warn('Failed to load keys from storage, clearing stale data:', error);
-    localStorage.removeItem(STORAGE_KEYS.PRIVATE_KEY);
-    localStorage.removeItem(STORAGE_KEYS.PUBLIC_KEY);
+    console.warn('Failed to load keys from storage (may be password-encrypted):', error);
+    // Don't clear keys — they may be loadable via loadKeyWithPassword()
     return null;
   }
 }
@@ -619,7 +649,7 @@ export function mnemonicToKeyPair(mnemonic: string): CryptoKeyPair {
  * Save keypair encrypted with user's password (not token).
  * This persists across logouts since the token is cleared but keys remain.
  */
-export async function saveKeyWithPassword(keyPair: CryptoKeyPair, password: string): Promise<void> {
+export async function saveKeyWithPassword(keyPair: CryptoKeyPair, password: string, pkHash?: string): Promise<void> {
   let privateKeyData: ArrayBuffer;
   let publicKeyData: ArrayBuffer;
 
@@ -636,6 +666,10 @@ export async function saveKeyWithPassword(keyPair: CryptoKeyPair, password: stri
   const passphrase = `accord-key-wrap:${password}`;
   const encryptedPrivateKey = await encryptWithPassphrase(privateKeyData, passphrase);
 
+  const keys = STORAGE_KEYS_FOR(pkHash);
+  localStorage.setItem(keys.PRIVATE_KEY, encryptedPrivateKey);
+  localStorage.setItem(keys.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
+  // Also save to legacy slot for backwards compat
   localStorage.setItem(STORAGE_KEYS.PRIVATE_KEY, encryptedPrivateKey);
   localStorage.setItem(STORAGE_KEYS.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
 }
@@ -643,11 +677,17 @@ export async function saveKeyWithPassword(keyPair: CryptoKeyPair, password: stri
 /**
  * Load keypair decrypted with user's password.
  */
-export async function loadKeyWithPassword(password: string): Promise<CryptoKeyPair | null> {
+export async function loadKeyWithPassword(password: string, pkHash?: string): Promise<CryptoKeyPair | null> {
+  // Try namespaced keys first, then legacy
+  const namespacedKeys = STORAGE_KEYS_FOR(pkHash);
+  let privateKeyEncrypted = localStorage.getItem(namespacedKeys.PRIVATE_KEY);
+  let publicKeyB64 = localStorage.getItem(namespacedKeys.PUBLIC_KEY);
+  // Fallback to legacy
+  if (!privateKeyEncrypted || !publicKeyB64) {
+    privateKeyEncrypted = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
+    publicKeyB64 = localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
+  }
   try {
-    const privateKeyEncrypted = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
-    const publicKeyB64 = localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
-
     if (!privateKeyEncrypted || !publicKeyB64) return null;
 
     const passphrase = `accord-key-wrap:${password}`;
@@ -679,8 +719,9 @@ export async function loadKeyWithPassword(password: string): Promise<CryptoKeyPa
 /**
  * Check if there's a stored keypair (public key in localStorage).
  */
-export function hasStoredKeyPair(): boolean {
-  return !!localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
+export function hasStoredKeyPair(pkHash?: string): boolean {
+  const keys = STORAGE_KEYS_FOR(pkHash);
+  return !!localStorage.getItem(keys.PUBLIC_KEY) || !!localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
 }
 
 /**

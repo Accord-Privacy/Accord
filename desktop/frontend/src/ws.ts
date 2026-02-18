@@ -420,7 +420,11 @@ export class AccordWebSocket {
 
   // Utility methods
   private generateId(): string {
-    return Math.random().toString(36).substr(2, 9);
+    return crypto.randomUUID?.() ?? 
+      'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
   }
 
   isSocketConnected(): boolean {
