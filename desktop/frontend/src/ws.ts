@@ -158,9 +158,9 @@ export class AccordWebSocket {
       return; // Already connecting
     }
 
-    // Pass token as query param — server requires it for WS upgrade.
-    // TODO: migrate to post-upgrade auth for production deployments.
-    const wsUrl = `${this.baseUrl}/ws?token=${encodeURIComponent(this.token)}`;
+    // Connect WITHOUT token in URL — authenticate post-upgrade via Authenticate message.
+    // This prevents token leakage in server/proxy access logs and browser history.
+    const wsUrl = `${this.baseUrl}/ws`;
     
     try {
       this.ws = new WebSocket(wsUrl);
@@ -176,6 +176,17 @@ export class AccordWebSocket {
     if (!this.ws) return;
 
     this.ws.onopen = () => {
+      // Send Authenticate message as the very first message after connection opens.
+      // Server requires this within 5 seconds or it will close the connection.
+      const authMsg = JSON.stringify({ Authenticate: { token: this.token } });
+      try {
+        this.ws!.send(authMsg);
+      } catch (error) {
+        console.error('Failed to send authentication message:', error);
+        this.emit('error', new Error('Failed to authenticate WebSocket'));
+        return;
+      }
+
       this.isConnected = true;
       this.reconnectAttempts = 0;
       this.reconnectDelay = 1000;

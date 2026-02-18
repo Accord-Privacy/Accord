@@ -2355,7 +2355,7 @@ function App() {
   // Check for existing session on mount
   useEffect(() => {
     const checkExistingSession = async () => {
-      const token = getToken();
+      const token = await getToken();
       const userId = localStorage.getItem('accord_user_id');
       
       if (token && userId && serverAvailable) {

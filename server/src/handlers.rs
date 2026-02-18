@@ -2683,44 +2683,87 @@ pub async fn ws_handler(
     headers: HeaderMap,
     State(state): State<SharedState>,
 ) -> Response {
-    use crate::state::BuildVerificationMode;
-    use accord_core::build_hash::BuildTrust;
-
-    let token = match params.get("token") {
-        Some(token) => token.clone(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Missing authentication token".into(),
-                    code: 401,
-                }),
-            )
-                .into_response()
-        }
-    };
-
-    let user_id = match state.validate_token(&token).await {
-        Some(uid) => uid,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Invalid or expired token".into(),
-                    code: 401,
-                }),
-            )
-                .into_response()
-        }
-    };
-
-    // Build hash verification
-    let bv = &state.build_verification;
+    // Extract optional build hash from headers (checked post-auth inside websocket_handler)
     let client_hash = headers
         .get("X-Build-Hash")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // Support legacy query-param token for backward compatibility, but prefer post-upgrade auth.
+    let legacy_token = params.get("token").cloned();
+
+    info!("WebSocket upgrade requested (post-upgrade auth)");
+    ws.on_upgrade(move |socket| {
+        websocket_handler_with_auth(socket, legacy_token, state, client_hash)
+    })
+}
+
+/// Post-upgrade WebSocket authentication wrapper.
+/// The client must send an `Authenticate` message within 5 seconds or the connection is closed.
+/// Also supports legacy query-param token for backward compatibility.
+async fn websocket_handler_with_auth(
+    socket: WebSocket,
+    legacy_token: Option<String>,
+    state: SharedState,
+    client_hash: Option<String>,
+) {
+    use crate::state::BuildVerificationMode;
+    use accord_core::build_hash::BuildTrust;
+
+    let (mut sender, mut receiver) = socket.split();
+
+    // Determine user_id: either from legacy query param or from post-upgrade Authenticate message
+    let user_id = if let Some(ref token) = legacy_token {
+        // Legacy path: token was in query params (backward compat)
+        tracing::warn!("Client using deprecated query-param token authentication");
+        match state.validate_token(token).await {
+            Some(uid) => uid,
+            None => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "code": "auth_failed",
+                    "message": "Invalid or expired token"
+                });
+                let _ = sender.send(Message::Text(err.to_string())).await;
+                let _ = sender.close().await;
+                return;
+            }
+        }
+    } else {
+        // Post-upgrade auth: wait for Authenticate message within 5 seconds
+        let auth_result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wait_for_auth_message(&mut receiver, &state),
+        )
+        .await;
+
+        match auth_result {
+            Ok(Ok(uid)) => uid,
+            Ok(Err(err_msg)) => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "code": "auth_failed",
+                    "message": err_msg
+                });
+                let _ = sender.send(Message::Text(err.to_string())).await;
+                let _ = sender.close().await;
+                return;
+            }
+            Err(_) => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "code": "auth_failed",
+                    "message": "Authentication timeout — must authenticate within 5 seconds"
+                });
+                let _ = sender.send(Message::Text(err.to_string())).await;
+                let _ = sender.close().await;
+                return;
+            }
+        }
+    };
+
+    // Build hash verification (moved from pre-upgrade to post-auth)
+    let bv = &state.build_verification;
     match bv.mode {
         BuildVerificationMode::Disabled => {}
         BuildVerificationMode::Warn => match &client_hash {
@@ -2734,62 +2777,105 @@ pub async fn ws_handler(
                 }
             }
         },
-        BuildVerificationMode::Enforce => {
-            match &client_hash {
-                None => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(ErrorResponse {
-                            error: "Missing X-Build-Hash header".into(),
-                            code: 400,
-                        }),
-                    )
-                        .into_response();
+        BuildVerificationMode::Enforce => match &client_hash {
+            None => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "code": "build_hash_required",
+                    "message": "Missing X-Build-Hash header"
+                });
+                let _ = sender.send(Message::Text(err.to_string())).await;
+                let _ = sender.close().await;
+                return;
+            }
+            Some(hash) => {
+                let trust = bv.verify_client_hash(hash);
+                if trust == BuildTrust::Revoked {
+                    let err = serde_json::json!({
+                        "type": "error",
+                        "code": "build_revoked",
+                        "message": "Build has been revoked"
+                    });
+                    let _ = sender.send(Message::Text(err.to_string())).await;
+                    let _ = sender.close().await;
+                    return;
                 }
-                Some(hash) => {
-                    let trust = bv.verify_client_hash(hash);
-                    if trust == BuildTrust::Revoked {
-                        return (
-                            StatusCode::FORBIDDEN,
-                            Json(ErrorResponse {
-                                error: "Build has been revoked".into(),
-                                code: 403,
-                            }),
-                        )
-                            .into_response();
-                    }
-                    // Unknown builds are allowed in enforce mode when no
-                    // known hashes are loaded (otherwise everything would fail).
-                    // When known hashes exist, unknown builds are rejected.
-                    if trust == BuildTrust::Unknown && !bv.known_hashes.is_empty() {
-                        return (
-                            StatusCode::FORBIDDEN,
-                            Json(ErrorResponse {
-                                error: "Unrecognized build hash".into(),
-                                code: 403,
-                            }),
-                        )
-                            .into_response();
-                    }
+                if trust == BuildTrust::Unknown && !bv.known_hashes.is_empty() {
+                    let err = serde_json::json!({
+                        "type": "error",
+                        "code": "build_unknown",
+                        "message": "Unrecognized build hash"
+                    });
+                    let _ = sender.send(Message::Text(err.to_string())).await;
+                    let _ = sender.close().await;
+                    return;
                 }
             }
-        }
+        },
     }
 
     // Relay-level build hash enforcement
     if let Err(msg) = state.check_relay_build_hash(client_hash.as_deref()).await {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: msg,
-                code: 403,
-            }),
-        )
-            .into_response();
+        let err = serde_json::json!({
+            "type": "error",
+            "code": "build_rejected",
+            "message": msg
+        });
+        let _ = sender.send(Message::Text(err.to_string())).await;
+        let _ = sender.close().await;
+        return;
     }
 
-    info!("WebSocket connection established for user: {}", user_id);
-    ws.on_upgrade(move |socket| websocket_handler(socket, user_id, state, client_hash))
+    info!("WebSocket authenticated for user: {}", user_id);
+
+    // Continue with the normal handler, passing the already-split halves
+    websocket_handler_inner(sender, receiver, user_id, state, client_hash).await;
+}
+
+/// Wait for an Authenticate message from the client.
+/// Returns the validated user_id or an error string.
+async fn wait_for_auth_message(
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
+    state: &SharedState,
+) -> Result<Uuid, String> {
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                // Try to parse as Authenticate message
+                #[derive(serde::Deserialize)]
+                struct AuthenticateMsg {
+                    token: String,
+                }
+                #[derive(serde::Deserialize)]
+                enum AuthEnvelope {
+                    Authenticate(AuthenticateMsg),
+                }
+
+                match serde_json::from_str::<AuthEnvelope>(&text) {
+                    Ok(AuthEnvelope::Authenticate(auth)) => {
+                        match state.validate_token(&auth.token).await {
+                            Some(uid) => return Ok(uid),
+                            None => return Err("Invalid or expired token".to_string()),
+                        }
+                    }
+                    Err(_) => {
+                        return Err("First message must be an Authenticate message".to_string());
+                    }
+                }
+            }
+            Ok(Message::Close(_)) => {
+                return Err("Connection closed before authentication".to_string());
+            }
+            Ok(_) => {
+                // Ignore ping/pong/binary during auth phase
+                continue;
+            }
+            Err(e) => {
+                return Err(format!("WebSocket error during authentication: {}", e));
+            }
+        }
+    }
+    Err("Connection closed before authentication".to_string())
 }
 
 /// Build info REST endpoint — returns the server's build identity.
@@ -2810,11 +2896,21 @@ async fn websocket_handler(
     state: SharedState,
     client_hash: Option<String>,
 ) {
+    let (sender, receiver) = socket.split();
+    websocket_handler_inner(sender, receiver, user_id, state, client_hash).await;
+}
+
+async fn websocket_handler_inner(
+    mut sender: futures_util::stream::SplitSink<WebSocket, Message>,
+    mut receiver: futures_util::stream::SplitStream<WebSocket>,
+    user_id: Uuid,
+    state: SharedState,
+    client_hash: Option<String>,
+) {
     // Store client build hash for per-Node allowlist checks
     if let Some(ref hash) = client_hash {
         state.set_client_build_hash(user_id, hash.clone()).await;
     }
-    let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = broadcast::channel::<String>(100);
 
     state.add_connection(user_id, tx.clone()).await;

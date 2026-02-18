@@ -33,6 +33,7 @@ export default defineConfig({
     outDir: "dist",
     chunkSizeWarningLimit: 600,
     rollupOptions: {
+      external: ['@tauri-apps/plugin-store'],
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom'],
