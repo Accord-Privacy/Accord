@@ -224,6 +224,7 @@ function App() {
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  const creatingNodeRef = useRef(false);
 
   // Scroll-to-bottom state
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -736,7 +737,17 @@ function App() {
     
     try {
       const rawMembers = await api.getNodeMembers(nodeId, appState.token);
-      const nodeMembers = Array.isArray(rawMembers) ? rawMembers : [];
+      const nodeMembers = (Array.isArray(rawMembers) ? rawMembers : []).map((m: any) => ({
+        ...m,
+        // Synthesize a `user` object from member/profile data so the UI can render members
+        user: m.user || {
+          id: m.user_id,
+          public_key_hash: m.public_key_hash || '',
+          public_key: '',
+          created_at: m.joined_at || 0,
+          display_name: m.profile?.display_name || undefined,
+        },
+      }));
       setMembers(nodeMembers);
       
       // Find current user's role in this node
@@ -1165,13 +1176,16 @@ function App() {
 
   const handleCreateNode = async () => {
     if (!appState.token || !newNodeName.trim()) return;
+    if (creatingNodeRef.current) return; // Prevent double-fire
+    creatingNodeRef.current = true;
     setCreatingNode(true);
     try {
       const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
       // Only create #general if the server didn't already create default channels
       try {
         const existingChannels = await api.getNodeChannels(newNode.id, appState.token);
-        if (!existingChannels || existingChannels.length === 0) {
+        const hasChannels = Array.isArray(existingChannels) && existingChannels.length > 0;
+        if (!hasChannels) {
           await api.createChannel(newNode.id, 'general', 'text', appState.token);
         }
       } catch (e) {
@@ -1192,6 +1206,7 @@ function App() {
       handleApiError(error);
     } finally {
       setCreatingNode(false);
+      creatingNodeRef.current = false;
     }
   };
 
@@ -2787,6 +2802,9 @@ function App() {
                     <span style={{ color: isVoiceChannel ? '#8e9297' : undefined }}>
                       {isVoiceChannel ? '🔊' : '#'} {channel.name}
                     </span>
+                    {isVoiceChannel && !isConnectedToVoice && (
+                      <span style={{ fontSize: '10px', color: '#8e9297', marginLeft: '4px' }}>Voice Channel</span>
+                    )}
                     {isConnectedToVoice && (
                       <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
                     )}

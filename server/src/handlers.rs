@@ -2264,10 +2264,29 @@ async fn handle_ws_message(
                 .await
                 .map_err(|e| format!("Failed to store message: {}", e))?;
 
+            // Look up sender's encrypted display name for this node
+            let sender_display_name_b64 =
+                if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
+                    if let Ok(Some(profile)) = state
+                        .db
+                        .get_node_user_profile(channel.node_id, sender_user_id)
+                        .await
+                    {
+                        profile
+                            .encrypted_display_name
+                            .map(|b| base64::engine::general_purpose::STANDARD.encode(&b))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
             let relay = serde_json::json!({
                 "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
                 "encrypted_data": encrypted_data, "message_id": message_id,
-                "timestamp": ws_message.timestamp, "reply_to": reply_to
+                "timestamp": ws_message.timestamp, "reply_to": reply_to,
+                "encrypted_display_name": sender_display_name_b64
             });
             state.send_to_channel(channel_id, relay.to_string()).await?;
         }

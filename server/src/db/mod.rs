@@ -1913,11 +1913,16 @@ impl Database {
             sqlx::query(
                 r#"
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
-                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash
+                       nup.encrypted_display_name as sender_encrypted_display_name,
+                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
+                       rnup.encrypted_display_name as replied_encrypted_display_name
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
+                JOIN channels c ON m.channel_id = c.id
+                LEFT JOIN node_user_profiles nup ON nup.user_id = m.sender_id AND nup.node_id = c.node_id
                 LEFT JOIN messages rm ON m.reply_to = rm.id
                 LEFT JOIN users ru ON rm.sender_id = ru.id
+                LEFT JOIN node_user_profiles rnup ON rnup.user_id = rm.sender_id AND rnup.node_id = c.node_id
                 WHERE m.channel_id = ? AND m.created_at < ?
                 ORDER BY m.created_at DESC
                 LIMIT ?
@@ -1930,11 +1935,16 @@ impl Database {
             sqlx::query(
                 r#"
                 SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
-                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash
+                       nup.encrypted_display_name as sender_encrypted_display_name,
+                       rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
+                       rnup.encrypted_display_name as replied_encrypted_display_name
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
+                JOIN channels c ON m.channel_id = c.id
+                LEFT JOIN node_user_profiles nup ON nup.user_id = m.sender_id AND nup.node_id = c.node_id
                 LEFT JOIN messages rm ON m.reply_to = rm.id
                 LEFT JOIN users ru ON rm.sender_id = ru.id
+                LEFT JOIN node_user_profiles rnup ON rnup.user_id = rm.sender_id AND rnup.node_id = c.node_id
                 WHERE m.channel_id = ?
                 ORDER BY m.created_at DESC
                 LIMIT ?
@@ -4020,6 +4030,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
     let channel_id = Uuid::parse_str(&row.get::<String, _>("channel_id"))?;
     let sender_id = Uuid::parse_str(&row.get::<String, _>("sender_id"))?;
     let sender_public_key_hash: String = row.get("public_key_hash");
+    let sender_encrypted_display_name: Option<Vec<u8>> = row.get("sender_encrypted_display_name");
     let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
     let created_at = row.get::<i64, _>("created_at") as u64;
     let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
@@ -4033,10 +4044,14 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
 
     let replied_message =
         if let Some(replied_id) = row.get::<Option<String>, _>("replied_message_id") {
+            let replied_encrypted_display_name: Option<Vec<u8>> =
+                row.get("replied_encrypted_display_name");
             Some(crate::models::RepliedMessage {
                 id: Uuid::parse_str(&replied_id)?,
                 sender_id: Uuid::parse_str(&row.get::<String, _>("replied_sender_id"))?,
                 sender_public_key_hash: row.get("replied_public_key_hash"),
+                encrypted_display_name: replied_encrypted_display_name
+                    .map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
                 encrypted_payload: base64::engine::general_purpose::STANDARD
                     .encode(row.get::<Vec<u8>, _>("replied_payload")),
                 created_at: row.get::<i64, _>("replied_created_at") as u64,
@@ -4050,6 +4065,8 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
         channel_id,
         sender_id,
         sender_public_key_hash,
+        encrypted_display_name: sender_encrypted_display_name
+            .map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
         encrypted_payload: base64::engine::general_purpose::STANDARD.encode(&encrypted_payload),
         created_at,
         edited_at,

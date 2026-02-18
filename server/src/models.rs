@@ -643,6 +643,9 @@ pub struct MessageMetadata {
     pub sender_id: Uuid,
     /// Sender's public_key_hash (hex). Display name comes from Node-level profile.
     pub sender_public_key_hash: String,
+    /// Sender's encrypted display name from their Node profile (base64-encoded, if set)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_display_name: Option<String>,
     pub encrypted_payload: String, // Base64 encoded encrypted content
     pub created_at: u64,
     pub edited_at: Option<u64>,
@@ -659,6 +662,9 @@ pub struct RepliedMessage {
     pub sender_id: Uuid,
     /// Sender's public_key_hash (hex). Display name comes from Node-level profile.
     pub sender_public_key_hash: String,
+    /// Sender's encrypted display name from their Node profile (base64-encoded, if set)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_display_name: Option<String>,
     pub encrypted_payload: String, // Base64 encoded encrypted content (snippet)
     pub created_at: u64,
 }
