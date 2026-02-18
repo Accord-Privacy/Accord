@@ -3062,6 +3062,105 @@ input, textarea, select, button {
   cursor: not-allowed;
 }
 
+/* Staged Files Preview */
+.staged-files-preview {
+  margin: 0 16px;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.staged-files-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.staged-files-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.staged-files-clear {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 2px;
+  transition: color var(--transition-fast);
+}
+
+.staged-files-clear:hover {
+  color: var(--text-primary);
+}
+
+.staged-files-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.staged-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  max-width: 220px;
+}
+
+.staged-file-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.staged-file-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.staged-file-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.staged-file-size {
+  font-size: 10px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.staged-file-remove {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  transition: color var(--transition-fast);
+}
+
+.staged-file-remove:hover {
+  color: var(--red);
+}
+
 /* File List Toggle */
 .file-list-toggle-btn {
   background: none;

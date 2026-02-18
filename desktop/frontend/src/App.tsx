@@ -22,7 +22,7 @@ import {
   setActiveIdentity,
 } from "./crypto";
 import { storeToken, getToken, clearToken } from "./tokenStorage";
-import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./FileManager";
+import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview, StagedFile } from "./FileManager";
 import { EmojiPickerButton } from "./EmojiPicker";
 const VoiceChat = React.lazy(() => import("./VoiceChat").then(m => ({ default: m.VoiceChat })));
 import { SearchOverlay } from "./SearchOverlay";
@@ -323,6 +323,7 @@ function App() {
 
   // Message input emoji picker state
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
   const creatingNodeRef = useRef(false);
@@ -1199,6 +1200,24 @@ function App() {
     }
   }, [appState.token, serverAvailable, isLoadingOlderMessages, hasMoreMessages, oldestMessageCursor]);
 
+  // Handle staging files for preview before upload
+  const handleFilesStaged = useCallback((files: StagedFile[]) => {
+    setStagedFiles(prev => [...prev, ...files]);
+  }, []);
+
+  const handleRemoveStagedFile = useCallback((index: number) => {
+    setStagedFiles(prev => {
+      const removed = prev[index];
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
+  const handleClearStagedFiles = useCallback(() => {
+    stagedFiles.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+    setStagedFiles([]);
+  }, [stagedFiles]);
+
   // Handle inserting emoji at cursor position
   const handleInsertEmoji = useCallback((emoji: string) => {
     const textarea = messageInputRef.current;
@@ -2051,6 +2070,40 @@ function App() {
 
   // Handle sending messages
   const handleSendMessage = async () => {
+    if (!message.trim() && stagedFiles.length === 0) return;
+
+    // Upload any staged files first
+    const channelForUpload = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
+    if (stagedFiles.length > 0 && channelForUpload && appState.token) {
+      for (const sf of stagedFiles) {
+        try {
+          let fileToUpload = sf.file;
+          let encryptedFilename: string | undefined;
+
+          if (encryptionEnabled && keyPair) {
+            try {
+              const channelKey = await getChannelKey(keyPair.privateKey, channelForUpload);
+              const { encryptFile: ef, encryptFilename: efn } = await import('./crypto');
+              const fileBuffer = await sf.file.arrayBuffer();
+              const encryptedBuffer = await ef(channelKey, fileBuffer);
+              encryptedFilename = await efn(channelKey, sf.file.name);
+              fileToUpload = new File([encryptedBuffer], 'encrypted_file', { type: 'application/octet-stream' });
+            } catch (error) {
+              console.warn('Failed to encrypt file, uploading plaintext:', error);
+            }
+          }
+
+          await api.uploadFile(channelForUpload, fileToUpload, appState.token, encryptedFilename);
+        } catch (error) {
+          console.error(`Failed to upload ${sf.name}:`, error);
+        }
+      }
+      // Clean up previews
+      stagedFiles.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+      setStagedFiles([]);
+    }
+
+    // If only files were staged with no message text, we're done
     if (!message.trim()) return;
 
     // Determine which channel to use - DM channel takes priority
@@ -3505,6 +3558,7 @@ function App() {
         token={appState.token || ''}
         keyPair={keyPair}
         encryptionEnabled={encryptionEnabled}
+        onFilesStaged={handleFilesStaged}
       >
         <div className="chat-header">
           <div className="chat-header-left">
@@ -3910,6 +3964,12 @@ function App() {
             <span className="typing-text">{formatTypingUsers(selectedChannelId)}</span>
           </div>
         )}
+        {/* Staged files preview */}
+        <StagedFilesPreview
+          files={stagedFiles}
+          onRemove={handleRemoveStagedFile}
+          onClear={handleClearStagedFiles}
+        />
         <div className="message-input-container">
           {/* Reply preview bar */}
           {replyingTo && (
@@ -3930,6 +3990,7 @@ function App() {
               token={appState.token || ''}
               keyPair={keyPair}
               encryptionEnabled={encryptionEnabled}
+              onFilesStaged={handleFilesStaged}
             />
           )}
           <textarea

@@ -9,6 +9,12 @@ import {
   decryptFilename 
 } from './crypto';
 
+export interface StagedFile {
+  file: File;
+  previewUrl?: string; // blob URL for image previews
+  name: string;
+}
+
 interface FileManagerProps {
   channelId: string;
   token: string;
@@ -23,11 +29,16 @@ interface FileUploadState {
 }
 
 // =================== File Upload Button ===================
-export const FileUploadButton: React.FC<FileManagerProps> = ({
+interface FileUploadButtonProps extends FileManagerProps {
+  onFilesStaged?: (files: StagedFile[]) => void;
+}
+
+export const FileUploadButton: React.FC<FileUploadButtonProps> = ({
   channelId,
   token,
   keyPair,
   encryptionEnabled,
+  onFilesStaged,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<FileUploadState>({
@@ -89,9 +100,25 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
   }, [channelId, token, keyPair, encryptionEnabled]);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    await uploadFile(file);
+    const selectedFiles = event.target.files;
+    if (!selectedFiles || selectedFiles.length === 0) return;
+
+    if (onFilesStaged) {
+      // Stage files for preview before sending
+      const staged: StagedFile[] = [];
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        const previewUrl = isImageFile(file.name) ? URL.createObjectURL(file) : undefined;
+        staged.push({ file, previewUrl, name: file.name });
+      }
+      onFilesStaged(staged);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } else {
+      // Direct upload (legacy behavior)
+      for (let i = 0; i < selectedFiles.length; i++) {
+        await uploadFile(selectedFiles[i]);
+      }
+    }
   };
 
   return (
@@ -99,6 +126,7 @@ export const FileUploadButton: React.FC<FileManagerProps> = ({
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         onChange={handleFileChange}
         style={{ display: 'none' }}
         disabled={uploadState.isUploading}
@@ -140,6 +168,7 @@ interface DropZoneProps {
   keyPair: CryptoKeyPair | null;
   encryptionEnabled: boolean;
   children: React.ReactNode;
+  onFilesStaged?: (files: StagedFile[]) => void;
 }
 
 export const FileDropZone: React.FC<DropZoneProps> = ({
@@ -148,6 +177,7 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
   keyPair,
   encryptionEnabled,
   children,
+  onFilesStaged,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadState, setUploadState] = useState<FileUploadState>({
@@ -180,6 +210,39 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
     e.stopPropagation();
   }, []);
 
+  const uploadSingleFile = useCallback(async (file: File) => {
+    let fileToUpload = file;
+    let encryptedFilename: string | undefined;
+
+    if (encryptionEnabled && keyPair) {
+      try {
+        const channelKey = await getChannelKey(keyPair.privateKey, channelId);
+        const fileBuffer = await file.arrayBuffer();
+        const encryptedBuffer = await encryptFile(channelKey, fileBuffer);
+        encryptedFilename = await encryptFilename(channelKey, file.name);
+        fileToUpload = new File([encryptedBuffer], 'encrypted_file', {
+          type: 'application/octet-stream'
+        });
+      } catch (error) {
+        console.warn('Failed to encrypt file, uploading plaintext:', error);
+      }
+    }
+
+    await api.uploadFile(
+      channelId,
+      fileToUpload,
+      token,
+      encryptedFilename,
+      (loaded, total) => {
+        const percentage = Math.round((loaded / total) * 100);
+        setUploadState(prev => ({
+          ...prev,
+          progress: { loaded, total, percentage }
+        }));
+      }
+    );
+  }, [channelId, token, keyPair, encryptionEnabled]);
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -189,52 +252,36 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-    const file = files[0]; // Upload first file
-    setUploadState({
-      isUploading: true,
-      progress: { loaded: 0, total: file.size, percentage: 0 },
-      fileName: file.name,
-    });
-
-    try {
-      let fileToUpload = file;
-      let encryptedFilename: string | undefined;
-
-      if (encryptionEnabled && keyPair) {
-        try {
-          const channelKey = await getChannelKey(keyPair.privateKey, channelId);
-          const fileBuffer = await file.arrayBuffer();
-          const encryptedBuffer = await encryptFile(channelKey, fileBuffer);
-          encryptedFilename = await encryptFilename(channelKey, file.name);
-          fileToUpload = new File([encryptedBuffer], 'encrypted_file', {
-            type: 'application/octet-stream'
-          });
-        } catch (error) {
-          console.warn('Failed to encrypt file, uploading plaintext:', error);
-        }
+    if (onFilesStaged) {
+      // Stage files for preview
+      const staged: StagedFile[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const previewUrl = isImageFile(file.name) ? URL.createObjectURL(file) : undefined;
+        staged.push({ file, previewUrl, name: file.name });
       }
-
-      await api.uploadFile(
-        channelId,
-        fileToUpload,
-        token,
-        encryptedFilename,
-        (loaded, total) => {
-          const percentage = Math.round((loaded / total) * 100);
-          setUploadState(prev => ({
-            ...prev,
-            progress: { loaded, total, percentage }
-          }));
-        }
-      );
-
-      setUploadState({ isUploading: false, progress: null, fileName: '' });
-    } catch (error) {
-      console.error('File upload failed:', error);
-      alert(`File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setUploadState({ isUploading: false, progress: null, fileName: '' });
+      onFilesStaged(staged);
+      return;
     }
-  }, [channelId, token, keyPair, encryptionEnabled]);
+
+    // Direct upload all files sequentially (legacy behavior)
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setUploadState({
+        isUploading: true,
+        progress: { loaded: 0, total: file.size, percentage: 0 },
+        fileName: `${file.name}${files.length > 1 ? ` (${i + 1}/${files.length})` : ''}`,
+      });
+
+      try {
+        await uploadSingleFile(file);
+      } catch (error) {
+        console.error('File upload failed:', error);
+        alert(`File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    setUploadState({ isUploading: false, progress: null, fileName: '' });
+  }, [onFilesStaged, uploadSingleFile]);
 
   return (
     <div
@@ -249,7 +296,7 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
         <div className="file-drop-overlay">
           <div className="file-drop-overlay-content">
             <span className="file-drop-icon">📁</span>
-            <span>Drop file to upload</span>
+            <span>Drop files to upload</span>
           </div>
         </div>
       )}
@@ -269,6 +316,44 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// =================== Staged Files Preview ===================
+interface StagedFilesPreviewProps {
+  files: StagedFile[];
+  onRemove: (index: number) => void;
+  onClear: () => void;
+}
+
+export const StagedFilesPreview: React.FC<StagedFilesPreviewProps> = ({
+  files,
+  onRemove,
+  onClear,
+}) => {
+  if (files.length === 0) return null;
+
+  return (
+    <div className="staged-files-preview">
+      <div className="staged-files-header">
+        <span className="staged-files-count">{files.length} file{files.length > 1 ? 's' : ''} attached</span>
+        <button className="staged-files-clear" onClick={onClear} title="Remove all">✕</button>
+      </div>
+      <div className="staged-files-list">
+        {files.map((sf, index) => (
+          <div key={index} className="staged-file-item">
+            {sf.previewUrl ? (
+              <img src={sf.previewUrl} alt={sf.name} className="staged-file-thumb" />
+            ) : (
+              <span className="staged-file-icon">{getFileTypeIcon(sf.name)}</span>
+            )}
+            <span className="staged-file-name" title={sf.name}>{sf.name}</span>
+            <span className="staged-file-size">{formatFileSize(sf.file.size)}</span>
+            <button className="staged-file-remove" onClick={() => onRemove(index)} title="Remove">✕</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
