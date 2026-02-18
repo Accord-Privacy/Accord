@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { notificationManager, NotificationPreferences } from './notifications';
 import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
+import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator } from './buildHash';
+import QRCode from 'qrcode';
+import jsQR from 'jsqr';
 
 // Types for settings
 interface AccountSettings {
@@ -336,6 +339,16 @@ export const Settings: React.FC<SettingsProps> = ({
   const [importLoading, setImportLoading] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
 
+  // QR code state
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
+  const [showScanModal, setShowScanModal] = useState(false);
+  const [scanError, setScanError] = useState<string>('');
+  const scanVideoRef = useRef<HTMLVideoElement>(null);
+  const scanCanvasRef = useRef<HTMLCanvasElement>(null);
+  const scanStreamRef = useRef<MediaStream | null>(null);
+  const scanAnimRef = useRef<number>(0);
+
   // Advanced: export identity key file
   const handleExportIdentity = () => {
     const pkHash = currentUser?.public_key_hash || '';
@@ -438,6 +451,87 @@ export const Settings: React.FC<SettingsProps> = ({
       setImportLoading(false);
     }
   };
+
+  // QR code: show identity as QR
+  const handleShowQrCode = async () => {
+    const pkHash = currentUser?.public_key_hash || '';
+    const hash16 = pkHash.substring(0, 16);
+    if (!hash16) { alert('No identity found.'); return; }
+    const encPrivKey = localStorage.getItem(`accord_private_key_${hash16}`) || localStorage.getItem('accord_private_key');
+    const pubKey = localStorage.getItem(`accord_public_key_${hash16}`) || localStorage.getItem('accord_public_key');
+    if (!encPrivKey || !pubKey) { alert('Could not find keys in storage.'); return; }
+    const payload = JSON.stringify({ version: 1, public_key: pubKey, encrypted_private_key: encPrivKey, public_key_hash: hash16 });
+    try {
+      const url = await QRCode.toDataURL(payload, { errorCorrectionLevel: 'L', width: 300, margin: 2 });
+      setQrDataUrl(url);
+      setShowQrModal(true);
+    } catch (err) {
+      alert('Failed to generate QR code — identity data may be too large.');
+    }
+  };
+
+  // QR code: scan
+  const stopScan = useCallback(() => {
+    if (scanAnimRef.current) { cancelAnimationFrame(scanAnimRef.current); scanAnimRef.current = 0; }
+    if (scanStreamRef.current) { scanStreamRef.current.getTracks().forEach(t => t.stop()); scanStreamRef.current = null; }
+  }, []);
+
+  const handleScanQrCode = async () => {
+    setScanError('');
+    setShowScanModal(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      scanStreamRef.current = stream;
+      const video = scanVideoRef.current;
+      if (!video) { stopScan(); return; }
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true');
+      await video.play();
+      const canvas = scanCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+      const tick = () => {
+        if (!scanStreamRef.current) return;
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          if (code) {
+            try {
+              const data = JSON.parse(code.data);
+              if (!data.version || !data.public_key || !data.encrypted_private_key || !data.public_key_hash) {
+                setScanError('Invalid QR code: missing required identity fields.');
+              } else if (data.version !== 1) {
+                setScanError(`Unsupported identity version: ${data.version}`);
+              } else {
+                // Valid — trigger import flow
+                stopScan();
+                setShowScanModal(false);
+                setImportPasswordPrompt({ hash16: data.public_key_hash, encPrivKey: data.encrypted_private_key, pubKeyB64: data.public_key });
+                return;
+              }
+            } catch {
+              setScanError('QR code does not contain valid identity JSON.');
+            }
+          }
+        }
+        scanAnimRef.current = requestAnimationFrame(tick);
+      };
+      scanAnimRef.current = requestAnimationFrame(tick);
+    } catch (err: any) {
+      setScanError('Camera access denied. Please use file import instead.');
+    }
+  };
+
+  // Cleanup scan on modal close
+  const closeScanModal = useCallback(() => {
+    stopScan();
+    setShowScanModal(false);
+    setScanError('');
+  }, [stopScan]);
 
   // Advanced: clear local data
   const handleClearLocalData = () => {
@@ -1154,12 +1248,18 @@ export const Settings: React.FC<SettingsProps> = ({
 
                 <div className="settings-group">
                   <label className="settings-label">Identity Key Management</label>
-                  <div className="test-buttons">
+                  <div className="test-buttons" style={{ flexWrap: 'wrap' }}>
                     <button className="test-button" onClick={handleExportIdentity}>
                       📤 Export Identity
                     </button>
+                    <button className="test-button" onClick={handleShowQrCode}>
+                      📱 Show QR Code
+                    </button>
                     <button className="test-button" onClick={() => importFileRef.current?.click()}>
                       📥 Import Identity
+                    </button>
+                    <button className="test-button" onClick={handleScanQrCode}>
+                      📷 Scan QR Code
                     </button>
                     <input
                       ref={importFileRef}
@@ -1276,7 +1376,15 @@ export const Settings: React.FC<SettingsProps> = ({
             )}
 
             {/* =================== ABOUT =================== */}
-            {activeTab === 'about' && (
+            {activeTab === 'about' && (() => {
+              const clientTrust = verifyBuildHash(CLIENT_BUILD_HASH);
+              const serverTrust = serverInfo?.buildHash ? verifyBuildHash(serverInfo.buildHash) : null;
+              const combinedTrust = serverInfo?.buildHash
+                ? getCombinedTrust(CLIENT_BUILD_HASH, serverInfo.buildHash)
+                : clientTrust;
+              const indicator = getTrustIndicator(combinedTrust);
+
+              return (
               <div className="settings-section">
                 <h3>About Accord</h3>
                 
@@ -1288,7 +1396,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   
                   <div className="about-info">
                     <div className="info-row">
-                      <strong>Version:</strong> 0.1.0-beta
+                      <strong>Version:</strong> {ACCORD_VERSION}
                     </div>
                     <div className="info-row">
                       <strong>Protocol:</strong> Accord Protocol v1
@@ -1296,8 +1404,59 @@ export const Settings: React.FC<SettingsProps> = ({
                     <div className="info-row">
                       <strong>Platform:</strong> Desktop (Tauri + React)
                     </div>
-                    <div className="info-row">
-                      <strong>Build:</strong> Development
+                  </div>
+
+                  {/* Build Hash Verification */}
+                  <div className="about-build-hashes" style={{ margin: '16px 0', padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                    <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>Build Verification</h4>
+                    
+                    {/* Trust indicator */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', padding: '8px 12px', borderRadius: '6px', background: `${indicator.color}15`, border: `1px solid ${indicator.color}40` }}>
+                      <span style={{ fontSize: '18px' }}>{indicator.emoji}</span>
+                      <span style={{ fontWeight: 600, color: indicator.color }}>{indicator.label}</span>
+                    </div>
+
+                    <div className="info-row" style={{ marginBottom: '6px' }}>
+                      <strong>Client Build:</strong>{' '}
+                      <code
+                        style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '3px' }}
+                        title={`Full hash: ${CLIENT_BUILD_HASH}\nClick to copy`}
+                        onClick={() => navigator.clipboard.writeText(CLIENT_BUILD_HASH)}
+                      >
+                        {shortHash(CLIENT_BUILD_HASH)}
+                      </code>
+                      <span style={{ marginLeft: '6px', fontSize: '11px', color: getTrustIndicator(clientTrust).color }}>
+                        {getTrustIndicator(clientTrust).emoji} {getTrustIndicator(clientTrust).label}
+                      </span>
+                    </div>
+
+                    <div className="info-row" style={{ marginBottom: '6px' }}>
+                      <strong>Server Build:</strong>{' '}
+                      {serverInfo?.buildHash ? (
+                        <>
+                          <code
+                            style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '3px' }}
+                            title={`Full hash: ${serverInfo.buildHash}\nClick to copy`}
+                            onClick={() => navigator.clipboard.writeText(serverInfo.buildHash)}
+                          >
+                            {shortHash(serverInfo.buildHash)}
+                          </code>
+                          {serverTrust && (
+                            <span style={{ marginLeft: '6px', fontSize: '11px', color: getTrustIndicator(serverTrust).color }}>
+                              {getTrustIndicator(serverTrust).emoji} {getTrustIndicator(serverTrust).label}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                          {serverInfo?.isConnected ? 'Not reported' : 'Not connected'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                      Build hashes verify that client and server code hasn't been tampered with.
+                      Official releases are signed and verified against a known hash registry.
                     </div>
                   </div>
 
@@ -1309,13 +1468,13 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
 
                   <div className="about-links">
-                    <a href="https://github.com/accord-chat/accord" target="_blank" rel="noopener noreferrer">
+                    <a href="https://github.com/nicholasgasior/accord" target="_blank" rel="noopener noreferrer">
                       📖 Source Code on GitHub
                     </a>
-                    <a href="https://github.com/accord-chat/accord/issues" target="_blank" rel="noopener noreferrer">
+                    <a href="https://github.com/nicholasgasior/accord/issues" target="_blank" rel="noopener noreferrer">
                       🐛 Report a Bug
                     </a>
-                    <a href="https://github.com/accord-chat/accord/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
+                    <a href="https://github.com/nicholasgasior/accord/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
                       📄 License (MIT)
                     </a>
                   </div>
@@ -1326,10 +1485,49 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       </div>
+      {/* QR Code Show Modal */}
+      {showQrModal && (
+        <div className="settings-overlay" style={{ zIndex: 10001 }} onClick={() => setShowQrModal(false)}>
+          <div style={{ background: 'var(--bg-secondary, #2f3136)', borderRadius: 12, padding: 24, maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 12px', color: 'var(--text-primary)' }}>Identity QR Code</h3>
+            <img src={qrDataUrl} alt="Identity QR Code" style={{ width: 280, height: 280, borderRadius: 8, background: '#fff', padding: 8 }} />
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '12px 0 4px' }}>
+              Scan this QR code on your other device to sync your identity.
+            </p>
+            <p style={{ color: '#f0a030', fontSize: 12, margin: '4px 0 12px' }}>
+              ⚠️ This QR code contains your encrypted identity. Only share with your own devices.
+            </p>
+            <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px' }} onClick={() => setShowQrModal(false)}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Scan Modal */}
+      {showScanModal && (
+        <div className="settings-overlay" style={{ zIndex: 10001 }} onClick={closeScanModal}>
+          <div style={{ background: 'var(--bg-secondary, #2f3136)', borderRadius: 12, padding: 24, maxWidth: 400, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 12px', color: 'var(--text-primary)' }}>Scan Identity QR Code</h3>
+            {scanError ? (
+              <div>
+                <p style={{ color: '#f44', fontSize: 14, margin: '16px 0' }}>{scanError}</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>You can use file import as an alternative.</p>
+              </div>
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <video ref={scanVideoRef} style={{ width: '100%', maxWidth: 340, borderRadius: 8, background: '#000' }} muted playsInline />
+                <canvas ref={scanCanvasRef} style={{ display: 'none' }} />
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>Point your camera at an Accord identity QR code.</p>
+              </div>
+            )}
+            <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px', marginTop: 12 }} onClick={closeScanModal}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

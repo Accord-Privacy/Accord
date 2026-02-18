@@ -30,6 +30,7 @@ import { NodeSettings } from "./NodeSettings";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import { NotificationSettings } from "./NotificationSettings";
 import { Settings } from "./Settings";
+import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
