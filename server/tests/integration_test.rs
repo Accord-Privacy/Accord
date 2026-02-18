@@ -331,6 +331,14 @@ async fn test_websocket_connection_with_valid_token() {
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
     });
 
+    // Consume the server hello message first
+    let hello = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+    assert!(hello.is_ok(), "Should receive hello message");
+    if let Some(Ok(WsMessage::Text(text))) = hello.unwrap() {
+        let data: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(data["type"], "hello");
+    }
+
     sink.send(WsMessage::Text(ping_message.to_string()))
         .await
         .unwrap();
@@ -460,6 +468,10 @@ async fn test_channel_join_leave_and_messaging() {
 
     let (mut sink1, mut stream1) = ws_stream1.split();
     let (mut sink2, mut stream2) = ws_stream2.split();
+
+    // Consume hello messages from both connections
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream2.next()).await;
 
     // Create a Node via WebSocket (user1 creates it)
     let create_node_msg = json!({

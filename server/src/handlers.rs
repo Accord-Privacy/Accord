@@ -1863,8 +1863,12 @@ pub async fn get_prekey_messages_handler(
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     State(state): State<SharedState>,
 ) -> Response {
+    use crate::state::BuildVerificationMode;
+    use accord_core::build_hash::BuildTrust;
+
     let token = match params.get("token") {
         Some(token) => token.clone(),
         None => {
@@ -1893,8 +1897,82 @@ pub async fn ws_handler(
         }
     };
 
+    // Build hash verification
+    let bv = &state.build_verification;
+    let client_hash = headers
+        .get("X-Build-Hash")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    match bv.mode {
+        BuildVerificationMode::Disabled => {}
+        BuildVerificationMode::Warn => match &client_hash {
+            None => {
+                tracing::warn!("Client {} connected without build hash", user_id);
+            }
+            Some(hash) => {
+                let trust = bv.verify_client_hash(hash);
+                if trust != BuildTrust::Verified {
+                    tracing::warn!("Client {} build hash {:?}: {}", user_id, trust, hash);
+                }
+            }
+        },
+        BuildVerificationMode::Enforce => {
+            match &client_hash {
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: "Missing X-Build-Hash header".into(),
+                            code: 400,
+                        }),
+                    )
+                        .into_response();
+                }
+                Some(hash) => {
+                    let trust = bv.verify_client_hash(hash);
+                    if trust == BuildTrust::Revoked {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(ErrorResponse {
+                                error: "Build has been revoked".into(),
+                                code: 403,
+                            }),
+                        )
+                            .into_response();
+                    }
+                    // Unknown builds are allowed in enforce mode when no
+                    // known hashes are loaded (otherwise everything would fail).
+                    // When known hashes exist, unknown builds are rejected.
+                    if trust == BuildTrust::Unknown && !bv.known_hashes.is_empty() {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(ErrorResponse {
+                                error: "Unrecognized build hash".into(),
+                                code: 403,
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+    }
+
     info!("WebSocket connection established for user: {}", user_id);
     ws.on_upgrade(move |socket| websocket_handler(socket, user_id, state))
+}
+
+/// Build info REST endpoint — returns the server's build identity.
+pub async fn build_info_handler(State(state): State<SharedState>) -> Json<serde_json::Value> {
+    let bi = &state.build_verification.server_build_info;
+    Json(serde_json::json!({
+        "commit_hash": bi.commit_hash,
+        "version": bi.version,
+        "build_hash": bi.build_hash,
+        "build_timestamp": bi.build_timestamp,
+        "target_triple": bi.target_triple,
+    }))
 }
 
 async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState) {
@@ -1902,6 +1980,18 @@ async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState)
     let (tx, mut rx) = broadcast::channel::<String>(100);
 
     state.add_connection(user_id, tx.clone()).await;
+
+    // Send welcome message with server build info for mutual verification
+    {
+        let bi = &state.build_verification.server_build_info;
+        let welcome = serde_json::json!({
+            "type": "hello",
+            "server_version": bi.version,
+            "server_build_hash": bi.build_hash,
+            "protocol_version": accord_core::PROTOCOL_VERSION,
+        });
+        let _ = sender.send(Message::Text(welcome.to_string())).await;
+    }
 
     // Set user online when they connect
     if let Err(err) = state.set_user_online(user_id).await {

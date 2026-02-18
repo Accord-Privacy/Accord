@@ -6,15 +6,88 @@ use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
 use crate::permissions::{has_permission, Permission};
 use crate::rate_limit::RateLimiter;
+use accord_core::build_hash::{BuildInfo, BuildTrust, KnownBuild};
 use anyhow::Result;
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
+use tracing::{info, warn};
 use uuid::Uuid;
+
+/// Build verification mode for client connections.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildVerificationMode {
+    /// Accept any client regardless of build hash.
+    #[default]
+    Disabled,
+    /// Log unverified/revoked clients but allow connection.
+    Warn,
+    /// Reject unverified or revoked builds.
+    Enforce,
+}
+
+/// Holds server build verification state.
+#[derive(Debug, Clone)]
+pub struct BuildVerification {
+    /// The server's own build info.
+    pub server_build_info: BuildInfo,
+    /// Optional list of known client build hashes.
+    pub known_hashes: Vec<KnownBuild>,
+    /// Verification mode.
+    pub mode: BuildVerificationMode,
+}
+
+impl BuildVerification {
+    /// Create a new `BuildVerification`, loading known hashes from `hashes.json` if present.
+    pub fn new(mode: BuildVerificationMode) -> Self {
+        let server_build_info = BuildInfo::current();
+        let known_hashes = Self::load_known_hashes();
+        info!(
+            "Build verification: mode={:?}, server_hash={}, known_hashes={}",
+            mode,
+            server_build_info.build_hash,
+            known_hashes.len()
+        );
+        Self {
+            server_build_info,
+            known_hashes,
+            mode,
+        }
+    }
+
+    fn load_known_hashes() -> Vec<KnownBuild> {
+        match std::fs::read_to_string("hashes.json") {
+            Ok(contents) => match accord_core::build_hash::parse_hashes_json(&contents) {
+                Ok(hashes) => {
+                    info!(
+                        "Loaded {} known build hashes from hashes.json",
+                        hashes.len()
+                    );
+                    hashes
+                }
+                Err(e) => {
+                    warn!("Failed to parse hashes.json: {}", e);
+                    Vec::new()
+                }
+            },
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Verify a client build hash. Returns the trust level.
+    pub fn verify_client_hash(&self, hash: &str) -> BuildTrust {
+        if self.known_hashes.is_empty() {
+            return BuildTrust::Unknown;
+        }
+        accord_core::build_hash::verify_build_hash(hash, &self.known_hashes)
+    }
+}
 
 /// Application state shared across handlers
 pub struct AppState {
@@ -34,6 +107,8 @@ pub struct AppState {
     pub node_creation_policy: NodeCreationPolicy,
     /// Rate limiter
     pub rate_limiter: RateLimiter,
+    /// Build hash verification
+    pub build_verification: BuildVerification,
 }
 
 impl std::fmt::Debug for AppState {
@@ -62,6 +137,7 @@ impl AppState {
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
             rate_limiter: RateLimiter::new(),
+            build_verification: BuildVerification::new(BuildVerificationMode::default()),
         })
     }
 
