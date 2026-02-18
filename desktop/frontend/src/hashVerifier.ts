@@ -8,7 +8,17 @@ const CACHE_KEY = 'accord_known_hashes';
 const CACHE_TS_KEY = 'accord_known_hashes_ts';
 const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
+// Ed25519 release signing public key (base64-encoded, 32 bytes).
+// Replace with the real key once generated via `accord generate-signing-key`.
+export const RELEASE_SIGNING_PUBLIC_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+
 export type FetchStatus = 'ok' | 'pending' | 'error';
+
+/** A KnownBuild entry with signature fields from signed HASHES.json */
+interface SignedKnownBuild extends KnownBuild {
+  signature?: string;
+  signature_timestamp?: string;
+}
 
 let cachedHashes: KnownBuild[] | null = null;
 let fetchStatus: FetchStatus = 'pending';
@@ -49,14 +59,78 @@ function saveToCache(hashes: KnownBuild[]) {
   } catch (_) { /* ignore */ }
 }
 
-/** Fetch hash list from GitHub */
+/**
+ * Verify an Ed25519 signature using the Web Crypto API.
+ * Returns true if valid, false otherwise.
+ */
+async function verifyEd25519Signature(
+  publicKeyBase64: string,
+  message: Uint8Array,
+  signatureBase64: string,
+): Promise<boolean> {
+  try {
+    const pubKeyBytes = Uint8Array.from(atob(publicKeyBase64), c => c.charCodeAt(0));
+    const sigBytes = Uint8Array.from(atob(signatureBase64), c => c.charCodeAt(0));
+    if (pubKeyBytes.length !== 32 || sigBytes.length !== 64) return false;
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      pubKeyBytes,
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    );
+    return await crypto.subtle.verify('Ed25519', cryptoKey, sigBytes.buffer as ArrayBuffer, message.buffer as ArrayBuffer);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Build the canonical message for signature verification (must match Rust side).
+ * Uses SHA-256 of "accord-release-v1:<hash>:<version>:<timestamp>".
+ */
+async function buildCanonicalMessage(
+  buildHash: string,
+  version: string,
+  timestamp: string,
+): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`accord-release-v1:${buildHash}:${version}:${timestamp}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return new Uint8Array(hashBuffer);
+}
+
+/**
+ * Verify a single signed build entry. Returns true if signature is valid.
+ */
+async function verifySignedEntry(entry: SignedKnownBuild): Promise<boolean> {
+  if (!entry.signature || !entry.signature_timestamp) return false;
+  const message = await buildCanonicalMessage(entry.hash, entry.version, entry.signature_timestamp);
+  return verifyEd25519Signature(RELEASE_SIGNING_PUBLIC_KEY, message, entry.signature);
+}
+
+/** Fetch hash list from GitHub, verifying signatures */
 async function fetchHashes(): Promise<KnownBuild[] | null> {
   try {
     const resp = await fetch(HASHES_URL, { cache: 'no-cache' });
     if (!resp.ok) return null;
-    const data: KnownBuild[] = await resp.json();
+    const data: SignedKnownBuild[] = await resp.json();
     if (!Array.isArray(data)) return null;
-    return data;
+
+    // If the public key is the placeholder, skip verification (dev mode)
+    if (RELEASE_SIGNING_PUBLIC_KEY === 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=') {
+      return data;
+    }
+
+    // Only trust entries with valid signatures
+    const verified: KnownBuild[] = [];
+    for (const entry of data) {
+      if (await verifySignedEntry(entry)) {
+        verified.push(entry);
+      }
+    }
+    return verified;
   } catch (_) {
     return null;
   }

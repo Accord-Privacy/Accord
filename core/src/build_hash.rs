@@ -64,6 +64,12 @@ pub struct KnownBuild {
     pub platform: String,
     pub hash: String,
     pub revoked: bool,
+    /// Base64-encoded Ed25519 signature (optional, for signed releases).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Timestamp used in the signature (optional, for signed releases).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_timestamp: Option<String>,
 }
 
 /// A signed hash registry.
@@ -168,6 +174,8 @@ mod tests {
             platform: "linux".into(),
             hash: "abc123".into(),
             revoked: false,
+            signature: None,
+            signature_timestamp: None,
         }];
         assert_eq!(verify_build_hash("abc123", &known), BuildTrust::Verified);
     }
@@ -179,6 +187,8 @@ mod tests {
             platform: "linux".into(),
             hash: "abc123".into(),
             revoked: false,
+            signature: None,
+            signature_timestamp: None,
         }];
         assert_eq!(verify_build_hash("xyz789", &known), BuildTrust::Unknown);
     }
@@ -190,6 +200,8 @@ mod tests {
             platform: "linux".into(),
             hash: "abc123".into(),
             revoked: true,
+            signature: None,
+            signature_timestamp: None,
         }];
         assert_eq!(verify_build_hash("abc123", &known), BuildTrust::Revoked);
     }
@@ -212,6 +224,8 @@ mod tests {
             platform: "linux".into(),
             hash: "deadbeef".into(),
             revoked: false,
+            signature: None,
+            signature_timestamp: None,
         }];
 
         let signed = sign_hashes(&hashes, &signing_key);
@@ -229,6 +243,8 @@ mod tests {
             platform: "linux".into(),
             hash: "deadbeef".into(),
             revoked: false,
+            signature: None,
+            signature_timestamp: None,
         }];
 
         let mut signed = sign_hashes(&hashes, &signing_key);
@@ -247,6 +263,8 @@ mod tests {
             platform: "linux".into(),
             hash: "deadbeef".into(),
             revoked: false,
+            signature: None,
+            signature_timestamp: None,
         }];
 
         let signed = sign_hashes(&hashes, &signing_key);

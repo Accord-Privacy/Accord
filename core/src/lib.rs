@@ -28,6 +28,7 @@ pub mod mnemonic;
 pub mod p2p_voice;
 pub mod protocol;
 pub mod push_crypto;
+pub mod release_signing;
 pub mod session_manager;
 pub mod srtp;
 pub mod timing_privacy;

@@ -9,6 +9,10 @@ export interface KnownBuild {
   platform: string;
   hash: string;
   revoked: boolean;
+  /** Base64-encoded Ed25519 signature (present in signed releases). */
+  signature?: string;
+  /** Timestamp used in the signature. */
+  signature_timestamp?: string;
 }
 
 /** Trust levels for a build */

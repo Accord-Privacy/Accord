@@ -1,6 +1,9 @@
 use accord_core::crypto::CryptoManager;
+use accord_core::release_signing;
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::{Parser, Subcommand};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use futures::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -56,6 +59,33 @@ enum Commands {
     Chat {
         /// Channel ID to chat in
         channel_id: String,
+    },
+    /// Generate an Ed25519 signing keypair for release signing
+    GenerateSigningKey {
+        /// Output path (private key written to <path>, public to <path>.pub)
+        #[arg(long)]
+        output: String,
+    },
+    /// Sign a release build hash
+    SignRelease {
+        /// Path to Ed25519 private key file
+        #[arg(long)]
+        key: String,
+        /// Build hash to sign
+        #[arg(long)]
+        hash: String,
+        /// Version string
+        #[arg(long)]
+        version: String,
+    },
+    /// Verify signatures in a HASHES.json file
+    VerifyRelease {
+        /// Path to Ed25519 public key file
+        #[arg(long)]
+        pubkey: String,
+        /// Path to HASHES.json
+        #[arg(long)]
+        hashes: String,
     },
 }
 
@@ -618,6 +648,68 @@ async fn main() -> Result<()> {
         Commands::Chat { channel_id } => {
             if let Err(e) = enter_chat_mode(&client.server_url, &channel_id).await {
                 println!("❌ Chat failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        Commands::GenerateSigningKey { output } => {
+            let (sk, vk) = release_signing::generate_keypair();
+            fs::write(&output, sk.to_bytes())?;
+            fs::write(format!("{}.pub", output), vk.to_bytes())?;
+            println!("✅ Signing keypair generated");
+            println!("   Private key: {}", output);
+            println!("   Public key:  {}.pub", output);
+            println!("   Public key (base64): {}", B64.encode(vk.to_bytes()));
+        }
+
+        Commands::SignRelease { key, hash, version } => {
+            let key_bytes = fs::read(&key)?;
+            let key_arr: [u8; 32] = key_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid private key (expected 32 bytes)"))?;
+            let signing_key = SigningKey::from_bytes(&key_arr);
+
+            let timestamp = chrono::Utc::now().to_rfc3339();
+            let signed = release_signing::sign_release(&signing_key, &hash, &version, &timestamp);
+
+            // Output as a JSON KnownBuild entry with signature fields
+            let entry = serde_json::json!({
+                "version": signed.version,
+                "platform": "FILL_PLATFORM",
+                "hash": signed.build_hash,
+                "revoked": false,
+                "signature": signed.signature,
+                "signature_timestamp": signed.timestamp,
+            });
+            println!("{}", serde_json::to_string_pretty(&entry)?);
+        }
+
+        Commands::VerifyRelease { pubkey, hashes } => {
+            let key_bytes = fs::read(&pubkey)?;
+            let key_arr: [u8; 32] = key_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key (expected 32 bytes)"))?;
+            let verifying_key = VerifyingKey::from_bytes(&key_arr)
+                .map_err(|e| anyhow!("Invalid public key: {e}"))?;
+
+            let json = fs::read_to_string(&hashes)?;
+            let builds: Vec<accord_core::build_hash::KnownBuild> = serde_json::from_str(&json)?;
+
+            let results = release_signing::verify_signed_hashes(&verifying_key, &builds);
+            let mut all_ok = true;
+            for r in &results {
+                let status = if r.signature_valid {
+                    "✅ VALID"
+                } else {
+                    all_ok = false;
+                    "❌ INVALID/MISSING"
+                };
+                println!("{} {} v{} [{}]", status, r.hash, r.version, r.platform);
+            }
+            if all_ok {
+                println!("\n🔒 All {} entries have valid signatures.", results.len());
+            } else {
+                println!("\n⚠️  Some entries have missing or invalid signatures.");
                 std::process::exit(1);
             }
         }
