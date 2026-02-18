@@ -28,18 +28,86 @@ use uuid::Uuid;
 
 /// Health check endpoint
 pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResponse> {
+    // Database connectivity check
+    let database_ok = state.db.count_users().await.is_ok();
+
+    // WebSocket connection count
+    let websocket_connections = state.connections.read().await.len();
+
+    // Memory usage (RSS from /proc/self/statm on Linux, fallback 0)
+    let memory_usage_bytes = {
+        #[cfg(target_os = "linux")]
+        {
+            std::fs::read_to_string("/proc/self/statm")
+                .ok()
+                .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
+                .map(|pages| pages * 4096)
+                .unwrap_or(0)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            0u64
+        }
+    };
+
+    let build_hash = state
+        .build_verification
+        .server_build_info
+        .build_hash
+        .clone();
+
     Json(HealthResponse {
-        status: "healthy".to_string(),
+        status: if database_ok { "healthy" } else { "degraded" }.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_seconds: state.uptime(),
+        build_hash,
+        database_ok,
+        websocket_connections,
+        memory_usage_bytes,
     })
+}
+
+/// Extract client IP from X-Forwarded-For header or fall back to "unknown"
+fn extract_client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// User registration endpoint — keypair-only, no username at relay level
 pub async fn register_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<RegisterResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // IP-based rate limiting: max 3 registrations per hour per IP
+    let client_ip = extract_client_ip(&headers);
+    if let Err(err) = state
+        .rate_limiter
+        .check_ip(&client_ip, crate::rate_limit::ActionType::Registration)
+        .await
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: format!(
+                    "Rate limit exceeded: {}. Retry after {}s",
+                    err.message, err.retry_after_secs
+                ),
+                code: 429,
+            }),
+        ));
+    }
+
     if request.public_key.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -77,6 +145,25 @@ pub async fn auth_handler(
     headers: HeaderMap,
     Json(request): Json<AuthRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // IP-based rate limiting: max 5 auth attempts per minute per IP
+    let client_ip = extract_client_ip(&headers);
+    if let Err(err) = state
+        .rate_limiter
+        .check_ip(&client_ip, crate::rate_limit::ActionType::AuthAttempt)
+        .await
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorResponse {
+                error: format!(
+                    "Rate limit exceeded: {}. Retry after {}s",
+                    err.message, err.retry_after_secs
+                ),
+                code: 429,
+            }),
+        ));
+    }
+
     // Relay-level build hash enforcement
     let client_build_hash = headers.get("X-Build-Hash").and_then(|v| v.to_str().ok());
     if let Err(msg) = state.check_relay_build_hash(client_build_hash).await {

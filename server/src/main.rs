@@ -30,7 +30,6 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use serde::Deserialize;
 use handlers::{
     accept_friend_request_handler, add_build_allowlist_handler, add_reaction_handler,
     assign_member_role_handler, auth_handler, ban_check_handler, ban_user_handler,
@@ -60,6 +59,7 @@ use handlers::{
     upload_file_handler, upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler,
     ws_handler,
 };
+use serde::Deserialize;
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -673,8 +673,59 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Create and start the server
+    // Create and start the server with graceful shutdown
     let addr = format!("{}:{}", args.host, args.port);
+
+    // Create a shutdown signal that listens for SIGTERM and SIGINT
+    let shutdown_state = state.clone();
+    let shutdown_signal = async move {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => info!("Received SIGINT (Ctrl+C), initiating graceful shutdown..."),
+            _ = terminate => info!("Received SIGTERM, initiating graceful shutdown..."),
+        }
+
+        // Graceful shutdown sequence
+        info!("Shutdown: stopping new connections...");
+
+        // Send close frames to all connected WebSocket clients
+        info!("Shutdown: notifying WebSocket clients...");
+        {
+            let connections = shutdown_state.connections.read().await;
+            let close_msg = serde_json::json!({
+                "type": "server_shutdown",
+                "message": "Server is shutting down"
+            })
+            .to_string();
+            for (user_id, sender) in connections.iter() {
+                let _ = sender.send(close_msg.clone());
+                tracing::debug!("Sent shutdown notice to user {}", user_id);
+            }
+            info!("Shutdown: notified {} WebSocket clients", connections.len());
+        }
+
+        // Wait briefly for in-flight requests to complete (up to 10s)
+        info!("Shutdown: waiting up to 10s for in-flight requests...");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        info!("Shutdown: complete.");
+    };
 
     match (args.tls_cert, args.tls_key) {
         (Some(cert_path), Some(key_path)) => {
@@ -692,7 +743,17 @@ async fn main() -> Result<()> {
                     })?;
 
             info!("Server starting with TLS (HTTPS/WSS) on {}", addr);
+            let handle = axum_server::Handle::new();
+            let handle_clone = handle.clone();
+
+            // Spawn shutdown listener that triggers the axum_server handle
+            tokio::spawn(async move {
+                shutdown_signal.await;
+                handle_clone.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+            });
+
             axum_server::bind_rustls(addr.parse()?, tls_config)
+                .handle(handle)
                 .serve(app.into_make_service())
                 .await?;
         }
@@ -700,13 +761,15 @@ async fn main() -> Result<()> {
             // Plain HTTP mode
             let listener = tokio::net::TcpListener::bind(&addr).await?;
             info!("Server starting in plain HTTP/WS mode on {}", addr);
-            axum::serve(listener, app).await?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal)
+                .await?;
         }
         _ => {
             anyhow::bail!("Both --tls-cert and --tls-key must be provided together for TLS mode");
         }
     }
 
-    info!("Shutting down server...");
+    info!("Server shut down cleanly.");
     Ok(())
 }

@@ -16,10 +16,14 @@ pub enum ActionType {
     FileUpload,
     Reaction,
     ProfileUpdate,
+    /// Auth attempts per IP (brute-force protection)
+    AuthAttempt,
+    /// Registration attempts per IP
+    Registration,
 }
 
 impl ActionType {
-    /// Get the default rate limit for this action type (requests per minute)
+    /// Get the default rate limit for this action type
     pub fn default_limit(&self) -> usize {
         match self {
             ActionType::Message => 30,
@@ -27,12 +31,17 @@ impl ActionType {
             ActionType::FileUpload => 5,
             ActionType::Reaction => 20,
             ActionType::ProfileUpdate => 5,
+            ActionType::AuthAttempt => 5,  // 5 per minute per IP
+            ActionType::Registration => 3, // 3 per hour per IP
         }
     }
 
     /// Get the time window for this action type
     pub fn window_duration(&self) -> Duration {
-        Duration::from_secs(60) // 1 minute window for all actions
+        match self {
+            ActionType::Registration => Duration::from_secs(3600), // 1 hour
+            _ => Duration::from_secs(60),                          // 1 minute for all other actions
+        }
     }
 }
 
@@ -52,14 +61,19 @@ impl std::fmt::Display for RateLimitError {
 
 impl std::error::Error for RateLimitError {}
 
-/// Window map type alias for rate limiter
+/// Window map type alias for rate limiter (user-keyed)
 type WindowMap = HashMap<(Uuid, ActionType), VecDeque<Instant>>;
+
+/// Window map for IP-keyed rate limiting (auth, registration)
+type IpWindowMap = HashMap<(String, ActionType), VecDeque<Instant>>;
 
 /// Rate limiter using sliding window algorithm
 #[derive(Debug)]
 pub struct RateLimiter {
     /// Tracks timestamps of actions per (user_id, action_type)
     windows: Arc<RwLock<WindowMap>>,
+    /// Tracks timestamps of actions per (ip, action_type)
+    ip_windows: Arc<RwLock<IpWindowMap>>,
 }
 
 impl RateLimiter {
@@ -67,7 +81,50 @@ impl RateLimiter {
     pub fn new() -> Self {
         Self {
             windows: Arc::new(RwLock::new(HashMap::new())),
+            ip_windows: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Check if an action is allowed for an IP address (for auth/registration)
+    pub async fn check_ip(&self, ip: &str, action: ActionType) -> Result<(), RateLimitError> {
+        let mut windows = self.ip_windows.write().await;
+        let now = Instant::now();
+        let window_duration = action.window_duration();
+        let limit = action.default_limit();
+
+        let window = windows
+            .entry((ip.to_string(), action))
+            .or_insert_with(VecDeque::new);
+
+        // Remove entries older than the window duration
+        while let Some(&front_time) = window.front() {
+            if now.duration_since(front_time) > window_duration {
+                window.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        if window.len() >= limit {
+            let oldest = window.front().copied().unwrap_or(now);
+            let retry_after = window_duration
+                .saturating_sub(now.duration_since(oldest))
+                .as_secs();
+
+            return Err(RateLimitError {
+                message: format!(
+                    "{:?} rate limit exceeded. Limit: {} per {}s",
+                    action,
+                    limit,
+                    window_duration.as_secs()
+                ),
+                retry_after_secs: retry_after,
+                remaining: 0,
+            });
+        }
+
+        window.push_back(now);
+        Ok(())
     }
 
     /// Check if an action is allowed for a user

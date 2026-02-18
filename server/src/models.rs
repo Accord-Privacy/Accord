@@ -718,6 +718,10 @@ pub struct HealthResponse {
     pub status: String,
     pub version: String,
     pub uptime_seconds: u64,
+    pub build_hash: String,
+    pub database_ok: bool,
+    pub websocket_connections: usize,
+    pub memory_usage_bytes: u64,
 }
 
 /// User profile information

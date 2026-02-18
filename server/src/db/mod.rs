@@ -26,7 +26,7 @@ use crate::models::{Channel, FileMetadata, NodeInvite, User};
 use crate::node::{Node, NodeMember, NodeRole};
 use anyhow::{Context, Result};
 use base64::Engine;
-use sqlx::{sqlite::SqlitePool, Row, SqlitePool as Pool};
+use sqlx::{Row, SqlitePool as Pool};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -87,7 +87,20 @@ impl Database {
             format!("sqlite:{}?mode=rwc", db_path.as_ref().display())
         };
 
-        let pool = SqlitePool::connect(&db_url)
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .min_connections(1)
+            .idle_timeout(std::time::Duration::from_secs(300))
+            .max_lifetime(std::time::Duration::from_secs(1800))
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    use sqlx::Executor;
+                    conn.execute("PRAGMA busy_timeout = 5000").await?;
+                    conn.execute("PRAGMA journal_mode = WAL").await?;
+                    Ok(())
+                })
+            })
+            .connect(&db_url)
             .await
             .context("Failed to connect to SQLite database")?;
 
