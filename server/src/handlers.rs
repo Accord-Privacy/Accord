@@ -74,8 +74,21 @@ pub async fn register_handler(
 /// User authentication endpoint — authenticate by public_key or public_key_hash + password
 pub async fn auth_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(request): Json<AuthRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Relay-level build hash enforcement
+    let client_build_hash = headers.get("X-Build-Hash").and_then(|v| v.to_str().ok());
+    if let Err(msg) = state.check_relay_build_hash(client_build_hash).await {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: msg,
+                code: 403,
+            }),
+        ));
+    }
+
     // Determine the public_key_hash to authenticate with
     let public_key_hash = if let Some(ref pkh) = request.public_key_hash {
         pkh.clone()
@@ -2761,6 +2774,18 @@ pub async fn ws_handler(
                 }
             }
         }
+    }
+
+    // Relay-level build hash enforcement
+    if let Err(msg) = state.check_relay_build_hash(client_hash.as_deref()).await {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: msg,
+                code: 403,
+            }),
+        )
+            .into_response();
     }
 
     info!("WebSocket connection established for user: {}", user_id);

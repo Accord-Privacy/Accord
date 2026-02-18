@@ -60,6 +60,47 @@ impl std::str::FromStr for MetadataMode {
     }
 }
 
+/// Relay-level build hash enforcement mode.
+///
+/// This is separate from `BuildVerificationMode` (which checks against hashes.json).
+/// This mode enforces a relay admin-managed allowlist stored in the database.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildHashEnforcementMode {
+    /// Allow all clients regardless of build hash.
+    #[default]
+    Off,
+    /// Log unverified builds but allow connection.
+    Warn,
+    /// Reject clients whose build hash is not in the relay allowlist.
+    Strict,
+}
+
+impl std::fmt::Display for BuildHashEnforcementMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildHashEnforcementMode::Off => write!(f, "off"),
+            BuildHashEnforcementMode::Warn => write!(f, "warn"),
+            BuildHashEnforcementMode::Strict => write!(f, "strict"),
+        }
+    }
+}
+
+impl std::str::FromStr for BuildHashEnforcementMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "off" => Ok(BuildHashEnforcementMode::Off),
+            "warn" => Ok(BuildHashEnforcementMode::Warn),
+            "strict" => Ok(BuildHashEnforcementMode::Strict),
+            other => Err(format!(
+                "unknown build-hash-enforcement mode '{}': expected 'off', 'warn', or 'strict'",
+                other
+            )),
+        }
+    }
+}
+
 /// Build verification mode for client connections.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -154,6 +195,8 @@ pub struct AppState {
     pub metadata_mode: MetadataMode,
     /// Connected clients' build hashes (user_id -> build_hash)
     pub client_build_hashes: RwLock<HashMap<Uuid, String>>,
+    /// Relay-level build hash enforcement mode
+    pub build_hash_enforcement: BuildHashEnforcementMode,
 }
 
 impl std::fmt::Debug for AppState {
@@ -190,6 +233,7 @@ impl AppState {
             build_verification: BuildVerification::new(BuildVerificationMode::default()),
             metadata_mode: MetadataMode::default(),
             client_build_hashes: RwLock::new(HashMap::new()),
+            build_hash_enforcement: BuildHashEnforcementMode::default(),
         })
     }
 
@@ -900,6 +944,48 @@ impl AppState {
     /// Get the client's build hash.
     pub async fn get_client_build_hash(&self, user_id: Uuid) -> Option<String> {
         self.client_build_hashes.read().await.get(&user_id).cloned()
+    }
+
+    /// Check relay-level build hash enforcement.
+    /// Returns Ok(()) if allowed, Err with message if rejected.
+    pub async fn check_relay_build_hash(&self, client_hash: Option<&str>) -> Result<(), String> {
+        let mode = self.build_hash_enforcement;
+        if mode == BuildHashEnforcementMode::Off {
+            return Ok(());
+        }
+
+        // If allowlist is empty, allow everything regardless of mode
+        let allowlist = self
+            .db
+            .get_relay_build_hash_allowlist()
+            .await
+            .map_err(|e| format!("Failed to check relay build allowlist: {}", e))?;
+        if allowlist.is_empty() {
+            return Ok(());
+        }
+
+        let hash = client_hash.unwrap_or("");
+        let is_allowed = allowlist.iter().any(|entry| entry.build_hash == hash);
+
+        match mode {
+            BuildHashEnforcementMode::Off => Ok(()),
+            BuildHashEnforcementMode::Warn => {
+                if !is_allowed {
+                    warn!(
+                        "Relay build hash enforcement (warn): unverified build hash '{}'",
+                        hash
+                    );
+                }
+                Ok(())
+            }
+            BuildHashEnforcementMode::Strict => {
+                if is_allowed {
+                    Ok(())
+                } else {
+                    Err("Build not accepted by relay administrator".to_string())
+                }
+            }
+        }
     }
 
     /// Check if a user's build hash is allowed for a given node.

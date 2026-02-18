@@ -683,6 +683,21 @@ impl Database {
         .await
         .context("Failed to create node_build_hash_allowlist table")?;
 
+        // Relay-level build hash allowlist (global, not per-Node)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS relay_build_hash_allowlist (
+                build_hash TEXT PRIMARY KEY NOT NULL,
+                added_by TEXT NOT NULL DEFAULT 'admin',
+                added_at INTEGER NOT NULL,
+                label TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create relay_build_hash_allowlist table")?;
+
         // Indexes for zero-knowledge identity
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_users_public_key_hash ON users (public_key_hash)",
@@ -1255,6 +1270,87 @@ impl Database {
         .fetch_one(&self.pool)
         .await?;
         Ok(match_row.get::<i64, _>("count") > 0)
+    }
+
+    // ── Relay-level build hash allowlist operations ──
+
+    /// Get the relay-level build hash allowlist
+    pub async fn get_relay_build_hash_allowlist(
+        &self,
+    ) -> Result<Vec<crate::models::RelayBuildHashAllowlistEntry>> {
+        let rows = sqlx::query(
+            "SELECT build_hash, added_by, added_at, label FROM relay_build_hash_allowlist ORDER BY added_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query relay build hash allowlist")?;
+
+        rows.iter()
+            .map(
+                |row| -> Result<crate::models::RelayBuildHashAllowlistEntry> {
+                    Ok(crate::models::RelayBuildHashAllowlistEntry {
+                        build_hash: row.get("build_hash"),
+                        added_by: row.get("added_by"),
+                        added_at: row.get::<i64, _>("added_at") as u64,
+                        label: row.get("label"),
+                    })
+                },
+            )
+            .collect()
+    }
+
+    /// Set the full relay-level build hash allowlist (replaces existing)
+    pub async fn set_relay_build_hash_allowlist(
+        &self,
+        entries: &[crate::models::RelayBuildHashAllowlistInput],
+    ) -> Result<()> {
+        sqlx::query("DELETE FROM relay_build_hash_allowlist")
+            .execute(&self.pool)
+            .await
+            .context("Failed to clear relay build hash allowlist")?;
+
+        let added_at = now();
+        for entry in entries {
+            sqlx::query(
+                "INSERT INTO relay_build_hash_allowlist (build_hash, added_by, added_at, label) VALUES (?, 'admin', ?, ?)",
+            )
+            .bind(&entry.build_hash)
+            .bind(added_at as i64)
+            .bind(entry.label.as_deref())
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert relay build hash allowlist entry")?;
+        }
+        Ok(())
+    }
+
+    /// Add a single build hash to the relay allowlist
+    pub async fn add_relay_build_hash(
+        &self,
+        build_hash: &str,
+        label: Option<&str>,
+    ) -> Result<bool> {
+        let added_at = now();
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO relay_build_hash_allowlist (build_hash, added_by, added_at, label) VALUES (?, 'admin', ?, ?)",
+        )
+        .bind(build_hash)
+        .bind(added_at as i64)
+        .bind(label)
+        .execute(&self.pool)
+        .await
+        .context("Failed to add relay build hash")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Remove a build hash from the relay allowlist
+    pub async fn remove_relay_build_hash(&self, build_hash: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM relay_build_hash_allowlist WHERE build_hash = ?")
+            .bind(build_hash)
+            .execute(&self.pool)
+            .await
+            .context("Failed to remove relay build hash")?;
+        Ok(result.rows_affected() > 0)
     }
 
     // ── Node user profile operations ──

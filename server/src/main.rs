@@ -166,6 +166,10 @@ struct Args {
     /// Path to frontend dist directory to serve (optional)
     #[arg(long)]
     frontend: Option<String>,
+
+    /// Relay-level build hash enforcement: 'off' (allow all), 'warn' (log unverified), 'strict' (reject unverified)
+    #[arg(long, default_value = "off")]
+    build_hash_enforcement: String,
 }
 
 #[tokio::main]
@@ -199,6 +203,17 @@ async fn main() -> Result<()> {
     let mut app_state =
         AppState::new_with_encryption(&args.database, args.database_encryption).await?;
     app_state.metadata_mode = metadata_mode;
+
+    // Parse build hash enforcement mode
+    let build_hash_enforcement: state::BuildHashEnforcementMode = args
+        .build_hash_enforcement
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!(e))?;
+    app_state.build_hash_enforcement = build_hash_enforcement;
+    if build_hash_enforcement != state::BuildHashEnforcementMode::Off {
+        info!("Relay build hash enforcement: {}", build_hash_enforcement);
+    }
+
     let state: SharedState = Arc::new(app_state);
 
     // Restore auth tokens from database so sessions survive restarts
@@ -222,6 +237,17 @@ async fn main() -> Result<()> {
         .route("/admin/stats", get(admin::admin_stats_handler))
         .route("/admin/users", get(admin::admin_users_handler))
         .route("/admin/nodes", get(admin::admin_nodes_handler))
+        // Relay-level build hash allowlist admin endpoints
+        .route(
+            "/api/admin/build-allowlist",
+            get(admin::admin_build_allowlist_get_handler)
+                .put(admin::admin_build_allowlist_set_handler)
+                .post(admin::admin_build_allowlist_add_handler),
+        )
+        .route(
+            "/api/admin/build-allowlist/:hash",
+            delete(admin::admin_build_allowlist_remove_handler),
+        )
         .route("/health", get(health_handler))
         .route("/api/build-info", get(build_info_handler))
         .route("/register", post(register_handler))

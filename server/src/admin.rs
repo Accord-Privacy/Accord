@@ -206,6 +206,109 @@ impl std::io::Write for TeeWriterInstance {
     }
 }
 
+// ── Relay-level build hash allowlist endpoints ──
+
+/// List relay-level allowed build hashes (GET /api/admin/build-allowlist)
+pub async fn admin_build_allowlist_get_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    let entries = state
+        .db
+        .get_relay_build_hash_allowlist()
+        .await
+        .unwrap_or_default();
+    Ok(Json(json!({
+        "allowlist": entries,
+        "enforcement": state.build_hash_enforcement.to_string(),
+    })))
+}
+
+/// Set the full relay-level build hash allowlist (PUT /api/admin/build-allowlist)
+pub async fn admin_build_allowlist_set_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(entries): Json<Vec<crate::models::RelayBuildHashAllowlistInput>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    state
+        .db
+        .set_relay_build_hash_allowlist(&entries)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to set allowlist: {}", e)})),
+            )
+        })?;
+    Ok(Json(json!({
+        "status": "updated",
+        "count": entries.len()
+    })))
+}
+
+/// Add a build hash to the relay allowlist (POST /api/admin/build-allowlist)
+pub async fn admin_build_allowlist_add_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(input): Json<crate::models::RelayBuildHashAllowlistInput>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    let added = state
+        .db
+        .add_relay_build_hash(&input.build_hash, input.label.as_deref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Failed to add hash: {}", e)})),
+            )
+        })?;
+    Ok(Json(json!({
+        "status": if added { "added" } else { "already_exists" },
+        "build_hash": input.build_hash
+    })))
+}
+
+/// Remove a build hash from the relay allowlist (DELETE /api/admin/build-allowlist/:hash)
+pub async fn admin_build_allowlist_remove_handler(
+    State(state): State<SharedState>,
+    axum::extract::Path(hash): axum::extract::Path<String>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    let removed = state.db.remove_relay_build_hash(&hash).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to remove hash: {}", e)})),
+        )
+    })?;
+    if removed {
+        Ok(Json(json!({
+            "status": "removed",
+            "build_hash": hash
+        })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Build hash not found in allowlist"})),
+        ))
+    }
+}
+
 // ── Helpers ──
 
 fn get_rss_bytes() -> Option<u64> {

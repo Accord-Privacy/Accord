@@ -362,6 +362,22 @@ pub struct BuildHashAllowlistInput {
     pub label: Option<String>,
 }
 
+/// Relay-level build hash allowlist entry (global, not per-Node)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayBuildHashAllowlistEntry {
+    pub build_hash: String,
+    pub added_by: String,
+    pub added_at: u64,
+    pub label: Option<String>,
+}
+
+/// Input for adding a relay-level build hash
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayBuildHashAllowlistInput {
+    pub build_hash: String,
+    pub label: Option<String>,
+}
+
 /// Authentication token
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthToken {
