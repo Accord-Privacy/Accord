@@ -6,6 +6,7 @@
 // Federation and Bot API modules are scaffolding — allow unused until fully integrated.
 #![allow(dead_code)]
 
+mod admin;
 mod bot_api;
 #[allow(dead_code)]
 mod db;
@@ -29,18 +30,18 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    accept_friend_request_handler, add_reaction_handler, admin_page_handler, admin_stats_handler,
-    assign_member_role_handler, auth_handler, ban_check_handler, ban_user_handler,
-    build_info_handler, create_channel_category_handler, create_channel_handler,
-    create_dm_channel_handler, create_invite_handler, create_node_handler, create_role_handler,
-    delete_channel_category_handler, delete_channel_handler, delete_channel_overwrite_handler,
-    delete_file_handler, delete_message_handler, delete_role_handler,
-    deregister_push_token_handler, download_file_handler, edit_message_handler,
-    fetch_key_bundle_handler, get_channel_messages_handler, get_dm_channels_handler,
-    get_effective_permissions_handler, get_member_roles_handler, get_message_reactions_handler,
-    get_message_thread_handler, get_node_audit_log_handler, get_node_handler,
-    get_node_members_handler, get_node_user_profiles_handler, get_pinned_messages_handler,
-    get_prekey_messages_handler, get_user_profile_handler, health_handler,
+    accept_friend_request_handler, add_reaction_handler, assign_member_role_handler, auth_handler,
+    ban_check_handler, ban_user_handler, build_info_handler, create_channel_category_handler,
+    create_channel_handler, create_dm_channel_handler, create_invite_handler, create_node_handler,
+    create_role_handler, delete_channel_category_handler, delete_channel_handler,
+    delete_channel_overwrite_handler, delete_file_handler, delete_message_handler,
+    delete_role_handler, deregister_push_token_handler, download_file_handler,
+    edit_message_handler, fetch_key_bundle_handler, get_channel_messages_handler,
+    get_dm_channels_handler, get_effective_permissions_handler, get_member_roles_handler,
+    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
+    get_node_handler, get_node_icon_handler, get_node_members_handler,
+    get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
+    get_user_avatar_handler, get_user_profile_handler, health_handler,
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
     list_bans_handler, list_channel_files_handler, list_channel_overwrites_handler,
     list_friend_requests_handler, list_friends_handler, list_invites_handler,
@@ -52,7 +53,8 @@ use handlers::{
     store_prekey_message_handler, unban_user_handler, unpin_message_handler,
     update_channel_category_handler, update_channel_handler, update_node_handler,
     update_push_preferences_handler, update_role_handler, update_user_profile_handler,
-    upload_file_handler, use_invite_handler, ws_handler,
+    upload_file_handler, upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler,
+    ws_handler,
 };
 use state::{AppState, SharedState};
 use std::sync::Arc;
@@ -162,8 +164,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    // Initialize logging with broadcast writer for admin log streaming
+    let log_tx = admin::new_log_broadcast();
+    let log_writer = admin::TeeWriter::new(log_tx.clone());
+    tracing_subscriber::fmt().with_writer(log_writer).init();
 
     let args = Args::parse();
 
@@ -196,11 +200,21 @@ async fn main() -> Result<()> {
         info!("Restored {} auth tokens from database", restored);
     }
 
+    let log_tx_arc = Arc::new(log_tx);
+
+    // Admin log WebSocket route (different state type)
+    let admin_logs_router = Router::new()
+        .route("/admin/logs", get(admin::admin_logs_ws_handler))
+        .with_state(log_tx_arc.clone());
+
     // Build the router with all endpoints
     let app = Router::new()
-        // REST endpoints
-        .route("/admin", get(admin_page_handler))
-        .route("/admin/stats", get(admin_stats_handler))
+        .merge(admin_logs_router)
+        // Admin dashboard endpoints
+        .route("/admin", get(admin::admin_page_handler))
+        .route("/admin/stats", get(admin::admin_stats_handler))
+        .route("/admin/users", get(admin::admin_users_handler))
+        .route("/admin/nodes", get(admin::admin_nodes_handler))
         .route("/health", get(health_handler))
         .route("/api/build-info", get(build_info_handler))
         .route("/register", post(register_handler))
@@ -323,6 +337,16 @@ async fn main() -> Result<()> {
             "/users/me/profile",
             axum::routing::patch(update_user_profile_handler),
         )
+        // Icon / Avatar endpoints
+        .route(
+            "/nodes/:id/icon",
+            axum::routing::put(upload_node_icon_handler).get(get_node_icon_handler),
+        )
+        .route(
+            "/users/me/avatar",
+            axum::routing::put(upload_user_avatar_handler),
+        )
+        .route("/users/:id/avatar", get(get_user_avatar_handler))
         .route("/nodes/:id/members", get(get_node_members_handler))
         // Audit log endpoints
         .route("/nodes/:id/audit-log", get(get_node_audit_log_handler))

@@ -783,6 +783,16 @@ impl Database {
             .await
             .ok();
 
+        // Icon/avatar hash columns
+        sqlx::query("ALTER TABLE nodes ADD COLUMN icon_hash TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN avatar_hash TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         Ok(())
     }
 
@@ -1185,12 +1195,13 @@ impl Database {
             owner_id,
             description: description.map(|s| s.to_string()),
             created_at,
+            icon_hash: None,
         })
     }
 
     pub async fn get_node(&self, node_id: Uuid) -> Result<Option<Node>> {
         let row = sqlx::query(
-            "SELECT id, name, owner_id, description, created_at FROM nodes WHERE id = ?",
+            "SELECT id, name, owner_id, description, created_at, icon_hash FROM nodes WHERE id = ?",
         )
         .bind(node_id.to_string())
         .fetch_optional(&self.pool)
@@ -1316,7 +1327,7 @@ impl Database {
 
     pub async fn get_user_nodes(&self, user_id: Uuid) -> Result<Vec<Node>> {
         let rows = sqlx::query(
-            "SELECT n.id, n.name, n.owner_id, n.description, n.created_at FROM nodes n JOIN node_members nm ON n.id = nm.node_id WHERE nm.user_id = ?"
+            "SELECT n.id, n.name, n.owner_id, n.description, n.created_at, n.icon_hash FROM nodes n JOIN node_members nm ON n.id = nm.node_id WHERE nm.user_id = ?"
         )
         .bind(user_id.to_string())
         .fetch_all(&self.pool)
@@ -1406,6 +1417,75 @@ impl Database {
                     "target_id": r.get::<Option<String>, _>("target_id"),
                     "details": r.get::<Option<String>, _>("details"),
                     "created_at": r.get::<i64, _>("created_at"),
+                })
+            })
+            .collect())
+    }
+
+    /// Count total messages
+    pub async fn count_messages(&self) -> Result<u64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM messages")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") as u64)
+    }
+
+    /// Get all users with their public_key_hash, created_at, and node memberships (admin)
+    pub async fn get_all_users_admin(&self) -> Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT u.id, u.public_key_hash, u.created_at,
+                   GROUP_CONCAT(n.name, ', ') as node_names
+            FROM users u
+            LEFT JOIN node_members nm ON u.id = nm.user_id
+            LEFT JOIN nodes n ON nm.node_id = n.id
+            GROUP BY u.id
+            ORDER BY u.created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query all users")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.get::<String, _>("id"),
+                    "public_key_hash": r.get::<String, _>("public_key_hash"),
+                    "created_at": r.get::<i64, _>("created_at"),
+                    "node_names": r.get::<Option<String>, _>("node_names"),
+                })
+            })
+            .collect())
+    }
+
+    /// Get all nodes with member count, channel count, created_at (admin)
+    pub async fn get_nodes_admin(&self) -> Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT n.id, n.name, n.owner_id, n.description, n.created_at,
+                   (SELECT COUNT(*) FROM node_members nm WHERE nm.node_id = n.id) as member_count,
+                   (SELECT COUNT(*) FROM channels c WHERE c.node_id = n.id) as channel_count
+            FROM nodes n
+            ORDER BY n.created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query all nodes")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.get::<String, _>("id"),
+                    "name": r.get::<String, _>("name"),
+                    "owner_id": r.get::<String, _>("owner_id"),
+                    "description": r.get::<Option<String>, _>("description"),
+                    "created_at": r.get::<i64, _>("created_at"),
+                    "member_count": r.get::<i64, _>("member_count"),
+                    "channel_count": r.get::<i64, _>("channel_count"),
                 })
             })
             .collect())
@@ -3999,6 +4079,50 @@ impl Database {
 
         Ok(perms)
     }
+
+    // ── Icon / Avatar operations ──
+
+    /// Set node icon hash
+    pub async fn set_node_icon_hash(&self, node_id: Uuid, icon_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE nodes SET icon_hash = ? WHERE id = ?")
+            .bind(icon_hash)
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to set node icon hash")?;
+        Ok(())
+    }
+
+    /// Get node icon hash
+    pub async fn get_node_icon_hash(&self, node_id: Uuid) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT icon_hash FROM nodes WHERE id = ?")
+            .bind(node_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to get node icon hash")?;
+        Ok(row.and_then(|r| r.get("icon_hash")))
+    }
+
+    /// Set user avatar hash
+    pub async fn set_user_avatar_hash(&self, user_id: Uuid, avatar_hash: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET avatar_hash = ? WHERE id = ?")
+            .bind(avatar_hash)
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to set user avatar hash")?;
+        Ok(())
+    }
+
+    /// Get user avatar hash
+    pub async fn get_user_avatar_hash(&self, user_id: Uuid) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT avatar_hash FROM users WHERE id = ?")
+            .bind(user_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to get user avatar hash")?;
+        Ok(row.and_then(|r| r.get("avatar_hash")))
+    }
 }
 
 // ── Helpers ──
@@ -4100,6 +4224,7 @@ fn parse_node(row: &sqlx::sqlite::SqliteRow) -> Result<Node> {
         owner_id: Uuid::parse_str(&row.get::<String, _>("owner_id"))?,
         description: row.get("description"),
         created_at: row.get::<i64, _>("created_at") as u64,
+        icon_hash: row.try_get("icon_hash").ok(),
     })
 }
 

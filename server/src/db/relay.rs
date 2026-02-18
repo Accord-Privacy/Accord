@@ -494,6 +494,7 @@ impl RelayDatabase {
             owner_id,
             description: description.map(|s| s.to_string()),
             created_at,
+            icon_hash: None,
         })
     }
 

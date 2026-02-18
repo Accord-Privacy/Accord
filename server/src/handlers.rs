@@ -169,6 +169,7 @@ pub async fn list_user_nodes_handler(
                         "owner_id": n.owner_id,
                         "description": n.description,
                         "created_at": n.created_at,
+                        "icon_hash": n.icon_hash,
                     })
                 })
                 .collect(),
@@ -1778,6 +1779,410 @@ async fn check_node_permission(
 }
 
 // ── WebSocket ──
+
+// ── Node icon / User avatar upload endpoints ──
+
+const MAX_ICON_SIZE: usize = 256 * 1024; // 256 KB
+
+fn validate_image_content_type(ct: &str) -> Option<&'static str> {
+    match ct {
+        "image/png" => Some("image/png"),
+        "image/jpeg" | "image/jpg" => Some("image/jpeg"),
+        "image/gif" => Some("image/gif"),
+        "image/webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn content_type_to_ext(ct: &str) -> &'static str {
+    match ct {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "bin",
+    }
+}
+
+fn detect_content_type(data: &[u8]) -> Option<&'static str> {
+    if data.len() < 4 {
+        return None;
+    }
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        Some("image/png")
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if data.starts_with(b"GIF8") {
+        Some("image/gif")
+    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+/// Upload node icon (PUT /nodes/:id/icon)
+pub async fn upload_node_icon_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
+
+    // Check ownership or admin
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) if has_permission(m.role, Permission::ManageChannels) => {}
+        _ => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Insufficient permissions to update node icon".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    // Extract file from multipart
+    let mut file_data: Option<Vec<u8>> = None;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "icon" || name == "file" {
+            if let Ok(data) = field.bytes().await {
+                file_data = Some(data.to_vec());
+            }
+        }
+    }
+
+    let data = file_data.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing icon file".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    if data.len() > MAX_ICON_SIZE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Icon must be under 256KB".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let content_type = detect_content_type(&data).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Unsupported image format. Use PNG, JPEG, GIF, or WebP".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    // Hash the content
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(&data));
+    let ext = content_type_to_ext(content_type);
+    let filename = format!("{}.{}", hash, ext);
+
+    // Save to disk
+    let dir = std::path::PathBuf::from("./data/uploads/icons");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to create upload dir: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+    tokio::fs::write(dir.join(&filename), &data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to write icon: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Update DB
+    state
+        .db
+        .set_node_icon_hash(node_id, &hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to update icon hash: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(
+        serde_json::json!({ "status": "updated", "icon_hash": hash }),
+    ))
+}
+
+/// Get node icon (GET /nodes/:id/icon)
+pub async fn get_node_icon_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    let hash = state.db.get_node_icon_hash(node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("{}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let hash = hash.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "No icon set".into(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    // Find the file on disk
+    let dir = std::path::PathBuf::from("./data/uploads/icons");
+    let mut found_path = None;
+    for ext in &["png", "jpg", "gif", "webp"] {
+        let p = dir.join(format!("{}.{}", hash, ext));
+        if p.exists() {
+            found_path = Some((p, *ext));
+            break;
+        }
+    }
+
+    let (path, ext) = found_path.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Icon file not found".into(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    let data = tokio::fs::read(&path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to read icon: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let ct = match ext {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    };
+
+    Ok(Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, ct)
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .header(header::ETAG, format!("\"{}\"", hash))
+        .body(Body::from(data))
+        .unwrap())
+}
+
+/// Upload user avatar (PUT /users/me/avatar)
+pub async fn upload_user_avatar_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
+
+    let mut file_data: Option<Vec<u8>> = None;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "avatar" || name == "file" {
+            if let Ok(data) = field.bytes().await {
+                file_data = Some(data.to_vec());
+            }
+        }
+    }
+
+    let data = file_data.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing avatar file".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    if data.len() > MAX_ICON_SIZE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Avatar must be under 256KB".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let content_type = detect_content_type(&data).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Unsupported image format. Use PNG, JPEG, GIF, or WebP".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(&data));
+    let ext = content_type_to_ext(content_type);
+    let filename = format!("{}.{}", hash, ext);
+
+    let dir = std::path::PathBuf::from("./data/uploads/avatars");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to create upload dir: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+    tokio::fs::write(dir.join(&filename), &data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to write avatar: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    state
+        .db
+        .set_user_avatar_hash(user_id, &hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to update avatar hash: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(
+        serde_json::json!({ "status": "updated", "avatar_hash": hash }),
+    ))
+}
+
+/// Get user avatar (GET /users/:id/avatar)
+pub async fn get_user_avatar_handler(
+    State(state): State<SharedState>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    let hash = state.db.get_user_avatar_hash(user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("{}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let hash = hash.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "No avatar set".into(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    let dir = std::path::PathBuf::from("./data/uploads/avatars");
+    let mut found_path = None;
+    for ext in &["png", "jpg", "gif", "webp"] {
+        let p = dir.join(format!("{}.{}", hash, ext));
+        if p.exists() {
+            found_path = Some((p, *ext));
+            break;
+        }
+    }
+
+    let (path, ext) = found_path.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Avatar file not found".into(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    let data = tokio::fs::read(&path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to read avatar: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let ct = match ext {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    };
+
+    Ok(Response::builder()
+        .status(200)
+        .header(header::CONTENT_TYPE, ct)
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .header(header::ETAG, format!("\"{}\"", hash))
+        .body(Body::from(data))
+        .unwrap())
+}
 
 // ── Key Bundle endpoints (Double Ratchet / X3DH) ──
 

@@ -59,6 +59,8 @@ pub struct Node {
     pub owner_id: Uuid,
     pub description: Option<String>,
     pub created_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_hash: Option<String>,
 }
 
 /// Node membership info

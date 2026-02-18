@@ -45,6 +45,7 @@ export interface Node {
   owner_id: string;
   description?: string;
   created_at: number;
+  icon_hash?: string;
 }
 
 export interface NodeMember {
