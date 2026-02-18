@@ -695,6 +695,94 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // ── Roles table (per-Node permission system) ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS roles (
+                id TEXT PRIMARY KEY NOT NULL,
+                node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                color INTEGER NOT NULL DEFAULT 0,
+                permissions INTEGER NOT NULL DEFAULT 0,
+                position INTEGER NOT NULL DEFAULT 0,
+                hoist BOOLEAN NOT NULL DEFAULT 0,
+                mentionable BOOLEAN NOT NULL DEFAULT 0,
+                icon_emoji TEXT,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create roles table")?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_roles_node ON roles(node_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // ── Member roles (many-to-many: user <-> role) ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS member_roles (
+                member_id TEXT NOT NULL,
+                role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+                assigned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                PRIMARY KEY (member_id, role_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create member_roles table")?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_member_roles_node ON member_roles(node_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_member_roles_member ON member_roles(member_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // ── Channel permission overwrites ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS channel_permission_overwrites (
+                channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+                role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                allow_bits INTEGER NOT NULL DEFAULT 0,
+                deny_bits INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (channel_id, role_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create channel_permission_overwrites table")?;
+
+        // ── New columns on channels for permission system ──
+        sqlx::query("ALTER TABLE channels ADD COLUMN channel_type INTEGER NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE channels ADD COLUMN parent_id TEXT REFERENCES channels(id)")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE channels ADD COLUMN topic TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE channels ADD COLUMN nsfw BOOLEAN NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE channels ADD COLUMN icon_emoji TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         Ok(())
     }
 
@@ -1080,6 +1168,16 @@ impl Database {
 
         // Create a default "general" channel
         self.create_channel("general", node_id, owner_id).await?;
+
+        // Create the default @everyone role (position 0) with sensible defaults
+        self.create_role_with_id(
+            node_id, // Use node_id as the @everyone role ID (convention: same UUID)
+            node_id,
+            "@everyone",
+            crate::models::permission_bits::DEFAULT_EVERYONE,
+            0,
+        )
+        .await?;
 
         Ok(Node {
             id: node_id,
@@ -3367,6 +3465,490 @@ impl Database {
 
         Ok(result.rows_affected())
     }
+
+    // ── Role operations ──
+
+    /// Create a new role in a Node
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_role(
+        &self,
+        node_id: Uuid,
+        name: &str,
+        color: u32,
+        permissions: u64,
+        position: i32,
+        hoist: bool,
+        mentionable: bool,
+        icon_emoji: Option<&str>,
+    ) -> Result<crate::models::Role> {
+        let role_id = Uuid::new_v4();
+        let created_at = now();
+        sqlx::query(
+            "INSERT INTO roles (id, node_id, name, color, permissions, position, hoist, mentionable, icon_emoji, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(role_id.to_string())
+        .bind(node_id.to_string())
+        .bind(name)
+        .bind(color as i64)
+        .bind(permissions as i64)
+        .bind(position as i64)
+        .bind(hoist)
+        .bind(mentionable)
+        .bind(icon_emoji)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create role")?;
+
+        Ok(crate::models::Role {
+            id: role_id,
+            node_id,
+            name: name.to_string(),
+            color,
+            permissions,
+            position,
+            hoist,
+            mentionable,
+            icon_emoji: icon_emoji.map(|s| s.to_string()),
+            created_at,
+        })
+    }
+
+    /// Create a role with a specific ID (for the @everyone role)
+    pub async fn create_role_with_id(
+        &self,
+        role_id: Uuid,
+        node_id: Uuid,
+        name: &str,
+        permissions: u64,
+        position: i32,
+    ) -> Result<crate::models::Role> {
+        let created_at = now();
+        sqlx::query(
+            "INSERT INTO roles (id, node_id, name, color, permissions, position, hoist, mentionable, created_at) VALUES (?, ?, ?, 0, ?, ?, 0, 0, ?)",
+        )
+        .bind(role_id.to_string())
+        .bind(node_id.to_string())
+        .bind(name)
+        .bind(permissions as i64)
+        .bind(position as i64)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create role with ID")?;
+
+        Ok(crate::models::Role {
+            id: role_id,
+            node_id,
+            name: name.to_string(),
+            color: 0,
+            permissions,
+            position,
+            hoist: false,
+            mentionable: false,
+            icon_emoji: None,
+            created_at,
+        })
+    }
+
+    /// Get all roles for a Node, ordered by position descending
+    pub async fn get_node_roles(&self, node_id: Uuid) -> Result<Vec<crate::models::Role>> {
+        let rows = sqlx::query(
+            "SELECT id, node_id, name, color, permissions, position, hoist, mentionable, icon_emoji, created_at FROM roles WHERE node_id = ? ORDER BY position ASC",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query node roles")?;
+
+        rows.iter().map(parse_role).collect()
+    }
+
+    /// Get a single role by ID
+    pub async fn get_role(&self, role_id: Uuid) -> Result<Option<crate::models::Role>> {
+        let row = sqlx::query(
+            "SELECT id, node_id, name, color, permissions, position, hoist, mentionable, icon_emoji, created_at FROM roles WHERE id = ?",
+        )
+        .bind(role_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query role")?;
+
+        row.map(|r| parse_role(&r)).transpose()
+    }
+
+    /// Get the @everyone role for a Node (position = 0, lowest role)
+    pub async fn get_everyone_role(&self, node_id: Uuid) -> Result<Option<crate::models::Role>> {
+        let row = sqlx::query(
+            "SELECT id, node_id, name, color, permissions, position, hoist, mentionable, icon_emoji, created_at FROM roles WHERE node_id = ? AND position = 0",
+        )
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query @everyone role")?;
+
+        row.map(|r| parse_role(&r)).transpose()
+    }
+
+    /// Update a role
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_role(
+        &self,
+        role_id: Uuid,
+        name: Option<&str>,
+        color: Option<u32>,
+        permissions: Option<u64>,
+        hoist: Option<bool>,
+        mentionable: Option<bool>,
+        icon_emoji: Option<Option<&str>>,
+    ) -> Result<()> {
+        let mut parts = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
+
+        if let Some(name) = name {
+            parts.push("name = ?");
+            binds.push(name.to_string());
+        }
+        if let Some(color) = color {
+            parts.push("color = ?");
+            binds.push(color.to_string());
+        }
+        if let Some(permissions) = permissions {
+            parts.push("permissions = ?");
+            binds.push(permissions.to_string());
+        }
+        if let Some(hoist) = hoist {
+            parts.push("hoist = ?");
+            binds.push(if hoist { "1".into() } else { "0".into() });
+        }
+        if let Some(mentionable) = mentionable {
+            parts.push("mentionable = ?");
+            binds.push(if mentionable { "1".into() } else { "0".into() });
+        }
+        if let Some(icon) = icon_emoji {
+            parts.push("icon_emoji = ?");
+            binds.push(icon.unwrap_or("").to_string());
+        }
+
+        if parts.is_empty() {
+            return Ok(());
+        }
+
+        let sql = format!("UPDATE roles SET {} WHERE id = ?", parts.join(", "));
+        let mut q = sqlx::query(&sql);
+        for b in &binds {
+            q = q.bind(b);
+        }
+        q = q.bind(role_id.to_string());
+        q.execute(&self.pool).await.context("Failed to update role")?;
+        Ok(())
+    }
+
+    /// Delete a role
+    pub async fn delete_role(&self, role_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM roles WHERE id = ?")
+            .bind(role_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete role")?;
+        Ok(())
+    }
+
+    /// Reorder roles by setting positions
+    pub async fn reorder_roles(&self, entries: &[(Uuid, i32)]) -> Result<()> {
+        for (role_id, position) in entries {
+            sqlx::query("UPDATE roles SET position = ? WHERE id = ?")
+                .bind(*position as i64)
+                .bind(role_id.to_string())
+                .execute(&self.pool)
+                .await
+                .context("Failed to reorder role")?;
+        }
+        Ok(())
+    }
+
+    /// Get the next available role position for a Node
+    pub async fn next_role_position(&self, node_id: Uuid) -> Result<i32> {
+        let row = sqlx::query(
+            "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM roles WHERE node_id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("next_pos") as i32)
+    }
+
+    // ── Member role operations ──
+
+    /// Assign a role to a member
+    pub async fn assign_member_role(
+        &self,
+        node_id: Uuid,
+        member_id: Uuid,
+        role_id: Uuid,
+    ) -> Result<()> {
+        let assigned_at = now();
+        sqlx::query(
+            "INSERT OR IGNORE INTO member_roles (member_id, role_id, node_id, assigned_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(member_id.to_string())
+        .bind(role_id.to_string())
+        .bind(node_id.to_string())
+        .bind(assigned_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to assign member role")?;
+        Ok(())
+    }
+
+    /// Remove a role from a member
+    pub async fn remove_member_role(&self, member_id: Uuid, role_id: Uuid) -> Result<bool> {
+        let result =
+            sqlx::query("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?")
+                .bind(member_id.to_string())
+                .bind(role_id.to_string())
+                .execute(&self.pool)
+                .await
+                .context("Failed to remove member role")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get all roles for a member in a Node
+    pub async fn get_member_roles(
+        &self,
+        node_id: Uuid,
+        member_id: Uuid,
+    ) -> Result<Vec<crate::models::Role>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT r.id, r.node_id, r.name, r.color, r.permissions, r.position, r.hoist, r.mentionable, r.icon_emoji, r.created_at
+            FROM roles r
+            JOIN member_roles mr ON r.id = mr.role_id
+            WHERE mr.member_id = ? AND mr.node_id = ?
+            ORDER BY r.position DESC
+            "#,
+        )
+        .bind(member_id.to_string())
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query member roles")?;
+
+        rows.iter().map(parse_role).collect()
+    }
+
+    // ── Channel permission overwrite operations ──
+
+    /// Set (upsert) a channel permission overwrite for a role
+    pub async fn set_channel_overwrite(
+        &self,
+        channel_id: Uuid,
+        role_id: Uuid,
+        allow: u64,
+        deny: u64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO channel_permission_overwrites (channel_id, role_id, allow_bits, deny_bits)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(channel_id, role_id) DO UPDATE SET allow_bits = excluded.allow_bits, deny_bits = excluded.deny_bits
+            "#,
+        )
+        .bind(channel_id.to_string())
+        .bind(role_id.to_string())
+        .bind(allow as i64)
+        .bind(deny as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to set channel overwrite")?;
+        Ok(())
+    }
+
+    /// Delete a channel permission overwrite for a role
+    pub async fn delete_channel_overwrite(
+        &self,
+        channel_id: Uuid,
+        role_id: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM channel_permission_overwrites WHERE channel_id = ? AND role_id = ?",
+        )
+        .bind(channel_id.to_string())
+        .bind(role_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to delete channel overwrite")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get all permission overwrites for a channel
+    pub async fn get_channel_overwrites(
+        &self,
+        channel_id: Uuid,
+    ) -> Result<Vec<crate::models::ChannelPermissionOverwrite>> {
+        let rows = sqlx::query(
+            "SELECT channel_id, role_id, allow_bits, deny_bits FROM channel_permission_overwrites WHERE channel_id = ?",
+        )
+        .bind(channel_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channel overwrites")?;
+
+        rows.iter()
+            .map(|r| -> Result<crate::models::ChannelPermissionOverwrite> {
+                Ok(crate::models::ChannelPermissionOverwrite {
+                    channel_id: Uuid::parse_str(&r.get::<String, _>("channel_id"))?,
+                    role_id: Uuid::parse_str(&r.get::<String, _>("role_id"))?,
+                    allow: r.get::<i64, _>("allow_bits") as u64,
+                    deny: r.get::<i64, _>("deny_bits") as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Get channel overwrites for a specific channel, including inherited from parent category
+    pub async fn get_effective_channel_overwrites(
+        &self,
+        channel_id: Uuid,
+    ) -> Result<Vec<crate::models::ChannelPermissionOverwrite>> {
+        // First, get the channel's own overwrites
+        let own_overwrites = self.get_channel_overwrites(channel_id).await?;
+
+        // If channel has no parent, just return own overwrites
+        let parent_id: Option<String> =
+            sqlx::query_scalar("SELECT parent_id FROM channels WHERE id = ?")
+                .bind(channel_id.to_string())
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+
+        let parent_id = match parent_id {
+            Some(pid) => Uuid::parse_str(&pid)?,
+            None => return Ok(own_overwrites),
+        };
+
+        // Get parent (category) overwrites
+        let parent_overwrites = self.get_channel_overwrites(parent_id).await?;
+
+        // Merge: channel's own overwrites replace parent's per-role
+        let own_role_ids: std::collections::HashSet<Uuid> =
+            own_overwrites.iter().map(|o| o.role_id).collect();
+
+        let mut merged = own_overwrites;
+        for parent_ow in parent_overwrites {
+            if !own_role_ids.contains(&parent_ow.role_id) {
+                merged.push(crate::models::ChannelPermissionOverwrite {
+                    channel_id, // present as if it belongs to this channel
+                    ..parent_ow
+                });
+            }
+        }
+
+        Ok(merged)
+    }
+
+    // ── Permission resolution ──
+
+    /// Compute the effective permissions for a user in a specific channel.
+    ///
+    /// Resolution order (matches Discord):
+    /// 1. Start with @everyone role permissions
+    /// 2. OR all the member's additional role permissions
+    /// 3. If ADMINISTRATOR is set, grant ALL_PERMISSIONS (stop)
+    /// 4. Apply channel @everyone overwrite: deny removes, allow adds
+    /// 5. Collect all role overwrites for member's roles: OR denies, OR allows
+    /// 6. Remove all collected denies, add all collected allows
+    pub async fn compute_channel_permissions(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+        channel_id: Uuid,
+    ) -> Result<u64> {
+        use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
+
+        // Check if user is the Node owner — owners always get full permissions
+        let node = self.get_node(node_id).await?.ok_or_else(|| anyhow::anyhow!("Node not found"))?;
+        if node.owner_id == user_id {
+            return Ok(ALL_PERMISSIONS);
+        }
+
+        // Step 1: Get @everyone role permissions
+        let everyone_role = self.get_everyone_role(node_id).await?;
+        let mut perms = everyone_role.as_ref().map(|r| r.permissions).unwrap_or(0);
+
+        // Step 2: OR all the member's additional role permissions
+        let member_roles = self.get_member_roles(node_id, user_id).await?;
+        for role in &member_roles {
+            perms |= role.permissions;
+        }
+
+        // Step 3: ADMINISTRATOR bypasses everything
+        if perms & ADMINISTRATOR != 0 {
+            return Ok(ALL_PERMISSIONS);
+        }
+
+        // Steps 4-7: Apply channel overwrites
+        let overwrites = self.get_effective_channel_overwrites(channel_id).await?;
+
+        // Step 4: Apply @everyone overwrite
+        let everyone_role_id = everyone_role
+            .as_ref()
+            .map(|r| r.id);
+
+        if let Some(eid) = everyone_role_id {
+            if let Some(ow) = overwrites.iter().find(|o| o.role_id == eid) {
+                perms &= !ow.deny;
+                perms |= ow.allow;
+            }
+        }
+
+        // Steps 5-7: Collect role overwrites
+        let member_role_ids: std::collections::HashSet<Uuid> =
+            member_roles.iter().map(|r| r.id).collect();
+
+        let mut role_allow: u64 = 0;
+        let mut role_deny: u64 = 0;
+        for ow in &overwrites {
+            if member_role_ids.contains(&ow.role_id) {
+                role_allow |= ow.allow;
+                role_deny |= ow.deny;
+            }
+        }
+        perms &= !role_deny;
+        perms |= role_allow;
+
+        Ok(perms)
+    }
+
+    /// Compute effective permissions for a user at the Node level (no channel overwrites).
+    /// This is the base permission from roles only.
+    pub async fn compute_node_permissions(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<u64> {
+        use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
+
+        // Node owner gets everything
+        let node = self.get_node(node_id).await?.ok_or_else(|| anyhow::anyhow!("Node not found"))?;
+        if node.owner_id == user_id {
+            return Ok(ALL_PERMISSIONS);
+        }
+
+        let everyone_role = self.get_everyone_role(node_id).await?;
+        let mut perms = everyone_role.as_ref().map(|r| r.permissions).unwrap_or(0);
+
+        let member_roles = self.get_member_roles(node_id, user_id).await?;
+        for role in &member_roles {
+            perms |= role.permissions;
+        }
+
+        if perms & ADMINISTRATOR != 0 {
+            return Ok(ALL_PERMISSIONS);
+        }
+
+        Ok(perms)
+    }
 }
 
 // ── Helpers ──
@@ -3376,6 +3958,21 @@ fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+fn parse_role(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::Role> {
+    Ok(crate::models::Role {
+        id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+        node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+        name: row.get("name"),
+        color: row.get::<i64, _>("color") as u32,
+        permissions: row.get::<i64, _>("permissions") as u64,
+        position: row.get::<i64, _>("position") as i32,
+        hoist: row.get::<bool, _>("hoist"),
+        mentionable: row.get::<bool, _>("mentionable"),
+        icon_emoji: row.get("icon_emoji"),
+        created_at: row.get::<i64, _>("created_at") as u64,
+    })
 }
 
 fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::MessageMetadata> {

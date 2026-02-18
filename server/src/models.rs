@@ -3,6 +3,217 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// ── Permission bit constants (Discord-compatible bit positions) ──
+
+/// Permission bit constants stored as a 64-bit bitmask.
+/// Bit positions intentionally match Discord for template import compatibility.
+pub mod permission_bits {
+    // Phase 1 — Core permissions (20 bits)
+    pub const CREATE_INVITE: u64 = 1 << 0;
+    pub const KICK_MEMBERS: u64 = 1 << 1;
+    pub const BAN_MEMBERS: u64 = 1 << 2;
+    pub const ADMINISTRATOR: u64 = 1 << 3;
+    pub const MANAGE_CHANNELS: u64 = 1 << 4;
+    pub const MANAGE_NODE: u64 = 1 << 5;
+    pub const ADD_REACTIONS: u64 = 1 << 6;
+    pub const VIEW_CHANNEL: u64 = 1 << 10;
+    pub const SEND_MESSAGES: u64 = 1 << 11;
+    pub const MANAGE_MESSAGES: u64 = 1 << 13;
+    pub const EMBED_LINKS: u64 = 1 << 14;
+    pub const ATTACH_FILES: u64 = 1 << 15;
+    pub const READ_MESSAGE_HISTORY: u64 = 1 << 16;
+    pub const MENTION_EVERYONE: u64 = 1 << 17;
+    pub const CONNECT: u64 = 1 << 20;
+    pub const SPEAK: u64 = 1 << 21;
+    pub const MUTE_MEMBERS: u64 = 1 << 22;
+    pub const DEAFEN_MEMBERS: u64 = 1 << 23;
+    pub const MOVE_MEMBERS: u64 = 1 << 24;
+    pub const MANAGE_ROLES: u64 = 1 << 28;
+
+    /// Default permissions for the @everyone role
+    pub const DEFAULT_EVERYONE: u64 = VIEW_CHANNEL
+        | SEND_MESSAGES
+        | READ_MESSAGE_HISTORY
+        | ADD_REACTIONS
+        | CONNECT
+        | SPEAK
+        | EMBED_LINKS
+        | ATTACH_FILES
+        | CREATE_INVITE;
+
+    /// All Phase 1 permission bits OR'd together (for masking)
+    pub const ALL_PERMISSIONS: u64 = CREATE_INVITE
+        | KICK_MEMBERS
+        | BAN_MEMBERS
+        | ADMINISTRATOR
+        | MANAGE_CHANNELS
+        | MANAGE_NODE
+        | ADD_REACTIONS
+        | VIEW_CHANNEL
+        | SEND_MESSAGES
+        | MANAGE_MESSAGES
+        | EMBED_LINKS
+        | ATTACH_FILES
+        | READ_MESSAGE_HISTORY
+        | MENTION_EVERYONE
+        | CONNECT
+        | SPEAK
+        | MUTE_MEMBERS
+        | DEAFEN_MEMBERS
+        | MOVE_MEMBERS
+        | MANAGE_ROLES;
+
+    /// Human-readable name for a permission bit (for error messages / audit logs)
+    pub fn name(bit: u64) -> &'static str {
+        match bit {
+            CREATE_INVITE => "CREATE_INVITE",
+            KICK_MEMBERS => "KICK_MEMBERS",
+            BAN_MEMBERS => "BAN_MEMBERS",
+            ADMINISTRATOR => "ADMINISTRATOR",
+            MANAGE_CHANNELS => "MANAGE_CHANNELS",
+            MANAGE_NODE => "MANAGE_NODE",
+            ADD_REACTIONS => "ADD_REACTIONS",
+            VIEW_CHANNEL => "VIEW_CHANNEL",
+            SEND_MESSAGES => "SEND_MESSAGES",
+            MANAGE_MESSAGES => "MANAGE_MESSAGES",
+            EMBED_LINKS => "EMBED_LINKS",
+            ATTACH_FILES => "ATTACH_FILES",
+            READ_MESSAGE_HISTORY => "READ_MESSAGE_HISTORY",
+            MENTION_EVERYONE => "MENTION_EVERYONE",
+            CONNECT => "CONNECT",
+            SPEAK => "SPEAK",
+            MUTE_MEMBERS => "MUTE_MEMBERS",
+            DEAFEN_MEMBERS => "DEAFEN_MEMBERS",
+            MOVE_MEMBERS => "MOVE_MEMBERS",
+            MANAGE_ROLES => "MANAGE_ROLES",
+            _ => "UNKNOWN",
+        }
+    }
+}
+
+/// Channel type enum (Discord-compatible integer values)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(i32)]
+pub enum ChannelType {
+    /// Standard text channel
+    #[default]
+    Text = 0,
+    /// Voice channel (with optional text)
+    Voice = 2,
+    /// Category container for organizing channels
+    Category = 4,
+}
+
+impl ChannelType {
+    pub fn from_i32(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(ChannelType::Text),
+            2 => Some(ChannelType::Voice),
+            4 => Some(ChannelType::Category),
+            _ => None,
+        }
+    }
+}
+
+/// A role within a Node (community space)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Role {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub name: String,
+    /// RGB color as integer (0 = no color / default)
+    pub color: u32,
+    /// Permission bitmask (see `permission_bits` module)
+    pub permissions: u64,
+    /// Hierarchy position — higher number = more authority. @everyone is always 0.
+    pub position: i32,
+    /// Show members with this role separately in the member list
+    pub hoist: bool,
+    /// Can be @mentioned by anyone
+    pub mentionable: bool,
+    /// Unicode emoji for role icon
+    pub icon_emoji: Option<String>,
+    pub created_at: u64,
+}
+
+/// Channel permission overwrite for a specific role
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelPermissionOverwrite {
+    pub channel_id: Uuid,
+    pub role_id: Uuid,
+    /// Explicitly granted permissions (bits)
+    pub allow: u64,
+    /// Explicitly denied permissions (bits)
+    pub deny: u64,
+}
+
+/// Association between a member and a role within a Node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberRole {
+    pub member_id: Uuid,
+    pub role_id: Uuid,
+    pub node_id: Uuid,
+    pub assigned_at: u64,
+}
+
+// ── Request / Response types for role endpoints ──
+
+/// Request to create a new role
+#[derive(Debug, Deserialize)]
+pub struct CreateRoleRequest {
+    pub name: String,
+    #[serde(default)]
+    pub color: Option<u32>,
+    #[serde(default)]
+    pub permissions: Option<u64>,
+    #[serde(default)]
+    pub hoist: Option<bool>,
+    #[serde(default)]
+    pub mentionable: Option<bool>,
+    #[serde(default)]
+    pub icon_emoji: Option<String>,
+}
+
+/// Request to update a role
+#[derive(Debug, Deserialize)]
+pub struct UpdateRoleRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub color: Option<u32>,
+    #[serde(default)]
+    pub permissions: Option<u64>,
+    #[serde(default)]
+    pub hoist: Option<bool>,
+    #[serde(default)]
+    pub mentionable: Option<bool>,
+    #[serde(default)]
+    pub icon_emoji: Option<String>,
+}
+
+/// Request to reorder roles
+#[derive(Debug, Deserialize)]
+pub struct ReorderRolesRequest {
+    /// List of { id, position } pairs
+    pub roles: Vec<RolePositionEntry>,
+}
+
+/// Single entry in a role reorder request
+#[derive(Debug, Deserialize)]
+pub struct RolePositionEntry {
+    pub id: Uuid,
+    pub position: i32,
+}
+
+/// Request to set a channel permission overwrite
+#[derive(Debug, Deserialize)]
+pub struct SetChannelOverwriteRequest {
+    #[serde(default)]
+    pub allow: u64,
+    #[serde(default)]
+    pub deny: u64,
+}
+
 /// User information stored on the server
 ///
 /// The relay identifies users by UUID and public_key_hash only.

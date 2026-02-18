@@ -397,9 +397,15 @@ function App() {
         }
       }
 
+      // Look up sender display name from member list
+      const senderMember = members.find(m => m.user_id === data.from);
+      const senderName = senderMember 
+        ? (senderMember.user?.display_name || senderMember.profile?.display_name || fingerprint(senderMember.public_key_hash || data.from || ''))
+        : fingerprint(data.from || '');
+
       const newMessage: Message = {
         id: data.message_id || Math.random().toString(),
-        author: data.from || "Unknown",
+        author: senderName,
         content: content,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: data.timestamp * 1000,
@@ -754,7 +760,7 @@ function App() {
       // Format messages for display
       const formattedMessages = response.messages.map(msg => ({
         ...msg,
-        author: msg.author || fingerprint(msg.sender_public_key_hash || '' ) || 'Unknown',
+        author: msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
       
@@ -813,7 +819,7 @@ function App() {
       // Format messages for display
       const formattedMessages = response.messages.map(msg => ({
         ...msg,
-        author: msg.author || fingerprint(msg.sender_public_key_hash || '' ) || 'Unknown',
+        author: msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
       

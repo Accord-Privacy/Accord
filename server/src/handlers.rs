@@ -5324,3 +5324,405 @@ pub async fn admin_stats_handler(
         "audit_log": audit_entries,
     })))
 }
+
+// ══════════════════════════════════════════════════════════════
+// ── Role & Permission Handlers ──
+// ══════════════════════════════════════════════════════════════
+
+use crate::models::{
+    CreateRoleRequest, UpdateRoleRequest, ReorderRolesRequest, SetChannelOverwriteRequest,
+    permission_bits,
+};
+
+/// Helper: check that the requesting user has a given permission bit in a Node.
+/// Returns Ok(user_id) on success, or a 403 error response.
+async fn require_node_permission(
+    state: &SharedState,
+    params: &HashMap<String, String>,
+    node_id: Uuid,
+    required_bit: u64,
+) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(state, params).await?;
+
+    // Check membership first
+    if !state.db.is_node_member(node_id, user_id).await.unwrap_or(false) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Not a member of this node".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let perms = state
+        .db
+        .compute_node_permissions(node_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to compute permissions: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if perms & required_bit == 0 && perms & permission_bits::ADMINISTRATOR == 0 {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Missing permission: {}",
+                    permission_bits::name(required_bit)
+                ),
+                code: 403,
+            }),
+        ));
+    }
+
+    Ok(user_id)
+}
+
+/// GET /nodes/:id/roles — list all roles for a Node
+pub async fn list_roles_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let roles = state.db.get_node_roles(node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get roles: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "roles": roles })))
+}
+
+/// POST /nodes/:id/roles — create a new role
+pub async fn create_role_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<CreateRoleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id =
+        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+
+    let position = state.db.next_role_position(node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("DB error: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let role = state
+        .db
+        .create_role(
+            node_id,
+            &request.name,
+            request.color.unwrap_or(0),
+            request.permissions.unwrap_or(0),
+            position,
+            request.hoist.unwrap_or(false),
+            request.mentionable.unwrap_or(false),
+            request.icon_emoji.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to create role: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!(role)))
+}
+
+/// PATCH /nodes/:id/roles/:role_id — edit a role
+pub async fn update_role_handler(
+    State(state): State<SharedState>,
+    Path((node_id, role_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<UpdateRoleRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id =
+        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+
+    // Can't rename @everyone
+    let role = state.db.get_role(role_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e.to_string(), code: 500 }),
+        )
+    })?;
+    let role = role.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse { error: "Role not found".into(), code: 404 }),
+        )
+    })?;
+    if role.node_id != node_id {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse { error: "Role not found in this node".into(), code: 404 }),
+        ));
+    }
+
+    state
+        .db
+        .update_role(
+            role_id,
+            request.name.as_deref(),
+            request.color,
+            request.permissions,
+            request.hoist,
+            request.mentionable,
+            request.icon_emoji.as_ref().map(|s| Some(s.as_str())),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: format!("Failed to update role: {}", e), code: 500 }),
+            )
+        })?;
+
+    let updated = state.db.get_role(role_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e.to_string(), code: 500 }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!(updated)))
+}
+
+/// DELETE /nodes/:id/roles/:role_id — delete a role
+pub async fn delete_role_handler(
+    State(state): State<SharedState>,
+    Path((node_id, role_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id =
+        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+
+    // Prevent deleting @everyone (position 0)
+    let role = state.db.get_role(role_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+    let role = role.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Role not found".into(), code: 404 }))
+    })?;
+    if role.position == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: "Cannot delete the @everyone role".into(), code: 400 }),
+        ));
+    }
+
+    state.db.delete_role(role_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// PATCH /nodes/:id/roles/reorder — reorder roles
+pub async fn reorder_roles_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<ReorderRolesRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id =
+        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+
+    let entries: Vec<(Uuid, i32)> = request.roles.iter().map(|e| (e.id, e.position)).collect();
+    state.db.reorder_roles(&entries).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /nodes/:id/members/:user_id/roles — get a member's roles
+pub async fn get_member_roles_handler(
+    State(state): State<SharedState>,
+    Path((node_id, target_user_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let roles = state.db.get_member_roles(node_id, target_user_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(Json(serde_json::json!({ "roles": roles })))
+}
+
+/// PUT /nodes/:id/members/:user_id/roles/:role_id — assign a role to a member
+pub async fn assign_member_role_handler(
+    State(state): State<SharedState>,
+    Path((node_id, target_user_id, role_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id =
+        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+
+    // Verify the role belongs to this node
+    let role = state.db.get_role(role_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+    let role = role.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Role not found".into(), code: 404 }))
+    })?;
+    if role.node_id != node_id {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Role not in this node".into(), code: 404 })));
+    }
+
+    // Verify target is a member
+    if !state.db.is_node_member(node_id, target_user_id).await.unwrap_or(false) {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "User is not a member of this node".into(), code: 404 })));
+    }
+
+    state.db.assign_member_role(node_id, target_user_id, role_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /nodes/:id/members/:user_id/roles/:role_id — remove a role from a member
+pub async fn remove_member_role_handler(
+    State(state): State<SharedState>,
+    Path((node_id, target_user_id, role_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id =
+        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+
+    state.db.remove_member_role(target_user_id, role_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /channels/:id/permissions — list channel permission overwrites
+pub async fn list_channel_overwrites_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let overwrites = state.db.get_channel_overwrites(channel_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(Json(serde_json::json!({ "overwrites": overwrites })))
+}
+
+/// PUT /channels/:id/permissions/:role_id — set a channel permission overwrite
+pub async fn set_channel_overwrite_handler(
+    State(state): State<SharedState>,
+    Path((channel_id, role_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<SetChannelOverwriteRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get the channel's node to check permissions
+    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Channel not found".into(), code: 404 }))
+    })?;
+
+    // Require MANAGE_CHANNELS or MANAGE_ROLES
+    let perms = state.db.compute_node_permissions(channel.node_id, user_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+    let can_manage = perms & permission_bits::ADMINISTRATOR != 0
+        || perms & permission_bits::MANAGE_CHANNELS != 0
+        || perms & permission_bits::MANAGE_ROLES != 0;
+    if !can_manage {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "Missing MANAGE_CHANNELS or MANAGE_ROLES".into(), code: 403 })));
+    }
+
+    state.db.set_channel_overwrite(channel_id, role_id, request.allow, request.deny).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /channels/:id/permissions/:role_id — remove a channel permission overwrite
+pub async fn delete_channel_overwrite_handler(
+    State(state): State<SharedState>,
+    Path((channel_id, role_id)): Path<(Uuid, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Channel not found".into(), code: 404 }))
+    })?;
+
+    let perms = state.db.compute_node_permissions(channel.node_id, user_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+    let can_manage = perms & permission_bits::ADMINISTRATOR != 0
+        || perms & permission_bits::MANAGE_CHANNELS != 0
+        || perms & permission_bits::MANAGE_ROLES != 0;
+    if !can_manage {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "Missing MANAGE_CHANNELS or MANAGE_ROLES".into(), code: 403 })));
+    }
+
+    state.db.delete_channel_overwrite(channel_id, role_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /channels/:id/effective-permissions — compute effective permissions for the requesting user
+pub async fn get_effective_permissions_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Channel not found".into(), code: 404 }))
+    })?;
+
+    let perms = state.db.compute_channel_permissions(channel.node_id, user_id, channel_id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "permissions": perms,
+        "channel_id": channel_id,
+        "user_id": user_id,
+    })))
+}
