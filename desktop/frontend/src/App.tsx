@@ -37,6 +37,64 @@ function fingerprint(publicKeyHash: string): string {
   return publicKeyHash.substring(0, 8) + '...' + publicKeyHash.substring(publicKeyHash.length - 8);
 }
 
+// Voice Connection Panel (sidebar bottom, above user panel)
+const VoiceConnectionPanel: React.FC<{
+  channelName: string;
+  connectedAt: number | null;
+  onDisconnect: () => void;
+}> = ({ channelName, connectedAt, onDisconnect }) => {
+  const [elapsed, setElapsed] = useState("00:00");
+  const [isMuted, setIsMuted] = useState(false);
+  const [isDeafened, setIsDeafened] = useState(false);
+
+  useEffect(() => {
+    if (!connectedAt) return;
+    const interval = setInterval(() => {
+      const secs = Math.floor((Date.now() - connectedAt) / 1000);
+      const m = String(Math.floor(secs / 60)).padStart(2, '0');
+      const s = String(secs % 60).padStart(2, '0');
+      setElapsed(`${m}:${s}`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [connectedAt]);
+
+  return (
+    <div className="voice-connection-panel">
+      <div className="voice-connection-info">
+        <span className="voice-connection-dot">●</span>
+        <div className="voice-connection-details">
+          <span className="voice-connection-label">Voice Connected</span>
+          <span className="voice-connection-channel">{channelName}</span>
+        </div>
+        <span className="voice-connection-timer">{elapsed}</span>
+      </div>
+      <div className="voice-connection-controls">
+        <button
+          className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`}
+          onClick={() => setIsMuted(!isMuted)}
+          title={isMuted ? 'Unmute' : 'Mute'}
+        >
+          {isMuted ? '🔇' : '🎤'}
+        </button>
+        <button
+          className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`}
+          onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }}
+          title={isDeafened ? 'Undeafen' : 'Deafen'}
+        >
+          {isDeafened ? '🔇' : '🔊'}
+        </button>
+        <button
+          className="voice-ctrl-btn voice-disconnect-btn"
+          onClick={onDisconnect}
+          title="Disconnect"
+        >
+          📞
+        </button>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   // Server connection state
   const [serverUrl, setServerUrl] = useState(() => 
@@ -2853,6 +2911,7 @@ function App() {
                         if (!isConnectedToVoice) {
                           setVoiceChannelId(channel.id);
                           setVoiceChannelName(channel.name);
+                          setVoiceConnectedAt(Date.now());
                         }
                       } else {
                         handleChannelSelect(channel.id, `# ${channel.name}`);
@@ -2881,6 +2940,17 @@ function App() {
                       <button onClick={(e) => { e.stopPropagation(); setDeleteChannelConfirm({ id: channel.id, name: channel.name }); }} className="channel-delete-btn" title="Delete channel">×</button>
                     )}
                   </div>
+                  {/* Voice channel connected users */}
+                  {isConnectedToVoice && voiceChannelId === channel.id && (
+                    <div className="voice-channel-users">
+                      <div className="voice-channel-user">
+                        <div className="voice-user-avatar">
+                          {(appState.user?.display_name || "U")[0]}
+                        </div>
+                        <span className="voice-user-name">{appState.user?.display_name || "You"}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             };
@@ -2993,6 +3063,19 @@ function App() {
           </div>
         </div>
         
+        {/* Voice Connection Panel */}
+        {voiceChannelId && (
+          <VoiceConnectionPanel
+            channelName={voiceChannelName}
+            connectedAt={voiceConnectedAt}
+            onDisconnect={() => {
+              setVoiceChannelId(null);
+              setVoiceChannelName("");
+              setVoiceConnectedAt(null);
+            }}
+          />
+        )}
+
         <div className="user-panel">
           <div className="user-avatar">
             {appState.user?.id ? (
@@ -3006,8 +3089,8 @@ function App() {
           </div>
           <div className="user-info">
             <div className="username">{appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You"}</div>
-            <div className="user-status">
-              {appState.isConnected ? "Online" : "Offline"}
+            <div className="user-status" onClick={() => { setStatusInput(customStatus); setShowStatusPopover(true); }} style={{ cursor: 'pointer' }} title="Click to set custom status">
+              {customStatus || (appState.isConnected ? "Online" : "Offline")}
             </div>
           </div>
           <button
@@ -3035,6 +3118,35 @@ function App() {
           </button>
           <button onClick={handleLogout} className="user-panel-logout">Logout</button>
         </div>
+
+        {/* Custom Status Popover */}
+        {showStatusPopover && (
+          <div className="status-popover">
+            <div className="status-popover-header">
+              <span>Set Custom Status</span>
+              <button onClick={() => setShowStatusPopover(false)} className="status-popover-close">×</button>
+            </div>
+            <input
+              type="text"
+              className="status-popover-input"
+              placeholder="What's on your mind?"
+              value={statusInput}
+              onChange={(e) => setStatusInput(e.target.value.slice(0, 128))}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveCustomStatus(); if (e.key === 'Escape') setShowStatusPopover(false); }}
+              maxLength={128}
+              autoFocus
+            />
+            <div className="status-popover-footer">
+              <span className="status-popover-count">{statusInput.length}/128</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {customStatus && (
+                  <button className="status-popover-clear" onClick={() => { setStatusInput(""); setCustomStatus(""); api.updateProfile({ custom_status: "" }, appState.token || '').catch(() => {}); setShowStatusPopover(false); }}>Clear</button>
+                )}
+                <button className="status-popover-save" onClick={handleSaveCustomStatus}>Save</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main chat area */}
@@ -3486,6 +3598,7 @@ function App() {
           onLeave={() => {
             setVoiceChannelId(null);
             setVoiceChannelName("");
+            setVoiceConnectedAt(null);
           }}
         />
       )}
@@ -3515,8 +3628,15 @@ function App() {
                   </div>
                   <span className={`presence-dot presence-${presence}`} title={presence}></span>
                 </div>
-                <span className="member-name">{displayName(member.user)}</span>
-                <span className="member-role-badge" title={member.role}>{getRoleBadge(member.role)}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span className="member-name">{displayName(member.user)}</span>
+                    <span className="member-role-badge" title={member.role}>{getRoleBadge(member.role)}</span>
+                  </div>
+                  {member.profile?.custom_status && (
+                    <span className="member-custom-status">{member.profile.custom_status}</span>
+                  )}
+                </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {!isCurrentUser && (
                     <button onClick={(e) => { e.stopPropagation(); openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>

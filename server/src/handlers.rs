@@ -5690,65 +5690,6 @@ pub async fn update_push_preferences_handler(
         )),
     }
 }
-
-// ── Admin dashboard handlers ──
-
-/// Serve the admin dashboard HTML page
-pub async fn admin_page_handler() -> impl IntoResponse {
-    Response::builder()
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(include_str!("../static/admin.html")))
-        .unwrap()
-}
-
-/// Return admin stats as JSON (requires ?token= auth)
-pub async fn admin_stats_handler(
-    State(state): State<SharedState>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
-
-    let user_count = state.db.count_users().await.unwrap_or(0);
-    let node_count = state.db.count_nodes().await.unwrap_or(0);
-    let token_count = state.auth_tokens.read().await.len();
-    let connection_count = state.connections.read().await.len();
-    let uptime = state.uptime();
-    let version = env!("CARGO_PKG_VERSION");
-
-    let nodes_with_members = state
-        .db
-        .get_nodes_with_member_counts()
-        .await
-        .unwrap_or_default();
-    let nodes_json: Vec<serde_json::Value> = nodes_with_members
-        .iter()
-        .map(|(id, name, count)| {
-            serde_json::json!({
-                "id": id,
-                "name": name,
-                "member_count": count,
-            })
-        })
-        .collect();
-
-    let audit_entries = state
-        .db
-        .get_recent_audit_log_entries(50)
-        .await
-        .unwrap_or_default();
-
-    Ok(Json(serde_json::json!({
-        "user_count": user_count,
-        "node_count": node_count,
-        "token_count": token_count,
-        "connection_count": connection_count,
-        "uptime_seconds": uptime,
-        "version": version,
-        "nodes": nodes_json,
-        "audit_log": audit_entries,
-    })))
-}
-
 // ══════════════════════════════════════════════════════════════
 // ── Role & Permission Handlers ──
 // ══════════════════════════════════════════════════════════════
