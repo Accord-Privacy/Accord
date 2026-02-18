@@ -7458,3 +7458,262 @@ pub async fn import_discord_template_handler(
 
     Ok(Json(summary))
 }
+
+/// Link preview endpoint — fetches Open Graph metadata for a URL
+pub async fn link_preview_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Auth check
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let url = params.get("url").ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing 'url' query parameter".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    // Validate URL scheme
+    let parsed = url::Url::parse(url).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid URL".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Only http/https URLs are allowed".into(),
+                    code: 400,
+                }),
+            ));
+        }
+    }
+
+    // SSRF protection: block private/reserved IPs
+    if let Some(host) = parsed.host_str() {
+        let is_private = match host.parse::<std::net::IpAddr>() {
+            Ok(ip) => match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback()
+                        || v4.is_private()
+                        || v4.is_link_local()
+                        || v4.is_broadcast()
+                        || v4.is_unspecified()
+                        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64
+                    // 100.64.0.0/10
+                }
+                std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+            },
+            Err(_) => {
+                // It's a hostname — block localhost variants
+                host == "localhost"
+                    || host.ends_with(".local")
+                    || host.ends_with(".internal")
+                    || host == "0.0.0.0"
+                    || host == "[::]"
+            }
+        };
+        if is_private {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "URL points to a private/reserved address".into(),
+                    code: 400,
+                }),
+            ));
+        }
+    }
+
+    let url_string = url.to_string();
+
+    // Check cache (TTL: 1 hour)
+    {
+        let cache = state.link_preview_cache.read().await;
+        if let Some((cached, fetched_at)) = cache.get(&url_string) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now - fetched_at < 3600 {
+                return Ok(Json(cached.clone()));
+            }
+        }
+    }
+
+    // Fetch the URL
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| {
+            error!("Failed to build HTTP client: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Internal error".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let response = client
+        .get(&url_string)
+        .header("User-Agent", "Accord LinkPreview/1.0")
+        .send()
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: "Failed to fetch URL".into(),
+                    code: 502,
+                }),
+            )
+        })?;
+
+    // Check content length (1MB limit)
+    if let Some(len) = response.content_length() {
+        if len > 1_048_576 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Response too large".into(),
+                    code: 400,
+                }),
+            ));
+        }
+    }
+
+    let body = response.text().await.map_err(|_| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: "Failed to read response body".into(),
+                code: 502,
+            }),
+        )
+    })?;
+
+    // Truncate to 1MB if needed
+    let body = if body.len() > 1_048_576 {
+        &body[..1_048_576]
+    } else {
+        &body
+    };
+
+    // Parse OG tags and title with simple string scanning
+    let mut og_title: Option<String> = None;
+    let mut og_description: Option<String> = None;
+    let mut og_image: Option<String> = None;
+    let mut og_site_name: Option<String> = None;
+    let mut html_title: Option<String> = None;
+
+    // Find meta tags with og: properties
+    let body_lower = body.to_lowercase();
+    for cap in find_meta_tags(body) {
+        let lower = cap.to_lowercase();
+        if lower.contains("og:title") {
+            og_title = extract_content(&cap);
+        } else if lower.contains("og:description") {
+            og_description = extract_content(&cap);
+        } else if lower.contains("og:image") && !lower.contains("og:image:") {
+            og_image = extract_content(&cap);
+        } else if lower.contains("og:site_name") {
+            og_site_name = extract_content(&cap);
+        }
+    }
+
+    // Fallback: extract <title>
+    if let Some(start) = body_lower.find("<title") {
+        if let Some(gt) = body_lower[start..].find('>') {
+            let after = start + gt + 1;
+            if let Some(end) = body_lower[after..].find("</title") {
+                html_title = Some(body[after..after + end].trim().to_string());
+            }
+        }
+    }
+
+    let title = og_title.or(html_title);
+    let result = serde_json::json!({
+        "title": title,
+        "description": og_description,
+        "image": og_image,
+        "siteName": og_site_name,
+        "url": url_string,
+    });
+
+    // Cache the result
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut cache = state.link_preview_cache.write().await;
+        // Evict if cache is too large
+        if cache.len() > 1000 {
+            cache.clear();
+        }
+        cache.insert(url_string, (result.clone(), now));
+    }
+
+    Ok(Json(result))
+}
+
+/// Find all <meta ...> tags in HTML
+fn find_meta_tags(html: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    let lower = html.to_lowercase();
+    let mut search_from = 0;
+    while let Some(start) = lower[search_from..].find("<meta ") {
+        let abs_start = search_from + start;
+        if let Some(end) = html[abs_start..].find('>') {
+            tags.push(html[abs_start..abs_start + end + 1].to_string());
+            search_from = abs_start + end + 1;
+        } else {
+            break;
+        }
+    }
+    tags
+}
+
+/// Extract content="..." from a meta tag
+fn extract_content(tag: &str) -> Option<String> {
+    let lower = tag.to_lowercase();
+    let idx = lower.find("content=")?;
+    let after = &tag[idx + 8..];
+    if let Some(stripped) = after.strip_prefix('"') {
+        let end = stripped.find('"')?;
+        Some(html_decode(&stripped[..end]))
+    } else if let Some(stripped) = after.strip_prefix('\'') {
+        let end = stripped.find('\'')?;
+        Some(html_decode(&stripped[..end]))
+    } else {
+        let end = after
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(after.len());
+        Some(html_decode(&after[..end]))
+    }
+}
+
+/// Basic HTML entity decoding
+fn html_decode(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+        .replace("&apos;", "'")
+}

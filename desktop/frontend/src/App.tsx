@@ -38,6 +38,7 @@ import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildH
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts, SHORTCUTS } from "./keyboard";
+import { LinkPreview, extractFirstUrl } from "./LinkPreview";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -3805,6 +3806,11 @@ function App() {
                   />
                 )}
 
+                {/* Link Preview */}
+                {msg.content && extractFirstUrl(msg.content) && (
+                  <LinkPreview content={msg.content} token={appState.token || ''} />
+                )}
+
                 {/* File Attachments */}
                 {msg.files && msg.files.length > 0 && (
                   <div className="message-attachments">
@@ -4674,6 +4680,11 @@ function App() {
                         __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername),
                       }}
                     />
+                    {msg.content && extractFirstUrl(msg.content) && (
+                      <div style={{ marginLeft: '32px' }}>
+                        <LinkPreview content={msg.content} token={appState.token || ''} />
+                      </div>
+                    )}
                     <div
                       style={{
                         marginLeft: '32px',

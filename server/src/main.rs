@@ -46,9 +46,9 @@ use handlers::{
     get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
     get_user_avatar_handler, get_user_profile_handler, health_handler,
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
-    list_bans_handler, list_channel_files_handler, list_channel_overwrites_handler,
-    list_friend_requests_handler, list_friends_handler, list_invites_handler,
-    list_node_channels_handler, list_roles_handler, list_user_nodes_handler,
+    link_preview_handler, list_bans_handler, list_channel_files_handler,
+    list_channel_overwrites_handler, list_friend_requests_handler, list_friends_handler,
+    list_invites_handler, list_node_channels_handler, list_roles_handler, list_user_nodes_handler,
     mark_channel_read_handler, pin_message_handler, publish_key_bundle_handler, register_handler,
     register_push_token_handler, reject_friend_request_handler, remove_build_allowlist_handler,
     remove_friend_handler, remove_member_role_handler, remove_reaction_handler,
@@ -625,6 +625,8 @@ async fn main() -> Result<()> {
         .route("/files/:id", delete(delete_file_handler))
         // Search endpoints
         .route("/nodes/:id/search", get(search_messages_handler))
+        // Link preview endpoint
+        .route("/api/link-preview", get(link_preview_handler))
         // User profile endpoints
         .route("/users/:id/profile", get(get_user_profile_handler))
         .route(
