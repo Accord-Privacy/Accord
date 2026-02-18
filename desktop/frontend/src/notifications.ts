@@ -30,7 +30,7 @@ export interface NodeUnreads {
 export class NotificationManager {
   private preferences: NotificationPreferences;
   private unreads: NodeUnreads = {};
-  private currentUsername = '';
+  public currentUsername = '';
   private windowFocused = true;
   private activeChannelId: string | null = null;
   private audioContext: AudioContext | null = null;

@@ -28,6 +28,7 @@ const VoiceChat = React.lazy(() => import("./VoiceChat").then(m => ({ default: m
 import { SearchOverlay } from "./SearchOverlay";
 const NodeSettings = React.lazy(() => import("./NodeSettings").then(m => ({ default: m.NodeSettings })));
 import { notificationManager, NotificationPreferences } from "./notifications";
+import { renderMessageMarkdown } from "./markdown";
 const NotificationSettings = React.lazy(() => import("./NotificationSettings").then(m => ({ default: m.NotificationSettings })));
 const Settings = React.lazy(() => import("./Settings").then(m => ({ default: m.Settings })));
 import { LoadingSpinner } from "./LoadingSpinner";
@@ -3735,7 +3736,7 @@ function App() {
                   <div 
                     className="message-content"
                     dangerouslySetInnerHTML={{ 
-                      __html: notificationManager.highlightMentions(msg.content) 
+                      __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) 
                     }}
                   />
                 )}
@@ -4576,12 +4577,13 @@ function App() {
                       </span>
                     </div>
                     <div
+                      className="message-content"
                       style={{
                         marginLeft: '32px',
                         lineHeight: '1.4',
                       }}
                       dangerouslySetInnerHTML={{
-                        __html: notificationManager.highlightMentions(msg.content),
+                        __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername),
                       }}
                     />
                     <div

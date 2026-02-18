@@ -3629,3 +3629,59 @@ input, textarea, select, button {
   white-space: nowrap;
   max-width: 140px;
 }
+
+/* ── Markdown message rendering ── */
+.message-content p {
+  margin: 0 0 0.25em 0;
+}
+.message-content p:last-child {
+  margin-bottom: 0;
+}
+.message-content code {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+  padding: 0.15em 0.35em;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+}
+.message-content pre {
+  background: #1e1e2e;
+  border-radius: 6px;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  margin: 0.4em 0;
+}
+.message-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+  color: #cdd6f4;
+}
+.message-content blockquote {
+  border-left: 3px solid var(--accent, #7289da);
+  margin: 0.4em 0;
+  padding: 0.2em 0.8em;
+  color: var(--text-muted, #999);
+}
+.message-content ul, .message-content ol {
+  margin: 0.25em 0;
+  padding-left: 1.5em;
+}
+.message-content a {
+  color: var(--accent, #7289da);
+  text-decoration: none;
+}
+.message-content a:hover {
+  text-decoration: underline;
+}
+.message-content del {
+  opacity: 0.6;
+}
+.message-content table {
+  border-collapse: collapse;
+  margin: 0.4em 0;
+}
+.message-content th, .message-content td {
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 0.3em 0.6em;
+}
