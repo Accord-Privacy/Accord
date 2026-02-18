@@ -150,6 +150,12 @@ function App() {
   // Voice state
   const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null);
   const [voiceChannelName, setVoiceChannelName] = useState<string>("");
+  const [voiceConnectedAt, setVoiceConnectedAt] = useState<number | null>(null);
+
+  // Custom status state
+  const [customStatus, setCustomStatus] = useState<string>("");
+  const [showStatusPopover, setShowStatusPopover] = useState(false);
+  const [statusInput, setStatusInput] = useState("");
 
   // Pinned messages state
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
@@ -219,6 +225,9 @@ function App() {
 
   // Keyboard shortcuts help state
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Member sidebar visibility
+  const [showMemberSidebar, setShowMemberSidebar] = useState(true);
 
   // Message input emoji picker state
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
@@ -1059,6 +1068,31 @@ function App() {
       setDisplayNameSaving(false);
     }
   };
+
+  // Save custom status
+  const handleSaveCustomStatus = async () => {
+    if (!appState.token) return;
+    const newStatus = statusInput.trim().slice(0, 128);
+    try {
+      await api.updateProfile({ custom_status: newStatus || undefined }, appState.token);
+      setCustomStatus(newStatus);
+      setShowStatusPopover(false);
+    } catch (error) {
+      console.error('Failed to update custom status:', error);
+    }
+  };
+
+  // Load own custom status on login
+  useEffect(() => {
+    if (appState.user?.id && appState.token) {
+      api.getUserProfile(appState.user.id, appState.token).then(profile => {
+        if (profile?.custom_status) {
+          setCustomStatus(profile.custom_status);
+          setStatusInput(profile.custom_status);
+        }
+      }).catch(() => {});
+    }
+  }, [appState.user?.id, appState.token]);
 
   // Handle channel selection
   const handleChannelSelect = useCallback((channelId: string, channelName: string) => {
@@ -3032,7 +3066,8 @@ function App() {
                   {(() => {
                     const ch = channels.find(c => c.id === selectedChannelId);
                     if (ch?.channel_type === 'voice') return `🔊 Voice channel — ${ch.name}`;
-                    return `Welcome to ${activeChannel}!`;
+                    if (ch?.topic) return ch.topic;
+                    return '';
                   })()}
                 </span>
               </>
@@ -3055,6 +3090,13 @@ function App() {
               title="Search messages (Ctrl+K)"
             >
               🔍
+            </button>
+            <button
+              onClick={() => setShowMemberSidebar(prev => !prev)}
+              className={`chat-header-btn ${showMemberSidebar ? 'active' : ''}`}
+              title="Toggle member list"
+            >
+              👥
             </button>
           </div>
         </div>
@@ -3449,7 +3491,7 @@ function App() {
       )}
 
       {/* Member sidebar */}
-      <div className="member-sidebar">
+      {showMemberSidebar && <div className="member-sidebar">
         <div className="member-header">Members — {members.filter(m => m.user).length}</div>
         {(() => {
           const currentUserId = localStorage.getItem('accord_user_id');
@@ -3556,7 +3598,7 @@ function App() {
             </>
           );
         })()}
-      </div>
+      </div>}
 
       {/* Error Message */}
       {error && (
