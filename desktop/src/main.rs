@@ -142,6 +142,99 @@ fn delete_token() -> Result<(), String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Identity keyring storage
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone)]
+struct IdentityData {
+    encrypted_private_key: String,
+    public_key: String,
+}
+
+const IDENTITY_SERVICE: &str = "accord-identity";
+const IDENTITY_INDEX_USER: &str = "_identity_index";
+
+/// Save an identity keypair to the OS keyring.
+#[tauri::command]
+fn save_identity(
+    key_hash: String,
+    encrypted_private_key: String,
+    public_key: String,
+) -> Result<(), String> {
+    let data = IdentityData {
+        encrypted_private_key,
+        public_key,
+    };
+    let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new(IDENTITY_SERVICE, &key_hash).map_err(|e| e.to_string())?;
+    entry
+        .set_password(&json)
+        .map_err(|e| format!("Failed to save identity: {e}"))?;
+
+    // Update the index of stored key hashes
+    let mut hashes = load_identity_index();
+    if !hashes.contains(&key_hash) {
+        hashes.push(key_hash);
+        save_identity_index(&hashes);
+    }
+    Ok(())
+}
+
+/// Load an identity from the OS keyring.
+#[tauri::command]
+fn load_identity(key_hash: String) -> Result<Option<IdentityData>, String> {
+    let entry = keyring::Entry::new(IDENTITY_SERVICE, &key_hash).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(json) => {
+            let data: IdentityData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            Ok(Some(data))
+        }
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to load identity: {e}")),
+    }
+}
+
+/// Delete an identity from the OS keyring.
+#[tauri::command]
+fn delete_identity(key_hash: String) -> Result<(), String> {
+    let entry = keyring::Entry::new(IDENTITY_SERVICE, &key_hash).map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) => {}
+        Err(keyring::Error::NoEntry) => {}
+        Err(e) => return Err(format!("Failed to delete identity: {e}")),
+    }
+    let mut hashes = load_identity_index();
+    hashes.retain(|h| h != &key_hash);
+    save_identity_index(&hashes);
+    Ok(())
+}
+
+/// List all stored identity key hashes.
+#[tauri::command]
+fn list_identities() -> Vec<String> {
+    load_identity_index()
+}
+
+fn load_identity_index() -> Vec<String> {
+    let entry = match keyring::Entry::new(IDENTITY_SERVICE, IDENTITY_INDEX_USER) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    match entry.get_password() {
+        Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_identity_index(hashes: &[String]) {
+    if let Ok(entry) = keyring::Entry::new(IDENTITY_SERVICE, IDENTITY_INDEX_USER) {
+        if let Ok(json) = serde_json::to_string(hashes) {
+            let _ = entry.set_password(&json);
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|_app| {
@@ -164,6 +257,10 @@ fn main() {
             store_token,
             get_token,
             delete_token,
+            save_identity,
+            load_identity,
+            delete_identity,
+            list_identities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
