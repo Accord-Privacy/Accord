@@ -19,6 +19,47 @@ use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::metadata;
+
+/// Metadata storage mode for the relay server.
+///
+/// Controls how much metadata the relay persists. In `Minimal` mode, the relay
+/// strips optional plaintext metadata before writing to the database, storing
+/// only what is needed for routing and message ordering.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MetadataMode {
+    /// Store all metadata as-is (current behavior, full backward compatibility).
+    #[default]
+    Standard,
+    /// Strip optional plaintext metadata before storage. Only routing-essential
+    /// data and encrypted blobs are persisted.
+    Minimal,
+}
+
+impl std::fmt::Display for MetadataMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MetadataMode::Standard => write!(f, "standard"),
+            MetadataMode::Minimal => write!(f, "minimal"),
+        }
+    }
+}
+
+impl std::str::FromStr for MetadataMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "standard" => Ok(MetadataMode::Standard),
+            "minimal" => Ok(MetadataMode::Minimal),
+            other => Err(format!(
+                "unknown metadata mode '{}': expected 'standard' or 'minimal'",
+                other
+            )),
+        }
+    }
+}
+
 /// Build verification mode for client connections.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -109,6 +150,8 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// Build hash verification
     pub build_verification: BuildVerification,
+    /// Metadata storage mode (standard or minimal)
+    pub metadata_mode: MetadataMode,
 }
 
 impl std::fmt::Debug for AppState {
@@ -138,6 +181,7 @@ impl AppState {
             node_creation_policy: NodeCreationPolicy::default(),
             rate_limiter: RateLimiter::new(),
             build_verification: BuildVerification::new(BuildVerificationMode::default()),
+            metadata_mode: MetadataMode::default(),
         })
     }
 
@@ -174,7 +218,16 @@ impl AppState {
         };
 
         match self.db.create_user(&public_key, &password_hash).await {
-            Ok(user) => Ok(user.id),
+            Ok(user) => {
+                // In minimal mode, strip the default display name that db.create_user set
+                if self.metadata_mode == MetadataMode::Minimal {
+                    let _ = self
+                        .db
+                        .update_user_profile(user.id, Some("[redacted]"), None, None, None)
+                        .await;
+                }
+                Ok(user.id)
+            }
             Err(e) => Err(format!("Failed to create user: {}", e)),
         }
     }
@@ -256,9 +309,12 @@ impl AppState {
             }
         }
 
+        let stripped_name = metadata::strip_node_name(self.metadata_mode, &name);
+        let stripped_desc = metadata::strip_description(self.metadata_mode, description.as_deref());
+
         match self
             .db
-            .create_node(&name, owner_id, description.as_deref())
+            .create_node(&stripped_name, owner_id, stripped_desc.as_deref())
             .await
         {
             Ok(node) => Ok(node),
@@ -634,8 +690,9 @@ impl AppState {
             }
             None => return Err("Must be a member of the node to create channels".to_string()),
         }
+        let stripped_name = metadata::strip_channel_name(self.metadata_mode, &name);
         self.db
-            .create_channel(&name, node_id, created_by)
+            .create_channel(&stripped_name, node_id, created_by)
             .await
             .map_err(|e| e.to_string())
     }
@@ -676,8 +733,9 @@ impl AppState {
         node_id: Uuid,
         name: &str,
     ) -> Result<crate::models::ChannelCategory, String> {
+        let stripped_name = metadata::strip_category_name(self.metadata_mode, name);
         self.db
-            .create_channel_category(node_id, name)
+            .create_channel_category(node_id, &stripped_name)
             .await
             .map_err(|e| e.to_string())
     }
@@ -698,8 +756,9 @@ impl AppState {
         name: Option<&str>,
         position: Option<u32>,
     ) -> Result<(), String> {
+        let stripped_name = name.map(|n| metadata::strip_category_name(self.metadata_mode, n));
         self.db
-            .update_channel_category(category_id, name, position)
+            .update_channel_category(category_id, stripped_name.as_deref(), position)
             .await
             .map_err(|e| e.to_string())
     }
@@ -755,8 +814,15 @@ impl AppState {
             None => return Err("Must be a member of the node".to_string()),
         }
 
+        let stripped_name = name
+            .as_deref()
+            .map(|n| metadata::strip_node_name(self.metadata_mode, n));
+        let stripped_desc = description
+            .as_deref()
+            .and_then(|d| metadata::strip_description(self.metadata_mode, Some(d)));
+
         self.db
-            .update_node(node_id, name.as_deref(), description.as_deref())
+            .update_node(node_id, stripped_name.as_deref(), stripped_desc.as_deref())
             .await
             .map_err(|e| e.to_string())
     }
@@ -845,9 +911,22 @@ impl AppState {
         status: Option<&str>,
         custom_status: Option<&str>,
     ) -> Result<(), String> {
+        // Strip metadata in minimal mode
+        let stripped_display =
+            display_name.map(|n| metadata::strip_display_name(self.metadata_mode, n));
+        let stripped_bio = metadata::strip_optional_text(self.metadata_mode, bio);
+        let stripped_custom = metadata::strip_optional_text(self.metadata_mode, custom_status);
+
         // Update profile in database
         self.db
-            .update_user_profile(user_id, display_name, bio, status, custom_status)
+            .update_user_profile(
+                user_id,
+                stripped_display.as_deref(),
+                stripped_bio.as_deref(),
+                // Status (online/offline/dnd/idle) is routing-relevant, always store
+                status,
+                stripped_custom.as_deref(),
+            )
             .await
             .map_err(|e| e.to_string())?;
 

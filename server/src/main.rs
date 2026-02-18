@@ -12,6 +12,7 @@ mod db;
 #[allow(dead_code)]
 mod files;
 mod handlers;
+mod metadata;
 #[allow(dead_code)]
 mod models;
 mod node;
@@ -143,6 +144,10 @@ struct Args {
     /// Database file path
     #[arg(short = 'd', long, default_value = "accord.db")]
     database: String,
+
+    /// Metadata storage mode: 'standard' (store everything) or 'minimal' (strip optional metadata)
+    #[arg(long, default_value = "standard")]
+    metadata_mode: String,
 }
 
 #[tokio::main]
@@ -162,9 +167,17 @@ async fn main() -> Result<()> {
         warn!("Running without TLS - only use for development!");
     }
 
+    // Parse metadata mode
+    let metadata_mode: state::MetadataMode = args
+        .metadata_mode
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!(e))?;
+    info!("Metadata mode: {}", metadata_mode);
+
     // Initialize shared state with database
     info!("Initializing database: {}", args.database);
-    let app_state = AppState::new(&args.database).await?;
+    let mut app_state = AppState::new(&args.database).await?;
+    app_state.metadata_mode = metadata_mode;
     let state: SharedState = Arc::new(app_state);
 
     // Build the router with all endpoints

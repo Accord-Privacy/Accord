@@ -10,6 +10,7 @@ pub mod bot_api;
 pub mod db;
 pub mod files;
 pub mod handlers;
+pub mod metadata;
 pub mod models;
 pub mod node;
 pub mod permissions;
