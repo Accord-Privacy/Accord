@@ -2,11 +2,18 @@
 // Falls back to @noble libraries when crypto.subtle is unavailable
 // (e.g., HTTP origins on LAN — crypto.subtle requires secure context)
 //
-// ⚠️  WARNING: INSECURE PLACEHOLDER ENCRYPTION ⚠️
-// The current key derivation does NOT provide true end-to-end encryption.
-// Channel keys are derived from channel ID + a user-specific token, meaning
-// the server (or anyone with the channel UUID and token) can decrypt messages.
-// TODO: Implement proper key exchange protocol for real E2EE.
+// ─── DUAL ENCRYPTION SYSTEM ───
+//
+// 1. **Symmetric (AES-GCM) — Groups & Channels**
+//    encryptMessage / decryptMessage use a shared channel key derived from
+//    the channel ID + user token. This is a PLACEHOLDER — the server can
+//    derive these keys too. Real group E2EE requires Sender Keys or MLS.
+//
+// 2. **Double Ratchet (X3DH + DR) — Direct Messages**
+//    encryptE2EE / decryptE2EE use per-peer Double Ratchet sessions with
+//    X3DH key agreement. This provides true E2EE with forward secrecy and
+//    break-in recovery for 1:1 DMs. See ./e2ee/ module.
+//
 
 // @ts-ignore - noble v2 uses .js exports
 import { p256 } from '@noble/curves/nist.js';
@@ -729,4 +736,46 @@ export function hasStoredKeyPair(pkHash?: string): boolean {
  */
 export function getStoredPublicKey(): string | null {
   return localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// E2EE — Double Ratchet for Direct Messages
+// ---------------------------------------------------------------------------
+
+import { createE2EEManager, type IdentityKeyPair, type E2EESessionManager } from './e2ee';
+
+let e2eeManager: E2EESessionManager | null = null;
+
+/**
+ * Initialize the E2EE manager with an X25519 identity keypair.
+ * Must be called once after login/registration before using encryptE2EE/decryptE2EE.
+ */
+export function initE2EE(identityKeyPair: IdentityKeyPair): E2EESessionManager {
+  e2eeManager = createE2EEManager(identityKeyPair);
+  return e2eeManager;
+}
+
+/**
+ * Get the current E2EE manager, or null if not initialized.
+ */
+export function getE2EEManager(): E2EESessionManager | null {
+  return e2eeManager;
+}
+
+/**
+ * Encrypt a DM plaintext for a recipient using the Double Ratchet.
+ * Requires an active session with the recipient (call initSession first).
+ */
+export async function encryptE2EE(recipientId: string, plaintext: string): Promise<string> {
+  if (!e2eeManager) throw new Error('E2EE not initialized — call initE2EE() first');
+  return e2eeManager.encrypt(recipientId, plaintext);
+}
+
+/**
+ * Decrypt a DM ciphertext from a sender using the Double Ratchet.
+ * Requires an active session with the sender (call receiveSession first).
+ */
+export async function decryptE2EE(senderId: string, ciphertext: string): Promise<string> {
+  if (!e2eeManager) throw new Error('E2EE not initialized — call initE2EE() first');
+  return e2eeManager.decrypt(senderId, ciphertext);
 }
