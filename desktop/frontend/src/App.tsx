@@ -37,6 +37,7 @@ import { listIdentities } from "./identityStorage";
 import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle } from "./e2ee";
+import { initKeyboardShortcuts, SHORTCUTS } from "./keyboard";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -2467,26 +2468,14 @@ function App() {
     }
   }, [selectedChannelId, appState.token, serverAvailable, loadMessages]);
 
-  // Keyboard shortcuts for search, settings, help, and escape
+  // Keyboard shortcuts — powered by keyboard.ts manager
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+K / Cmd+K: open search
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'f')) {
-        e.preventDefault();
-        setShowSearchOverlay(true);
-      }
-      // Ctrl+, / Cmd+,: open settings
-      if ((e.ctrlKey || e.metaKey) && e.key === ',') {
-        e.preventDefault();
-        setShowSettings(true);
-      }
-      // Ctrl+/ / Cmd+/: keyboard shortcuts help
-      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
-        e.preventDefault();
-        setShowShortcutsHelp(prev => !prev);
-      }
-      // Escape: close modals / cancel editing
-      if (e.key === 'Escape') {
+    return initKeyboardShortcuts({
+      openSearch: () => setShowSearchOverlay(true),
+      openSettings: () => setShowSettings(true),
+      toggleShortcutsHelp: () => setShowShortcutsHelp(prev => !prev),
+      toggleEmojiPicker: () => setShowInputEmojiPicker(prev => !prev),
+      closeTopModal: () => {
         if (showShortcutsHelp) { setShowShortcutsHelp(false); return; }
         if (showSearchOverlay) { setShowSearchOverlay(false); return; }
         if (showSettings) { setShowSettings(false); return; }
@@ -2496,16 +2485,38 @@ function App() {
         if (showCreateNodeModal) { setShowCreateNodeModal(false); return; }
         if (showInviteModal) { setShowInviteModal(false); return; }
         if (showDisplayNamePrompt) { setShowDisplayNamePrompt(false); return; }
+        if (showInputEmojiPicker) { setShowInputEmojiPicker(false); return; }
         if (editingMessageId) { handleCancelEdit(); return; }
         if (replyingTo) { handleCancelReply(); return; }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showCreateNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo]);
+      },
+      navigateChannel: (direction: 'up' | 'down') => {
+        // Navigate text channels up/down in the sidebar
+        const textChannels = channels.filter(c => c.channel_type === 'text');
+        if (textChannels.length === 0) return;
+        const currentIdx = textChannels.findIndex(c => c.id === selectedChannelId);
+        let nextIdx: number;
+        if (currentIdx === -1) {
+          nextIdx = 0;
+        } else {
+          nextIdx = direction === 'up'
+            ? (currentIdx - 1 + textChannels.length) % textChannels.length
+            : (currentIdx + 1) % textChannels.length;
+        }
+        const next = textChannels[nextIdx];
+        handleChannelSelect(next.id, next.name);
+      },
+      toggleMute: () => {
+        // Click the mute button in the voice connection panel
+        const btn = document.querySelector('.voice-connection-controls .voice-ctrl-btn:first-child') as HTMLButtonElement | null;
+        btn?.click();
+      },
+      toggleDeafen: () => {
+        // Click the deafen button in the voice connection panel
+        const btn = document.querySelector('.voice-connection-controls .voice-ctrl-btn:nth-child(2)') as HTMLButtonElement | null;
+        btn?.click();
+      },
+    });
+  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showCreateNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect]);
 
   // Apply font-size and density from localStorage on mount
   useEffect(() => {
@@ -4383,6 +4394,7 @@ function App() {
       <Settings
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
+        onShowShortcuts={() => setShowShortcutsHelp(true)}
         currentUser={appState.user}
         knownHashes={knownHashes}
         serverInfo={{
@@ -4717,12 +4729,9 @@ function App() {
           <div className="modal-card shortcuts-modal" onClick={(e) => e.stopPropagation()}>
             <h3>⌨️ Keyboard Shortcuts</h3>
             <div className="shortcuts-list">
-              <div className="shortcut-row"><kbd>Enter</kbd><span>Send message</span></div>
-              <div className="shortcut-row"><kbd>Shift + Enter</kbd><span>New line in message</span></div>
-              <div className="shortcut-row"><kbd>Escape</kbd><span>Close modal / Cancel edit</span></div>
-              <div className="shortcut-row"><kbd>Ctrl + K</kbd><span>Open search</span></div>
-              <div className="shortcut-row"><kbd>Ctrl + /</kbd><span>Show this help</span></div>
-              <div className="shortcut-row"><kbd>Ctrl + ,</kbd><span>Open settings</span></div>
+              {SHORTCUTS.map((s, i) => (
+                <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>
+              ))}
             </div>
             <div className="modal-actions" style={{ marginTop: '16px' }}>
               <button onClick={() => setShowShortcutsHelp(false)} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>

@@ -47,6 +47,7 @@ interface ServerInfo {
 interface SettingsProps {
   isOpen: boolean;
   onClose: () => void;
+  onShowShortcuts?: () => void;
   knownHashes?: KnownBuild[] | null;
   currentUser?: {
     id: string;
@@ -98,6 +99,7 @@ const defaultPrivacySettings: PrivacySettings = {
 export const Settings: React.FC<SettingsProps> = ({
   isOpen,
   onClose,
+  onShowShortcuts,
   currentUser,
   onUserUpdate,
   serverInfo,
@@ -624,6 +626,14 @@ export const Settings: React.FC<SettingsProps> = ({
             >
               🖥️ Server Info
             </button>
+            {onShowShortcuts && (
+              <button
+                className="settings-nav-item"
+                onClick={() => { onClose(); onShowShortcuts(); }}
+              >
+                ⌨️ Keyboard Shortcuts
+              </button>
+            )}
             <button
               className={`settings-nav-item ${activeTab === 'about' ? 'active' : ''}`}
               onClick={() => setActiveTab('about')}
