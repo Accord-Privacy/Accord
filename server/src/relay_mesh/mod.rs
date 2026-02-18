@@ -8,6 +8,9 @@ pub mod config;
 pub mod envelope;
 pub mod identity;
 pub mod peers;
+pub mod router;
+pub mod service;
+pub mod transport;
 
 use std::path::Path;
 

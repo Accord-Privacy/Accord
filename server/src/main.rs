@@ -21,6 +21,7 @@ mod permissions;
 pub mod push;
 #[allow(dead_code)]
 mod rate_limit;
+mod relay_mesh;
 mod state;
 
 use anyhow::Result;
@@ -170,6 +171,22 @@ struct Args {
     /// Relay-level build hash enforcement: 'off' (allow all), 'warn' (log unverified), 'strict' (reject unverified)
     #[arg(long, default_value = "off")]
     build_hash_enforcement: String,
+
+    /// Enable relay mesh networking for cross-relay DMs
+    #[arg(long)]
+    mesh_enabled: bool,
+
+    /// Mesh listen port for peer relay connections
+    #[arg(long, default_value_t = 9443)]
+    mesh_port: u16,
+
+    /// Mesh bootstrap peers (comma-separated host:port)
+    #[arg(long, default_value = "")]
+    mesh_peers: String,
+
+    /// Mesh data directory for relay identity and peer state
+    #[arg(long, default_value = "mesh_data")]
+    mesh_data_dir: String,
 }
 
 #[tokio::main]
@@ -215,6 +232,42 @@ async fn main() -> Result<()> {
     }
 
     let state: SharedState = Arc::new(app_state);
+
+    // Start mesh service if enabled
+    if args.mesh_enabled {
+        let mesh_peers: Vec<String> = args
+            .mesh_peers
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let mesh_config = relay_mesh::config::MeshConfig {
+            enabled: true,
+            listen_port: args.mesh_port,
+            known_peers: mesh_peers,
+            max_peers: 50,
+        };
+
+        let data_dir = std::path::Path::new(&args.mesh_data_dir);
+        match relay_mesh::MeshNode::init(data_dir, mesh_config) {
+            Ok(node) => {
+                info!("Mesh: relay_id={}", node.relay_id());
+                match relay_mesh::service::MeshService::start(node, state.clone()).await {
+                    Ok(handle) => {
+                        *state.mesh_handle.write().await = Some(handle);
+                        info!("Mesh service started on port {}", args.mesh_port);
+                    }
+                    Err(e) => {
+                        warn!("Failed to start mesh service: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to init mesh node: {}", e);
+            }
+        }
+    }
 
     // Restore auth tokens from database so sessions survive restarts
     let restored = state.load_persisted_tokens().await;

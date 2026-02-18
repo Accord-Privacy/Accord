@@ -197,6 +197,8 @@ pub struct AppState {
     pub client_build_hashes: RwLock<HashMap<Uuid, String>>,
     /// Relay-level build hash enforcement mode
     pub build_hash_enforcement: BuildHashEnforcementMode,
+    /// Optional mesh handle for cross-relay DM routing
+    pub mesh_handle: RwLock<Option<crate::relay_mesh::service::MeshHandle>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -234,6 +236,7 @@ impl AppState {
             metadata_mode: MetadataMode::default(),
             client_build_hashes: RwLock::new(HashMap::new()),
             build_hash_enforcement: BuildHashEnforcementMode::default(),
+            mesh_handle: RwLock::new(None),
         })
     }
 
