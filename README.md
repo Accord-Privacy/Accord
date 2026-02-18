@@ -2,75 +2,77 @@
 
 **Privacy-first community communications** — Discord's features with Signal's security
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/your-org/accord)
+[![CI](https://github.com/Accord-Privacy/Accord/actions/workflows/ci.yml/badge.svg)](https://github.com/Accord-Privacy/Accord/actions/workflows/ci.yml)
+[![Windows Build](https://github.com/Accord-Privacy/Accord/actions/workflows/windows.yml/badge.svg)](https://github.com/Accord-Privacy/Accord/actions/workflows/windows.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 ---
 
-## 🚀 What is Accord?
+## What is Accord?
 
-Accord fills the gap between Discord (great features, no privacy) and Signal (great privacy, no community features). It's an open-source, end-to-end encrypted platform where the server **never** has access to your messages, voice, or files.
+Accord fills the gap between Discord (great features, no privacy) and Signal (great privacy, no community features). It's an open-source, end-to-end encrypted platform where the relay **never** has access to your messages, voice, or files.
 
-**Key Differentiators:**
-- **Zero-knowledge server** — routes encrypted blobs, never decrypts
-- **Discord-like UX** — Nodes (communities), channels, voice chat, bots, rich messaging
-- **Signal-grade encryption** — X25519 + AES-256-GCM with forward secrecy
-- **Self-hostable** — run your own server, own your data
-- **Privacy-preserving bots** — bots see only commands, never regular messages
-
-> **The server admin is just a landlord — they provide the building but can't enter your apartment.** Unlike Discord, where the company has god-mode access to everything, Accord's server admin has zero access to Node content.
+> **The relay admin is just a landlord — they provide the building but can't enter your apartment.**
 
 ---
 
-## ✨ Features
+## Features
 
-### 🔒 **End-to-End Encryption**
-- **X25519 key agreement** for secure key exchange
-- **AES-256-GCM encryption** for all messages and files
+### 🔐 End-to-End Encryption
+- **Double Ratchet + X3DH** key agreement (Signal protocol foundations)
+- **AES-256-GCM** for all messages and files
 - **Forward secrecy** — keys rotate per message
-- **Voice encryption** — per-packet encryption with 30s key rotation
+- **SRTP voice encryption** with periodic key rotation
 
-### 🏘️ **Nodes (Community Spaces)**
-- Discord-like servers but fully encrypted
-- Admin/moderator/member roles and permissions
-- Invite-only or approval-based joining
-- Multi-tenant architecture (one server, many communities)
+### 🏘️ Nodes (Community Spaces)
+- Discord-style UI: **categories, channels, roles with colors**
+- **50+ permission bits** with category → channel cascade
+- **Discord template import** — paste a discord.new link to scaffold your Node structure
+- Node icon and user avatar uploads
+- Custom user status
 
-### 🎙️ **Voice Channels**
-- Real-time encrypted voice communication
-- P2P for small groups, server-relayed for larger groups
+### 🔑 Zero-Knowledge Relay
+- **Keypair-only registration** — no email, no phone, no PII
+- **Per-Node encrypted profiles** — different display name/avatar per Node
+- Relay stores only encrypted blobs and routing metadata
+
+### 🎙️ Voice Channels
+- **P2P mesh** for small groups (≤4 users), **relay fallback** for larger ones
+- SRTP encryption on all voice traffic
 - Mute/deafen controls, speaking indicators
 - Opus codec for high-quality audio
 
-### 📁 **Secure File Sharing**
-- End-to-end encrypted file uploads (up to 100MB)
-- Zero-knowledge filenames — server can't see file names
-- Chunked uploads for reliability
+### 🪪 Identity Portability
+- **BIP39 mnemonic** — your identity is a 12-word seed phrase
+- **Export/import file** for full account backup
+- **QR code sync** between devices
+- Auto session reconnect on token expiry
 
-### 🔧 **Self-Hostable**
-- Run your own relay server
-- Docker support for easy deployment
-- No vendor lock-in — migrate your communities
+### 🤖 Bot API
+- Scoped access with fine-grained permissions
+- Webhook support for integrations
+- Bots see only what their scopes allow
 
-### 🤖 **Privacy-Preserving Bots**
-- Bots see only commands they're mentioned in
-- Never access regular user messages
-- Rich bot API while preserving privacy
+### 🛡️ Admin Dashboard
+- Live server logs
+- **Build hash verification** — clients display trust indicators so users can verify they're running unmodified code
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-[Client Apps] <--E2E Encrypted--> [Relay Server] <--E2E Encrypted--> [Client Apps]
-     ^                                  ^                                  ^
-  Full Crypto                     Routing Only                       Full Crypto
-  All Features                  No Decryption Keys                  All Features
+┌─────────┐         ┌─────────────┐         ┌─────────┐
+│  Client  │◄──E2E──►│  Relay Server│◄──E2E──►│  Client  │
+│  (Tauri) │         │ (Zero-Know.) │         │  (Tauri) │
+└─────────┘         └─────────────┘         └─────────┘
 ```
 
-### Workspace Structure
+- **Relay** — routes encrypted blobs between clients. Has no decryption keys. Handles auth (keypair-based), presence, and channel metadata.
+- **Node** — a community space (like a Discord server). All content is E2E encrypted; the relay only sees opaque ciphertext.
+- **Client** — Tauri desktop app (Rust backend + React/TypeScript UI). Holds all crypto keys locally.
 
-This is a **Rust workspace** with multiple crates:
+### Workspace Crates
 
 | Crate | Purpose |
 |-------|---------|
@@ -78,121 +80,101 @@ This is a **Rust workspace** with multiple crates:
 | `server/` | WebSocket relay server (zero-knowledge routing) |
 | `desktop/` | Tauri desktop app (Rust + React/TypeScript) |
 | `accord-cli/` | Command-line client |
-| `core-minimal/` | Lightweight demo of core concepts |
-| `standalone-demo/` | Zero-dependency proof of concept |
-
-### Zero-Knowledge Relay Design
-
-- **Server stores:** Encrypted blobs, routing metadata, user handles
-- **Server never sees:** Message contents, file names, voice data
-- **Relay server admin ≠ Node admin** — complete separation of privileges
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
-### Building from Source
+### Requirements
 
-**Requirements:**
-- Rust 1.86+
-- build-essential, pkg-config, libssl-dev
-- For desktop: libgtk-3-dev, libwebkit2gtk-4.1-dev, libsoup-2.4-dev
+- **Rust 1.86+**
+- **Node.js** (for the desktop UI)
+- System deps: `build-essential pkg-config libssl-dev`
+- Desktop deps: `libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-2.4-dev`
+
+### Build & Run
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/accord
-cd accord
+git clone https://github.com/Accord-Privacy/Accord
+cd Accord
 
-# Build core components
-cargo build --release -p accord-core -p accord-server -p accord-cli
+# Build the relay server
+cargo build --release -p accord-server
 
-# Build desktop app (requires GUI dependencies)
+# Build the desktop client
+cd desktop/src-ui && npm install && cd ../..
 cargo build --release -p accord-desktop
+
+# Run the relay
+./target/release/accord-server
 
 # Run tests
 cargo test
 ```
 
-### Self-Hosting with Docker
+---
 
-For detailed self-hosting instructions, see **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)**.
+## Self-Hosting
 
-```bash
-# Quick start with Docker Compose
-docker-compose up -d
+Accord is designed to be self-hosted. A **$5/month VPS** or a spare desktop on your LAN is all you need.
 
-# The relay server will be available at localhost:8080
-# Configure clients to connect to your server
-```
+1. Build `accord-server` (see above) or use the Docker setup in `docker/`
+2. Open port **8080** (WebSocket) on your firewall
+3. Point clients at your relay's address
+
+The relay is lightweight — it never decrypts anything, so CPU and memory usage stay low. See **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)** for detailed instructions.
 
 ---
 
-## 📸 Screenshots
+## Security
 
-*Coming soon! We're focusing on security and functionality first, polish second.*
+### What the relay **can** see
+- Which keypairs are online
+- Which Node a user is connected to (routing metadata)
+- Encrypted blob sizes and timestamps
+
+### What the relay **cannot** see
+- Message contents, file names, or file contents
+- Voice audio
+- Display names, avatars, or any profile information (encrypted per-Node)
+- Permission assignments or role names within a Node
+
+### Design Principles
+- **No PII at registration** — identity is a keypair, optionally backed by a BIP39 mnemonic
+- **Forward secrecy** — compromising a key doesn't reveal past messages
+- **Build verification** — clients ship a build hash so users can verify binary integrity
+- **Minimal trust surface** — the relay is designed to be untrusted by default
+
+**Reporting Vulnerabilities:** Do **not** create public issues. Use [GitHub Security Advisories](https://github.com/Accord-Privacy/Accord/security/advisories).
 
 ---
 
-## 📊 Comparison
+## Comparison
 
 | | Accord | Discord | Signal | Matrix |
 |---|:---:|:---:|:---:|:---:|
-| **E2E encryption** | ✅ | ❌ | ✅ | ✅ |
-| **Community features** | ✅ | ✅ | ❌ | ✅ |
-| **Voice channels** | ✅ | ✅ | ❌ | ⚠️ |
-| **Zero-knowledge server** | ✅ | ❌ | ✅ | ❌ |
-| **Privacy-preserving bots** | ✅ | ❌ | ❌ | ❌ |
-| **Self-hostable** | ✅ | ❌ | ⚠️ | ✅ |
-| **Open source** | ✅ | ❌ | ✅ | ✅ |
-
-**Why not just use...?**
-- **Discord:** No encryption, no privacy, corporate control
-- **Signal:** Great for 1:1 and small groups, but no community features
-- **Matrix:** Complex protocol, servers can see metadata, no voice channels
-- **Accord:** The best of all worlds — Discord UX + Signal privacy
+| E2E encryption | ✅ | ❌ | ✅ | ✅ |
+| Community features | ✅ | ✅ | ❌ | ✅ |
+| Voice channels | ✅ | ✅ | ❌ | ⚠️ |
+| Zero-knowledge server | ✅ | ❌ | ✅ | ❌ |
+| Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
+| No PII required | ✅ | ❌ | ❌ | ❌ |
+| Open source | ✅ | ❌ | ✅ | ✅ |
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions! Please see **[CONTRIBUTING.md](CONTRIBUTING.md)** for development guidelines.
-
-**Get Involved:**
-- **GitHub Issues**: Bug reports and feature requests
-- **GitHub Discussions**: Community Q&A and feature brainstorming
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for development guidelines.
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE) for details.
+**GNU Affero General Public License v3.0** — see [LICENSE](LICENSE).
 
-**TLDR:** You can use, modify, and distribute this software, but any modifications must also be open-source under GPL v3.
-
----
-
-## 🔒 Security
-
-**Current Status:** Core architecture complete, integration phase in progress. Not ready for production use.
-
-**Reporting Vulnerabilities:** 
-- **DO NOT** create public GitHub issues for security vulnerabilities
-- Report security issues via **GitHub Security Advisories**
-- Include: description, severity, reproduction steps, suggested fix
-- For other inquiries, use GitHub Issues and Discussions
+You can use, modify, and distribute this software, but any modifications must also be open-source under AGPL v3.
 
 ---
 
-## 📈 Roadmap
-
-**Phase 2 (Current):** Integration & polish — connecting E2E crypto to client flows
-**Phase 3:** Voice & real-time features
-**Phase 4:** Security audit and hardening
-**Phase 5:** Mobile apps (iOS/Android)
-**Phase 6:** Public beta
-
-See **[ROADMAP.md](ROADMAP.md)** for detailed development timeline and technical specifications.
-
----
-
-**Built with ❤️ for privacy-conscious communities**
+**Built with ❤️ for privacy-conscious communities** · [accord.chat](https://accord.chat)
