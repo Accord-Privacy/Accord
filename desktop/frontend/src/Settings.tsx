@@ -3,6 +3,7 @@ import { notificationManager, NotificationPreferences } from './notifications';
 import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
+import { themes, applyTheme, getSavedTheme } from './themes';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 
@@ -14,7 +15,7 @@ interface AccountSettings {
 }
 
 interface AppearanceSettings {
-  theme: 'dark' | 'light';
+  theme: string;
   fontSize: number; // px value for slider
   messageDensity: 'compact' | 'comfortable' | 'cozy';
 }
@@ -76,7 +77,7 @@ const defaultAccountSettings: AccountSettings = {
 };
 
 const defaultAppearanceSettings: AppearanceSettings = {
-  theme: 'dark',
+  theme: getSavedTheme(),
   fontSize: 15,
   messageDensity: 'comfortable',
 };
@@ -270,20 +271,8 @@ export const Settings: React.FC<SettingsProps> = ({
   const applyAppearanceSettings = (settings: AppearanceSettings) => {
     const root = document.documentElement;
     
-    // Apply theme
-    if (settings.theme === 'light') {
-      root.style.setProperty('--bg-primary', '#ffffff');
-      root.style.setProperty('--bg-secondary', '#f6f6f6');
-      root.style.setProperty('--bg-tertiary', '#e3e5e8');
-      root.style.setProperty('--text-primary', '#2e3338');
-      root.style.setProperty('--text-secondary', '#747f8d');
-    } else {
-      root.style.setProperty('--bg-primary', '#36393f');
-      root.style.setProperty('--bg-secondary', '#2f3136');
-      root.style.setProperty('--bg-tertiary', '#202225');
-      root.style.setProperty('--text-primary', '#dcddde');
-      root.style.setProperty('--text-secondary', '#8e9297');
-    }
+    // Apply theme via theme system
+    applyTheme(settings.theme);
 
     // Apply font size (CSS variable)
     root.style.setProperty('--font-size', `${settings.fontSize}px`);
@@ -294,7 +283,7 @@ export const Settings: React.FC<SettingsProps> = ({
     root.style.setProperty('--message-spacing', spacingMap[settings.messageDensity]);
     localStorage.setItem('accord_message_density', settings.messageDensity);
     
-    // Add theme class to body
+    // Add density class to body
     document.body.className = `theme-${settings.theme} density-${settings.messageDensity}`;
   };
 
@@ -854,28 +843,52 @@ export const Settings: React.FC<SettingsProps> = ({
                 
                 <div className="settings-group">
                   <label className="settings-label">Theme</label>
-                  <div className="theme-buttons">
-                    <button
-                      className={`theme-button dark ${appearanceSettings.theme === 'dark' ? 'active' : ''}`}
-                      onClick={() => saveAppearanceSettings({
-                        ...appearanceSettings,
-                        theme: 'dark'
-                      })}
-                    >
-                      🌙 Dark
-                    </button>
-                    <button
-                      className={`theme-button light ${appearanceSettings.theme === 'light' ? 'active' : ''}`}
-                      onClick={() => saveAppearanceSettings({
-                        ...appearanceSettings,
-                        theme: 'light'
-                      })}
-                    >
-                      ☀️ Light
-                    </button>
-                  </div>
-                  <div className="settings-help">
-                    Light theme is experimental and may not look perfect everywhere.
+                  <div className="theme-buttons" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                    {Object.values(themes).map((theme) => (
+                      <button
+                        key={theme.name}
+                        className={`theme-swatch-btn ${appearanceSettings.theme === theme.name ? 'active' : ''}`}
+                        onClick={() => {
+                          applyTheme(theme.name);
+                          saveAppearanceSettings({ ...appearanceSettings, theme: theme.name });
+                        }}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '12px',
+                          borderRadius: 'var(--radius-md)',
+                          border: appearanceSettings.theme === theme.name
+                            ? '2px solid var(--accent)'
+                            : '2px solid var(--border-subtle)',
+                          background: 'var(--bg-input)',
+                          cursor: 'pointer',
+                          transition: 'border-color 0.15s ease',
+                          minWidth: '100px',
+                        }}
+                      >
+                        {/* Preview swatch */}
+                        <div style={{
+                          width: '80px',
+                          height: '52px',
+                          borderRadius: '6px',
+                          overflow: 'hidden',
+                          display: 'flex',
+                          boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                        }}>
+                          <div style={{ width: '24px', background: theme.preview.sidebar }} />
+                          <div style={{ flex: 1, background: theme.preview.bg, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '3px', padding: '4px' }}>
+                            <div style={{ width: '100%', height: '4px', borderRadius: '2px', background: theme.preview.text, opacity: 0.6 }} />
+                            <div style={{ width: '70%', height: '4px', borderRadius: '2px', background: theme.preview.text, opacity: 0.3 }} />
+                            <div style={{ width: '50%', height: '6px', borderRadius: '3px', background: theme.preview.accent, marginTop: '2px' }} />
+                          </div>
+                        </div>
+                        <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: appearanceSettings.theme === theme.name ? 600 : 400 }}>
+                          {theme.icon} {theme.label}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 </div>
 

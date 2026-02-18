@@ -39,6 +39,7 @@ import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifi
 import { E2EEManager, type PreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts, SHORTCUTS } from "./keyboard";
 import { LinkPreview, extractFirstUrl } from "./LinkPreview";
+import { initTheme } from "./themes";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -103,6 +104,9 @@ const VoiceConnectionPanel: React.FC<{
     </div>
   );
 };
+
+// Initialize theme immediately on module load (before first render)
+initTheme();
 
 function App() {
   // Server connection state
