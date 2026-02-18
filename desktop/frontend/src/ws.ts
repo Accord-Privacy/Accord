@@ -46,6 +46,7 @@ export interface WsEvents {
   message_pin: (data: any) => void;
   message_unpin: (data: any) => void;
   typing_start: (data: any) => void;
+  read_receipt: (data: any) => void;
 }
 
 type EventListener<T = any> = (data: T) => void;

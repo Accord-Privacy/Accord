@@ -324,19 +324,24 @@ pub async fn list_node_channels_handler(
     let _user_id = extract_user_from_token(&state, &params).await?;
 
     match state.db.get_node_channels(node_id).await {
-        Ok(channels) => Ok(Json(
-            channels
-                .into_iter()
-                .map(|ch| {
-                    serde_json::json!({
-                        "id": ch.id,
-                        "name": ch.name,
-                        "node_id": ch.node_id,
-                        "created_at": ch.created_at,
-                    })
-                })
-                .collect(),
-        )),
+        Ok(channels) => {
+            let mut result = Vec::new();
+            for ch in channels {
+                let unread_count = state
+                    .db
+                    .get_unread_count(_user_id, ch.id)
+                    .await
+                    .unwrap_or(0);
+                result.push(serde_json::json!({
+                    "id": ch.id,
+                    "name": ch.name,
+                    "node_id": ch.node_id,
+                    "created_at": ch.created_at,
+                    "unread_count": unread_count,
+                }));
+            }
+            Ok(Json(result))
+        }
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -362,6 +367,12 @@ pub async fn get_node_handler(
             }),
         )),
     }
+}
+
+/// Request body for marking a channel as read
+#[derive(Debug, serde::Deserialize)]
+pub struct MarkChannelReadRequest {
+    pub message_id: Uuid,
 }
 
 /// Optional body for join_node (device fingerprint hash)
@@ -1853,6 +1864,76 @@ pub async fn get_channel_messages_handler(
             }),
         )),
     }
+}
+
+/// Mark channel as read up to a message (POST /channels/:id/read)
+pub async fn mark_channel_read_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(body): Json<MarkChannelReadRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check channel access
+    let can_access = state
+        .user_can_access_channel(user_id, channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Access check failed: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if !can_access {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Access denied to this channel".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let message_id = body.message_id;
+
+    state
+        .db
+        .mark_channel_read(user_id, channel_id, message_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to mark channel as read: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Broadcast read receipt to channel members via WebSocket
+    let read_receipt_event = serde_json::json!({
+        "type": "read_receipt",
+        "user_id": user_id,
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "timestamp": now_secs()
+    });
+
+    let channel_members = state.get_channel_members(channel_id).await;
+    for member_id in &channel_members {
+        if *member_id != user_id {
+            let _ = state
+                .send_to_user(*member_id, read_receipt_event.to_string())
+                .await;
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "status": "ok" })))
 }
 
 /// Search messages within a Node (GET /nodes/:id/search)

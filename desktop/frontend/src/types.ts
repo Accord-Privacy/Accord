@@ -86,6 +86,7 @@ export interface Channel {
   topic?: string | null;
   nsfw?: boolean;
   icon_emoji?: string | null;
+  unread_count?: number;
 }
 
 // Role types
@@ -137,6 +138,22 @@ export interface WsMessage {
 export interface WsIncomingMessage {
   type: string;
   [key: string]: any;
+}
+
+// Read receipt WebSocket message
+export interface ReadReceiptMessage {
+  type: 'read_receipt';
+  user_id: string;
+  channel_id: string;
+  message_id: string;
+  timestamp: number;
+}
+
+// Read receipt for display (who read up to which message)
+export interface ReadReceipt {
+  user_id: string;
+  message_id: string;
+  timestamp: number;
 }
 
 export interface PresenceUpdateMessage {

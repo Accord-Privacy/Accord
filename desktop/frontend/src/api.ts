@@ -536,6 +536,17 @@ export class AccordApi {
     );
   }
 
+  // Mark channel as read up to a message
+  async markChannelRead(channelId: string, messageId: string, token: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/channels/${channelId}/read?token=${encodeURIComponent(token)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ message_id: messageId }),
+      }
+    );
+  }
+
   // Get Node audit log (admin/mod only)
   async getNodeAuditLog(
     nodeId: string,

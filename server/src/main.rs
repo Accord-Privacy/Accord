@@ -47,17 +47,17 @@ use handlers::{
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
     list_bans_handler, list_channel_files_handler, list_channel_overwrites_handler,
     list_friend_requests_handler, list_friends_handler, list_invites_handler,
-    list_node_channels_handler, list_roles_handler, list_user_nodes_handler, pin_message_handler,
-    publish_key_bundle_handler, register_handler, register_push_token_handler,
-    reject_friend_request_handler, remove_build_allowlist_handler, remove_friend_handler,
-    remove_member_role_handler, remove_reaction_handler, reorder_roles_handler,
-    revoke_invite_handler, search_messages_handler, send_friend_request_handler,
-    set_build_allowlist_handler, set_channel_overwrite_handler, set_node_user_profile_handler,
-    store_prekey_message_handler, unban_user_handler, unpin_message_handler,
-    update_channel_category_handler, update_channel_handler, update_node_handler,
-    update_push_preferences_handler, update_role_handler, update_user_profile_handler,
-    upload_file_handler, upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler,
-    ws_handler,
+    list_node_channels_handler, list_roles_handler, list_user_nodes_handler,
+    mark_channel_read_handler, pin_message_handler, publish_key_bundle_handler, register_handler,
+    register_push_token_handler, reject_friend_request_handler, remove_build_allowlist_handler,
+    remove_friend_handler, remove_member_role_handler, remove_reaction_handler,
+    reorder_roles_handler, revoke_invite_handler, search_messages_handler,
+    send_friend_request_handler, set_build_allowlist_handler, set_channel_overwrite_handler,
+    set_node_user_profile_handler, store_prekey_message_handler, unban_user_handler,
+    unpin_message_handler, update_channel_category_handler, update_channel_handler,
+    update_node_handler, update_push_preferences_handler, update_role_handler,
+    update_user_profile_handler, upload_file_handler, upload_node_icon_handler,
+    upload_user_avatar_handler, use_invite_handler, ws_handler,
 };
 use serde::Deserialize;
 use state::{AppState, SharedState};
@@ -469,6 +469,7 @@ async fn main() -> Result<()> {
         )
         .route("/channels/:id", delete(delete_channel_handler))
         .route("/channels/:id/messages", get(get_channel_messages_handler))
+        .route("/channels/:id/read", post(mark_channel_read_handler))
         // ── Message editing and deletion ──
         .route("/messages/:id", axum::routing::patch(edit_message_handler))
         .route("/messages/:id", delete(delete_message_handler))

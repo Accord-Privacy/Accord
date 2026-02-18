@@ -301,6 +301,29 @@ impl NodeDatabase {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_node_user_profiles_user ON node_user_profiles (user_id)")
             .execute(&self.pool).await?;
 
+        // Read receipts
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS read_receipts (
+                user_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                last_read_message_id TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, channel_id),
+                FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create read_receipts table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_read_receipts_channel ON read_receipts (channel_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -1472,6 +1495,118 @@ impl NodeDatabase {
                 })
             })
             .collect()
+    }
+    // ── Read receipt operations ──
+
+    /// Mark a channel as read up to a specific message for a user
+    pub async fn mark_channel_read(
+        &self,
+        user_id: Uuid,
+        channel_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        sqlx::query(
+            "INSERT INTO read_receipts (user_id, channel_id, last_read_message_id, updated_at) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT(user_id, channel_id) DO UPDATE SET last_read_message_id = excluded.last_read_message_id, updated_at = excluded.updated_at",
+        )
+        .bind(user_id.to_string())
+        .bind(channel_id.to_string())
+        .bind(message_id.to_string())
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to upsert read receipt")?;
+
+        Ok(())
+    }
+
+    /// Get the last read message ID for a user in a channel
+    pub async fn get_read_receipt(&self, user_id: Uuid, channel_id: Uuid) -> Result<Option<Uuid>> {
+        let row = sqlx::query(
+            "SELECT last_read_message_id FROM read_receipts WHERE user_id = ? AND channel_id = ?",
+        )
+        .bind(user_id.to_string())
+        .bind(channel_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query read receipt")?;
+
+        match row {
+            Some(r) => {
+                let id_str: String = r.get("last_read_message_id");
+                Ok(Some(Uuid::parse_str(&id_str)?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get all read receipts for a channel (for showing who has read up to where)
+    pub async fn get_channel_read_receipts(
+        &self,
+        channel_id: Uuid,
+    ) -> Result<Vec<(Uuid, Uuid, u64)>> {
+        let rows = sqlx::query(
+            "SELECT user_id, last_read_message_id, updated_at FROM read_receipts WHERE channel_id = ?",
+        )
+        .bind(channel_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channel read receipts")?;
+
+        let mut receipts = Vec::new();
+        for row in rows {
+            let user_id = Uuid::parse_str(&row.get::<String, _>("user_id"))?;
+            let message_id = Uuid::parse_str(&row.get::<String, _>("last_read_message_id"))?;
+            let updated_at = row.get::<i64, _>("updated_at") as u64;
+            receipts.push((user_id, message_id, updated_at));
+        }
+        Ok(receipts)
+    }
+
+    /// Get unread message count for a user in a channel
+    pub async fn get_unread_count(&self, user_id: Uuid, channel_id: Uuid) -> Result<u32> {
+        // Get the user's last read message created_at timestamp
+        let last_read_row = sqlx::query(
+            "SELECT m.created_at FROM read_receipts r \
+             JOIN messages m ON m.id = r.last_read_message_id \
+             WHERE r.user_id = ? AND r.channel_id = ?",
+        )
+        .bind(user_id.to_string())
+        .bind(channel_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query last read timestamp")?;
+
+        let count = match last_read_row {
+            Some(row) => {
+                let last_read_at: i64 = row.get("created_at");
+                let count_row = sqlx::query(
+                    "SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ? AND created_at > ?",
+                )
+                .bind(channel_id.to_string())
+                .bind(last_read_at)
+                .fetch_one(&self.pool)
+                .await?;
+                count_row.get::<i64, _>("cnt") as u32
+            }
+            None => {
+                // No read receipt — all messages are unread
+                let count_row =
+                    sqlx::query("SELECT COUNT(*) as cnt FROM messages WHERE channel_id = ?")
+                        .bind(channel_id.to_string())
+                        .fetch_one(&self.pool)
+                        .await?;
+                count_row.get::<i64, _>("cnt") as u32
+            }
+        };
+
+        Ok(count)
     }
 }
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -348,6 +348,10 @@ function App() {
     localStorage.getItem('accord-typing-indicators') !== 'false'
   )[0];
 
+  // Read receipts state: channelId -> ReadReceipt[]
+  const [readReceipts, setReadReceipts] = useState<Map<string, ReadReceipt[]>>(new Map());
+  const lastReadSent = useRef<Map<string, string>>(new Map()); // channelId -> last message_id sent
+
   // Permission checking utilities
   const getCurrentUserRole = useCallback((nodeId: string) => {
     return userRoles[nodeId] || 'member';
@@ -419,6 +423,17 @@ function App() {
     if (filtered.length === 2) return `${getName(filtered[0])} and ${getName(filtered[1])} are typing`;
     return 'Several people are typing';
   }, [typingUsers, members]);
+
+  // Send read receipt to server
+  const sendReadReceipt = useCallback((channelId: string, messageId: string) => {
+    if (!appState.token || !messageId || !channelId) return;
+    // Don't re-send for the same message
+    if (lastReadSent.current.get(channelId) === messageId) return;
+    lastReadSent.current.set(channelId, messageId);
+    api.markChannelRead(channelId, messageId, appState.token).catch(() => {
+      // Silent fail — read receipts are best-effort
+    });
+  }, [appState.token]);
 
   // Initialize E2EE manager and publish prekey bundle to server
   const initializeE2EE = useCallback(async (token: string) => {
@@ -692,6 +707,10 @@ function App() {
         setTimeout(() => {
           container.scrollTop = container.scrollHeight;
         }, 0);
+        // Send read receipt for the new message since user is at bottom
+        if (data.channel_id === selectedChannelId && newMessage.id) {
+          sendReadReceipt(data.channel_id, newMessage.id);
+        }
       } else {
         // User is scrolled up — increment unread count
         setNewMessageCount(prev => prev + 1);
@@ -877,6 +896,23 @@ function App() {
         }, 5000);
         
         newMap.set(timeoutKey, timeout);
+        return newMap;
+      });
+    });
+
+    // Handle read receipt events
+    socket.on('read_receipt', (data: ReadReceiptMessage) => {
+      setReadReceipts(prev => {
+        const newMap = new Map(prev);
+        const channelReceipts = (newMap.get(data.channel_id) || []).filter(
+          r => r.user_id !== data.user_id
+        );
+        channelReceipts.push({
+          user_id: data.user_id,
+          message_id: data.message_id,
+          timestamp: data.timestamp,
+        });
+        newMap.set(data.channel_id, channelReceipts);
         return newMap;
       });
     });
@@ -1349,6 +1385,10 @@ function App() {
       // Store last-read timestamp per channel in localStorage
       localStorage.setItem(`accord_lastread_${channelId}`, Date.now().toString());
       setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
+      // Send read receipt to server
+      if (latestMessage?.id) {
+        sendReadReceipt(channelId, latestMessage.id);
+      }
     }
     
     // Reset pagination state
@@ -1530,8 +1570,10 @@ function App() {
       notificationManager.markChannelAsRead(selectedNodeId, channelId, latestMessage.id);
       localStorage.setItem(`accord_lastread_${channelId}`, Date.now().toString());
       setForceUpdate(prev => prev + 1);
+      // Send read receipt to server
+      sendReadReceipt(channelId, latestMessage.id);
     }
-  }, [selectedNodeId]);
+  }, [selectedNodeId, sendReadReceipt]);
 
   // Handle invite link submission
   const handleInviteLinkSubmit = async () => {
@@ -3176,9 +3218,12 @@ function App() {
               const isVoiceChannel = getChannelTypeNum(channel) === 2;
               const isActive = channel.id === selectedChannelId;
               const isConnectedToVoice = isVoiceChannel && voiceChannelId === channel.id;
-              const channelUnreads = selectedNodeId ? 
+              const clientUnreads = selectedNodeId ? 
                 notificationManager.getChannelUnreads(selectedNodeId, channel.id) : 
                 { count: 0, mentions: 0 };
+              // Use server unread_count as fallback if client hasn't tracked any
+              const channelUnreads = clientUnreads.count > 0 ? clientUnreads : 
+                { count: channel.unread_count || 0, mentions: clientUnreads.mentions };
               const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
               
               return (
@@ -3786,6 +3831,41 @@ function App() {
                   </div>
                 )}
               </div>
+              {/* Read receipt indicators */}
+              {selectedChannelId && (() => {
+                const receipts = readReceipts.get(selectedChannelId) || [];
+                const currentUserId = appState.user?.id;
+                const readBy = receipts.filter(
+                  r => r.message_id === msg.id && r.user_id !== currentUserId
+                );
+                if (readBy.length === 0) return null;
+                return (
+                  <div className="read-receipts" style={{ display: 'flex', gap: '2px', justifyContent: 'flex-end', padding: '2px 8px' }}>
+                    {readBy.slice(0, 5).map(r => {
+                      const member = members.find(m => m.user_id === r.user_id);
+                      const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
+                      return (
+                        <span
+                          key={r.user_id}
+                          className="read-receipt-avatar"
+                          title={`Read by ${name}`}
+                          style={{
+                            width: '16px', height: '16px', borderRadius: '50%',
+                            backgroundColor: '#5865F2', color: '#fff', fontSize: '8px',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            lineHeight: 1,
+                          }}
+                        >
+                          {name[0]?.toUpperCase()}
+                        </span>
+                      );
+                    })}
+                    {readBy.length > 5 && (
+                      <span style={{ fontSize: '10px', color: '#8e9297' }}>+{readBy.length - 5}</span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
               </React.Fragment>
             );
