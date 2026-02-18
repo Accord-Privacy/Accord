@@ -658,6 +658,32 @@ export class AccordApi {
     return `${this.baseUrl}/users/${userId}/avatar`;
   }
 
+  // Publish E2EE prekey bundle
+  async publishKeyBundle(
+    identityKey: string,
+    signedPrekey: string,
+    oneTimePrekeys: string[],
+    token: string,
+  ): Promise<{ status: string; one_time_prekeys_stored: number }> {
+    return this.request(`/keys/bundle?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        identity_key: identityKey,
+        signed_prekey: signedPrekey,
+        one_time_prekeys: oneTimePrekeys,
+      }),
+    });
+  }
+
+  // Fetch a user's E2EE prekey bundle
+  async fetchKeyBundle(
+    targetUserId: string,
+    token: string,
+  ): Promise<{ user_id: string; identity_key: string; signed_prekey: string; one_time_prekey?: string }> {
+    return this.request(`/keys/bundle/${targetUserId}?token=${encodeURIComponent(token)}`);
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

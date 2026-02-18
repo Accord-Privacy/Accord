@@ -35,6 +35,7 @@ import { SetupWizard, SetupResult } from "./SetupWizard";
 import { listIdentities } from "./identityStorage";
 import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
+import { E2EEManager, type PreKeyBundle } from "./e2ee";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -323,6 +324,11 @@ function App() {
   const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
   const creatingNodeRef = useRef(false);
 
+  // E2EE manager for 1:1 DM Double Ratchet encryption
+  const e2eeManagerRef = useRef<E2EEManager | null>(null);
+  // Cache of fetched prekey bundles by user ID
+  const prekeyBundleCacheRef = useRef<Map<string, PreKeyBundle>>(new Map());
+
   // Scroll-to-bottom state
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -414,6 +420,60 @@ function App() {
     return 'Several people are typing';
   }, [typingUsers, members]);
 
+  // Initialize E2EE manager and publish prekey bundle to server
+  const initializeE2EE = useCallback(async (token: string) => {
+    if (e2eeManagerRef.current?.isInitialized) return;
+    try {
+      const manager = new E2EEManager();
+      const bundle = manager.initialize();
+      e2eeManagerRef.current = manager;
+
+      // Publish prekey bundle to server (base64-encoded keys)
+      const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+      await api.publishKeyBundle(
+        toBase64(bundle.identityKey),
+        toBase64(bundle.signedPrekey),
+        bundle.oneTimePrekey ? [toBase64(bundle.oneTimePrekey)] : [],
+        token,
+      );
+      console.log('E2EE initialized and prekey bundle published');
+    } catch (error) {
+      console.error('Failed to initialize E2EE:', error);
+    }
+  }, []);
+
+  // Fetch a peer's prekey bundle and initiate E2EE session
+  const ensureE2EESession = useCallback(async (peerId: string, token: string): Promise<boolean> => {
+    const manager = e2eeManagerRef.current;
+    if (!manager?.isInitialized) return false;
+    if (manager.hasSession(peerId)) return true;
+
+    try {
+      // Check cache first
+      let bundle = prekeyBundleCacheRef.current.get(peerId);
+      if (!bundle) {
+        const resp = await api.fetchKeyBundle(peerId, token);
+        const fromBase64 = (b64: string) => {
+          const binary = atob(b64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return bytes;
+        };
+        bundle = {
+          identityKey: fromBase64(resp.identity_key),
+          signedPrekey: fromBase64(resp.signed_prekey),
+          oneTimePrekey: resp.one_time_prekey ? fromBase64(resp.one_time_prekey) : undefined,
+        };
+        prekeyBundleCacheRef.current.set(peerId, bundle);
+      }
+      manager.initiateSession(peerId, bundle);
+      return true;
+    } catch (error) {
+      console.warn('Failed to establish E2EE session with peer:', peerId, error);
+      return false;
+    }
+  }, []);
+
   // Register API token refresher for automatic re-auth on 401
   useEffect(() => {
     const refresher = async (): Promise<string | null> => {
@@ -433,6 +493,13 @@ function App() {
     api.setTokenRefresher(refresher);
     return () => api.setTokenRefresher(null);
   }, []);
+
+  // Initialize E2EE when authenticated with a token
+  useEffect(() => {
+    if (isAuthenticated && appState.token) {
+      initializeE2EE(appState.token);
+    }
+  }, [isAuthenticated, appState.token, initializeE2EE]);
 
   // Async identity check for Tauri keyring (supplement synchronous check)
   useEffect(() => {
@@ -518,15 +585,35 @@ function App() {
       let content = data.encrypted_data;
       let isEncrypted = false;
 
-      // Try to decrypt the message if we have encryption enabled and keys
-      if (encryptionEnabled && keyPair && data.channel_id) {
+      // Check if this is a DM message
+      const isIncomingDm = data.is_dm || dmChannels.some(dm => dm.id === data.channel_id);
+
+      if (isIncomingDm && e2eeManagerRef.current?.isInitialized && data.from) {
+        // DM: try Double Ratchet E2EE decryption
+        try {
+          content = e2eeManagerRef.current.decrypt(data.from, data.encrypted_data);
+          isEncrypted = true;
+        } catch (error) {
+          console.warn('E2EE decrypt failed, trying symmetric fallback:', error);
+          // Fallback to symmetric
+          if (encryptionEnabled && keyPair && data.channel_id) {
+            try {
+              const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+              content = await decryptMessage(channelKey, data.encrypted_data);
+              isEncrypted = true;
+            } catch (e2) {
+              console.warn('Symmetric decrypt also failed:', e2);
+            }
+          }
+        }
+      } else if (encryptionEnabled && keyPair && data.channel_id) {
+        // Channel: use symmetric decryption
         try {
           const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
           content = await decryptMessage(channelKey, data.encrypted_data);
           isEncrypted = true;
         } catch (error) {
           console.warn('Failed to decrypt message, showing encrypted data:', error);
-          // Keep the encrypted data if decryption fails
         }
       }
 
@@ -1925,8 +2012,30 @@ function App() {
         let messageToSend = message;
         let isEncrypted = false;
 
-        // Encrypt message if encryption is enabled and we have keys
-        if (encryptionEnabled && keyPair && channelToUse) {
+        // Encrypt: use E2EE (Double Ratchet) for DMs, symmetric for channels
+        const isDmSend = !!selectedDmChannel;
+        if (isDmSend && e2eeManagerRef.current?.isInitialized && appState.token) {
+          // DM: use Double Ratchet E2EE
+          try {
+            const recipientId = selectedDmChannel!.other_user.id;
+            await ensureE2EESession(recipientId, appState.token);
+            messageToSend = e2eeManagerRef.current.encrypt(recipientId, message);
+            isEncrypted = true;
+          } catch (error) {
+            console.warn('E2EE encrypt failed, falling back to symmetric:', error);
+            // Fallback to symmetric encryption
+            if (encryptionEnabled && keyPair) {
+              try {
+                const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
+                messageToSend = await encryptMessage(channelKey, message);
+                isEncrypted = true;
+              } catch (e2) {
+                console.warn('Symmetric encrypt also failed, sending plaintext:', e2);
+              }
+            }
+          }
+        } else if (encryptionEnabled && keyPair && channelToUse) {
+          // Channel: use symmetric encryption
           try {
             const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
             messageToSend = await encryptMessage(channelKey, message);
