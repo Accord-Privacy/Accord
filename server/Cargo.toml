@@ -53,6 +53,9 @@ base64 = "0.21"
 # Cryptographic hashing
 sha2 = "0.10"
 
+# Ed25519 signatures for relay mesh
+ed25519-dalek = { workspace = true, features = ["rand_core", "serde"] }
+
 
 # Hex encoding
 hex = "0.4"

@@ -15,5 +15,6 @@ pub mod models;
 pub mod node;
 pub mod permissions;
 pub mod rate_limit;
+pub mod relay_mesh;
 pub mod state;
 pub mod validation;
