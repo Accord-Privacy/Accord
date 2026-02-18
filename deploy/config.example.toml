@@ -1,0 +1,37 @@
+# Accord Relay Server Configuration
+# Copy to /etc/accord/config.toml or pass via --config <path>
+# CLI flags override values set here.
+
+# Bind address
+host = "0.0.0.0"
+
+# Server port
+port = 8080
+
+# Database file path
+database = "/var/lib/accord/accord.db"
+
+# Enable SQLCipher encryption at rest
+database_encryption = true
+
+# Metadata storage: "standard" or "minimal"
+metadata_mode = "standard"
+
+# CORS allowed origins (comma-separated, use "*" for dev only)
+cors_origins = "https://app.example.com"
+
+# TLS (omit to run behind reverse proxy)
+# tls_cert = "/etc/accord/tls/cert.pem"
+# tls_key  = "/etc/accord/tls/key.pem"
+
+# Path to frontend dist directory (optional)
+# frontend = "/opt/accord/frontend"
+
+# Build hash enforcement: "off", "warn", or "strict"
+build_hash_enforcement = "off"
+
+# ── Relay Mesh ──────────────────────────────────────────────────
+mesh_enabled = false
+mesh_port = 9443
+mesh_peers = ""
+mesh_data_dir = "/var/lib/accord/mesh"

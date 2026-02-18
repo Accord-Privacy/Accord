@@ -1,0 +1,16 @@
+{$ACCORD_DOMAIN:localhost} {
+    reverse_proxy accord-server:{$ACCORD_PORT:8080} {
+        # WebSocket upgrade support
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Enable automatic HTTPS via Let's Encrypt
+    # Caddy handles this by default for non-localhost domains
+
+    encode gzip zstd
+
+    log {
+        output stdout
+        format console
+    }
+}

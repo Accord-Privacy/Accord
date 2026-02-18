@@ -30,6 +30,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
+use serde::Deserialize;
 use handlers::{
     accept_friend_request_handler, add_build_allowlist_handler, add_reaction_handler,
     assign_member_role_handler, auth_handler, ban_check_handler, ban_user_handler,
@@ -193,6 +194,78 @@ struct Args {
     mesh_data_dir: String,
 }
 
+/// TOML config file schema. All fields optional — CLI flags override.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct FileConfig {
+    host: Option<String>,
+    port: Option<u16>,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    cors_origins: Option<String>,
+    database: Option<String>,
+    database_encryption: Option<bool>,
+    metadata_mode: Option<String>,
+    frontend: Option<String>,
+    build_hash_enforcement: Option<String>,
+    mesh_enabled: Option<bool>,
+    mesh_port: Option<u16>,
+    mesh_peers: Option<String>,
+    mesh_data_dir: Option<String>,
+}
+
+impl FileConfig {
+    fn load(path: &str) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", path, e))?;
+        toml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file '{}': {}", path, e))
+    }
+}
+
+/// Merge: CLI explicit values win over config file values.
+/// We detect "was this flag actually passed on CLI?" by checking against clap defaults.
+fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
+    // Helper: only apply config value if the CLI arg still has its default
+    macro_rules! apply {
+        ($field:ident, $default:expr) => {
+            if let Some(v) = cfg.$field {
+                if args.$field == $default {
+                    args.$field = v;
+                }
+            }
+        };
+    }
+    macro_rules! apply_opt {
+        ($field:ident) => {
+            if args.$field.is_none() {
+                args.$field = cfg.$field;
+            }
+        };
+    }
+
+    apply!(host, "0.0.0.0");
+    apply!(port, 8080);
+    apply!(cors_origins, "http://localhost:3000,http://localhost:5173");
+    apply!(database, "accord.db");
+    apply!(database_encryption, true);
+    apply!(metadata_mode, "standard");
+    apply!(build_hash_enforcement, "off");
+    apply!(mesh_port, 9443);
+    apply!(mesh_peers, "");
+    apply!(mesh_data_dir, "mesh_data");
+
+    apply_opt!(tls_cert);
+    apply_opt!(tls_key);
+    apply_opt!(frontend);
+
+    if let Some(true) = cfg.mesh_enabled {
+        if !args.mesh_enabled {
+            args.mesh_enabled = true;
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging with broadcast writer for admin log streaming
@@ -200,7 +273,14 @@ async fn main() -> Result<()> {
     let log_writer = admin::TeeWriter::new(log_tx.clone());
     tracing_subscriber::fmt().with_writer(log_writer).init();
 
-    let args = Args::parse();
+    let mut args = Args::parse();
+
+    // Load config file if specified
+    if let Some(ref config_path) = args.config.clone() {
+        let cfg = FileConfig::load(config_path)?;
+        info!("Loaded config from: {}", config_path);
+        merge_args_with_config(&mut args, cfg);
+    }
 
     info!("Starting Accord Relay Server");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));

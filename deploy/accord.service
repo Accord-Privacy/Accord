@@ -1,0 +1,23 @@
+[Unit]
+Description=Accord Relay Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=accord
+Group=accord
+ExecStart=/usr/local/bin/accord-server --config /etc/accord/config.toml
+Restart=on-failure
+RestartSec=5
+WorkingDirectory=/var/lib/accord
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/accord
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
