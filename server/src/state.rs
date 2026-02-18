@@ -1364,15 +1364,27 @@ impl AppState {
     }
 
     /// Search messages within a Node by metadata
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_messages(
         &self,
         node_id: Uuid,
         query: &str,
         channel_id_filter: Option<Uuid>,
+        author_filter: Option<Uuid>,
+        before_filter: Option<i64>,
+        after_filter: Option<i64>,
         limit: u32,
     ) -> Result<Vec<crate::models::SearchResult>, String> {
         self.db
-            .search_messages(node_id, query, channel_id_filter, limit)
+            .search_messages(
+                node_id,
+                query,
+                channel_id_filter,
+                author_filter,
+                before_filter,
+                after_filter,
+                limit,
+            )
             .await
             .map_err(|e| format!("Database error: {}", e))
     }

@@ -2022,14 +2022,17 @@ pub async fn search_messages_handler(
     }
 
     let channel_id_filter = params.get("channel").and_then(|s| Uuid::parse_str(s).ok());
+    let author_filter = params.get("author").and_then(|s| Uuid::parse_str(s).ok());
+    let before_filter = params.get("before").and_then(|s| s.parse::<i64>().ok());
+    let after_filter = params.get("after").and_then(|s| s.parse::<i64>().ok());
 
     let limit = params
         .get("limit")
         .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(50)
+        .unwrap_or(25)
         .min(200); // Cap at 200 search results
 
-    match state.search_messages(node_id, query, channel_id_filter, limit).await {
+    match state.search_messages(node_id, query, channel_id_filter, author_filter, before_filter, after_filter, limit).await {
         Ok(results) => {
             Ok(Json(crate::models::SearchResponse {
                 total_count: results.len() as u32,

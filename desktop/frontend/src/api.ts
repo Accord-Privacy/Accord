@@ -403,21 +403,31 @@ export class AccordApi {
   }
 
   // Search messages in a node
-  async searchMessages(nodeId: string, query: string, token: string, channelId?: string): Promise<{ 
+  async searchMessages(nodeId: string, query: string, token: string, filters?: {
+    channelId?: string;
+    authorId?: string;
+    before?: number;
+    after?: number;
+    limit?: number;
+  }): Promise<{ 
     results: Array<{
       message_id: string;
       channel_id: string; 
       channel_name: string;
       sender_id: string;
       sender_public_key_hash: string;
-      timestamp: number;
+      created_at: number;
+      encrypted_payload: string;
     }>;
+    total_count: number;
     note?: string;
   }> {
     let url = `/nodes/${nodeId}/search?q=${encodeURIComponent(query)}&token=${encodeURIComponent(token)}`;
-    if (channelId) {
-      url += `&channel=${encodeURIComponent(channelId)}`;
-    }
+    if (filters?.channelId) url += `&channel=${encodeURIComponent(filters.channelId)}`;
+    if (filters?.authorId) url += `&author=${encodeURIComponent(filters.authorId)}`;
+    if (filters?.before) url += `&before=${filters.before}`;
+    if (filters?.after) url += `&after=${filters.after}`;
+    if (filters?.limit) url += `&limit=${filters.limit}`;
     return this.request<{ 
       results: Array<{
         message_id: string;
@@ -425,8 +435,10 @@ export class AccordApi {
         channel_name: string;
         sender_id: string;
         sender_public_key_hash: string;
-        timestamp: number;
+        created_at: number;
+        encrypted_payload: string;
       }>;
+      total_count: number;
       note?: string;
     }>(url);
   }

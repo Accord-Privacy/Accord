@@ -4471,6 +4471,8 @@ function App() {
         channels={channels}
         token={appState.token || null}
         onNavigateToMessage={handleNavigateToMessage}
+        keyPair={keyPair}
+        encryptionEnabled={encryptionEnabled}
       />
 
       {/* Notification Settings Modal */}

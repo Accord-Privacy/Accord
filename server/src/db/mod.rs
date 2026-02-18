@@ -2382,60 +2382,64 @@ impl Database {
 
     /// Search messages within a Node by metadata (sender, channel, timestamp)
     /// Note: Content search is not possible due to E2E encryption
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_messages(
         &self,
         node_id: Uuid,
         query: &str,
         channel_id_filter: Option<Uuid>,
+        author_filter: Option<Uuid>,
+        before_filter: Option<i64>,
+        after_filter: Option<i64>,
         limit: u32,
     ) -> Result<Vec<crate::models::SearchResult>> {
-        // Since messages are E2E encrypted, we can only search by metadata:
-        // - sender public_key_hash
-        // - channel name
-        // - timestamp (not implemented in query param, but could be)
+        // Build dynamic query with optional filters
+        let mut sql = String::from(
+            r#"SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
+                      u.public_key_hash as sender_public_key_hash, c.name as channel_name
+               FROM messages m
+               JOIN users u ON m.sender_id = u.id
+               JOIN channels c ON m.channel_id = c.id
+               WHERE c.node_id = ?
+                 AND (LOWER(u.public_key_hash) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))"#,
+        );
 
-        let base_query = if channel_id_filter.is_some() {
-            r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
-                       u.public_key_hash as sender_public_key_hash, c.name as channel_name
-                FROM messages m
-                JOIN users u ON m.sender_id = u.id
-                JOIN channels c ON m.channel_id = c.id
-                WHERE c.node_id = ? AND c.id = ?
-                  AND (LOWER(u.public_key_hash) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
-                ORDER BY m.created_at DESC
-                LIMIT ?
-                "#.to_string()
-        } else {
-            r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.pinned_at, m.pinned_by,
-                       u.public_key_hash as sender_public_key_hash, c.name as channel_name
-                FROM messages m
-                JOIN users u ON m.sender_id = u.id
-                JOIN channels c ON m.channel_id = c.id
-                WHERE c.node_id = ?
-                  AND (LOWER(u.public_key_hash) LIKE LOWER(?) OR LOWER(c.name) LIKE LOWER(?))
-                ORDER BY m.created_at DESC
-                LIMIT ?
-                "#.to_string()
-        };
+        if channel_id_filter.is_some() {
+            sql.push_str(" AND c.id = ?");
+        }
+        if author_filter.is_some() {
+            sql.push_str(" AND m.sender_id = ?");
+        }
+        if before_filter.is_some() {
+            sql.push_str(" AND m.created_at < ?");
+        }
+        if after_filter.is_some() {
+            sql.push_str(" AND m.created_at > ?");
+        }
+
+        sql.push_str(" ORDER BY m.created_at DESC LIMIT ?");
 
         let search_pattern = format!("%{}%", query.to_lowercase());
 
-        let query_builder = if let Some(channel_filter) = channel_id_filter {
-            sqlx::query(&base_query)
-                .bind(node_id.to_string())
-                .bind(channel_filter.to_string())
-                .bind(&search_pattern)
-                .bind(&search_pattern)
-                .bind(limit as i64)
-        } else {
-            sqlx::query(&base_query)
-                .bind(node_id.to_string())
-                .bind(&search_pattern)
-                .bind(&search_pattern)
-                .bind(limit as i64)
-        };
+        let mut query_builder = sqlx::query(&sql)
+            .bind(node_id.to_string())
+            .bind(&search_pattern)
+            .bind(&search_pattern);
+
+        if let Some(channel_filter) = channel_id_filter {
+            query_builder = query_builder.bind(channel_filter.to_string());
+        }
+        if let Some(author) = author_filter {
+            query_builder = query_builder.bind(author.to_string());
+        }
+        if let Some(before) = before_filter {
+            query_builder = query_builder.bind(before);
+        }
+        if let Some(after) = after_filter {
+            query_builder = query_builder.bind(after);
+        }
+
+        query_builder = query_builder.bind(limit as i64);
 
         let rows = query_builder
             .fetch_all(&self.pool)
