@@ -107,6 +107,7 @@ dependencies = [
  "criterion",
  "futures-util",
  "hex",
+ "libsqlite3-sys",
  "rand 0.8.5",
  "reqwest 0.12.28",
  "rustls 0.21.12",

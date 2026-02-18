@@ -153,6 +153,10 @@ struct Args {
     #[arg(short = 'd', long, default_value = "accord.db")]
     database: String,
 
+    /// Enable SQLCipher encryption at rest for the database (requires 'sqlcipher' feature)
+    #[arg(long, default_value_t = true)]
+    database_encryption: bool,
+
     /// Metadata storage mode: 'standard' (store everything) or 'minimal' (strip optional metadata)
     #[arg(long, default_value = "standard")]
     metadata_mode: String,
@@ -190,7 +194,8 @@ async fn main() -> Result<()> {
 
     // Initialize shared state with database
     info!("Initializing database: {}", args.database);
-    let mut app_state = AppState::new(&args.database).await?;
+    let mut app_state =
+        AppState::new_with_encryption(&args.database, args.database_encryption).await?;
     app_state.metadata_mode = metadata_mode;
     let state: SharedState = Arc::new(app_state);
 

@@ -168,7 +168,12 @@ impl std::fmt::Debug for AppState {
 impl AppState {
     /// Create new application state with database connection
     pub async fn new(db_path: &str) -> Result<Self> {
-        let db = Database::new(db_path).await?;
+        Self::new_with_encryption(db_path, false).await
+    }
+
+    /// Create new application state with explicit encryption control
+    pub async fn new_with_encryption(db_path: &str, database_encryption: bool) -> Result<Self> {
+        let db = Database::new_with_encryption(db_path, database_encryption).await?;
         let file_handler = FileHandler::with_default_config();
         file_handler.init().await?;
         Ok(Self {

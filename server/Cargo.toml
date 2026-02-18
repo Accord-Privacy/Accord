@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+sqlcipher = ["libsqlite3-sys/bundled-sqlcipher"]
+
 [[bin]]
 name = "accord-server"
 path = "src/main.rs"
@@ -52,6 +56,9 @@ sha2 = "0.10"
 
 # Hex encoding
 hex = "0.4"
+
+# SQLCipher (optional, activated via 'sqlcipher' feature)
+libsqlite3-sys = { version = "0.30", optional = true }
 
 # Password hashing
 argon2 = "0.5"

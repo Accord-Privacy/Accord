@@ -1,9 +1,18 @@
-//! Database layer for Accord server using SQLite
+//! Database layer for Accord server using SQLite (with optional SQLCipher encryption at rest).
+//!
+//! ## Encryption at rest (SQLCipher)
+//!
+//! When compiled with `--features sqlcipher` and `database_encryption` is enabled:
+//! - A 256-bit random key is generated on first run and stored in `<db_path>.key` (mode 0600).
+//! - On every startup the key is read and applied via `PRAGMA key = 'x"<hex>"'`.
+//! - Existing unencrypted databases are migrated in-place (export → re-import with key).
+//! - Set `database_encryption: false` (or omit the feature) to use plain SQLite.
 //!
 //! Provides persistent storage for users, nodes, channels, and messages while maintaining
 //! zero-knowledge properties for encrypted content.
 //!
 //! Sub-modules for per-Node database isolation (WIP migration):
+pub mod encryption;
 pub mod migration;
 pub mod node_db;
 pub mod relay;
@@ -28,17 +37,65 @@ pub struct Database {
 }
 
 impl Database {
-    /// Create a new database connection to the specified file path
+    /// Create a new database connection to the specified file path.
+    ///
+    /// If `enable_encryption` is true **and** the `sqlcipher` feature is compiled in,
+    /// the database will be encrypted at rest using SQLCipher. A key file is created
+    /// next to the database on first run; existing unencrypted databases are migrated
+    /// automatically.
     pub async fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
-        let db_url = if db_path.as_ref().to_str() == Some(":memory:") {
+        Self::new_with_encryption(db_path, false).await
+    }
+
+    /// Create a new database connection with explicit encryption control.
+    pub async fn new_with_encryption<P: AsRef<Path>>(
+        db_path: P,
+        enable_encryption: bool,
+    ) -> Result<Self> {
+        let is_memory = db_path.as_ref().to_str() == Some(":memory:");
+
+        // Handle encryption setup for on-disk databases
+        #[cfg(feature = "sqlcipher")]
+        let hex_key: Option<String> = if enable_encryption && !is_memory {
+            let path = db_path.as_ref();
+
+            // Check for unencrypted→encrypted migration
+            if path.exists() && encryption::is_unencrypted_sqlite(path)? {
+                let key = encryption::read_or_create_key(path)?;
+                encryption::migrate_to_encrypted(path, &key).await?;
+                Some(key)
+            } else {
+                Some(encryption::read_or_create_key(path)?)
+            }
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "sqlcipher"))]
+        let hex_key: Option<String> = {
+            if enable_encryption {
+                tracing::warn!(
+                    "database_encryption is enabled but the 'sqlcipher' feature was not compiled in — using plain SQLite"
+                );
+            }
+            None
+        };
+
+        let db_url = if is_memory {
             "sqlite::memory:".to_string()
         } else {
-            format!("sqlite:{}", db_path.as_ref().display())
+            format!("sqlite:{}?mode=rwc", db_path.as_ref().display())
         };
 
         let pool = SqlitePool::connect(&db_url)
             .await
             .context("Failed to connect to SQLite database")?;
+
+        // Apply encryption key if available
+        if let Some(ref key) = hex_key {
+            encryption::apply_pragma_key(&pool, key).await?;
+            tracing::info!("Database encryption (SQLCipher) active");
+        }
 
         let db = Self { pool };
         db.run_migrations().await?;
