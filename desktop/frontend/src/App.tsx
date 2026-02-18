@@ -31,6 +31,8 @@ import { notificationManager, NotificationPreferences } from "./notifications";
 const NotificationSettings = React.lazy(() => import("./NotificationSettings").then(m => ({ default: m.NotificationSettings })));
 const Settings = React.lazy(() => import("./Settings").then(m => ({ default: m.Settings })));
 import { LoadingSpinner } from "./LoadingSpinner";
+import { SetupWizard, SetupResult } from "./SetupWizard";
+import { listIdentities } from "./identityStorage";
 import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 
@@ -295,6 +297,20 @@ function App() {
   const [displayNameInput, setDisplayNameInput] = useState("");
   const [displayNameSaving, setDisplayNameSaving] = useState(false);
 
+  // First-run setup wizard state
+  const [showSetupWizard, setShowSetupWizard] = useState(() => {
+    // Show wizard if no identity exists (first run)
+    if (hasStoredKeyPair()) return false;
+    // Also check localStorage identity index
+    const idx = localStorage.getItem('accord_identity_index');
+    if (idx) {
+      try { if (JSON.parse(idx).length > 0) return false; } catch {}
+    }
+    // Check legacy keys
+    if (localStorage.getItem('accord_public_key')) return false;
+    return true;
+  });
+
   // Keyboard shortcuts help state
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
@@ -416,6 +432,14 @@ function App() {
     };
     api.setTokenRefresher(refresher);
     return () => api.setTokenRefresher(null);
+  }, []);
+
+  // Async identity check for Tauri keyring (supplement synchronous check)
+  useEffect(() => {
+    if (!showSetupWizard) return;
+    listIdentities().then(ids => {
+      if (ids.length > 0) setShowSetupWizard(false);
+    }).catch(() => {});
   }, []);
 
   // Check server availability on mount — with same-origin auto-detection
@@ -2558,6 +2582,86 @@ function App() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // First-run setup wizard
+  if (showSetupWizard) {
+    const handleSetupComplete = async (result: SetupResult) => {
+      try {
+        // Store identity
+        setKeyPair(result.keyPair);
+        setPublicKey(result.publicKey);
+        setPublicKeyHash(result.publicKeyHash);
+        setActiveIdentity(result.publicKeyHash);
+        passwordRef.current = result.password;
+        if (result.mnemonic) setMnemonicPhrase(result.mnemonic);
+
+        // Store relay URL
+        const relayUrl = result.relayUrl;
+        localStorage.setItem('accord_server_url', relayUrl);
+        api.setBaseUrl(relayUrl);
+        setServerUrl(relayUrl);
+
+        // Store mesh preference
+        if (result.meshEnabled) {
+          localStorage.setItem('accord_mesh_enabled', 'true');
+        }
+
+        // Register on the relay
+        await api.register(result.publicKey, result.password);
+        const response = await api.login(result.publicKey, result.password);
+        storeToken(response.token);
+        localStorage.setItem('accord_user_id', response.user_id);
+
+        // Save key with token-based wrapping too
+        await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+
+        setAppState(prev => ({
+          ...prev,
+          isAuthenticated: true,
+          token: response.token,
+          user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: fingerprint(result.publicKeyHash) }
+        }));
+        setIsAuthenticated(true);
+
+        // Join via invite if provided
+        if (result.inviteCode) {
+          try { await api.joinNodeByInvite(result.inviteCode, response.token); } catch {}
+        }
+
+        // Connect WebSocket
+        const wsBaseUrl = relayUrl.replace(/^http/, 'ws');
+        const socket = new AccordWebSocket(response.token, wsBaseUrl);
+        setupWebSocketHandlers(socket);
+        setWs(socket);
+        socket.connect();
+
+        setHasExistingKey(true);
+        setShowSetupWizard(false);
+        setShowWelcomeScreen(false);
+        setServerAvailable(true);
+
+        // Prompt for display name
+        setShowDisplayNamePrompt(true);
+
+        setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
+      } catch (e: any) {
+        setAuthError(e.message || "Setup failed");
+        // Fall back to welcome screen
+        setShowSetupWizard(false);
+        setShowWelcomeScreen(true);
+      }
+    };
+
+    return (
+      <SetupWizard
+        onComplete={handleSetupComplete}
+        onSkip={() => {
+          setShowSetupWizard(false);
+          setShowWelcomeScreen(true);
+        }}
+      />
     );
   }
 

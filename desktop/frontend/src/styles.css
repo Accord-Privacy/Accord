@@ -412,6 +412,97 @@ input, textarea, select, button {
   margin-top: 8px;
 }
 
+/* =================== Setup Wizard =================== */
+
+.setup-progress {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 32px;
+  margin-bottom: 24px;
+  position: relative;
+  padding: 0 16px;
+}
+
+.setup-progress-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+}
+
+.setup-progress-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-input);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all var(--transition-normal);
+  border: 2px solid transparent;
+}
+
+.setup-progress-step.active .setup-progress-dot {
+  background: var(--accent);
+  color: white;
+}
+
+.setup-progress-step.current .setup-progress-dot {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+.setup-progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.setup-progress-step.active .setup-progress-label {
+  color: var(--text-secondary);
+}
+
+.setup-progress-line {
+  position: absolute;
+  top: 16px;
+  left: 72px;
+  right: 72px;
+  height: 2px;
+  background: var(--bg-input);
+  z-index: 0;
+}
+
+.setup-progress-line-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+  border-radius: 1px;
+}
+
+.setup-tooltip {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-high);
+  width: 260px;
+  z-index: 10;
+  pointer-events: none;
+}
+
 /* Key backup screen */
 .key-backup-card {
   max-width: 520px;
