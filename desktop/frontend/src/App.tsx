@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role } from "./types";
@@ -24,12 +24,13 @@ import {
 import { storeToken, getToken, clearToken } from "./tokenStorage";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./FileManager";
 import { EmojiPickerButton } from "./EmojiPicker";
-import { VoiceChat } from "./VoiceChat";
+const VoiceChat = React.lazy(() => import("./VoiceChat").then(m => ({ default: m.VoiceChat })));
 import { SearchOverlay } from "./SearchOverlay";
-import { NodeSettings } from "./NodeSettings";
+const NodeSettings = React.lazy(() => import("./NodeSettings").then(m => ({ default: m.NodeSettings })));
 import { notificationManager, NotificationPreferences } from "./notifications";
-import { NotificationSettings } from "./NotificationSettings";
-import { Settings } from "./Settings";
+const NotificationSettings = React.lazy(() => import("./NotificationSettings").then(m => ({ default: m.NotificationSettings })));
+const Settings = React.lazy(() => import("./Settings").then(m => ({ default: m.Settings })));
+import { LoadingSpinner } from "./LoadingSpinner";
 import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
 
 // Helper: truncate a public key hash to a short fingerprint for display
@@ -3649,6 +3650,7 @@ function App() {
 
       {/* Voice Chat Component */}
       {voiceChannelId && (
+        <Suspense fallback={<LoadingSpinner />}>
         <VoiceChat
           ws={ws}
           currentUserId={localStorage.getItem('accord_user_id')}
@@ -3660,6 +3662,7 @@ function App() {
             setVoiceConnectedAt(null);
           }}
         />
+        </Suspense>
       )}
 
       {/* Member sidebar */}
@@ -4001,6 +4004,7 @@ function App() {
         const currentNode = nodes.find(n => n.id === selectedNodeId);
         if (!currentNode) return null;
         return (
+          <Suspense fallback={<LoadingSpinner />}>
           <NodeSettings
             isOpen={showNodeSettings}
             onClose={() => setShowNodeSettings(false)}
@@ -4017,6 +4021,7 @@ function App() {
               loadNodes();
             }}
           />
+          </Suspense>
         );
       })()}
 
@@ -4031,14 +4036,17 @@ function App() {
       />
 
       {/* Notification Settings Modal */}
+      <Suspense fallback={<LoadingSpinner />}>
       <NotificationSettings
         isOpen={showNotificationSettings}
         onClose={() => setShowNotificationSettings(false)}
         preferences={notificationPreferences}
         onPreferencesChange={handleNotificationPreferencesChange}
       />
+      </Suspense>
 
       {/* Settings Modal */}
+      <Suspense fallback={<LoadingSpinner />}>
       <Settings
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
@@ -4063,6 +4071,7 @@ function App() {
           }
         }}
       />
+      </Suspense>
 
       {/* Connection Info Modal */}
       {showConnectionInfo && (

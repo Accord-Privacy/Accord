@@ -31,5 +31,15 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-qr': ['qrcode', 'jsqr'],
+          'vendor-crypto': ['@noble/ciphers', '@noble/curves', '@noble/hashes'],
+        },
+      },
+    },
   },
 });
