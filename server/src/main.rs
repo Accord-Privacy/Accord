@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 mod admin;
+mod backup;
 mod bot_api;
 #[allow(dead_code)]
 mod db;
@@ -130,9 +131,53 @@ mod rate_limit_middleware {
     }
 }
 
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Start the Accord relay server (default)
+    Serve,
+    /// Back up the database to a compressed archive
+    Backup {
+        /// Path to the database file
+        #[arg(short = 'd', long, default_value = "accord.db")]
+        database: String,
+
+        /// Output archive path (default: accord-backup-<timestamp>.tar.gz)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Enable SQLCipher encryption (reads key from <database>.key)
+        #[arg(long, default_value_t = true)]
+        database_encryption: bool,
+
+        /// Force hot backup via VACUUM INTO (even if DB doesn't appear locked)
+        #[arg(long)]
+        hot: bool,
+    },
+    /// Restore the database from a backup archive
+    Restore {
+        /// Path to the backup archive (.tar.gz)
+        archive: String,
+
+        /// Path to restore the database to
+        #[arg(short = 'd', long, default_value = "accord.db")]
+        database: String,
+
+        /// Enable SQLCipher encryption (reads key from <database>.key)
+        #[arg(long, default_value_t = true)]
+        database_encryption: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Server bind address
     #[arg(short = 'a', long, default_value = "0.0.0.0")]
     host: String,
@@ -278,6 +323,69 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_writer(log_writer).init();
 
     let mut args = Args::parse();
+
+    // Handle backup/restore subcommands (these don't start the server)
+    match &args.command {
+        Some(Command::Backup {
+            database,
+            output,
+            database_encryption,
+            hot,
+        }) => {
+            let db_path = std::path::Path::new(database);
+            let encryption_key: Option<String> = if *database_encryption {
+                #[cfg(feature = "sqlcipher")]
+                {
+                    let key_path = db::encryption::key_file_path(db_path);
+                    if key_path.exists() {
+                        Some(db::encryption::read_or_create_key(db_path)?)
+                    } else {
+                        None
+                    }
+                }
+                #[cfg(not(feature = "sqlcipher"))]
+                {
+                    None
+                }
+            } else {
+                None
+            };
+            let output_path = output.as_ref().map(|p| std::path::Path::new(p.as_str()));
+            backup::create_backup(db_path, output_path, encryption_key.as_deref(), *hot)?;
+            return Ok(());
+        }
+        Some(Command::Restore {
+            archive,
+            database,
+            database_encryption,
+            yes,
+        }) => {
+            let archive_path = std::path::Path::new(archive);
+            let db_path = std::path::Path::new(database);
+            let encryption_key: Option<String> = if *database_encryption {
+                #[cfg(feature = "sqlcipher")]
+                {
+                    let key_path = db::encryption::key_file_path(db_path);
+                    if key_path.exists() {
+                        Some(db::encryption::read_or_create_key(db_path)?)
+                    } else {
+                        None
+                    }
+                }
+                #[cfg(not(feature = "sqlcipher"))]
+                {
+                    None
+                }
+            } else {
+                None
+            };
+            backup::restore_backup(archive_path, db_path, encryption_key.as_deref(), *yes)?;
+            return Ok(());
+        }
+        Some(Command::Serve) | None => {
+            // Continue to server startup below
+        }
+    }
 
     // Load config file if specified
     if let Some(ref config_path) = args.config.clone() {
