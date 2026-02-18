@@ -47,8 +47,8 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const audioBuffersRef = useRef<Map<string, { context: AudioContext; gainNode: GainNode }>>(new Map());
   
   // Voice Activity Detection
-  const vadIntervalRef = useRef<number | null>(null);
-  const speakingTimeoutRef = useRef<number | null>(null);
+  const vadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Initialize audio context and setup
   const initializeAudio = useCallback(async () => {

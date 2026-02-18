@@ -52,10 +52,10 @@ export class AccordWebSocket {
   private maxReconnectAttempts = 20;
   private reconnectDelay = 1000; // Start with 1 second
   private maxReconnectDelay = 30000; // Max 30 seconds
-  private reconnectTimeout: number | null = null;
+  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private isConnected = false;
   private isDestroyed = false;
-  private pingInterval: number | null = null;
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
   private connectionStatus: ConnectionStatus = 'disconnected';
   private messageQueue: string[] = [];
   private onlineHandler: (() => void) | null = null;

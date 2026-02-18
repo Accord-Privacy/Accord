@@ -3156,10 +3156,10 @@ function App() {
             onClick={() => setShowConnectionInfo(true)}
             className="user-panel-settings connection-indicator"
             title={appState.isConnected
-              ? `Connected${serverHelloVersion ? ` — v${serverHelloVersion}` : ''}${serverBuildHash ? ` (${serverBuildHash.slice(0, 8)})` : ''}`
+              ? `Connected${serverHelloVersion ? ` — v${serverHelloVersion}` : ''}${serverBuildHash ? ` (${serverBuildHash.slice(0, 8)})` : ''}\nTrust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash)).label}`
               : 'Disconnected'}
           >
-            {appState.isConnected ? '🟢' : '🔴'}
+            {appState.isConnected ? getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash)).emoji : '🔴'}
           </button>
           <button
             onClick={() => setShowNotificationSettings(true)}
