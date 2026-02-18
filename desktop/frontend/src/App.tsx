@@ -317,6 +317,26 @@ function App() {
     return 'Several people are typing';
   }, [typingUsers, members]);
 
+  // Register API token refresher for automatic re-auth on 401
+  useEffect(() => {
+    const refresher = async (): Promise<string | null> => {
+      const storedPk = getStoredPublicKey();
+      const pwd = passwordRef.current;
+      if (!storedPk || !pwd) return null;
+      try {
+        const response = await api.login(storedPk, pwd);
+        storeToken(response.token);
+        localStorage.setItem('accord_user_id', response.user_id);
+        setAppState(prev => ({ ...prev, token: response.token }));
+        return response.token;
+      } catch {
+        return null;
+      }
+    };
+    api.setTokenRefresher(refresher);
+    return () => api.setTokenRefresher(null);
+  }, []);
+
   // Check server availability on mount — with same-origin auto-detection
   useEffect(() => {
     const checkServer = async () => {

@@ -61,6 +61,8 @@ export async function detectSameOriginRelay(): Promise<string | null> {
 
 export class AccordApi {
   private baseUrl: string;
+  private _tokenRefresher: (() => Promise<string | null>) | null = null;
+  private _refreshingToken: Promise<string | null> | null = null;
 
   constructor(baseUrl?: string) {
     this.baseUrl = (baseUrl || getDefaultBaseUrl()).replace(/\/+$/, '');
@@ -75,9 +77,29 @@ export class AccordApi {
     localStorage.setItem('accord_server_url', url);
   }
 
+  /**
+   * Set a callback that will be invoked when a 401 is received.
+   * The callback should re-authenticate and return the new token, or null if re-auth fails.
+   */
+  setTokenRefresher(refresher: (() => Promise<string | null>) | null): void {
+    this._tokenRefresher = refresher;
+  }
+
+  private async refreshToken(): Promise<string | null> {
+    if (!this._tokenRefresher) return null;
+    // Deduplicate concurrent refresh calls
+    if (!this._refreshingToken) {
+      this._refreshingToken = this._tokenRefresher().finally(() => {
+        this._refreshingToken = null;
+      });
+    }
+    return this._refreshingToken;
+  }
+
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    _isRetry = false
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
     
@@ -88,6 +110,16 @@ export class AccordApi {
       },
       ...options,
     });
+
+    // On 401, try to refresh the token and retry once
+    if (response.status === 401 && !_isRetry && this._tokenRefresher) {
+      const newToken = await this.refreshToken();
+      if (newToken) {
+        // Replace token in the endpoint URL and retry
+        const refreshedEndpoint = endpoint.replace(/([?&])token=[^&]*/, `$1token=${encodeURIComponent(newToken)}`);
+        return this.request<T>(refreshedEndpoint, options, true);
+      }
+    }
 
     const data = await response.json();
 

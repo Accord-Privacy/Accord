@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { notificationManager, NotificationPreferences } from './notifications';
 import { api } from './api';
+import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 
 // Types for settings
 interface AccountSettings {
@@ -327,26 +328,115 @@ export const Settings: React.FC<SettingsProps> = ({
     oscillator.stop(audioContext.currentTime + 0.5);
   };
 
-  // Advanced: export keypair
-  const handleExportKeypair = () => {
-    const relayHost = api.getBaseUrl().replace(/https?:\/\//, '');
-    const keys = localStorage.getItem(`accord_keys_${relayHost}`);
-    const publicKey = currentUser?.public_key || '';
+  // Import identity state
+  const [importStatus, setImportStatus] = useState<string>('');
+  const [importError, setImportError] = useState<string>('');
+  const [importPasswordPrompt, setImportPasswordPrompt] = useState<{ hash16: string; encPrivKey: string; pubKeyB64: string } | null>(null);
+  const [importPassword, setImportPassword] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  // Advanced: export identity key file
+  const handleExportIdentity = () => {
+    const pkHash = currentUser?.public_key_hash || '';
+    const hash16 = pkHash.substring(0, 16);
+    if (!hash16) {
+      alert('No identity found to export.');
+      return;
+    }
+    // Read encrypted private key and public key from localStorage (namespaced)
+    const encPrivKey = localStorage.getItem(`accord_private_key_${hash16}`);
+    const pubKeyB64 = localStorage.getItem(`accord_public_key_${hash16}`);
+    // Fallback to legacy keys
+    const encPrivKeyFinal = encPrivKey || localStorage.getItem('accord_private_key');
+    const pubKeyFinal = pubKeyB64 || localStorage.getItem('accord_public_key');
+    if (!encPrivKeyFinal || !pubKeyFinal) {
+      alert('Could not find encrypted keys in storage. Cannot export.');
+      return;
+    }
     const exportData = JSON.stringify({
-      publicKey,
-      relayHost,
-      keys: keys ? JSON.parse(keys) : null,
-      exportedAt: new Date().toISOString(),
+      version: 1,
+      public_key: pubKeyFinal,
+      encrypted_private_key: encPrivKeyFinal,
+      public_key_hash: hash16,
     }, null, 2);
     const blob = new Blob([exportData], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `accord-keypair-${relayHost}.json`;
+    a.download = `accord-identity-${hash16}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  // Advanced: import identity key file
+  const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImportError('');
+    setImportStatus('');
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        if (!data.version || !data.public_key || !data.encrypted_private_key || !data.public_key_hash) {
+          setImportError('Invalid identity file: missing required fields (version, public_key, encrypted_private_key, public_key_hash).');
+          return;
+        }
+        if (data.version !== 1) {
+          setImportError(`Unsupported identity file version: ${data.version}`);
+          return;
+        }
+        // Prompt for password to verify
+        setImportPasswordPrompt({
+          hash16: data.public_key_hash,
+          encPrivKey: data.encrypted_private_key,
+          pubKeyB64: data.public_key,
+        });
+      } catch {
+        setImportError('Failed to parse identity file. Must be valid JSON.');
+      }
+    };
+    reader.readAsText(file);
+    // Reset file input so the same file can be selected again
+    e.target.value = '';
+  };
+
+  const handleImportConfirm = async () => {
+    if (!importPasswordPrompt || !importPassword) return;
+    setImportLoading(true);
+    setImportError('');
+    try {
+      const { hash16, encPrivKey, pubKeyB64 } = importPasswordPrompt;
+      // Store keys in localStorage with proper namespacing
+      localStorage.setItem(`accord_private_key_${hash16}`, encPrivKey);
+      localStorage.setItem(`accord_public_key_${hash16}`, pubKeyB64);
+      // Also store in legacy slots
+      localStorage.setItem('accord_private_key', encPrivKey);
+      localStorage.setItem('accord_public_key', pubKeyB64);
+
+      // Try to decrypt to verify password works
+      const keyPair = await loadKeyWithPassword(importPassword, hash16);
+      if (!keyPair) {
+        // Clean up on failure
+        setImportError('Incorrect password — could not decrypt the private key.');
+        setImportLoading(false);
+        return;
+      }
+
+      // Success — set as active identity and reload
+      setActiveIdentity(hash16);
+      setImportPasswordPrompt(null);
+      setImportPassword('');
+      setImportStatus('Identity imported successfully! Reloading...');
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err: any) {
+      setImportError(`Import failed: ${err.message || 'unknown error'}`);
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   // Advanced: clear local data
@@ -995,15 +1085,52 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
 
                 <div className="settings-group">
-                  <label className="settings-label">Key Management</label>
+                  <label className="settings-label">Identity Key Management</label>
                   <div className="test-buttons">
-                    <button className="test-button" onClick={handleExportKeypair}>
-                      📥 Export Keypair
+                    <button className="test-button" onClick={handleExportIdentity}>
+                      📤 Export Identity
                     </button>
+                    <button className="test-button" onClick={() => importFileRef.current?.click()}>
+                      📥 Import Identity
+                    </button>
+                    <input
+                      ref={importFileRef}
+                      type="file"
+                      accept=".json"
+                      style={{ display: 'none' }}
+                      onChange={handleImportFile}
+                    />
                   </div>
                   <div className="settings-help">
-                    Export your keypair for backup. Keep this file safe — it contains your private key.
+                    Export your encrypted identity to a JSON file for backup or transfer to another browser. Import a previously exported identity file to restore access.
                   </div>
+                  {importStatus && <div className="auth-success" style={{ marginTop: 8 }}>{importStatus}</div>}
+                  {importError && <div style={{ color: 'var(--red, #f44)', marginTop: 8, fontSize: 13 }}>{importError}</div>}
+                  {importPasswordPrompt && (
+                    <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
+                      <div style={{ marginBottom: 8, fontSize: 14 }}>
+                        Enter password to decrypt identity <code>{importPasswordPrompt.hash16}</code>:
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          type="password"
+                          placeholder="Password"
+                          value={importPassword}
+                          onChange={(e) => setImportPassword(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleImportConfirm(); }}
+                          className="form-input"
+                          style={{ flex: 1 }}
+                          autoFocus
+                        />
+                        <button className="test-button" onClick={handleImportConfirm} disabled={importLoading || !importPassword}>
+                          {importLoading ? 'Verifying...' : 'Confirm'}
+                        </button>
+                        <button className="test-button" onClick={() => { setImportPasswordPrompt(null); setImportPassword(''); }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="settings-group">
