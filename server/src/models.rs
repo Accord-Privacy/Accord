@@ -490,6 +490,8 @@ pub enum WsMessageType {
     JoinVoiceChannel { channel_id: Uuid },
     /// Leave a voice channel
     LeaveVoiceChannel { channel_id: Uuid },
+    /// Get current voice channel participants
+    GetVoiceParticipants { channel_id: Uuid },
     /// Voice packet (encrypted audio data)
     VoicePacket {
         channel_id: Uuid,

@@ -3565,13 +3565,30 @@ async fn handle_ws_message(
 
         // ── Voice operations ──
         WsMessageType::JoinVoiceChannel { channel_id } => {
+            // Get existing participants before joining (so new user knows who's there)
+            let existing = state.get_voice_channel_participants(channel_id).await;
+
             state.join_voice_channel(sender_user_id, channel_id).await?;
+
+            // Send the joining user the current participant list
             let resp = serde_json::json!({
                 "type": "voice_channel_joined",
                 "channel_id": channel_id,
-                "user_id": sender_user_id
+                "user_id": sender_user_id,
+                "participants": existing
             });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
+
+            // Broadcast to existing participants that a new user joined
+            let broadcast = serde_json::json!({
+                "type": "voice_peer_joined",
+                "channel_id": channel_id,
+                "user_id": sender_user_id
+            });
+            state
+                .send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string())
+                .await?;
+
             info!(
                 "User {} joined voice channel {}",
                 sender_user_id, channel_id
@@ -3579,6 +3596,16 @@ async fn handle_ws_message(
         }
 
         WsMessageType::LeaveVoiceChannel { channel_id } => {
+            // Broadcast to remaining participants before leaving
+            let broadcast = serde_json::json!({
+                "type": "voice_peer_left",
+                "channel_id": channel_id,
+                "user_id": sender_user_id
+            });
+            state
+                .send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string())
+                .await?;
+
             state
                 .leave_voice_channel(sender_user_id, channel_id)
                 .await?;
@@ -3589,6 +3616,16 @@ async fn handle_ws_message(
             });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
             info!("User {} left voice channel {}", sender_user_id, channel_id);
+        }
+
+        WsMessageType::GetVoiceParticipants { channel_id } => {
+            let participants = state.get_voice_channel_participants(channel_id).await;
+            let resp = serde_json::json!({
+                "type": "voice_participants",
+                "channel_id": channel_id,
+                "participants": participants
+            });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
         WsMessageType::VoicePacket {

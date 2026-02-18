@@ -34,6 +34,13 @@ export interface WsEvents {
   voice_leave: (data: any) => void;
   voice_packet: (data: any) => void;
   voice_speaking: (data: any) => void;
+  voice_channel_joined: (data: any) => void;
+  voice_channel_left: (data: any) => void;
+  voice_peer_joined: (data: any) => void;
+  voice_peer_left: (data: any) => void;
+  voice_participants: (data: any) => void;
+  voice_speaking_state: (data: any) => void;
+  p2p_signal: (data: any) => void;
   reaction_add: (data: any) => void;
   reaction_remove: (data: any) => void;
   message_pin: (data: any) => void;
