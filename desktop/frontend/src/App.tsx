@@ -3366,7 +3366,7 @@ function App() {
               <div className="message-body">
                 {!isGrouped && (
                 <div className="message-header">
-                  <span className="message-author" onContextMenu={(e) => {
+                  <span className="message-author" style={{ color: (() => { const am = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author); return am ? getMemberRoleColor(am.user_id) : undefined; })() || undefined }} onContextMenu={(e) => {
                     const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
                     if (authorMember) {
                       handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
@@ -3700,6 +3700,9 @@ function App() {
                     <button onClick={(e) => { e.stopPropagation(); openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>
                   )}
                   {canKick && !isCurrentUser && (
+                    <button onClick={(e) => { e.stopPropagation(); setShowRolePopup({ userId: member.user_id, x: e.clientX, y: e.clientY }); }} className="member-action-btn" title="Manage roles">Roles</button>
+                  )}
+                  {canKick && !isCurrentUser && (
                     <button onClick={(e) => { e.stopPropagation(); handleKickMember(member.user_id, displayName(member.user)); }} className="member-action-btn danger" title="Kick member">Kick</button>
                   )}
                 </div>
@@ -3738,9 +3741,13 @@ function App() {
           const sections: { name: string; color?: string | null; members: Array<NodeMember & { user: User }> }[] = [];
           
           for (const role of hoistedRoles) {
-            // For now, all members go in Online/Offline since we don't have per-member role assignments from the API yet
-            // This is a placeholder that will work once role assignments are available
-            sections.push({ name: role.name, color: role.color, members: [] });
+            const roleMembers = membersWithUser.filter(m => {
+              if (assigned.has(m.user_id)) return false;
+              const highest = getMemberHighestHoistedRole(m.user_id);
+              return highest?.id === role.id;
+            });
+            roleMembers.forEach(m => assigned.add(m.user_id));
+            sections.push({ name: role.name, color: role.color, members: roleMembers });
           }
           
           // Put all members not assigned to hoisted roles in Online/Offline
@@ -3777,6 +3784,41 @@ function App() {
           );
         })()}
       </div>}
+
+      {/* Role Assignment Popup */}
+      {showRolePopup && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1050 }} onClick={() => setShowRolePopup(null)}>
+          <div style={{
+            position: 'absolute',
+            top: Math.min(showRolePopup.y, window.innerHeight - 300),
+            left: Math.min(showRolePopup.x, window.innerWidth - 220),
+            background: '#2f3136',
+            border: '1px solid #40444b',
+            borderRadius: '6px',
+            padding: '8px',
+            minWidth: '200px',
+            maxHeight: '280px',
+            overflowY: 'auto',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '12px', color: '#b9bbbe', fontWeight: 600, padding: '4px 8px', marginBottom: '4px' }}>ASSIGN ROLES</div>
+            {nodeRoles.length === 0 ? (
+              <div style={{ padding: '8px', color: '#72767d', fontSize: '13px' }}>No roles available</div>
+            ) : nodeRoles.sort((a, b) => b.position - a.position).map(role => {
+              const userHasRole = (memberRolesMap[showRolePopup.userId] || []).some(r => r.id === role.id);
+              return (
+                <label key={role.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', color: '#dcddde' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#40444b')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                  <input type="checkbox" checked={userHasRole} onChange={() => toggleMemberRole(showRolePopup.userId, role.id, userHasRole)} />
+                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: role.color || '#99aab5', flexShrink: 0 }} />
+                  {role.name}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Error Message */}
       {error && (
