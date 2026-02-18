@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -201,6 +201,13 @@ function App() {
 
   // Node settings state
   const [showNodeSettings, setShowNodeSettings] = useState(false);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [nodeRoles, setNodeRoles] = useState<Role[]>([]);
+  const [showTemplateImport, setShowTemplateImport] = useState(false);
+  const [templateInput, setTemplateInput] = useState('');
+  const [templateImporting, setTemplateImporting] = useState(false);
+  const [templateResult, setTemplateResult] = useState<any>(null);
+  const [templateError, setTemplateError] = useState('');
 
   // Delete channel confirmation modal state
   const [deleteChannelConfirm, setDeleteChannelConfirm] = useState<{ id: string; name: string } | null>(null);
@@ -750,6 +757,18 @@ function App() {
     }
   }, [appState.token, serverAvailable]);
 
+  // Load roles for selected node
+  const loadRoles = useCallback(async (nodeId: string) => {
+    if (!appState.token || !serverAvailable) return;
+    try {
+      const roles = await api.getRoles(nodeId, appState.token);
+      setNodeRoles(Array.isArray(roles) ? roles : []);
+    } catch (error) {
+      console.error('Failed to load roles:', error);
+      setNodeRoles([]);
+    }
+  }, [appState.token, serverAvailable]);
+
   // Load message history for selected channel (initial load)
   const loadMessages = useCallback(async (channelId: string) => {
     if (!appState.token || !serverAvailable) return;
@@ -919,7 +938,8 @@ function App() {
     // Load channels and members for the selected node
     loadChannels(nodeId);
     loadMembers(nodeId);
-  }, [loadChannels, loadMembers]);
+    loadRoles(nodeId);
+  }, [loadChannels, loadMembers, loadRoles]);
 
   // Load user's DM channels
   const loadDmChannels = useCallback(async () => {
@@ -2618,9 +2638,33 @@ function App() {
 
   // Use server data — no mock fallback
   const servers = nodes.map(n => n.name);
-  const channelList = channels.map(ch => `# ${ch.name}`);
   const displayName = (u: User | undefined) => u ? (u.display_name || fingerprint(u.public_key_hash)) : 'Unknown';
-  const users = members.filter(m => m.user).map(m => displayName(m.user));
+
+  // Helper to determine channel type as number
+  const getChannelTypeNum = (ch: Channel): number => {
+    if (typeof ch.channel_type === 'number') return ch.channel_type;
+    if (ch.channel_type === 'voice') return 2;
+    if (ch.channel_type === 'category') return 4;
+    return 0; // text
+  };
+
+  // Sort channels by position
+  const sortedChannels = [...channels].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  
+  // Separate categories and regular channels
+  const categories = sortedChannels.filter(ch => getChannelTypeNum(ch) === 4);
+  const nonCategoryChannels = sortedChannels.filter(ch => getChannelTypeNum(ch) !== 4);
+  const uncategorizedChannels = nonCategoryChannels.filter(ch => !ch.parent_id);
+  const categorizedChannels = (catId: string) => nonCategoryChannels.filter(ch => ch.parent_id === catId);
+
+  const toggleCategory = (catId: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
+  };
 
   return (
     <div className="app">
@@ -2708,89 +2752,98 @@ function App() {
         </div>
         
         <div className="channel-list">
-          {channelList.map((ch, i) => {
-            const channel = channels.length > 0 ? channels[i] : null;
-            const isActive = channel ? channel.id === selectedChannelId : ch === activeChannel;
+          {/* Render a single channel item */}
+          {(() => {
             const canDeleteChannel = selectedNodeId && hasPermission(selectedNodeId, 'DeleteChannel');
-            const isVoiceChannel = channel?.channel_type === 'voice';
-            const isConnectedToVoice = isVoiceChannel && voiceChannelId === channel?.id;
             
-            const channelUnreads = selectedNodeId && channel ? 
-              notificationManager.getChannelUnreads(selectedNodeId, channel.id) : 
-              { count: 0, mentions: 0 };
-            const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
-            
-            return (
-              <div
-                key={channel?.id || ch}
-                className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
-              >
-                <span className="channel-drag-handle" title="Drag to reorder">⠿</span>
+            const renderChannel = (channel: Channel) => {
+              const isVoiceChannel = getChannelTypeNum(channel) === 2;
+              const isActive = channel.id === selectedChannelId;
+              const isConnectedToVoice = isVoiceChannel && voiceChannelId === channel.id;
+              const channelUnreads = selectedNodeId ? 
+                notificationManager.getChannelUnreads(selectedNodeId, channel.id) : 
+                { count: 0, mentions: 0 };
+              const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
+              
+              return (
                 <div
-                  onClick={() => {
-                    if (channel) {
+                  key={channel.id}
+                  className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
+                  title={channel.topic || undefined}
+                >
+                  <div
+                    onClick={() => {
                       if (isVoiceChannel) {
-                        // Handle voice channel click
-                        if (isConnectedToVoice) {
-                          // Already connected, do nothing or show voice panel
-                        } else {
-                          // Connect to voice channel
+                        if (!isConnectedToVoice) {
                           setVoiceChannelId(channel.id);
                           setVoiceChannelName(channel.name);
                         }
                       } else {
-                        // Text channel
-                        handleChannelSelect(channel.id, ch);
+                        handleChannelSelect(channel.id, `# ${channel.name}`);
                       }
-                    } else {
-                      setActiveChannel(ch);
-                    }
-                  }}
-                  style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                >
-                  <span>
-                    {isVoiceChannel ? '🔊' : '#'} {channel?.name || ch.replace(/^# /, '')}
-                  </span>
-                  {isVoiceChannel && (
-                    <span style={{ fontSize: '11px', color: '#8e9297' }}>
-                      {/* TODO: Show connected user count */}
-                      (0)
+                    }}
+                    style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <span style={{ color: isVoiceChannel ? '#8e9297' : undefined }}>
+                      {isVoiceChannel ? '🔊' : '#'} {channel.name}
                     </span>
-                  )}
-                  {isConnectedToVoice && (
-                    <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
-                  )}
+                    {isConnectedToVoice && (
+                      <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
+                    )}
+                  </div>
+                  <div className="channel-badges">
+                    {channelUnreads.mentions > 0 && (
+                      <div className="mention-badge">{channelUnreads.mentions > 9 ? '9+' : channelUnreads.mentions}</div>
+                    )}
+                    {channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
+                      <div className="unread-badge">{channelUnreads.count > 99 ? '99+' : channelUnreads.count}</div>
+                    )}
+                    {canDeleteChannel && (
+                      <button onClick={(e) => { e.stopPropagation(); setDeleteChannelConfirm({ id: channel.id, name: channel.name }); }} className="channel-delete-btn" title="Delete channel">×</button>
+                    )}
+                  </div>
                 </div>
-
-                <div className="channel-badges">
-                  {channelUnreads.mentions > 0 && (
-                    <div className="mention-badge">
-                      {channelUnreads.mentions > 9 ? '9+' : channelUnreads.mentions}
+              );
+            };
+            
+            return (
+              <>
+                {/* Uncategorized channels */}
+                {uncategorizedChannels.map(ch => renderChannel(ch))}
+                
+                {/* Categories with their children */}
+                {categories.map(cat => {
+                  const children = categorizedChannels(cat.id);
+                  const isCollapsed = collapsedCategories.has(cat.id);
+                  return (
+                    <div key={cat.id} className="channel-category">
+                      <div
+                        className="category-header"
+                        onClick={() => toggleCategory(cat.id)}
+                      >
+                        <span className="category-arrow">{isCollapsed ? '▶' : '▼'}</span>
+                        <span className="category-name">{cat.name}</span>
+                      </div>
+                      {!isCollapsed && children.map(ch => renderChannel(ch))}
                     </div>
-                  )}
-                  {channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
-                    <div className="unread-badge">
-                      {channelUnreads.count > 99 ? '99+' : channelUnreads.count}
-                    </div>
-                  )}
-                  
-                  {canDeleteChannel && channel && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setDeleteChannelConfirm({ id: channel.id, name: channel.name }); }}
-                      className="channel-delete-btn"
-                      title="Delete channel"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              </div>
+                  );
+                })}
+              </>
             );
-          })}
+          })()}
+          
+          {/* Import Discord Template Button */}
+          {selectedNodeId && hasPermission(selectedNodeId, 'ManageNode') && (
+            <div style={{ padding: '4px 8px' }}>
+              <button onClick={() => setShowTemplateImport(true)} className="btn btn-outline btn-sm" style={{ width: '100%', fontSize: '11px' }}>
+                📥 Import Discord Template
+              </button>
+            </div>
+          )}
           
           {/* Create Channel Button for Admins */}
           {selectedNodeId && hasPermission(selectedNodeId, 'CreateChannel') && (
-            <div style={{ marginTop: '8px', padding: '0 8px' }}>
+            <div style={{ marginTop: '4px', padding: '0 8px' }}>
               {!showCreateChannelForm ? (
                 <button onClick={() => setShowCreateChannelForm(true)} className="btn btn-green btn-sm" style={{ width: '100%' }}>
                   + Create Channel
@@ -3336,14 +3389,14 @@ function App() {
 
       {/* Member sidebar */}
       <div className="member-sidebar">
-        <div className="member-header">Members — {users.length}</div>
-        {sortedMembers.length > 0 ? (
-          sortedMembers.filter(m => m.user).map((member) => {
-            const currentUserId = localStorage.getItem('accord_user_id');
+        <div className="member-header">Members — {members.filter(m => m.user).length}</div>
+        {(() => {
+          const currentUserId = localStorage.getItem('accord_user_id');
+          const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers');
+          
+          const renderMember = (member: NodeMember & { user: User }) => {
             const isCurrentUser = member.user_id === currentUserId;
             const presence = getPresenceStatus(member.user_id);
-            const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers') && !isCurrentUser;
-            
             return (
               <div key={member.user?.id || member.user_id} className={`member ${presence === 'offline' ? 'member-offline' : ''}`}
                 onContextMenu={(e) => handleContextMenu(e, member.user_id, member.public_key_hash, displayName(member.user), member.profile?.bio, member.user)}
@@ -3358,18 +3411,83 @@ function App() {
                   {!isCurrentUser && (
                     <button onClick={(e) => { e.stopPropagation(); openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>
                   )}
-                  {canKick && (
+                  {canKick && !isCurrentUser && (
                     <button onClick={(e) => { e.stopPropagation(); handleKickMember(member.user_id, displayName(member.user)); }} className="member-action-btn danger" title="Kick member">Kick</button>
                   )}
                 </div>
               </div>
             );
-          })
-        ) : members.length === 0 ? (
-          <div className="members-empty">
-            {nodes.length === 0 ? 'Join or create a node to see members' : 'No members loaded'}
-          </div>
-        ) : null}
+          };
+
+          // Group by hoisted roles
+          const hoistedRoles = nodeRoles.filter(r => r.hoist).sort((a, b) => b.position - a.position);
+          const membersWithUser = sortedMembers.filter(m => m.user);
+          
+          if (hoistedRoles.length === 0) {
+            // No roles — show Online/Offline sections
+            const online = membersWithUser.filter(m => getPresenceStatus(m.user_id) !== 'offline');
+            const offline = membersWithUser.filter(m => getPresenceStatus(m.user_id) === 'offline');
+            return (
+              <>
+                {online.length > 0 && (
+                  <>
+                    <div className="role-section-header">Online — {online.length}</div>
+                    {online.map(m => renderMember(m))}
+                  </>
+                )}
+                {offline.length > 0 && (
+                  <>
+                    <div className="role-section-header" style={{ color: '#72767d' }}>Offline — {offline.length}</div>
+                    {offline.map(m => renderMember(m))}
+                  </>
+                )}
+              </>
+            );
+          }
+          
+          // With hoisted roles: group members by highest hoisted role
+          const assigned = new Set<string>();
+          const sections: { name: string; color?: string | null; members: Array<NodeMember & { user: User }> }[] = [];
+          
+          for (const role of hoistedRoles) {
+            // For now, all members go in Online/Offline since we don't have per-member role assignments from the API yet
+            // This is a placeholder that will work once role assignments are available
+            sections.push({ name: role.name, color: role.color, members: [] });
+          }
+          
+          // Put all members not assigned to hoisted roles in Online/Offline
+          const unassigned = membersWithUser.filter(m => !assigned.has(m.user_id));
+          const online = unassigned.filter(m => getPresenceStatus(m.user_id) !== 'offline');
+          const offline = unassigned.filter(m => getPresenceStatus(m.user_id) === 'offline');
+          
+          return (
+            <>
+              {sections.filter(s => s.members.length > 0).map(s => (
+                <React.Fragment key={s.name}>
+                  <div className="role-section-header" style={{ color: s.color || undefined }}>{s.name} — {s.members.length}</div>
+                  {s.members.map(m => renderMember(m))}
+                </React.Fragment>
+              ))}
+              {online.length > 0 && (
+                <>
+                  <div className="role-section-header">Online — {online.length}</div>
+                  {online.map(m => renderMember(m))}
+                </>
+              )}
+              {offline.length > 0 && (
+                <>
+                  <div className="role-section-header" style={{ color: '#72767d' }}>Offline — {offline.length}</div>
+                  {offline.map(m => renderMember(m))}
+                </>
+              )}
+              {membersWithUser.length === 0 && members.length === 0 && (
+                <div className="members-empty">
+                  {nodes.length === 0 ? 'Join or create a node to see members' : 'No members loaded'}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Error Message */}
@@ -3469,6 +3587,80 @@ function App() {
               <button onClick={() => handleDeleteChannelConfirmed(deleteChannelConfirm.id)} className="btn btn-red">Delete Channel</button>
               <button onClick={() => setDeleteChannelConfirm(null)} className="btn btn-outline">Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Discord Template Import Modal */}
+      {showTemplateImport && selectedNodeId && (
+        <div className="modal-overlay">
+          <div className="modal-card" style={{ maxWidth: '480px' }}>
+            <h3>📥 Import Discord Template</h3>
+            {!templateResult ? (
+              <>
+                <p style={{ color: '#b9bbbe', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
+                <div className="form-group">
+                  <input
+                    type="text"
+                    placeholder="discord.new/CODE or template code"
+                    value={templateInput}
+                    onChange={(e) => setTemplateInput(e.target.value)}
+                    className="form-input"
+                    disabled={templateImporting}
+                  />
+                </div>
+                {templateError && <div style={{ color: '#f04747', fontSize: '13px', marginBottom: '8px' }}>{templateError}</div>}
+                <div className="modal-actions">
+                  <button
+                    className="btn btn-green"
+                    disabled={templateImporting || !templateInput.trim()}
+                    onClick={async () => {
+                      setTemplateError('');
+                      setTemplateImporting(true);
+                      try {
+                        // Parse template code from URL
+                        let code = templateInput.trim();
+                        const m1 = code.match(/discord\.new\/([A-Za-z0-9]+)/);
+                        const m2 = code.match(/discord\.com\/template\/([A-Za-z0-9]+)/);
+                        if (m1) code = m1[1];
+                        else if (m2) code = m2[1];
+                        
+                        const result = await api.importDiscordTemplate(selectedNodeId, code, appState.token || '');
+                        setTemplateResult(result);
+                      } catch (err: any) {
+                        setTemplateError(err.message || 'Import failed');
+                      } finally {
+                        setTemplateImporting(false);
+                      }
+                    }}
+                  >
+                    {templateImporting ? '⏳ Importing...' : 'Import'}
+                  </button>
+                  <button className="btn btn-outline" onClick={() => { setShowTemplateImport(false); setTemplateInput(''); setTemplateError(''); setTemplateResult(null); }}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ color: '#43b581', marginBottom: '12px', fontSize: '14px' }}>✅ Import complete!</div>
+                <div style={{ color: '#dcddde', fontSize: '13px', lineHeight: '1.6' }}>
+                  {templateResult.roles_created !== undefined && <div>Roles created: <strong>{templateResult.roles_created}</strong></div>}
+                  {templateResult.channels_created !== undefined && <div>Channels created: <strong>{templateResult.channels_created}</strong></div>}
+                  {templateResult.categories_created !== undefined && <div>Categories created: <strong>{templateResult.categories_created}</strong></div>}
+                </div>
+                <div className="modal-actions" style={{ marginTop: '16px' }}>
+                  <button className="btn btn-green" onClick={() => {
+                    setShowTemplateImport(false);
+                    setTemplateInput('');
+                    setTemplateResult(null);
+                    setTemplateError('');
+                    if (selectedNodeId) {
+                      loadChannels(selectedNodeId);
+                      loadRoles(selectedNodeId);
+                    }
+                  }}>Done</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -5330,8 +5330,8 @@ pub async fn admin_stats_handler(
 // ══════════════════════════════════════════════════════════════
 
 use crate::models::{
-    CreateRoleRequest, UpdateRoleRequest, ReorderRolesRequest, SetChannelOverwriteRequest,
-    permission_bits,
+    permission_bits, CreateRoleRequest, ReorderRolesRequest, SetChannelOverwriteRequest,
+    UpdateRoleRequest,
 };
 
 /// Helper: check that the requesting user has a given permission bit in a Node.
@@ -5345,7 +5345,12 @@ async fn require_node_permission(
     let user_id = extract_user_from_token(state, params).await?;
 
     // Check membership first
-    if !state.db.is_node_member(node_id, user_id).await.unwrap_or(false) {
+    if !state
+        .db
+        .is_node_member(node_id, user_id)
+        .await
+        .unwrap_or(false)
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -5466,19 +5471,28 @@ pub async fn update_role_handler(
     let role = state.db.get_role(role_id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e.to_string(), code: 500 }),
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
         )
     })?;
     let role = role.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
-            Json(ErrorResponse { error: "Role not found".into(), code: 404 }),
+            Json(ErrorResponse {
+                error: "Role not found".into(),
+                code: 404,
+            }),
         )
     })?;
     if role.node_id != node_id {
         return Err((
             StatusCode::NOT_FOUND,
-            Json(ErrorResponse { error: "Role not found in this node".into(), code: 404 }),
+            Json(ErrorResponse {
+                error: "Role not found in this node".into(),
+                code: 404,
+            }),
         ));
     }
 
@@ -5497,14 +5511,20 @@ pub async fn update_role_handler(
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: format!("Failed to update role: {}", e), code: 500 }),
+                Json(ErrorResponse {
+                    error: format!("Failed to update role: {}", e),
+                    code: 500,
+                }),
             )
         })?;
 
     let updated = state.db.get_role(role_id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e.to_string(), code: 500 }),
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
         )
     })?;
 
@@ -5522,20 +5542,41 @@ pub async fn delete_role_handler(
 
     // Prevent deleting @everyone (position 0)
     let role = state.db.get_role(role_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
+        )
     })?;
     let role = role.ok_or_else(|| {
-        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Role not found".into(), code: 404 }))
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Role not found".into(),
+                code: 404,
+            }),
+        )
     })?;
     if role.position == 0 {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: "Cannot delete the @everyone role".into(), code: 400 }),
+            Json(ErrorResponse {
+                error: "Cannot delete the @everyone role".into(),
+                code: 400,
+            }),
         ));
     }
 
     state.db.delete_role(role_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
+        )
     })?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -5553,7 +5594,13 @@ pub async fn reorder_roles_handler(
 
     let entries: Vec<(Uuid, i32)> = request.roles.iter().map(|e| (e.id, e.position)).collect();
     state.db.reorder_roles(&entries).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
+        )
     })?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -5567,9 +5614,19 @@ pub async fn get_member_roles_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let _user_id = extract_user_from_token(&state, &params).await?;
 
-    let roles = state.db.get_member_roles(node_id, target_user_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    let roles = state
+        .db
+        .get_member_roles(node_id, target_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(Json(serde_json::json!({ "roles": roles })))
 }
@@ -5585,23 +5642,62 @@ pub async fn assign_member_role_handler(
 
     // Verify the role belongs to this node
     let role = state.db.get_role(role_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
+        )
     })?;
     let role = role.ok_or_else(|| {
-        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Role not found".into(), code: 404 }))
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Role not found".into(),
+                code: 404,
+            }),
+        )
     })?;
     if role.node_id != node_id {
-        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Role not in this node".into(), code: 404 })));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Role not in this node".into(),
+                code: 404,
+            }),
+        ));
     }
 
     // Verify target is a member
-    if !state.db.is_node_member(node_id, target_user_id).await.unwrap_or(false) {
-        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "User is not a member of this node".into(), code: 404 })));
+    if !state
+        .db
+        .is_node_member(node_id, target_user_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "User is not a member of this node".into(),
+                code: 404,
+            }),
+        ));
     }
 
-    state.db.assign_member_role(node_id, target_user_id, role_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    state
+        .db
+        .assign_member_role(node_id, target_user_id, role_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -5615,9 +5711,19 @@ pub async fn remove_member_role_handler(
     let _user_id =
         require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
-    state.db.remove_member_role(target_user_id, role_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    state
+        .db
+        .remove_member_role(target_user_id, role_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -5630,9 +5736,19 @@ pub async fn list_channel_overwrites_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let _user_id = extract_user_from_token(&state, &params).await?;
 
-    let overwrites = state.db.get_channel_overwrites(channel_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    let overwrites = state
+        .db
+        .get_channel_overwrites(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(Json(serde_json::json!({ "overwrites": overwrites })))
 }
@@ -5647,26 +5763,69 @@ pub async fn set_channel_overwrite_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     // Get the channel's node to check permissions
-    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?.ok_or_else(|| {
-        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Channel not found".into(), code: 404 }))
-    })?;
+    let channel = state
+        .db
+        .get_channel(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
 
     // Require MANAGE_CHANNELS or MANAGE_ROLES
-    let perms = state.db.compute_node_permissions(channel.node_id, user_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    let perms = state
+        .db
+        .compute_node_permissions(channel.node_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
     let can_manage = perms & permission_bits::ADMINISTRATOR != 0
         || perms & permission_bits::MANAGE_CHANNELS != 0
         || perms & permission_bits::MANAGE_ROLES != 0;
     if !can_manage {
-        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "Missing MANAGE_CHANNELS or MANAGE_ROLES".into(), code: 403 })));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Missing MANAGE_CHANNELS or MANAGE_ROLES".into(),
+                code: 403,
+            }),
+        ));
     }
 
-    state.db.set_channel_overwrite(channel_id, role_id, request.allow, request.deny).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    state
+        .db
+        .set_channel_overwrite(channel_id, role_id, request.allow, request.deny)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -5679,25 +5838,68 @@ pub async fn delete_channel_overwrite_handler(
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
 
-    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?.ok_or_else(|| {
-        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Channel not found".into(), code: 404 }))
-    })?;
+    let channel = state
+        .db
+        .get_channel(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
 
-    let perms = state.db.compute_node_permissions(channel.node_id, user_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    let perms = state
+        .db
+        .compute_node_permissions(channel.node_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
     let can_manage = perms & permission_bits::ADMINISTRATOR != 0
         || perms & permission_bits::MANAGE_CHANNELS != 0
         || perms & permission_bits::MANAGE_ROLES != 0;
     if !can_manage {
-        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "Missing MANAGE_CHANNELS or MANAGE_ROLES".into(), code: 403 })));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Missing MANAGE_CHANNELS or MANAGE_ROLES".into(),
+                code: 403,
+            }),
+        ));
     }
 
-    state.db.delete_channel_overwrite(channel_id, role_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    state
+        .db
+        .delete_channel_overwrite(channel_id, role_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -5710,15 +5912,42 @@ pub async fn get_effective_permissions_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
 
-    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?.ok_or_else(|| {
-        (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Channel not found".into(), code: 404 }))
-    })?;
+    let channel = state
+        .db
+        .get_channel(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
 
-    let perms = state.db.compute_channel_permissions(channel.node_id, user_id, channel_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-    })?;
+    let perms = state
+        .db
+        .compute_channel_permissions(channel.node_id, user_id, channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
 
     Ok(Json(serde_json::json!({
         "permissions": perms,
@@ -5793,14 +6022,29 @@ pub async fn import_discord_template_handler(
     let user_id = extract_user_from_token(&state, &params).await?;
 
     // Permission check: require Admin (ManageNode implies admin-level)
-    let user_role = state.get_user_role_in_node(user_id, node_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: format!("Permission check failed: {e}"), code: 500 }))
-    })?;
+    let user_role = state
+        .get_user_role_in_node(user_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Permission check failed: {e}"),
+                    code: 500,
+                }),
+            )
+        })?;
     if !has_permission(user_role, Permission::ManageNode) {
-        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse {
-            error: format!("Permission denied. Required: ManageNode, Your role: {:?}", user_role),
-            code: 403,
-        })));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: format!(
+                    "Permission denied. Required: ManageNode, Your role: {:?}",
+                    user_role
+                ),
+                code: 403,
+            }),
+        ));
     }
 
     // Resolve template JSON
@@ -5809,25 +6053,49 @@ pub async fn import_discord_template_handler(
     } else if let Some(code) = request.template_code {
         let url = format!("https://discord.com/api/v10/guilds/templates/{}", code);
         let resp = reqwest::get(&url).await.map_err(|e| {
-            (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: format!("Failed to fetch template: {e}"), code: 502 }))
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: format!("Failed to fetch template: {e}"),
+                    code: 502,
+                }),
+            )
         })?;
         if !resp.status().is_success() {
-            return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-                error: format!("Discord returned status {} for template code '{}'", resp.status(), code),
-                code: 400,
-            })));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!(
+                        "Discord returned status {} for template code '{}'",
+                        resp.status(),
+                        code
+                    ),
+                    code: 400,
+                }),
+            ));
         }
         resp.json::<serde_json::Value>().await.map_err(|e| {
-            (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: format!("Invalid JSON from Discord: {e}"), code: 502 }))
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorResponse {
+                    error: format!("Invalid JSON from Discord: {e}"),
+                    code: 502,
+                }),
+            )
         })?
     } else {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-            error: "Provide either template_code or template_json".into(), code: 400,
-        })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Provide either template_code or template_json".into(),
+                code: 400,
+            }),
+        ));
     };
 
     // Extract serialized_source_guild
-    let guild = template_json.get("serialized_source_guild")
+    let guild = template_json
+        .get("serialized_source_guild")
         .unwrap_or(&template_json); // allow passing guild directly
 
     let mut summary = ImportTemplateSummary {
@@ -5863,31 +6131,63 @@ pub async fn import_discord_template_handler(
     // Map Discord template role IDs (integers) → new Accord role UUIDs
     let mut role_id_map: HashMap<u64, Uuid> = HashMap::new();
 
-    let roles = guild.get("roles").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let roles = guild
+        .get("roles")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     // Get the existing @everyone role for this node
     let everyone_role = state.db.get_everyone_role(node_id).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
+        )
     })?;
 
     for role_val in &roles {
         let discord_id = role_val.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-        let name = role_val.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
-        let raw_perms_str = role_val.get("permissions").and_then(|v| v.as_str()).unwrap_or("0");
+        let name = role_val
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed");
+        let raw_perms_str = role_val
+            .get("permissions")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0");
         let raw_perms: u64 = raw_perms_str.parse().unwrap_or(0);
         let masked_perms = mask_perms(raw_perms);
         let color = role_val.get("color").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let hoist = role_val.get("hoist").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mentionable = role_val.get("mentionable").and_then(|v| v.as_bool()).unwrap_or(false);
+        let hoist = role_val
+            .get("hoist")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mentionable = role_val
+            .get("mentionable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let unicode_emoji = role_val.get("unicode_emoji").and_then(|v| v.as_str());
 
         if discord_id == 0 {
             // Update the existing @everyone role
             if let Some(ref ev) = everyone_role {
                 role_id_map.insert(0, ev.id);
-                state.db.update_role(ev.id, None, None, Some(masked_perms), None, None, None).await.map_err(|e| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-                })?;
+                state
+                    .db
+                    .update_role(ev.id, None, None, Some(masked_perms), None, None, None)
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse {
+                                error: e.to_string(),
+                                code: 500,
+                            }),
+                        )
+                    })?;
                 summary.roles_updated += 1;
             }
             continue;
@@ -5895,28 +6195,48 @@ pub async fn import_discord_template_handler(
 
         // Determine position (use array index as approximation, offset by 1 since @everyone=0)
         let position = state.db.next_role_position(node_id).await.map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
         })?;
 
-        let new_role = state.db.create_role(
-            node_id,
-            name,
-            color,
-            masked_perms,
-            position,
-            hoist,
-            mentionable,
-            unicode_emoji,
-        ).await.map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-        })?;
+        let new_role = state
+            .db
+            .create_role(
+                node_id,
+                name,
+                color,
+                masked_perms,
+                position,
+                hoist,
+                mentionable,
+                unicode_emoji,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: e.to_string(),
+                        code: 500,
+                    }),
+                )
+            })?;
 
         role_id_map.insert(discord_id, new_role.id);
         summary.roles_created += 1;
     }
 
     // ── 2. Import channels ──
-    let channels = guild.get("channels").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let channels = guild
+        .get("channels")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     // Map Discord channel IDs → Accord channel UUIDs
     let mut channel_id_map: HashMap<u64, Uuid> = HashMap::new();
@@ -5924,7 +6244,9 @@ pub async fn import_discord_template_handler(
     // First pass: create categories (type=4)
     for ch in &channels {
         let ch_type = ch.get("type").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
-        if ch_type != 4 { continue; }
+        if ch_type != 4 {
+            continue;
+        }
 
         let discord_ch_id = ch.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
         let name = ch.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
@@ -5934,11 +6256,21 @@ pub async fn import_discord_template_handler(
             .and_then(|v| v.get("name"))
             .and_then(|v| v.as_str());
 
-        let new_id = state.db.create_channel_full(
-            name, node_id, user_id, ch_type, None, position, None, false, icon_emoji,
-        ).await.map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-        })?;
+        let new_id = state
+            .db
+            .create_channel_full(
+                name, node_id, user_id, ch_type, None, position, None, false, icon_emoji,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: e.to_string(),
+                        code: 500,
+                    }),
+                )
+            })?;
 
         channel_id_map.insert(discord_ch_id, new_id);
         summary.categories_created += 1;
@@ -5947,11 +6279,17 @@ pub async fn import_discord_template_handler(
     // Second pass: create text (0) and voice (2) channels
     for ch in &channels {
         let ch_type = ch.get("type").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
-        if ch_type == 4 { continue; }
+        if ch_type == 4 {
+            continue;
+        }
 
         // We support types 0 (text) and 2 (voice)
         if ch_type != 0 && ch_type != 2 {
-            info!("Skipping unsupported channel type {} for channel {:?}", ch_type, ch.get("name"));
+            info!(
+                "Skipping unsupported channel type {} for channel {:?}",
+                ch_type,
+                ch.get("name")
+            );
             continue;
         }
 
@@ -5966,15 +6304,26 @@ pub async fn import_discord_template_handler(
             .and_then(|v| v.as_str());
 
         // Resolve parent_id (Discord integer → Accord UUID)
-        let parent_id = ch.get("parent_id")
+        let parent_id = ch
+            .get("parent_id")
             .and_then(|v| v.as_u64())
             .and_then(|pid| channel_id_map.get(&pid).copied());
 
-        let new_id = state.db.create_channel_full(
-            name, node_id, user_id, ch_type, parent_id, position, topic, nsfw, icon_emoji,
-        ).await.map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-        })?;
+        let new_id = state
+            .db
+            .create_channel_full(
+                name, node_id, user_id, ch_type, parent_id, position, topic, nsfw, icon_emoji,
+            )
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: e.to_string(),
+                        code: 500,
+                    }),
+                )
+            })?;
 
         channel_id_map.insert(discord_ch_id, new_id);
         if ch_type == 0 {
@@ -5997,7 +6346,9 @@ pub async fn import_discord_template_handler(
             for ow in overwrites {
                 // type 0 = role overwrite (we only support role overwrites for now)
                 let ow_type = ow.get("type").and_then(|v| v.as_u64()).unwrap_or(0);
-                if ow_type != 0 { continue; }
+                if ow_type != 0 {
+                    continue;
+                }
 
                 let discord_role_id = ow.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
                 let accord_role_id = match role_id_map.get(&discord_role_id) {
@@ -6013,16 +6364,27 @@ pub async fn import_discord_template_handler(
                 let masked_allow = mask_perms(allow);
                 let masked_deny = mask_perms(deny);
 
-                state.db.set_channel_overwrite(accord_ch_id, accord_role_id, masked_allow, masked_deny).await.map_err(|e| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string(), code: 500 }))
-                })?;
+                state
+                    .db
+                    .set_channel_overwrite(accord_ch_id, accord_role_id, masked_allow, masked_deny)
+                    .await
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ErrorResponse {
+                                error: e.to_string(),
+                                code: 500,
+                            }),
+                        )
+                    })?;
                 summary.overwrites_created += 1;
             }
         }
     }
 
     // Build stripped bits summary
-    let mut stripped: Vec<String> = stripped_bits_seen.iter()
+    let mut stripped: Vec<String> = stripped_bits_seen
+        .iter()
         .map(|&bit| {
             let name = discord_bit_name(bit);
             if name == "Unknown" {

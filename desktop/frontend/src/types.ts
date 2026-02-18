@@ -79,7 +79,25 @@ export interface Channel {
   node_id: string;
   members: string[];
   created_at: number;
-  channel_type?: 'text' | 'voice';
+  channel_type?: 'text' | 'voice' | 'category' | number;
+  parent_id?: string | null;
+  position?: number;
+  topic?: string | null;
+  nsfw?: boolean;
+  icon_emoji?: string | null;
+}
+
+// Role types
+export interface Role {
+  id: string;
+  node_id: string;
+  name: string;
+  color?: string | null;
+  position: number;
+  permissions: number;
+  hoist: boolean;
+  mentionable: boolean;
+  created_at: number;
 }
 
 export interface CreateChannelRequest {

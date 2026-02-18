@@ -525,6 +525,22 @@ export class AccordApi {
     );
   }
 
+  // Get Node roles
+  async getRoles(nodeId: string, token: string): Promise<any[]> {
+    const result = await this.request<any>(`/nodes/${nodeId}/roles?token=${encodeURIComponent(token)}`);
+    if (result && Array.isArray(result.roles)) return result.roles;
+    if (Array.isArray(result)) return result;
+    return [];
+  }
+
+  // Import Discord template
+  async importDiscordTemplate(nodeId: string, templateCode: string, token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/import-discord-template?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify({ template_code: templateCode }),
+    });
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

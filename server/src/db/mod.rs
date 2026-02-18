@@ -3683,7 +3683,9 @@ impl Database {
             q = q.bind(b);
         }
         q = q.bind(role_id.to_string());
-        q.execute(&self.pool).await.context("Failed to update role")?;
+        q.execute(&self.pool)
+            .await
+            .context("Failed to update role")?;
         Ok(())
     }
 
@@ -3746,13 +3748,12 @@ impl Database {
 
     /// Remove a role from a member
     pub async fn remove_member_role(&self, member_id: Uuid, role_id: Uuid) -> Result<bool> {
-        let result =
-            sqlx::query("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?")
-                .bind(member_id.to_string())
-                .bind(role_id.to_string())
-                .execute(&self.pool)
-                .await
-                .context("Failed to remove member role")?;
+        let result = sqlx::query("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?")
+            .bind(member_id.to_string())
+            .bind(role_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to remove member role")?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -3808,11 +3809,7 @@ impl Database {
     }
 
     /// Delete a channel permission overwrite for a role
-    pub async fn delete_channel_overwrite(
-        &self,
-        channel_id: Uuid,
-        role_id: Uuid,
-    ) -> Result<bool> {
+    pub async fn delete_channel_overwrite(&self, channel_id: Uuid, role_id: Uuid) -> Result<bool> {
         let result = sqlx::query(
             "DELETE FROM channel_permission_overwrites WHERE channel_id = ? AND role_id = ?",
         )
@@ -3910,7 +3907,10 @@ impl Database {
         use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
 
         // Check if user is the Node owner — owners always get full permissions
-        let node = self.get_node(node_id).await?.ok_or_else(|| anyhow::anyhow!("Node not found"))?;
+        let node = self
+            .get_node(node_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Node not found"))?;
         if node.owner_id == user_id {
             return Ok(ALL_PERMISSIONS);
         }
@@ -3934,9 +3934,7 @@ impl Database {
         let overwrites = self.get_effective_channel_overwrites(channel_id).await?;
 
         // Step 4: Apply @everyone overwrite
-        let everyone_role_id = everyone_role
-            .as_ref()
-            .map(|r| r.id);
+        let everyone_role_id = everyone_role.as_ref().map(|r| r.id);
 
         if let Some(eid) = everyone_role_id {
             if let Some(ow) = overwrites.iter().find(|o| o.role_id == eid) {
@@ -3965,15 +3963,14 @@ impl Database {
 
     /// Compute effective permissions for a user at the Node level (no channel overwrites).
     /// This is the base permission from roles only.
-    pub async fn compute_node_permissions(
-        &self,
-        node_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<u64> {
+    pub async fn compute_node_permissions(&self, node_id: Uuid, user_id: Uuid) -> Result<u64> {
         use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
 
         // Node owner gets everything
-        let node = self.get_node(node_id).await?.ok_or_else(|| anyhow::anyhow!("Node not found"))?;
+        let node = self
+            .get_node(node_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Node not found"))?;
         if node.owner_id == user_id {
             return Ok(ALL_PERMISSIONS);
         }

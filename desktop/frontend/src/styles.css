@@ -3316,3 +3316,45 @@ input, textarea, select, button {
   font-weight: 500;
 }
 .btn-red:hover { background: #c93b3e; }
+
+/* ======= Channel Categories ======= */
+.channel-category {
+  margin-top: 8px;
+}
+.category-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: #8e9297;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+.category-header:hover {
+  color: #dcddde;
+}
+.category-arrow {
+  font-size: 10px;
+  margin-right: 4px;
+  width: 12px;
+  text-align: center;
+}
+.category-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ======= Role Section Headers ======= */
+.role-section-header {
+  padding: 8px 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8e9297;
+}
