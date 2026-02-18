@@ -29,3 +29,10 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 base64 = "0.21"
 rand = "0.8"
 hex = "0.4"
+
+# Self-signed cert generation (optional)
+rcgen = { version = "0.13", optional = true }
+
+[features]
+default = ["generate-cert"]
+generate-cert = ["rcgen"]

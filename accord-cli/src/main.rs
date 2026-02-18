@@ -87,6 +87,16 @@ enum Commands {
         #[arg(long)]
         hashes: String,
     },
+    /// Generate a self-signed TLS certificate for development/testing
+    #[cfg(feature = "generate-cert")]
+    GenerateCert {
+        /// Hostname(s) for the certificate (comma-separated)
+        #[arg(long, default_value = "localhost")]
+        hostname: String,
+        /// Output directory for cert.pem and key.pem
+        #[arg(long, default_value = ".")]
+        output: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -712,6 +722,56 @@ async fn main() -> Result<()> {
                 println!("\n⚠️  Some entries have missing or invalid signatures.");
                 std::process::exit(1);
             }
+        }
+        #[cfg(feature = "generate-cert")]
+        Commands::GenerateCert { hostname, output } => {
+            use std::path::Path;
+
+            let hostnames: Vec<String> =
+                hostname.split(',').map(|s| s.trim().to_string()).collect();
+            let mut params = rcgen::CertificateParams::new(hostnames.clone())?;
+            params
+                .distinguished_name
+                .push(rcgen::DnType::CommonName, hostnames[0].clone());
+
+            // Add IP SAN for localhost
+            for h in &hostnames {
+                if h == "localhost" {
+                    params
+                        .subject_alt_names
+                        .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
+                            std::net::Ipv4Addr::LOCALHOST,
+                        )));
+                    params
+                        .subject_alt_names
+                        .push(rcgen::SanType::IpAddress(std::net::IpAddr::V6(
+                            std::net::Ipv6Addr::LOCALHOST,
+                        )));
+                }
+            }
+
+            let key_pair = rcgen::KeyPair::generate()?;
+            let cert = params.self_signed(&key_pair)?;
+
+            let out_dir = Path::new(&output);
+            fs::create_dir_all(out_dir)?;
+
+            let cert_path = out_dir.join("cert.pem");
+            let key_path = out_dir.join("key.pem");
+
+            fs::write(&cert_path, cert.pem())?;
+            fs::write(&key_path, key_pair.serialize_pem())?;
+
+            println!("✅ Self-signed certificate generated:");
+            println!("   Certificate: {}", cert_path.display());
+            println!("   Private key: {}", key_path.display());
+            println!("   Hostnames:   {}", hostnames.join(", "));
+            println!("\nUsage:");
+            println!(
+                "   accord-server --tls-cert {} --tls-key {}",
+                cert_path.display(),
+                key_path.display()
+            );
         }
     }
 

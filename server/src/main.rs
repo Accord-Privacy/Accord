@@ -140,9 +140,13 @@ struct Args {
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
 
-    /// Enable TLS
+    /// Path to TLS certificate PEM file (enables HTTPS/WSS when paired with --tls-key)
     #[arg(long)]
-    tls: bool,
+    tls_cert: Option<String>,
+
+    /// Path to TLS private key PEM file (enables HTTPS/WSS when paired with --tls-cert)
+    #[arg(long)]
+    tls_key: Option<String>,
 
     /// Configuration file path
     #[arg(short, long)]
@@ -202,10 +206,10 @@ async fn main() -> Result<()> {
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
     info!("Bind address: {}:{}", args.host, args.port);
 
-    if args.tls {
-        info!("TLS enabled");
+    if args.tls_cert.is_some() && args.tls_key.is_some() {
+        info!("TLS configured - will serve HTTPS/WSS");
     } else {
-        warn!("Running without TLS - only use for development!");
+        warn!("Running without TLS - only use for development or behind a reverse proxy!");
     }
 
     // Parse metadata mode
@@ -589,13 +593,39 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Create the server
-    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", args.host, args.port)).await?;
+    // Create and start the server
+    let addr = format!("{}:{}", args.host, args.port);
 
-    info!("Server successfully bound to {}:{}", args.host, args.port);
+    match (args.tls_cert, args.tls_key) {
+        (Some(cert_path), Some(key_path)) => {
+            // TLS mode
+            let tls_config =
+                axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to load TLS cert/key ({}, {}): {}",
+                            cert_path,
+                            key_path,
+                            e
+                        )
+                    })?;
 
-    // Start the server
-    axum::serve(listener, app).await?;
+            info!("Server starting with TLS (HTTPS/WSS) on {}", addr);
+            axum_server::bind_rustls(addr.parse()?, tls_config)
+                .serve(app.into_make_service())
+                .await?;
+        }
+        (None, None) => {
+            // Plain HTTP mode
+            let listener = tokio::net::TcpListener::bind(&addr).await?;
+            info!("Server starting in plain HTTP/WS mode on {}", addr);
+            axum::serve(listener, app).await?;
+        }
+        _ => {
+            anyhow::bail!("Both --tls-cert and --tls-key must be provided together for TLS mode");
+        }
+    }
 
     info!("Shutting down server...");
     Ok(())

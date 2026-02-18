@@ -710,6 +710,19 @@ export function generateInviteLink(host: string, inviteCode: string): string {
   return `accord://${encodeRelayHost(host)}/${inviteCode}`;
 }
 
+/** Infer http vs https from host:port — ports 443/8443 get https, others http */
+function inferScheme(host: string): 'https' | 'http' {
+  const portMatch = host.match(/:(\d+)$/);
+  if (portMatch) {
+    const port = parseInt(portMatch[1], 10);
+    if (port === 443 || port === 8443) return 'https';
+  } else {
+    // No explicit port — assume https for production domains
+    return 'https';
+  }
+  return 'http';
+}
+
 // Invite link parser
 // Supports:
 //   accord://BASE64HOST/CODE (new compact format)
@@ -727,7 +740,7 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
       if (relayHost.includes('.') || relayHost.includes(':')) {
         return {
           relayHost,
-          relayUrl: `http://${relayHost}`,
+          relayUrl: `${inferScheme(relayHost)}://${relayHost}`,
           inviteCode: compactMatch[2],
         };
       }
@@ -740,7 +753,7 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
     const relayHost = accordMatch[1];
     return {
       relayHost,
-      relayUrl: `http://${relayHost}`,
+      relayUrl: `${inferScheme(relayHost)}://${relayHost}`,
       inviteCode: accordMatch[2],
     };
   }
