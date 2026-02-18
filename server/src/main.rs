@@ -29,18 +29,19 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    accept_friend_request_handler, add_reaction_handler, auth_handler, ban_check_handler,
-    ban_user_handler, build_info_handler, create_channel_category_handler,
-    create_dm_channel_handler, create_invite_handler, create_node_handler,
-    delete_channel_category_handler, delete_channel_handler, delete_file_handler,
-    delete_message_handler, deregister_push_token_handler, download_file_handler,
-    edit_message_handler, fetch_key_bundle_handler, get_channel_messages_handler,
-    get_dm_channels_handler, get_message_reactions_handler, get_message_thread_handler,
-    get_node_audit_log_handler, get_node_handler, get_node_members_handler,
-    get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
-    get_user_profile_handler, health_handler, join_node_handler, kick_user_handler,
-    leave_node_handler, list_bans_handler, list_channel_files_handler,
-    list_friend_requests_handler, list_friends_handler, list_invites_handler, pin_message_handler,
+    accept_friend_request_handler, add_reaction_handler, admin_page_handler, admin_stats_handler,
+    auth_handler, ban_check_handler, ban_user_handler, build_info_handler,
+    create_channel_category_handler, create_channel_handler, create_dm_channel_handler,
+    create_invite_handler, create_node_handler, delete_channel_category_handler,
+    delete_channel_handler, delete_file_handler, delete_message_handler,
+    deregister_push_token_handler, download_file_handler, edit_message_handler,
+    fetch_key_bundle_handler, get_channel_messages_handler, get_dm_channels_handler,
+    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
+    get_node_handler, get_node_members_handler, get_node_user_profiles_handler,
+    get_pinned_messages_handler, get_prekey_messages_handler, get_user_profile_handler,
+    health_handler, join_node_handler, kick_user_handler, leave_node_handler, list_bans_handler,
+    list_channel_files_handler, list_friend_requests_handler, list_friends_handler,
+    list_invites_handler, list_node_channels_handler, list_user_nodes_handler, pin_message_handler,
     publish_key_bundle_handler, register_handler, register_push_token_handler,
     reject_friend_request_handler, remove_friend_handler, remove_reaction_handler,
     revoke_invite_handler, search_messages_handler, send_friend_request_handler,
@@ -54,6 +55,7 @@ use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
+    services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
 use tracing::{info, warn};
@@ -148,6 +150,10 @@ struct Args {
     /// Metadata storage mode: 'standard' (store everything) or 'minimal' (strip optional metadata)
     #[arg(long, default_value = "standard")]
     metadata_mode: String,
+
+    /// Path to frontend dist directory to serve (optional)
+    #[arg(long)]
+    frontend: Option<String>,
 }
 
 #[tokio::main]
@@ -180,17 +186,32 @@ async fn main() -> Result<()> {
     app_state.metadata_mode = metadata_mode;
     let state: SharedState = Arc::new(app_state);
 
+    // Restore auth tokens from database so sessions survive restarts
+    let restored = state.load_persisted_tokens().await;
+    if restored > 0 {
+        info!("Restored {} auth tokens from database", restored);
+    }
+
     // Build the router with all endpoints
     let app = Router::new()
         // REST endpoints
+        .route("/admin", get(admin_page_handler))
+        .route("/admin/stats", get(admin_stats_handler))
         .route("/health", get(health_handler))
         .route("/api/build-info", get(build_info_handler))
         .route("/register", post(register_handler))
         .route("/auth", post(auth_handler))
         // Node endpoints
-        .route("/nodes", post(create_node_handler))
+        .route(
+            "/nodes",
+            get(list_user_nodes_handler).post(create_node_handler),
+        )
         .route("/nodes/:id", get(get_node_handler))
         .route("/nodes/:id", axum::routing::patch(update_node_handler))
+        .route(
+            "/nodes/:id/channels",
+            get(list_node_channels_handler).post(create_channel_handler),
+        )
         .route("/nodes/:id/join", post(join_node_handler))
         .route("/nodes/:id/leave", post(leave_node_handler))
         .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
@@ -315,31 +336,42 @@ async fn main() -> Result<()> {
         // WebSocket endpoint
         .route("/ws", get(ws_handler))
         // Add shared state
-        .with_state(state.clone())
-        // Add middleware
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            rate_limit_middleware::rate_limit_layer,
-        ))
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer({
-                    let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
-                    if args.cors_origins.trim() == "*" {
-                        warn!("CORS: allowing ANY origin — only use in development!");
-                        cors.allow_origin(Any)
-                    } else {
-                        let origins: Vec<_> = args
-                            .cors_origins
-                            .split(',')
-                            .filter_map(|o| o.trim().parse().ok())
-                            .collect();
-                        info!("CORS: allowed origins: {:?}", origins);
-                        cors.allow_origin(AllowOrigin::list(origins))
-                    }
-                }),
-        );
+        .with_state(state.clone());
+
+    // Optionally serve frontend static files
+    let app = if let Some(ref frontend_path) = args.frontend {
+        let index_path = format!("{}/index.html", frontend_path);
+        info!("Serving frontend from: {}", frontend_path);
+        app.fallback_service(
+            ServeDir::new(frontend_path).not_found_service(ServeFile::new(index_path)),
+        )
+    } else {
+        app
+    }
+    // Add middleware
+    .layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        rate_limit_middleware::rate_limit_layer,
+    ))
+    .layer(
+        ServiceBuilder::new()
+            .layer(TraceLayer::new_for_http())
+            .layer({
+                let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
+                if args.cors_origins.trim() == "*" {
+                    warn!("CORS: allowing ANY origin — only use in development!");
+                    cors.allow_origin(Any)
+                } else {
+                    let origins: Vec<_> = args
+                        .cors_origins
+                        .split(',')
+                        .filter_map(|o| o.trim().parse().ok())
+                        .collect();
+                    info!("CORS: allowed origins: {:?}", origins);
+                    cors.allow_origin(AllowOrigin::list(origins))
+                }
+            }),
+    );
 
     println!("🚀 Accord Relay Server starting...");
     println!("📡 Listening on {}:{}", args.host, args.port);

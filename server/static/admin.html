@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accord Admin Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+  .header { background: #16213e; padding: 20px 30px; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 1.4em; color: #e94560; }
+  .header .meta { font-size: 0.85em; color: #888; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: #16213e; border-radius: 10px; padding: 20px; border: 1px solid #0f3460; }
+  .stat-card .label { font-size: 0.8em; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  .stat-card .value { font-size: 2em; font-weight: 700; color: #e94560; margin-top: 4px; }
+  .section { background: #16213e; border-radius: 10px; padding: 20px; border: 1px solid #0f3460; margin-bottom: 20px; }
+  .section h2 { font-size: 1.1em; color: #e94560; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #0f3460; font-size: 0.9em; }
+  th { color: #888; font-weight: 600; text-transform: uppercase; font-size: 0.75em; letter-spacing: 1px; }
+  .login-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .login-box { background: #16213e; padding: 30px; border-radius: 12px; border: 1px solid #0f3460; width: 360px; }
+  .login-box h2 { color: #e94560; margin-bottom: 16px; }
+  .login-box input { width: 100%; padding: 10px; background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 6px; font-size: 0.95em; margin-bottom: 12px; }
+  .login-box button { width: 100%; padding: 10px; background: #e94560; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 1em; font-weight: 600; }
+  .login-box button:hover { background: #c73650; }
+  .error { color: #e94560; font-size: 0.85em; margin-bottom: 8px; }
+  .mono { font-family: 'SF Mono', Monaco, monospace; font-size: 0.85em; }
+  .badge { display: inline-block; background: #0f3460; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+</style>
+</head>
+<body>
+
+<div id="login" class="login-overlay" style="display:none">
+  <div class="login-box">
+    <h2>🔐 Admin Login</h2>
+    <div id="login-error" class="error"></div>
+    <input id="token-input" type="password" placeholder="Auth token (tok_...)" autofocus>
+    <button onclick="doLogin()">Connect</button>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <div class="header">
+    <h1>⚡ Accord Admin</h1>
+    <div class="meta">v<span id="version">-</span> · uptime <span id="uptime">-</span> · refreshing every 5s</div>
+  </div>
+  <div class="container">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">Users</div><div class="value" id="s-users">-</div></div>
+      <div class="stat-card"><div class="label">Nodes</div><div class="value" id="s-nodes">-</div></div>
+      <div class="stat-card"><div class="label">Auth Tokens</div><div class="value" id="s-tokens">-</div></div>
+      <div class="stat-card"><div class="label">WS Connections</div><div class="value" id="s-conns">-</div></div>
+    </div>
+
+    <div class="section">
+      <h2>Nodes</h2>
+      <table><thead><tr><th>Name</th><th>ID</th><th>Members</th></tr></thead><tbody id="nodes-table"></tbody></table>
+    </div>
+
+    <div class="section">
+      <h2>Recent Audit Log</h2>
+      <table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th><th>Details</th></tr></thead><tbody id="audit-table"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+const token = () => sessionStorage.getItem('accord_admin_token');
+
+function init() {
+  if (!token()) { document.getElementById('login').style.display = 'flex'; }
+  else { document.getElementById('app').style.display = 'block'; poll(); setInterval(poll, 5000); }
+}
+
+function doLogin() {
+  const t = document.getElementById('token-input').value.trim();
+  if (!t) return;
+  sessionStorage.setItem('accord_admin_token', t);
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  poll(); setInterval(poll, 5000);
+}
+
+document.getElementById('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+function fmtUptime(s) {
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+  return (d ? d+'d ' : '') + h+'h ' + m+'m';
+}
+
+function fmtTime(epoch) {
+  return new Date(epoch * 1000).toLocaleString();
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/admin/stats?token=' + encodeURIComponent(token()));
+    if (r.status === 401) { sessionStorage.removeItem('accord_admin_token'); location.reload(); return; }
+    const d = await r.json();
+    document.getElementById('version').textContent = d.version;
+    document.getElementById('uptime').textContent = fmtUptime(d.uptime_seconds);
+    document.getElementById('s-users').textContent = d.user_count;
+    document.getElementById('s-nodes').textContent = d.node_count;
+    document.getElementById('s-tokens').textContent = d.token_count;
+    document.getElementById('s-conns').textContent = d.connection_count;
+
+    const nt = document.getElementById('nodes-table');
+    nt.innerHTML = d.nodes.map(n => `<tr><td>${esc(n.name)}</td><td class="mono">${esc(n.id.substring(0,8))}…</td><td>${n.member_count}</td></tr>`).join('');
+
+    const at = document.getElementById('audit-table');
+    if (d.audit_log.length === 0) { at.innerHTML = '<tr><td colspan="5" style="color:#666">No audit entries</td></tr>'; }
+    else { at.innerHTML = d.audit_log.map(a => `<tr><td>${fmtTime(a.created_at)}</td><td><span class="badge">${esc(a.action)}</span></td><td class="mono">${esc((a.actor_id||'').substring(0,8))}…</td><td>${esc(a.target_type)}${a.target_id ? ' '+esc(a.target_id.substring(0,8))+'…' : ''}</td><td class="mono">${esc((a.details||'').substring(0,80))}</td></tr>`).join(''); }
+  } catch(e) { console.error('Poll failed:', e); }
+}
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+init();
+</script>
+</body>
+</html>

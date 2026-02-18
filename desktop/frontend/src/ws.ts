@@ -61,9 +61,14 @@ export class AccordWebSocket {
   private onlineHandler: (() => void) | null = null;
   private offlineHandler: (() => void) | null = null;
 
-  constructor(token: string, baseUrl = ((typeof window !== 'undefined' && (window as any).__ACCORD_SERVER_URL__) || import.meta.env.VITE_ACCORD_SERVER_URL || 'http://localhost:8080').replace(/^http/, 'ws')) {
+  constructor(token: string, baseUrl?: string) {
     this.token = token;
-    this.baseUrl = baseUrl.replace(/^http/, 'ws');
+    // Derive WS URL from the provided base (or from the api module's current URL)
+    const raw = baseUrl ||
+      (typeof window !== 'undefined' && (window as any).__ACCORD_SERVER_URL__) ||
+      import.meta.env.VITE_ACCORD_SERVER_URL ||
+      'http://localhost:8080';
+    this.baseUrl = String(raw).replace(/^http/, 'ws');
 
     // Listen for online/offline events
     if (typeof window !== 'undefined') {
@@ -146,9 +151,9 @@ export class AccordWebSocket {
       return; // Already connecting
     }
 
-    // SECURITY: Don't send token in URL query params (logged by proxies/servers).
-    // Connect without token, then authenticate via first message.
-    const wsUrl = `${this.baseUrl}/ws`;
+    // Pass token as query param — server requires it for WS upgrade.
+    // TODO: migrate to post-upgrade auth for production deployments.
+    const wsUrl = `${this.baseUrl}/ws?token=${encodeURIComponent(this.token)}`;
     
     try {
       this.ws = new WebSocket(wsUrl);
@@ -167,14 +172,6 @@ export class AccordWebSocket {
       this.isConnected = true;
       this.reconnectAttempts = 0;
       this.reconnectDelay = 1000;
-      
-      // SECURITY: Send auth token as first message instead of in URL
-      this.ws!.send(JSON.stringify({
-        message_type: 'Authenticate',
-        token: this.token,
-        message_id: this.generateId(),
-        timestamp: Math.floor(Date.now() / 1000),
-      }));
       
       // Start ping interval
       this.startPingInterval();

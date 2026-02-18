@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { api, parseInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId } from "./api";
+import { api, parseInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink } from "./types";
 import { 
@@ -11,7 +11,14 @@ import {
   encryptMessage, 
   decryptMessage, 
   clearChannelKeyCache,
-  isCryptoSupported 
+  isCryptoSupported,
+  sha256Hex,
+  keyPairToMnemonic,
+  mnemonicToKeyPair,
+  saveKeyWithPassword,
+  loadKeyWithPassword,
+  hasStoredKeyPair,
+  getStoredPublicKey,
 } from "./crypto";
 import { storeToken, getToken, clearToken } from "./tokenStorage";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment } from "./FileManager";
@@ -22,15 +29,6 @@ import { NodeSettings } from "./NodeSettings";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import { NotificationSettings } from "./NotificationSettings";
 import { Settings } from "./Settings";
-
-// Helper: compute SHA-256 hex hash of a string (for public key -> public_key_hash)
-async function sha256Hex(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -68,6 +66,19 @@ function App() {
   const [authError, setAuthError] = useState("");
   const [showKeyBackup, setShowKeyBackup] = useState(false);
   const [publicKeyHash, setPublicKeyHash] = useState("");
+
+  // Mnemonic / Recovery state
+  const [showMnemonicModal, setShowMnemonicModal] = useState(false);
+  const [mnemonicPhrase, setMnemonicPhrase] = useState("");
+  const [mnemonicAcknowledged, setMnemonicAcknowledged] = useState(false);
+  const [showRecoverModal, setShowRecoverModal] = useState(false);
+  const [recoverMnemonic, setRecoverMnemonic] = useState("");
+  const [recoverPassword, setRecoverPassword] = useState("");
+  const [recoverError, setRecoverError] = useState("");
+  const [recoverLoading, setRecoverLoading] = useState(false);
+  const [hasExistingKey, setHasExistingKey] = useState(() => hasStoredKeyPair());
+  // Store password in memory for session reconnect
+  const passwordRef = useRef<string>("");
 
   // Encryption state
   const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
@@ -188,6 +199,7 @@ function App() {
   // Message input emoji picker state
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
 
   // Scroll-to-bottom state
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -280,13 +292,22 @@ function App() {
     return 'Several people are typing';
   }, [typingUsers, members]);
 
-  // Check server availability on mount
+  // Check server availability on mount — with same-origin auto-detection
   useEffect(() => {
     const checkServer = async () => {
+      // If no server URL saved yet, try same-origin detection first
+      if (!localStorage.getItem('accord_server_url')) {
+        const sameOrigin = await detectSameOriginRelay();
+        if (sameOrigin) {
+          api.setBaseUrl(sameOrigin);
+          setServerUrl(sameOrigin);
+          setServerAvailable(true);
+          setShowWelcomeScreen(false); // Skip welcome — we know where we are
+          return;
+        }
+      }
       const available = await api.testConnection();
       setServerAvailable(available);
-      if (!available) {
-      }
     };
     checkServer();
   }, []);
@@ -297,6 +318,8 @@ function App() {
       setAppState(prev => ({ ...prev, isConnected: true }));
       setConnectionInfo({ status: 'connected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
       setConnectedSince(Date.now());
+      // Reload nodes on reconnect to prevent stale/missing node list
+      loadNodesRef.current?.();
     });
 
     socket.on('hello' as any, (data: any) => {
@@ -313,8 +336,27 @@ function App() {
       setConnectionInfo(info);
     });
 
-    socket.on('auth_error', () => {
-      // Auth token expired — force re-login
+    socket.on('auth_error', async () => {
+      // Auth token expired — try auto re-authenticate with stored key + password
+      const storedPk = getStoredPublicKey();
+      const pwd = passwordRef.current;
+      if (storedPk && pwd) {
+        try {
+          const response = await api.login(storedPk, pwd);
+          storeToken(response.token);
+          localStorage.setItem('accord_user_id', response.user_id);
+          setAppState(prev => ({ ...prev, token: response.token }));
+          // Reconnect WebSocket with new token
+          socket.disconnect();
+          const newSocket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
+          setupWebSocketHandlers(newSocket);
+          setWs(newSocket);
+          newSocket.connect();
+          return;
+        } catch {
+          // Re-auth failed, fall through to logout
+        }
+      }
       handleLogout();
     });
 
@@ -625,7 +667,7 @@ function App() {
     
     try {
       const userNodes = await api.getUserNodes(appState.token);
-      setNodes(userNodes);
+      setNodes(Array.isArray(userNodes) ? userNodes : []);
       
       // Auto-select first node if none selected
       if (userNodes.length > 0 && !selectedNodeId) {
@@ -636,13 +678,16 @@ function App() {
     }
   }, [appState.token, serverAvailable, selectedNodeId]);
 
+  // Keep ref updated for use in WS handlers (avoids stale closures)
+  loadNodesRef.current = loadNodes;
+
   // Load channels for selected node
   const loadChannels = useCallback(async (nodeId: string) => {
     if (!appState.token || !serverAvailable) return;
     
     try {
       const nodeChannels = await api.getNodeChannels(nodeId, appState.token);
-      setChannels(nodeChannels);
+      setChannels(Array.isArray(nodeChannels) ? nodeChannels : []);
       
       // Auto-select first channel if none selected
       if (nodeChannels.length > 0 && !selectedChannelId) {
@@ -660,12 +705,13 @@ function App() {
     if (!appState.token || !serverAvailable) return;
     
     try {
-      const nodeMembers = await api.getNodeMembers(nodeId, appState.token);
+      const rawMembers = await api.getNodeMembers(nodeId, appState.token);
+      const nodeMembers = Array.isArray(rawMembers) ? rawMembers : [];
       setMembers(nodeMembers);
       
       // Find current user's role in this node
       const currentUserId = localStorage.getItem('accord_user_id');
-      if (currentUserId) {
+      if (currentUserId && nodeMembers.length > 0) {
         const currentUserMember = nodeMembers.find(member => member.user_id === currentUserId);
         if (currentUserMember) {
           setUserRoles(prev => ({
@@ -1054,11 +1100,14 @@ function App() {
     setCreatingNode(true);
     try {
       const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
-      // Auto-create a #general channel
+      // Only create #general if the server didn't already create default channels
       try {
-        await api.createChannel(newNode.id, 'general', 'text', appState.token);
+        const existingChannels = await api.getNodeChannels(newNode.id, appState.token);
+        if (!existingChannels || existingChannels.length === 0) {
+          await api.createChannel(newNode.id, 'general', 'text', appState.token);
+        }
       } catch (e) {
-        console.warn('Failed to auto-create #general channel:', e);
+        console.warn('Failed to check/create #general channel:', e);
       }
       // Reload nodes and auto-select the new one
       await loadNodes();
@@ -1167,8 +1216,9 @@ function App() {
             // May already be a member, that's fine
           }
 
-          // Initialize WebSocket
-          const socket = new AccordWebSocket(existingToken);
+          // Initialize WebSocket — pass server URL so it connects to the right relay
+          const wsBaseUrl = serverUrl.replace(/^http/, 'ws');
+          const socket = new AccordWebSocket(existingToken, wsBaseUrl);
           setupWebSocketHandlers(socket);
           setWs(socket);
           socket.connect();
@@ -1208,9 +1258,13 @@ function App() {
       if (encryptionEnabled) {
         const newKeyPair = await generateKeyPair();
         publicKeyToUse = await exportPublicKey(newKeyPair.publicKey);
+        await saveKeyWithPassword(newKeyPair, invitePassword);
         await saveKeyToStorage(newKeyPair);
         setKeyPair(newKeyPair);
         setPublicKey(publicKeyToUse);
+        // Generate mnemonic for backup
+        const mnemonic = await keyPairToMnemonic(newKeyPair);
+        setMnemonicPhrase(mnemonic);
       }
 
       if (!publicKeyToUse) {
@@ -1221,6 +1275,7 @@ function App() {
 
       // Register
       await api.register(publicKeyToUse, invitePassword);
+      passwordRef.current = invitePassword;
       const pkHash = await sha256Hex(publicKeyToUse);
       setPublicKeyHash(pkHash);
 
@@ -1251,13 +1306,14 @@ function App() {
       notificationManager.setCurrentUsername(fingerprint(pkHash));
 
       // Initialize WebSocket
-      const socket = new AccordWebSocket(response.token);
+      const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
       setupWebSocketHandlers(socket);
       setWs(socket);
       socket.connect();
 
-      // Show key backup, then land in app
-      setShowKeyBackup(true);
+      // Show mnemonic backup modal, then land in app
+      setShowMnemonicModal(true);
+      setMnemonicAcknowledged(false);
       setShowWelcomeScreen(false);
 
       // Prompt for display name after first join
@@ -1321,16 +1377,24 @@ function App() {
         
         // Try to load from storage if not provided
         if (!pkToUse && encryptionEnabled) {
-          const existingKeyPair = await loadKeyFromStorage();
+          // Try password-based decryption first
+          let existingKeyPair = await loadKeyWithPassword(password);
+          if (!existingKeyPair) {
+            existingKeyPair = await loadKeyFromStorage();
+          }
           if (existingKeyPair) {
             pkToUse = await exportPublicKey(existingKeyPair.publicKey);
             setKeyPair(existingKeyPair);
             setPublicKey(pkToUse);
+          } else if (hasExistingKey) {
+            // There's a stored public key but we can't decrypt the private key
+            const storedPk = getStoredPublicKey();
+            if (storedPk) pkToUse = storedPk;
           }
         }
         
         if (!pkToUse) {
-          setAuthError("No keypair found. Import your key or register a new account.");
+          setAuthError("No keypair found. Import your key, register a new account, or recover with your phrase.");
           return;
         }
 
@@ -1340,17 +1404,24 @@ function App() {
         // Store token and user info
         storeToken(response.token);
         localStorage.setItem('accord_user_id', response.user_id);
+        passwordRef.current = password;
 
-        // Ensure keypair is loaded
+        // Try loading key with password first, then fall back to token-based
         if (encryptionEnabled && !keyPair) {
-          const existingKeyPair = await loadKeyFromStorage();
+          let existingKeyPair = await loadKeyWithPassword(password);
+          if (!existingKeyPair) {
+            existingKeyPair = await loadKeyFromStorage();
+          }
           if (existingKeyPair) {
             setKeyPair(existingKeyPair);
+            // Re-save with password for future logins
+            await saveKeyWithPassword(existingKeyPair, password);
           }
         }
 
         const pkHash = await sha256Hex(pkToUse);
         setPublicKeyHash(pkHash);
+        setHasExistingKey(true);
         
         setAppState(prev => ({
           ...prev,
@@ -1364,7 +1435,7 @@ function App() {
         notificationManager.setCurrentUsername(fingerprint(pkHash));
 
         // Initialize WebSocket connection
-        const socket = new AccordWebSocket(response.token);
+        const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
         setupWebSocketHandlers(socket);
         setWs(socket);
         socket.connect();
@@ -1389,9 +1460,13 @@ function App() {
           try {
             const newKeyPair = await generateKeyPair();
             publicKeyToUse = await exportPublicKey(newKeyPair.publicKey);
+            await saveKeyWithPassword(newKeyPair, password);
             await saveKeyToStorage(newKeyPair);
             setKeyPair(newKeyPair);
             setPublicKey(publicKeyToUse);
+            // Generate mnemonic for backup
+            const mnemonic = await keyPairToMnemonic(newKeyPair);
+            setMnemonicPhrase(mnemonic);
           } catch (error) {
             setAuthError("Failed to generate encryption keys");
             return;
@@ -1404,18 +1479,73 @@ function App() {
         }
         
         await api.register(publicKeyToUse, password);
+        passwordRef.current = password;
         
         const pkHash = await sha256Hex(publicKeyToUse);
         setPublicKeyHash(pkHash);
         
-        // Show key backup prompt
-        setShowKeyBackup(true);
+        // Show mnemonic backup modal (replaces old key backup)
+        setShowMnemonicModal(true);
+        setMnemonicAcknowledged(false);
 
         // Prompt for display name after registration
         setTimeout(() => { setShowDisplayNamePrompt(true); }, 500);
       }
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Authentication failed");
+    }
+  };
+
+  // Handle mnemonic recovery
+  const handleRecover = async () => {
+    setRecoverError("");
+    setRecoverLoading(true);
+    try {
+      // Derive keypair from mnemonic
+      const recoveredKeyPair = mnemonicToKeyPair(recoverMnemonic);
+      const pk = await exportPublicKey(recoveredKeyPair.publicKey);
+      
+      // Authenticate with server
+      const response = await api.login(pk, recoverPassword);
+      
+      // Save keys
+      await saveKeyWithPassword(recoveredKeyPair, recoverPassword);
+      await saveKeyToStorage(recoveredKeyPair);
+      setKeyPair(recoveredKeyPair);
+      setPublicKey(pk);
+      passwordRef.current = recoverPassword;
+      
+      const pkHash = await sha256Hex(pk);
+      setPublicKeyHash(pkHash);
+      
+      storeToken(response.token);
+      localStorage.setItem('accord_user_id', response.user_id);
+      
+      setAppState(prev => ({
+        ...prev,
+        isAuthenticated: true,
+        token: response.token,
+        user: { id: response.user_id, public_key_hash: pkHash, public_key: pk, created_at: 0, display_name: fingerprint(pkHash) }
+      }));
+      setIsAuthenticated(true);
+      setShowRecoverModal(false);
+      setRecoverMnemonic("");
+      setRecoverPassword("");
+      setHasExistingKey(true);
+      
+      notificationManager.setCurrentUsername(fingerprint(pkHash));
+      
+      // Initialize WebSocket
+      const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
+      setupWebSocketHandlers(socket);
+      setWs(socket);
+      socket.connect();
+      
+      setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
+    } catch (error) {
+      setRecoverError(error instanceof Error ? error.message : "Recovery failed. Check your phrase and password.");
+    } finally {
+      setRecoverLoading(false);
     }
   };
 
@@ -1428,10 +1558,12 @@ function App() {
     
     clearToken();
     localStorage.removeItem('accord_user_id');
+    passwordRef.current = "";
     
-    // Clear encryption state
+    // Clear in-memory encryption state but keep keypair in localStorage for re-login
     setKeyPair(null);
     clearChannelKeyCache();
+    setHasExistingKey(hasStoredKeyPair());
     
     // Clear navigation state
     setNodes([]);
@@ -1828,7 +1960,7 @@ function App() {
         setIsAuthenticated(true);
 
         // Initialize WebSocket connection
-        const socket = new AccordWebSocket(token);
+        const socket = new AccordWebSocket(token, serverUrl.replace(/^http/, "ws"));
         setupWebSocketHandlers(socket);
         setWs(socket);
         socket.connect();
@@ -1920,7 +2052,167 @@ function App() {
     };
   }, [ws]);
 
+  // Presence helper: determine effective status for a member
+  const getPresenceStatus = useCallback((userId: string): import('./types').PresenceStatus => {
+    const explicit = presenceMap.get(userId);
+    if (explicit) return explicit;
+    const lastMsg = lastMessageTimes.get(userId);
+    if (lastMsg && Date.now() - lastMsg < 5 * 60 * 1000) {
+      return 'online' as import('./types').PresenceStatus;
+    }
+    const member = members.find(m => m.user_id === userId);
+    if (member?.status) return member.status;
+    if (member?.profile?.status) return member.profile.status;
+    return 'offline' as import('./types').PresenceStatus;
+  }, [presenceMap, lastMessageTimes, members]);
+
+  // Sort members: online > idle > dnd > offline
+  const sortedMembers = React.useMemo(() => {
+    const order: Record<string, number> = { online: 0, idle: 1, dnd: 2, offline: 3 };
+    return [...members].sort((a, b) => {
+      const sa = order[getPresenceStatus(a.user_id)] ?? 3;
+      const sb = order[getPresenceStatus(b.user_id)] ?? 3;
+      return sa - sb;
+    });
+  }, [members, getPresenceStatus]);
+
+  // Context menu handler
+  const handleContextMenu = useCallback((e: React.MouseEvent, userId: string, publicKeyHash: string, name: string, bio?: string, user?: User) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, userId, publicKeyHash, displayName: name, bio, user });
+  }, []);
+
+  // Close context menu on click anywhere
+  useEffect(() => {
+    const handler = () => setContextMenu(null);
+    if (contextMenu) {
+      document.addEventListener('click', handler);
+      return () => document.removeEventListener('click', handler);
+    }
+  }, [contextMenu]);
+
   // Key backup modal
+  // Mnemonic backup modal (shown after registration)
+  if (showMnemonicModal) {
+    return (
+      <div className="app">
+        <div className="auth-page">
+          <div className="auth-card key-backup-card">
+            <h2 className="auth-title">🔑 Save Your Recovery Phrase</h2>
+            <p className="auth-subtitle">
+              This 24-word phrase is the <strong>only way</strong> to recover your identity if you lose access to this browser.
+              <strong className="warning" style={{ color: 'var(--yellow)' }}> Write it down and store it safely. It will NOT be shown again.</strong>
+            </p>
+            <div className="form-group">
+              <label className="form-label">Recovery Phrase (24 words)</label>
+              <div style={{
+                background: 'var(--bg-tertiary)',
+                border: '2px solid var(--yellow)',
+                borderRadius: '8px',
+                padding: '16px',
+                fontFamily: 'monospace',
+                fontSize: '15px',
+                lineHeight: '2',
+                wordSpacing: '8px',
+                userSelect: 'all',
+                cursor: 'text',
+              }}>
+                {mnemonicPhrase}
+              </div>
+            </div>
+            <div className="form-group" style={{ marginTop: '16px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={mnemonicAcknowledged}
+                  onChange={(e) => setMnemonicAcknowledged(e.target.checked)}
+                />
+                I have written down my recovery phrase and stored it safely
+              </label>
+            </div>
+            <div className="key-backup-actions">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(mnemonicPhrase).catch(() => {});
+                  alert('Recovery phrase copied to clipboard! Store it safely and clear your clipboard.');
+                }}
+                className="btn btn-green"
+              >
+                Copy to Clipboard
+              </button>
+              <button
+                onClick={() => {
+                  setShowMnemonicModal(false);
+                  setMnemonicPhrase("");
+                  // After registration, go to login
+                  if (!isAuthenticated) {
+                    setIsLoginMode(true);
+                    setPassword("");
+                    setAuthError("");
+                  }
+                }}
+                disabled={!mnemonicAcknowledged}
+                className="btn btn-primary"
+                title={!mnemonicAcknowledged ? "Please acknowledge you saved your phrase" : ""}
+              >
+                {isAuthenticated ? 'Continue' : 'Continue to Login'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Recovery modal (enter mnemonic to recover identity)
+  if (showRecoverModal) {
+    return (
+      <div className="app">
+        <div className="auth-page">
+          <div className="auth-card">
+            <button onClick={() => { setShowRecoverModal(false); setRecoverError(""); setRecoverMnemonic(""); setRecoverPassword(""); }} className="auth-back-btn">← Back</button>
+            <h2 className="auth-title">🔄 Recover Identity</h2>
+            <p className="auth-subtitle">Enter your 24-word recovery phrase and password to restore your identity</p>
+            
+            <div className="form-group">
+              <label className="form-label">Recovery Phrase (24 words)</label>
+              <textarea
+                placeholder="word1 word2 word3 ... word24"
+                value={recoverMnemonic}
+                onChange={(e) => setRecoverMnemonic(e.target.value)}
+                rows={3}
+                className="form-textarea"
+                style={{ fontFamily: 'monospace' }}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <input
+                type="password"
+                placeholder="Your account password"
+                value={recoverPassword}
+                onChange={(e) => setRecoverPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleRecover(); }}
+                className="form-input"
+              />
+            </div>
+
+            {recoverError && <div className="auth-error">{recoverError}</div>}
+
+            <button
+              onClick={handleRecover}
+              disabled={recoverLoading || !recoverMnemonic.trim() || !recoverPassword}
+              className="btn btn-primary"
+            >
+              {recoverLoading ? 'Recovering...' : 'Recover Identity'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (showKeyBackup) {
     return (
       <div className="app">
@@ -1994,6 +2286,9 @@ function App() {
                   </button>
                   <button onClick={() => setWelcomeMode('admin')} className="btn btn-outline">
                     Set up a new relay (admin)
+                  </button>
+                  <button onClick={() => { setWelcomeMode('admin'); }} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
+                    🔄 Recover identity (connect to relay first)
                   </button>
                 </div>
               </>
@@ -2141,11 +2436,11 @@ function App() {
         <div className="auth-page">
           <div className="auth-card">
             <h2 className="auth-title">
-              {isLoginMode ? 'Login to Accord' : 'Create Identity'}
+              {isLoginMode ? (hasExistingKey ? 'Welcome Back' : 'Login to Accord') : 'Create Identity'}
             </h2>
             <p className="auth-subtitle">
               {isLoginMode 
-                ? 'Authenticate with your keypair and password' 
+                ? (hasExistingKey ? 'Enter your password to sign back in' : 'Authenticate with your keypair and password')
                 : 'A new keypair will be generated automatically'}
             </p>
             
@@ -2158,10 +2453,10 @@ function App() {
               <div className="form-group">
                 <label className="form-label">Key Status</label>
                 <div className="auth-info-box">
-                  {keyPair || publicKey ? (
-                    <span className="accent">🔑 Keypair loaded from browser storage</span>
+                  {keyPair || publicKey || hasExistingKey ? (
+                    <span className="accent">🔑 Keypair found in browser storage — enter your password to sign back in</span>
                   ) : (
-                    <span style={{ color: 'var(--yellow)' }}>⚠️ No keypair found — register or import</span>
+                    <span style={{ color: 'var(--yellow)' }}>⚠️ No keypair found — register, import, or recover with phrase</span>
                   )}
                 </div>
               </div>
@@ -2197,13 +2492,22 @@ function App() {
               {isLoginMode ? 'Login' : 'Create Identity & Register'}
             </button>
 
-            <div className="auth-toggle">
+            <div className="auth-toggle" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
               <button
                 onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(""); setPassword(""); }}
                 className="btn-ghost"
               >
                 {isLoginMode ? 'Need to create an identity?' : 'Already have a keypair? Login'}
               </button>
+              {isLoginMode && (
+                <button
+                  onClick={() => { setShowRecoverModal(true); setRecoverError(""); }}
+                  className="btn-ghost"
+                  style={{ fontSize: '12px', opacity: 0.8 }}
+                >
+                  🔄 Recover identity with recovery phrase
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2211,56 +2515,11 @@ function App() {
     );
   }
 
-  // Presence helper: determine effective status for a member
-  const getPresenceStatus = useCallback((userId: string): import('./types').PresenceStatus => {
-    // Check explicit presence from server
-    const explicit = presenceMap.get(userId);
-    if (explicit) return explicit;
-    
-    // Heuristic: user sent a message in the last 5 minutes = online
-    const lastMsg = lastMessageTimes.get(userId);
-    if (lastMsg && Date.now() - lastMsg < 5 * 60 * 1000) {
-      return 'online' as import('./types').PresenceStatus;
-    }
-    
-    // Check member profile status
-    const member = members.find(m => m.user_id === userId);
-    if (member?.status) return member.status;
-    if (member?.profile?.status) return member.profile.status;
-    
-    return 'offline' as import('./types').PresenceStatus;
-  }, [presenceMap, lastMessageTimes, members]);
-
-  // Sort members: online > idle > dnd > offline
-  const sortedMembers = React.useMemo(() => {
-    const order: Record<string, number> = { online: 0, idle: 1, dnd: 2, offline: 3 };
-    return [...members].sort((a, b) => {
-      const sa = order[getPresenceStatus(a.user_id)] ?? 3;
-      const sb = order[getPresenceStatus(b.user_id)] ?? 3;
-      return sa - sb;
-    });
-  }, [members, getPresenceStatus]);
-
-  // Context menu handler
-  const handleContextMenu = useCallback((e: React.MouseEvent, userId: string, publicKeyHash: string, name: string, bio?: string, user?: User) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, userId, publicKeyHash, displayName: name, bio, user });
-  }, []);
-
-  // Close context menu on click anywhere
-  useEffect(() => {
-    const handler = () => setContextMenu(null);
-    if (contextMenu) {
-      document.addEventListener('click', handler);
-      return () => document.removeEventListener('click', handler);
-    }
-  }, [contextMenu]);
-
   // Use server data — no mock fallback
   const servers = nodes.map(n => n.name);
   const channelList = channels.map(ch => `# ${ch.name}`);
-  const displayName = (u: User) => u.display_name || fingerprint(u.public_key_hash);
-  const users = members.map(m => displayName(m.user));
+  const displayName = (u: User | undefined) => u ? (u.display_name || fingerprint(u.public_key_hash)) : 'Unknown';
+  const users = members.filter(m => m.user).map(m => displayName(m.user));
 
   return (
     <div className="app">
@@ -2978,14 +3237,14 @@ function App() {
       <div className="member-sidebar">
         <div className="member-header">Members — {users.length}</div>
         {sortedMembers.length > 0 ? (
-          sortedMembers.map((member) => {
+          sortedMembers.filter(m => m.user).map((member) => {
             const currentUserId = localStorage.getItem('accord_user_id');
             const isCurrentUser = member.user_id === currentUserId;
             const presence = getPresenceStatus(member.user_id);
             const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers') && !isCurrentUser;
             
             return (
-              <div key={member.user.id} className={`member ${presence === 'offline' ? 'member-offline' : ''}`}
+              <div key={member.user?.id || member.user_id} className={`member ${presence === 'offline' ? 'member-offline' : ''}`}
                 onContextMenu={(e) => handleContextMenu(e, member.user_id, member.public_key_hash, displayName(member.user), member.profile?.bio, member.user)}
               >
                 <div className="member-avatar-wrapper">

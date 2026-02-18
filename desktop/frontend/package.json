@@ -9,6 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.1.1",
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
     "@types/dompurify": "^3.0.5",
     "dompurify": "^3.3.1",
     "react": "^19.0.0",

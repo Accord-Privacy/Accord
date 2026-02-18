@@ -113,15 +113,16 @@ export function NodeSettings({
     try {
       const cursor = reset ? undefined : nextAuditCursor;
       const response = await api.getNodeAuditLog(node.id, token, 50, cursor);
+      const entries = Array.isArray(response?.entries) ? response.entries : [];
       
       if (reset) {
-        setAuditEntries(response.entries);
+        setAuditEntries(entries);
       } else {
-        setAuditEntries(prev => [...prev, ...response.entries]);
+        setAuditEntries(prev => [...prev, ...entries]);
       }
       
-      setHasMoreAudit(response.has_more);
-      setNextAuditCursor(response.next_cursor);
+      setHasMoreAudit(response?.has_more ?? false);
+      setNextAuditCursor(response?.next_cursor);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to load audit log');
     } finally {

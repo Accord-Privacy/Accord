@@ -275,6 +275,16 @@ impl AppState {
             .write()
             .await
             .insert(token, auth_token.clone());
+
+        // Persist to database so tokens survive restarts
+        if let Err(e) = self
+            .db
+            .save_auth_token(&auth_token.token, auth_token.user_id, auth_token.expires_at)
+            .await
+        {
+            tracing::warn!("Failed to persist auth token: {}", e);
+        }
+
         Ok(auth_token)
     }
 
@@ -1156,13 +1166,45 @@ impl AppState {
             .map_err(|e| format!("Database error: {}", e))
     }
 
-    /// Remove expired auth tokens from memory (H3: token cleanup)
+    /// Load persisted auth tokens from database (call on startup)
+    pub async fn load_persisted_tokens(&self) -> usize {
+        match self.db.load_auth_tokens(now()).await {
+            Ok(tokens) => {
+                let count = tokens.len();
+                let mut auth_tokens = self.auth_tokens.write().await;
+                for (token, user_id, expires_at) in tokens {
+                    auth_tokens.insert(
+                        token.clone(),
+                        AuthToken {
+                            token,
+                            user_id,
+                            expires_at,
+                        },
+                    );
+                }
+                count
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load persisted tokens: {}", e);
+                0
+            }
+        }
+    }
+
+    /// Remove expired auth tokens from memory and database (H3: token cleanup)
     pub async fn cleanup_expired_tokens(&self) -> usize {
         let current_time = now();
         let mut tokens = self.auth_tokens.write().await;
         let before = tokens.len();
         tokens.retain(|_, token| token.expires_at > current_time);
-        before - tokens.len()
+        let removed = before - tokens.len();
+
+        // Also clean DB
+        if let Err(e) = self.db.delete_expired_auth_tokens(current_time).await {
+            tracing::warn!("Failed to clean expired tokens from DB: {}", e);
+        }
+
+        removed
     }
 
     pub fn uptime(&self) -> u64 {

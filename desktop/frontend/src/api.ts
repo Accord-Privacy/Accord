@@ -35,6 +35,30 @@ function getDefaultBaseUrl(): string {
   return import.meta.env.VITE_ACCORD_SERVER_URL || 'http://localhost:8080';
 }
 
+/**
+ * Detect if the frontend is being served by an Accord relay (same-origin).
+ * Probes the current origin's /health endpoint.
+ * Returns the origin URL if it's an Accord server, null otherwise.
+ */
+export async function detectSameOriginRelay(): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const origin = window.location.origin;
+  // Don't probe localhost dev servers (vite default ports)
+  if (origin.includes(':1420') || origin.includes(':5173') || origin.includes(':3000')) return null;
+  try {
+    const resp = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(3000) });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data && (data.status === 'healthy' || data.status === 'ok')) {
+        return origin;
+      }
+    }
+  } catch {
+    // Not an Accord server
+  }
+  return null;
+}
+
 export class AccordApi {
   private baseUrl: string;
 
@@ -156,7 +180,11 @@ export class AccordApi {
 
   // Get Node's members
   async getNodeMembers(nodeId: string, token: string): Promise<Array<NodeMember & { user: User }>> {
-    return this.request<Array<NodeMember & { user: User }>>(`/nodes/${nodeId}/members?token=${encodeURIComponent(token)}`);
+    const result = await this.request<any>(`/nodes/${nodeId}/members?token=${encodeURIComponent(token)}`);
+    // Server returns {members: [...]} — unwrap if needed
+    if (result && result.members && Array.isArray(result.members)) return result.members;
+    if (Array.isArray(result)) return result;
+    return [];
   }
 
   // Get channel message history
@@ -308,9 +336,13 @@ export class AccordApi {
 
   // Get invites for a node (admin/mod only)
   async getNodeInvites(nodeId: string, token: string): Promise<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>> {
-    return this.request<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>>(
+    const result = await this.request<any>(
       `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`
     );
+    // Server returns {invites: [...]} — unwrap if needed
+    if (result && result.invites && Array.isArray(result.invites)) return result.invites;
+    if (Array.isArray(result)) return result;
+    return [];
   }
 
   // Create an invite with options

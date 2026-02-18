@@ -1236,6 +1236,83 @@ impl Database {
         Ok(row.get::<i64, _>("count") as u64)
     }
 
+    // ── Admin stats queries ──
+
+    /// Count total registered users
+    pub async fn count_users(&self) -> Result<u64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM users")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") as u64)
+    }
+
+    /// Count total nodes
+    pub async fn count_nodes(&self) -> Result<u64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM nodes")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") as u64)
+    }
+
+    /// Get all nodes with their member counts
+    pub async fn get_nodes_with_member_counts(&self) -> Result<Vec<(String, String, u64)>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT n.id, n.name, COUNT(nm.user_id) as member_count
+            FROM nodes n
+            LEFT JOIN node_members nm ON n.id = nm.node_id
+            GROUP BY n.id
+            ORDER BY member_count DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query nodes with member counts")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("id"),
+                    r.get::<String, _>("name"),
+                    r.get::<i64, _>("member_count") as u64,
+                )
+            })
+            .collect())
+    }
+
+    /// Get recent audit log entries across all nodes
+    pub async fn get_recent_audit_log_entries(&self, limit: u32) -> Result<Vec<serde_json::Value>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at
+            FROM audit_log a
+            ORDER BY a.created_at DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query recent audit log")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.get::<String, _>("id"),
+                    "node_id": r.get::<String, _>("node_id"),
+                    "actor_id": r.get::<String, _>("actor_id"),
+                    "action": r.get::<String, _>("action"),
+                    "target_type": r.get::<String, _>("target_type"),
+                    "target_id": r.get::<Option<String>, _>("target_id"),
+                    "details": r.get::<Option<String>, _>("details"),
+                    "created_at": r.get::<i64, _>("created_at"),
+                })
+            })
+            .collect())
+    }
+
     // ── Channel operations (now scoped to nodes) ──
 
     pub async fn create_channel(
@@ -1854,6 +1931,71 @@ impl Database {
 
     pub async fn cleanup_expired_tokens(&self, _current_time: u64) -> Result<u64> {
         Ok(0)
+    }
+
+    // ── Auth Token Persistence ──
+
+    pub async fn save_auth_token(&self, token: &str, user_id: Uuid, expires_at: u64) -> Result<()> {
+        // Create table if not exists (migration safety)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS auth_tokens (
+                token TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+            )"#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO auth_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+        )
+        .bind(token)
+        .bind(user_id.to_string())
+        .bind(expires_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save auth token")?;
+        Ok(())
+    }
+
+    pub async fn load_auth_tokens(&self, current_time: u64) -> Result<Vec<(String, Uuid, u64)>> {
+        // Create table if not exists (migration safety)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS auth_tokens (
+                token TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
+            )"#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        let rows =
+            sqlx::query("SELECT token, user_id, expires_at FROM auth_tokens WHERE expires_at > ?")
+                .bind(current_time as i64)
+                .fetch_all(&self.pool)
+                .await
+                .context("Failed to load auth tokens")?;
+
+        let mut tokens = Vec::new();
+        for row in rows {
+            let token: String = row.get("token");
+            let user_id_str: String = row.get("user_id");
+            let expires_at: i64 = row.get("expires_at");
+            if let Ok(uid) = Uuid::parse_str(&user_id_str) {
+                tokens.push((token, uid, expires_at as u64));
+            }
+        }
+        Ok(tokens)
+    }
+
+    pub async fn delete_expired_auth_tokens(&self, current_time: u64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM auth_tokens WHERE expires_at <= ?")
+            .bind(current_time as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     /// Edit a message (author only)

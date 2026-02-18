@@ -266,6 +266,21 @@ impl RelayDatabase {
         .await
         .context("Failed to create channel_registry table")?;
 
+        // Auth tokens table — survives server restarts
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS auth_tokens (
+                token TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create auth_tokens table")?;
+
         // ── Indexes ──
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_users_public_key_hash ON users (public_key_hash)",
@@ -1298,5 +1313,58 @@ impl RelayDatabase {
                 .await?
         };
         Ok(result.rows_affected())
+    }
+
+    // ── Auth Token Persistence ──
+
+    pub async fn save_auth_token(&self, token: &str, user_id: Uuid, expires_at: u64) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO auth_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+        )
+        .bind(token)
+        .bind(user_id.to_string())
+        .bind(expires_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to save auth token")?;
+        Ok(())
+    }
+
+    pub async fn load_auth_tokens(&self, current_time: u64) -> Result<Vec<(String, Uuid, u64)>> {
+        let rows =
+            sqlx::query("SELECT token, user_id, expires_at FROM auth_tokens WHERE expires_at > ?")
+                .bind(current_time as i64)
+                .fetch_all(&self.pool)
+                .await
+                .context("Failed to load auth tokens")?;
+
+        let mut tokens = Vec::new();
+        for row in rows {
+            let token: String = row.get("token");
+            let user_id_str: String = row.get("user_id");
+            let expires_at: i64 = row.get("expires_at");
+            if let Ok(uid) = Uuid::parse_str(&user_id_str) {
+                tokens.push((token, uid, expires_at as u64));
+            }
+        }
+        Ok(tokens)
+    }
+
+    pub async fn delete_expired_tokens(&self, current_time: u64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM auth_tokens WHERE expires_at <= ?")
+            .bind(current_time as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete expired tokens")?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn delete_auth_token(&self, token: &str) -> Result<()> {
+        sqlx::query("DELETE FROM auth_tokens WHERE token = ?")
+            .bind(token)
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete auth token")?;
+        Ok(())
     }
 }

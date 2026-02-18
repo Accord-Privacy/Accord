@@ -151,6 +151,101 @@ pub async fn create_node_handler(
     }
 }
 
+/// List nodes the authenticated user belongs to
+pub async fn list_user_nodes_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.db.get_user_nodes(user_id).await {
+        Ok(nodes) => Ok(Json(
+            nodes
+                .into_iter()
+                .map(|n| {
+                    serde_json::json!({
+                        "id": n.id,
+                        "name": n.name,
+                        "owner_id": n.owner_id,
+                        "description": n.description,
+                        "created_at": n.created_at,
+                    })
+                })
+                .collect(),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to list nodes: {}", e),
+                code: 500,
+            }),
+        )),
+    }
+}
+
+/// Create a channel in a Node
+pub async fn create_channel_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let name = request
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("general");
+
+    match state.db.create_channel(name, node_id, user_id).await {
+        Ok(channel) => Ok(Json(serde_json::json!({
+            "id": channel.id,
+            "name": channel.name,
+            "node_id": channel.node_id,
+            "created_at": channel.created_at,
+        }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to create channel: {}", e),
+                code: 500,
+            }),
+        )),
+    }
+}
+
+/// List channels in a Node
+pub async fn list_node_channels_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    match state.db.get_node_channels(node_id).await {
+        Ok(channels) => Ok(Json(
+            channels
+                .into_iter()
+                .map(|ch| {
+                    serde_json::json!({
+                        "id": ch.id,
+                        "name": ch.name,
+                        "node_id": ch.node_id,
+                        "created_at": ch.created_at,
+                    })
+                })
+                .collect(),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to list channels: {}", e),
+                code: 500,
+            }),
+        )),
+    }
+}
+
 /// Get Node info
 pub async fn get_node_handler(
     State(state): State<SharedState>,
@@ -392,9 +487,13 @@ pub async fn create_invite_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     Query(params): Query<HashMap<String, String>>,
-    Json(request): Json<CreateInviteRequest>,
+    body: Option<Json<CreateInviteRequest>>,
 ) -> Result<Json<CreateInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
+    let request = body.map(|b| b.0).unwrap_or(CreateInviteRequest {
+        max_uses: None,
+        expires_in_hours: None,
+    });
 
     match state
         .create_invite(node_id, user_id, request.max_uses, request.expires_in_hours)
@@ -5166,4 +5265,62 @@ pub async fn update_push_preferences_handler(
             }),
         )),
     }
+}
+
+// ── Admin dashboard handlers ──
+
+/// Serve the admin dashboard HTML page
+pub async fn admin_page_handler() -> impl IntoResponse {
+    Response::builder()
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(include_str!("../static/admin.html")))
+        .unwrap()
+}
+
+/// Return admin stats as JSON (requires ?token= auth)
+pub async fn admin_stats_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let user_count = state.db.count_users().await.unwrap_or(0);
+    let node_count = state.db.count_nodes().await.unwrap_or(0);
+    let token_count = state.auth_tokens.read().await.len();
+    let connection_count = state.connections.read().await.len();
+    let uptime = state.uptime();
+    let version = env!("CARGO_PKG_VERSION");
+
+    let nodes_with_members = state
+        .db
+        .get_nodes_with_member_counts()
+        .await
+        .unwrap_or_default();
+    let nodes_json: Vec<serde_json::Value> = nodes_with_members
+        .iter()
+        .map(|(id, name, count)| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "member_count": count,
+            })
+        })
+        .collect();
+
+    let audit_entries = state
+        .db
+        .get_recent_audit_log_entries(50)
+        .await
+        .unwrap_or_default();
+
+    Ok(Json(serde_json::json!({
+        "user_count": user_count,
+        "node_count": node_count,
+        "token_count": token_count,
+        "connection_count": connection_count,
+        "uptime_seconds": uptime,
+        "version": version,
+        "nodes": nodes_json,
+        "audit_log": audit_entries,
+    })))
 }
