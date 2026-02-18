@@ -345,6 +345,23 @@ pub struct NodeBan {
     pub device_fingerprint_hash: Option<String>,
 }
 
+/// Build hash allowlist entry stored in the database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildHashAllowlistEntry {
+    pub node_id: Uuid,
+    pub build_hash: String,
+    pub added_by: Uuid,
+    pub added_at: u64,
+    pub label: Option<String>,
+}
+
+/// Input for adding a build hash to the allowlist
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildHashAllowlistInput {
+    pub build_hash: String,
+    pub label: Option<String>,
+}
+
 /// Authentication token
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthToken {

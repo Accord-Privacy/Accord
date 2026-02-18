@@ -665,6 +665,24 @@ impl Database {
             .await
             .ok();
 
+        // Build hash allowlist per Node
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS node_build_hash_allowlist (
+                node_id TEXT NOT NULL,
+                build_hash TEXT NOT NULL,
+                added_by TEXT NOT NULL,
+                added_at INTEGER NOT NULL,
+                label TEXT,
+                PRIMARY KEY (node_id, build_hash),
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create node_build_hash_allowlist table")?;
+
         // Indexes for zero-knowledge identity
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_users_public_key_hash ON users (public_key_hash)",
@@ -1112,6 +1130,131 @@ impl Database {
                 .await
                 .context("Failed to unban device from node")?;
         Ok(result.rows_affected() > 0)
+    }
+
+    // ── Build hash allowlist operations ──
+
+    /// Get the build hash allowlist for a Node
+    pub async fn get_build_hash_allowlist(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::BuildHashAllowlistEntry>> {
+        let rows = sqlx::query(
+            "SELECT node_id, build_hash, added_by, added_at, label FROM node_build_hash_allowlist WHERE node_id = ? ORDER BY added_at DESC",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query build hash allowlist")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::BuildHashAllowlistEntry> {
+                Ok(crate::models::BuildHashAllowlistEntry {
+                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                    build_hash: row.get("build_hash"),
+                    added_by: Uuid::parse_str(&row.get::<String, _>("added_by"))?,
+                    added_at: row.get::<i64, _>("added_at") as u64,
+                    label: row.get("label"),
+                })
+            })
+            .collect()
+    }
+
+    /// Set the full build hash allowlist for a Node (replaces existing)
+    pub async fn set_build_hash_allowlist(
+        &self,
+        node_id: Uuid,
+        added_by: Uuid,
+        entries: &[crate::models::BuildHashAllowlistInput],
+    ) -> Result<()> {
+        // Delete existing entries
+        sqlx::query("DELETE FROM node_build_hash_allowlist WHERE node_id = ?")
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to clear build hash allowlist")?;
+
+        let added_at = now();
+        for entry in entries {
+            sqlx::query(
+                "INSERT INTO node_build_hash_allowlist (node_id, build_hash, added_by, added_at, label) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(node_id.to_string())
+            .bind(&entry.build_hash)
+            .bind(added_by.to_string())
+            .bind(added_at as i64)
+            .bind(entry.label.as_deref())
+            .execute(&self.pool)
+            .await
+            .context("Failed to insert build hash allowlist entry")?;
+        }
+        Ok(())
+    }
+
+    /// Add a single build hash to the allowlist
+    pub async fn add_build_hash_to_allowlist(
+        &self,
+        node_id: Uuid,
+        build_hash: &str,
+        added_by: Uuid,
+        label: Option<&str>,
+    ) -> Result<bool> {
+        let added_at = now();
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO node_build_hash_allowlist (node_id, build_hash, added_by, added_at, label) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(node_id.to_string())
+        .bind(build_hash)
+        .bind(added_by.to_string())
+        .bind(added_at as i64)
+        .bind(label)
+        .execute(&self.pool)
+        .await
+        .context("Failed to add build hash to allowlist")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Remove a build hash from the allowlist
+    pub async fn remove_build_hash_from_allowlist(
+        &self,
+        node_id: Uuid,
+        build_hash: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM node_build_hash_allowlist WHERE node_id = ? AND build_hash = ?",
+        )
+        .bind(node_id.to_string())
+        .bind(build_hash)
+        .execute(&self.pool)
+        .await
+        .context("Failed to remove build hash from allowlist")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Check if a build hash is allowed for a Node.
+    /// Returns true if the allowlist is empty (open mode) or if the hash is in the list.
+    pub async fn is_build_hash_allowed(&self, node_id: Uuid, build_hash: &str) -> Result<bool> {
+        let count_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_build_hash_allowlist WHERE node_id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        let total: i64 = count_row.get("count");
+
+        // Empty allowlist = open mode, all builds allowed
+        if total == 0 {
+            return Ok(true);
+        }
+
+        let match_row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_build_hash_allowlist WHERE node_id = ? AND build_hash = ?",
+        )
+        .bind(node_id.to_string())
+        .bind(build_hash)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(match_row.get::<i64, _>("count") > 0)
     }
 
     // ── Node user profile operations ──

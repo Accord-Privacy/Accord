@@ -276,11 +276,32 @@ pub struct JoinNodeRequest {
 pub async fn join_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     body: Option<Json<JoinNodeRequest>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &params).await?;
     let fingerprint_hash = body.and_then(|b| b.0.device_fingerprint_hash);
+
+    // Check build hash allowlist
+    let client_build_hash = headers
+        .get("X-Build-Hash")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !state
+        .db
+        .is_build_hash_allowed(node_id, client_build_hash)
+        .await
+        .unwrap_or(true)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Build not allowed by Node admin".into(),
+                code: 403,
+            }),
+        ));
+    }
 
     // Check device fingerprint ban before joining
     if let Some(ref fph) = fingerprint_hash {
@@ -915,6 +936,285 @@ pub async fn list_bans_handler(
     })?;
 
     Ok(Json(crate::models::NodeBansResponse { bans }))
+}
+
+// ── Build hash allowlist endpoints ──
+
+/// List allowed build hashes for a Node (GET /nodes/:id/build-allowlist)
+pub async fn get_build_allowlist_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Check admin permission
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::ManageNode) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions. Admin required.".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let entries = state
+        .db
+        .get_build_hash_allowlist(node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get build allowlist: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({ "allowlist": entries })))
+}
+
+/// Set the full build hash allowlist for a Node (PUT /nodes/:id/build-allowlist)
+pub async fn set_build_allowlist_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<Vec<crate::models::BuildHashAllowlistInput>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::ManageNode) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions. Admin required.".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    state
+        .db
+        .set_build_hash_allowlist(node_id, user_id, &request)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to set build allowlist: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    info!(
+        "Build allowlist updated for node {} by {} ({} entries)",
+        node_id,
+        user_id,
+        request.len()
+    );
+
+    Ok(Json(serde_json::json!({
+        "status": "updated",
+        "count": request.len()
+    })))
+}
+
+/// Add a build hash to the allowlist (POST /nodes/:id/build-allowlist)
+pub async fn add_build_allowlist_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::BuildHashAllowlistInput>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::ManageNode) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions. Admin required.".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let added = state
+        .db
+        .add_build_hash_to_allowlist(
+            node_id,
+            &request.build_hash,
+            user_id,
+            request.label.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to add build hash: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if added {
+        info!(
+            "Build hash {} added to allowlist for node {} by {}",
+            request.build_hash, node_id, user_id
+        );
+        Ok(Json(serde_json::json!({
+            "status": "added",
+            "build_hash": request.build_hash
+        })))
+    } else {
+        Ok(Json(serde_json::json!({
+            "status": "already_exists",
+            "build_hash": request.build_hash
+        })))
+    }
+}
+
+/// Remove a build hash from the allowlist (DELETE /nodes/:id/build-allowlist/:hash)
+pub async fn remove_build_allowlist_handler(
+    State(state): State<SharedState>,
+    Path((node_id, build_hash)): Path<(Uuid, String)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) => {
+            if !has_permission(m.role, Permission::ManageNode) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Insufficient permissions. Admin required.".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+        None => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Must be a member of the node".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let removed = state
+        .db
+        .remove_build_hash_from_allowlist(node_id, &build_hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to remove build hash: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if removed {
+        info!(
+            "Build hash {} removed from allowlist for node {} by {}",
+            build_hash, node_id, user_id
+        );
+        Ok(Json(serde_json::json!({
+            "status": "removed",
+            "build_hash": build_hash
+        })))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Build hash not found in allowlist".into(),
+                code: 404,
+            }),
+        ))
+    }
 }
 
 // ── Node user profile endpoints ──
@@ -2464,7 +2764,7 @@ pub async fn ws_handler(
     }
 
     info!("WebSocket connection established for user: {}", user_id);
-    ws.on_upgrade(move |socket| websocket_handler(socket, user_id, state))
+    ws.on_upgrade(move |socket| websocket_handler(socket, user_id, state, client_hash))
 }
 
 /// Build info REST endpoint — returns the server's build identity.
@@ -2479,7 +2779,16 @@ pub async fn build_info_handler(State(state): State<SharedState>) -> Json<serde_
     }))
 }
 
-async fn websocket_handler(socket: WebSocket, user_id: Uuid, state: SharedState) {
+async fn websocket_handler(
+    socket: WebSocket,
+    user_id: Uuid,
+    state: SharedState,
+    client_hash: Option<String>,
+) {
+    // Store client build hash for per-Node allowlist checks
+    if let Some(ref hash) = client_hash {
+        state.set_client_build_hash(user_id, hash.clone()).await;
+    }
     let (mut sender, mut receiver) = socket.split();
     let (tx, mut rx) = broadcast::channel::<String>(100);
 
@@ -2564,6 +2873,10 @@ async fn handle_ws_message(
         }
 
         WsMessageType::JoinNode { node_id } => {
+            // Check build hash allowlist before joining
+            state
+                .check_build_hash_for_node(sender_user_id, node_id)
+                .await?;
             state.join_node(sender_user_id, node_id).await?;
             let resp = serde_json::json!({ "type": "node_joined", "node_id": node_id });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
@@ -2658,8 +2971,13 @@ async fn handle_ws_message(
             encrypted_data,
             reply_to,
         } => {
-            // Check SEND_MESSAGES permission
+            // Check SEND_MESSAGES permission and build hash allowlist
             if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
+                // Check build hash allowlist
+                state
+                    .check_build_hash_for_node(sender_user_id, channel.node_id)
+                    .await?;
+
                 if let Ok(perms) = state
                     .db
                     .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)

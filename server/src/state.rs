@@ -152,6 +152,8 @@ pub struct AppState {
     pub build_verification: BuildVerification,
     /// Metadata storage mode (standard or minimal)
     pub metadata_mode: MetadataMode,
+    /// Connected clients' build hashes (user_id -> build_hash)
+    pub client_build_hashes: RwLock<HashMap<Uuid, String>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -187,6 +189,7 @@ impl AppState {
             rate_limiter: RateLimiter::new(),
             build_verification: BuildVerification::new(BuildVerificationMode::default()),
             metadata_mode: MetadataMode::default(),
+            client_build_hashes: RwLock::new(HashMap::new()),
         })
     }
 
@@ -883,6 +886,37 @@ impl AppState {
 
     pub async fn remove_connection(&self, user_id: Uuid) {
         self.connections.write().await.remove(&user_id);
+        self.client_build_hashes.write().await.remove(&user_id);
+    }
+
+    /// Store the client's build hash for later allowlist checks.
+    pub async fn set_client_build_hash(&self, user_id: Uuid, build_hash: String) {
+        self.client_build_hashes
+            .write()
+            .await
+            .insert(user_id, build_hash);
+    }
+
+    /// Get the client's build hash.
+    pub async fn get_client_build_hash(&self, user_id: Uuid) -> Option<String> {
+        self.client_build_hashes.read().await.get(&user_id).cloned()
+    }
+
+    /// Check if a user's build hash is allowed for a given node.
+    /// Returns Ok(()) if allowed, Err with message if not.
+    pub async fn check_build_hash_for_node(
+        &self,
+        user_id: Uuid,
+        node_id: Uuid,
+    ) -> Result<(), String> {
+        let client_hash = self.get_client_build_hash(user_id).await;
+        let hash_str = client_hash.as_deref().unwrap_or("");
+
+        match self.db.is_build_hash_allowed(node_id, hash_str).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("Build not allowed by Node admin".to_string()),
+            Err(e) => Err(format!("Failed to check build allowlist: {}", e)),
+        }
     }
 
     pub async fn send_to_user(&self, user_id: Uuid, message: String) -> Result<(), String> {

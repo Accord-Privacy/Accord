@@ -50,10 +50,9 @@ pub fn read_or_create_key(db_path: &Path) -> Result<String> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&kf, std::fs::Permissions::from_mode(0o600))
-                .with_context(|| {
-                    format!("Failed to set permissions on key file: {}", kf.display())
-                })?;
+            std::fs::set_permissions(&kf, std::fs::Permissions::from_mode(0o600)).with_context(
+                || format!("Failed to set permissions on key file: {}", kf.display()),
+            )?;
         }
 
         tracing::info!("Generated new database encryption key: {}", kf.display());

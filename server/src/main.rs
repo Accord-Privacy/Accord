@@ -30,13 +30,14 @@ use axum::{
 };
 use clap::Parser;
 use handlers::{
-    accept_friend_request_handler, add_reaction_handler, assign_member_role_handler, auth_handler,
-    ban_check_handler, ban_user_handler, build_info_handler, create_channel_category_handler,
-    create_channel_handler, create_dm_channel_handler, create_invite_handler, create_node_handler,
-    create_role_handler, delete_channel_category_handler, delete_channel_handler,
-    delete_channel_overwrite_handler, delete_file_handler, delete_message_handler,
-    delete_role_handler, deregister_push_token_handler, download_file_handler,
-    edit_message_handler, fetch_key_bundle_handler, get_channel_messages_handler,
+    accept_friend_request_handler, add_build_allowlist_handler, add_reaction_handler,
+    assign_member_role_handler, auth_handler, ban_check_handler, ban_user_handler,
+    build_info_handler, create_channel_category_handler, create_channel_handler,
+    create_dm_channel_handler, create_invite_handler, create_node_handler, create_role_handler,
+    delete_channel_category_handler, delete_channel_handler, delete_channel_overwrite_handler,
+    delete_file_handler, delete_message_handler, delete_role_handler,
+    deregister_push_token_handler, download_file_handler, edit_message_handler,
+    fetch_key_bundle_handler, get_build_allowlist_handler, get_channel_messages_handler,
     get_dm_channels_handler, get_effective_permissions_handler, get_member_roles_handler,
     get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
     get_node_handler, get_node_icon_handler, get_node_members_handler,
@@ -47,9 +48,10 @@ use handlers::{
     list_friend_requests_handler, list_friends_handler, list_invites_handler,
     list_node_channels_handler, list_roles_handler, list_user_nodes_handler, pin_message_handler,
     publish_key_bundle_handler, register_handler, register_push_token_handler,
-    reject_friend_request_handler, remove_friend_handler, remove_member_role_handler,
-    remove_reaction_handler, reorder_roles_handler, revoke_invite_handler, search_messages_handler,
-    send_friend_request_handler, set_channel_overwrite_handler, set_node_user_profile_handler,
+    reject_friend_request_handler, remove_build_allowlist_handler, remove_friend_handler,
+    remove_member_role_handler, remove_reaction_handler, reorder_roles_handler,
+    revoke_invite_handler, search_messages_handler, send_friend_request_handler,
+    set_build_allowlist_handler, set_channel_overwrite_handler, set_node_user_profile_handler,
     store_prekey_message_handler, unban_user_handler, unpin_message_handler,
     update_channel_category_handler, update_channel_handler, update_node_handler,
     update_push_preferences_handler, update_role_handler, update_user_profile_handler,
@@ -243,6 +245,17 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/bans", delete(unban_user_handler))
         .route("/nodes/:id/bans", get(list_bans_handler))
         .route("/nodes/:id/ban-check", get(ban_check_handler))
+        // Build hash allowlist
+        .route(
+            "/nodes/:id/build-allowlist",
+            get(get_build_allowlist_handler)
+                .put(set_build_allowlist_handler)
+                .post(add_build_allowlist_handler),
+        )
+        .route(
+            "/nodes/:id/build-allowlist/:hash",
+            delete(remove_build_allowlist_handler),
+        )
         // Node user profile endpoints
         .route(
             "/nodes/:id/profile",
