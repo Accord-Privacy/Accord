@@ -24,6 +24,8 @@ pub mod push;
 mod rate_limit;
 mod relay_mesh;
 mod state;
+mod validation;
+mod webhooks;
 
 use anyhow::Result;
 use axum::{
@@ -65,6 +67,10 @@ use handlers::{
 };
 use serde::Deserialize;
 use state::{AppState, SharedState};
+use webhooks::{
+    create_webhook_handler, delete_webhook_handler, list_webhooks_handler,
+    test_webhook_handler, update_webhook_handler,
+};
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
@@ -696,6 +702,16 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/invites", get(list_invites_handler))
         .route("/invites/:invite_id", delete(revoke_invite_handler))
         .route("/invites/:code/join", post(use_invite_handler))
+        // Webhook endpoints
+        .route(
+            "/nodes/:id/webhooks",
+            get(list_webhooks_handler).post(create_webhook_handler),
+        )
+        .route(
+            "/webhooks/:id",
+            axum::routing::patch(update_webhook_handler).delete(delete_webhook_handler),
+        )
+        .route("/webhooks/:id/test", post(test_webhook_handler))
         // Key bundle endpoints (Double Ratchet / X3DH)
         .route("/keys/bundle", post(publish_key_bundle_handler))
         .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))

@@ -37,6 +37,13 @@ pub struct Database {
 }
 
 impl Database {
+    /// Access the connection pool (for use by extension modules like webhooks)
+    pub(crate) fn pool(&self) -> &Pool {
+        &self.pool
+    }
+}
+
+impl Database {
     /// Create a new database connection to the specified file path.
     ///
     /// If `enable_encryption` is true **and** the `sqlcipher` feature is compiled in,
@@ -980,6 +987,9 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
+
+        // ── Webhooks table ──
+        self.create_webhooks_table().await?;
 
         Ok(())
     }
