@@ -7814,12 +7814,13 @@ pub async fn import_discord_template_handler(
         let unicode_emoji = role_val.get("unicode_emoji").and_then(|v| v.as_str());
 
         if discord_id == 0 {
-            // Update the existing @everyone role
+            // Update the existing @everyone role — ensure minimum permissions
+            let everyone_perms = masked_perms | crate::models::permission_bits::DEFAULT_EVERYONE;
             if let Some(ref ev) = everyone_role {
                 role_id_map.insert(0, ev.id);
                 state
                     .db
-                    .update_role(ev.id, None, None, Some(masked_perms), None, None, None)
+                    .update_role(ev.id, None, None, Some(everyone_perms), None, None, None)
                     .await
                     .map_err(|e| {
                         (
