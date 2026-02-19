@@ -5,10 +5,24 @@ import SwiftUI
 struct VoiceChannelView: View {
     let channel: Channel
     @Environment(AppState.self) private var appState
-    @State private var voiceService = VoiceService()
+
+    /// Use the shared VoiceService from AppState (configured with WS + userId)
+    private var voiceService: VoiceService {
+        appState.voiceService ?? VoiceService()
+    }
 
     var body: some View {
         VStack(spacing: 24) {
+            // Connection state banner
+            if voiceService.connectionState == .connecting {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Connecting…")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 20)
+            }
+
             // Participants grid
             if voiceService.state.participants.isEmpty && voiceService.state.isConnected {
                 Text("No one else is here yet")
@@ -23,7 +37,7 @@ struct VoiceChannelView: View {
                             .fill(participant.isSpeaking ? .green : .secondary.opacity(0.3))
                             .frame(width: 60, height: 60)
                             .overlay {
-                                Text(String(participant.displayName.prefix(1)))
+                                Text(String(participant.displayName.prefix(1)).uppercased())
                                     .font(.title2)
                                     .foregroundStyle(.white)
                             }
@@ -36,6 +50,7 @@ struct VoiceChannelView: View {
                                         .background(.ultraThinMaterial, in: Circle())
                                 }
                             }
+                            .animation(.easeInOut(duration: 0.2), value: participant.isSpeaking)
                         Text(participant.displayName)
                             .font(.caption)
                             .lineLimit(1)
@@ -84,12 +99,19 @@ struct VoiceChannelView: View {
         .navigationTitle("🔊 \(channel.name)")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            // TODO: Join voice channel via VoiceService
+            // Configure VoiceService with WS and user info if not already done
+            if let ws = appState.webSocketService, let user = appState.currentUser {
+                voiceService.configure(webSocketService: ws, userId: user.id)
+            }
             do {
                 try await voiceService.joinChannel(channelId: channel.id)
             } catch {
-                // TODO: Error handling
+                print("[VoiceChannelView] Failed to join: \(error)")
             }
+        }
+        .onDisappear {
+            // Don't auto-leave — user may navigate away but stay in voice
+            // Leave only happens via the disconnect button
         }
     }
 }

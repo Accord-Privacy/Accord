@@ -69,11 +69,17 @@ final class AppState {
 
         ws.connect(token: token)
 
+        // Initialize voice service with WS connection
+        let voice = VoiceService()
+        voice.configure(webSocketService: ws, userId: userId)
+        self.voiceService = voice
+
         self.currentUser = User(id: userId, displayName: "")
         self.isLoggedIn = true
     }
 
     func logout() {
+        voiceService?.leaveChannel()
         webSocketService?.disconnect()
         cancellables.removeAll()
         cryptoService?.clearChannelKeyCache()

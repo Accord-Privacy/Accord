@@ -28,6 +28,11 @@ enum WSIncomingMessage {
     case messagePin(messageId: String, timestamp: Int, pinnedBy: String)
     case messageUnpin(messageId: String)
     case readReceipt(channelId: String, userId: String, messageId: String, timestamp: Int)
+    case voiceChannelJoined(channelId: String, participants: [String])
+    case voicePeerJoined(channelId: String, userId: String)
+    case voicePeerLeft(channelId: String, userId: String)
+    case voiceSignaling(channelId: String, fromUserId: String, signalType: String, data: String)
+    case voiceSpeakingState(channelId: String, userId: String, speaking: Bool)
     case hello(serverVersion: String?, serverBuildHash: String?)
     case error(code: String?, message: String)
     case unknown(type: String, raw: [String: Any])
@@ -179,6 +184,34 @@ final class WebSocketService {
         try await send(["Ping": [:] as [String: Any]])
     }
 
+    /// Join a voice channel
+    func joinVoiceChannel(channelId: String) async throws {
+        try await send(["JoinVoiceChannel": ["channel_id": channelId]])
+    }
+
+    /// Leave a voice channel
+    func leaveVoiceChannel(channelId: String) async throws {
+        try await send(["LeaveVoiceChannel": ["channel_id": channelId]])
+    }
+
+    /// Send P2P signaling data to a specific peer
+    func sendP2PSignal(channelId: String, targetUserId: String, signalData: String) async throws {
+        try await send(["P2PSignal": [
+            "channel_id": channelId,
+            "target_user_id": targetUserId,
+            "signal_data": signalData,
+        ] as [String: Any]])
+    }
+
+    /// Send speaking state
+    func sendVoiceSpeakingState(channelId: String, userId: String, speaking: Bool) async throws {
+        try await send(["VoiceSpeakingState": [
+            "channel_id": channelId,
+            "user_id": userId,
+            "speaking": speaking,
+        ] as [String: Any]])
+    }
+
     /// Send raw text
     func sendRaw(_ text: String) async throws {
         guard let task = webSocketTask else {
@@ -317,6 +350,40 @@ final class WebSocketService {
                 userId: json["user_id"] as? String ?? "",
                 messageId: json["message_id"] as? String ?? "",
                 timestamp: json["timestamp"] as? Int ?? 0
+            )
+
+        case "voice_channel_joined":
+            let participantsArr = json["participants"] as? [String] ?? []
+            parsed = .voiceChannelJoined(
+                channelId: json["channel_id"] as? String ?? "",
+                participants: participantsArr
+            )
+
+        case "voice_peer_joined":
+            parsed = .voicePeerJoined(
+                channelId: json["channel_id"] as? String ?? "",
+                userId: json["user_id"] as? String ?? ""
+            )
+
+        case "voice_peer_left":
+            parsed = .voicePeerLeft(
+                channelId: json["channel_id"] as? String ?? "",
+                userId: json["user_id"] as? String ?? ""
+            )
+
+        case "voice_offer", "voice_answer", "voice_ice_candidate", "p2p_signal":
+            parsed = .voiceSignaling(
+                channelId: json["channel_id"] as? String ?? "",
+                fromUserId: json["from_user_id"] as? String ?? json["user_id"] as? String ?? "",
+                signalType: type,
+                data: text
+            )
+
+        case "voice_speaking_state":
+            parsed = .voiceSpeakingState(
+                channelId: json["channel_id"] as? String ?? "",
+                userId: json["user_id"] as? String ?? "",
+                speaking: json["speaking"] as? Bool ?? false
             )
 
         case "hello":
