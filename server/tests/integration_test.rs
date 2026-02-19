@@ -1138,3 +1138,1165 @@ async fn test_ban_enforcement() {
 }
 
 use base64::Engine as _;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NEW INTEGRATION TESTS — Expanded coverage for security & functionality paths
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Extended test server with all routes needed for the new tests
+struct FullTestServer {
+    base_url: String,
+    client: Client,
+    state: SharedState,
+}
+
+impl FullTestServer {
+    async fn new() -> Self {
+        use accord_server::handlers::*;
+        use axum::routing::{delete, get, post};
+
+        let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
+
+        let app = Router::new()
+            .route("/health", get(health_handler))
+            .route("/register", post(register_handler))
+            .route("/auth", post(auth_handler))
+            // Key bundle
+            .route("/keys/bundle", post(publish_key_bundle_handler))
+            .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
+            .route("/keys/prekey-message", post(store_prekey_message_handler))
+            .route("/keys/prekey-messages", get(get_prekey_messages_handler))
+            // Nodes
+            .route(
+                "/nodes",
+                get(list_user_nodes_handler).post(create_node_handler),
+            )
+            .route("/nodes/:id", get(get_node_handler))
+            .route("/nodes/:id/join", post(join_node_handler))
+            .route("/nodes/:id/leave", post(leave_node_handler))
+            .route("/nodes/:id/bans", post(ban_user_handler))
+            .route(
+                "/nodes/:id/channels",
+                get(list_node_channels_handler).post(create_channel_handler),
+            )
+            .route("/nodes/:id/members", get(get_node_members_handler))
+            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
+            // Invites
+            .route("/nodes/:id/invites", post(create_invite_handler))
+            .route("/nodes/:id/invites", get(list_invites_handler))
+            .route("/invites/:invite_id", delete(revoke_invite_handler))
+            .route("/invites/:code/join", post(use_invite_handler))
+            // Roles
+            .route(
+                "/nodes/:id/roles",
+                get(list_roles_handler).post(create_role_handler),
+            )
+            .route(
+                "/nodes/:id/roles/:role_id",
+                axum::routing::patch(update_role_handler).delete(delete_role_handler),
+            )
+            .route(
+                "/nodes/:id/members/:user_id/roles",
+                get(get_member_roles_handler),
+            )
+            .route(
+                "/nodes/:id/members/:user_id/roles/:role_id",
+                axum::routing::put(assign_member_role_handler).delete(remove_member_role_handler),
+            )
+            // Channels
+            .route(
+                "/channels/:id",
+                axum::routing::patch(update_channel_handler).delete(delete_channel_handler),
+            )
+            .route("/channels/:id/messages", get(get_channel_messages_handler))
+            .route(
+                "/channels/:id/permissions/:role_id",
+                axum::routing::put(set_channel_overwrite_handler),
+            )
+            .route(
+                "/channels/:id/effective-permissions",
+                get(get_effective_permissions_handler),
+            )
+            // Messages
+            .route(
+                "/messages/:id",
+                axum::routing::patch(edit_message_handler).delete(delete_message_handler),
+            )
+            // Files
+            .route("/channels/:id/files", post(upload_file_handler))
+            .route("/files/:id", get(download_file_handler))
+            // Search
+            .route("/nodes/:id/search", get(search_messages_handler))
+            // Presence
+            .route("/api/presence/:id", get(get_node_presence_handler))
+            // Profiles
+            .route("/users/:id/profile", get(get_user_profile_handler))
+            .route(
+                "/users/me/profile",
+                axum::routing::patch(update_user_profile_handler),
+            )
+            // WebSocket
+            .route("/ws", get(ws_handler))
+            .with_state(state.clone())
+            .layer(
+                ServiceBuilder::new()
+                    .layer(TraceLayer::new_for_http())
+                    .layer(
+                        CorsLayer::new()
+                            .allow_methods(Any)
+                            .allow_headers(Any)
+                            .allow_origin(Any),
+                    ),
+            );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{}", addr);
+
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        Self {
+            base_url,
+            client: Client::new(),
+            state,
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
+    }
+
+    fn ws_url(&self, path: &str) -> String {
+        format!("ws://{}{}", self.base_url.replace("http://", ""), path)
+    }
+
+    /// Register a user and return (user_id, token)
+    async fn register_and_auth_full(&self, name: &str) -> (Uuid, String) {
+        let pk = format!("test_pk_{}", name);
+        let resp = self
+            .client
+            .post(&self.url("/register"))
+            .json(&json!({ "public_key": pk }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body: Value = resp.json().await.unwrap();
+        let user_id = Uuid::parse_str(body["user_id"].as_str().unwrap()).unwrap();
+
+        let resp = self
+            .client
+            .post(&self.url("/auth"))
+            .json(&json!({ "public_key": pk, "password": "" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body: Value = resp.json().await.unwrap();
+        let token = body["token"].as_str().unwrap().to_string();
+        (user_id, token)
+    }
+
+    /// Create a node, return node_id
+    async fn create_node(&self, token: &str, name: &str) -> Uuid {
+        let resp = self
+            .client
+            .post(&format!("{}/nodes?token={}", self.base_url, token))
+            .json(&json!({ "name": name }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body: Value = resp.json().await.unwrap();
+        Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
+    }
+
+    /// Create a channel in a node, return channel_id
+    async fn create_channel(&self, token: &str, node_id: Uuid, name: &str) -> Uuid {
+        let resp = self
+            .client
+            .post(&format!(
+                "{}/nodes/{}/channels?token={}",
+                self.base_url, node_id, token
+            ))
+            .json(&json!({ "name": name }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            200,
+            "create_channel failed: {:?}",
+            resp.text().await
+        );
+        let body: Value = resp.json().await.unwrap();
+        Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
+    }
+
+    /// Join a node
+    async fn join_node(&self, token: &str, node_id: Uuid) {
+        let resp = self
+            .client
+            .post(&format!(
+                "{}/nodes/{}/join?token={}",
+                self.base_url, node_id, token
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    /// Connect WS and consume initial messages, return (sink, stream)
+    async fn connect_ws(
+        &self,
+        token: &str,
+    ) -> (
+        futures_util::stream::SplitSink<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            WsMessage,
+        >,
+        futures_util::stream::SplitStream<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+        >,
+    ) {
+        let ws_url = format!("{}?token={}", self.ws_url("/ws"), token);
+        let (ws, _) = connect_async(&ws_url).await.unwrap();
+        let (sink, mut stream) = ws.split();
+        // Drain initial messages (authenticated, hello, presence_bulk, etc.)
+        for _ in 0..10 {
+            if tokio::time::timeout(Duration::from_millis(200), stream.next())
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        (sink, stream)
+    }
+
+    /// Read next WS text message with timeout
+    async fn next_ws_msg(
+        stream: &mut futures_util::stream::SplitStream<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+        >,
+        timeout_ms: u64,
+    ) -> Option<Value> {
+        loop {
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), stream.next()).await {
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    return Some(serde_json::from_str(&text).unwrap());
+                }
+                Ok(Some(Ok(_))) => continue, // skip non-text
+                _ => return None,
+            }
+        }
+    }
+
+    /// Wait for a specific WS message type
+    async fn wait_for_ws_type(
+        stream: &mut futures_util::stream::SplitStream<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+        >,
+        msg_type: &str,
+        timeout_ms: u64,
+    ) -> Option<Value> {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(remaining, stream.next()).await {
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    let v: Value = serde_json::from_str(&text).unwrap_or_default();
+                    if v["type"] == msg_type {
+                        return Some(v);
+                    }
+                }
+                Ok(Some(Ok(_))) => continue,
+                _ => return None,
+            }
+        }
+    }
+}
+
+// ── Test 1: Voice Channel Join/Leave ──
+
+#[tokio::test]
+async fn test_voice_channel_join_leave() {
+    let server = FullTestServer::new().await;
+
+    let (user1_id, token1) = server.register_and_auth_full("voice_u1").await;
+    let (user2_id, token2) = server.register_and_auth_full("voice_u2").await;
+
+    let node_id = server.create_node(&token1, "VoiceNode").await;
+    server.join_node(&token2, node_id).await;
+    let channel_id = server.create_channel(&token1, node_id, "voice-room").await;
+
+    // Both users join channel (needed for channel membership)
+    // Join via WS
+    let (mut sink1, mut stream1) = server.connect_ws(&token1).await;
+    let (mut sink2, mut stream2) = server.connect_ws(&token2).await;
+
+    // User1 joins the channel (text) first
+    let join_ch = json!({
+        "message_type": { "JoinChannel": { "channel_id": channel_id } },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink1
+        .send(WsMessage::Text(join_ch.to_string()))
+        .await
+        .unwrap();
+    sink2
+        .send(WsMessage::Text(join_ch.to_string()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // User1 joins voice
+    let join_voice = json!({
+        "message_type": { "JoinVoiceChannel": { "channel_id": channel_id } },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink1
+        .send(WsMessage::Text(join_voice.to_string()))
+        .await
+        .unwrap();
+
+    // User1 should get voice_channel_joined
+    let msg = FullTestServer::wait_for_ws_type(&mut stream1, "voice_channel_joined", 3000).await;
+    assert!(msg.is_some(), "User1 should receive voice_channel_joined");
+    let msg = msg.unwrap();
+    assert_eq!(msg["channel_id"], channel_id.to_string());
+
+    // User2 joins voice
+    sink2
+        .send(WsMessage::Text(join_voice.to_string()))
+        .await
+        .unwrap();
+
+    // User2 should get voice_channel_joined with user1 in participants
+    let msg = FullTestServer::wait_for_ws_type(&mut stream2, "voice_channel_joined", 3000).await;
+    assert!(msg.is_some(), "User2 should receive voice_channel_joined");
+    let participants = msg.unwrap()["participants"].as_array().unwrap().clone();
+    assert!(
+        participants
+            .iter()
+            .any(|p| p.as_str() == Some(&user1_id.to_string())),
+        "User1 should be in participants"
+    );
+
+    // User1 should receive voice_peer_joined for user2
+    let msg = FullTestServer::wait_for_ws_type(&mut stream1, "voice_peer_joined", 3000).await;
+    assert!(msg.is_some(), "User1 should receive voice_peer_joined");
+    assert_eq!(msg.unwrap()["user_id"], user2_id.to_string());
+
+    // User2 leaves voice
+    let leave_voice = json!({
+        "message_type": { "LeaveVoiceChannel": { "channel_id": channel_id } },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink2
+        .send(WsMessage::Text(leave_voice.to_string()))
+        .await
+        .unwrap();
+
+    // User1 should receive voice_peer_left
+    let msg = FullTestServer::wait_for_ws_type(&mut stream1, "voice_peer_left", 3000).await;
+    assert!(msg.is_some(), "User1 should receive voice_peer_left");
+    assert_eq!(msg.unwrap()["user_id"], user2_id.to_string());
+
+    // Verify participants via state
+    let participants = server
+        .state
+        .get_voice_channel_participants(channel_id)
+        .await;
+    assert_eq!(participants.len(), 1);
+    assert!(participants.contains(&user1_id));
+}
+
+// ── Test 2: Invites — create → use → verify membership ──
+
+#[tokio::test]
+async fn test_invite_create_use_join() {
+    let server = FullTestServer::new().await;
+
+    let (_owner_id, owner_token) = server.register_and_auth_full("inv_owner").await;
+    let (joiner_id, joiner_token) = server.register_and_auth_full("inv_joiner").await;
+
+    let node_id = server.create_node(&owner_token, "InviteNode").await;
+
+    // Owner creates invite
+    let resp = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/invites?token={}",
+            server.base_url, node_id, owner_token
+        ))
+        .json(&json!({ "max_uses": 1, "expires_in_hours": 24 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let invite_code = body["invite_code"].as_str().unwrap().to_string();
+    assert!(!invite_code.is_empty());
+
+    // Joiner uses invite
+    let resp = server
+        .client
+        .post(&format!(
+            "{}/invites/{}/join?token={}",
+            server.base_url, invite_code, joiner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "joined");
+    assert_eq!(body["node_id"], node_id.to_string());
+
+    // Verify joiner is a member
+    assert!(server
+        .state
+        .is_node_member(joiner_id, node_id)
+        .await
+        .unwrap());
+
+    // Invite should be used up (max_uses=1), try again with different user
+    let (_u3_id, u3_token) = server.register_and_auth_full("inv_third").await;
+    let resp = server
+        .client
+        .post(&format!(
+            "{}/invites/{}/join?token={}",
+            server.base_url, invite_code, u3_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400, "Invite should be exhausted");
+}
+
+// ── Test 3: File Upload and Download ──
+
+#[tokio::test]
+async fn test_file_upload_download() {
+    let server = FullTestServer::new().await;
+
+    let (user_id, token) = server.register_and_auth_full("file_user").await;
+    let node_id = server.create_node(&token, "FileNode").await;
+    let channel_id = server.create_channel(&token, node_id, "file-ch").await;
+
+    // Join the channel so we have membership
+    server
+        .state
+        .join_channel(user_id, channel_id)
+        .await
+        .unwrap();
+
+    // Upload a file via multipart
+    let file_content = b"encrypted_file_data_here_12345";
+    let encrypted_filename = b"encrypted_name.bin";
+
+    let form = reqwest::multipart::Form::new()
+        .part(
+            "encrypted_filename",
+            reqwest::multipart::Part::bytes(encrypted_filename.to_vec()),
+        )
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(file_content.to_vec()),
+        );
+
+    let resp = server
+        .client
+        .post(&format!(
+            "{}/channels/{}/files?token={}",
+            server.base_url, channel_id, token
+        ))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "Upload should succeed");
+    let body: Value = resp.json().await.unwrap();
+    let file_id = body["file_id"].as_str().unwrap();
+
+    // Download the file
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/files/{}?token={}",
+            server.base_url, file_id, token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "Download should succeed");
+    let downloaded = resp.bytes().await.unwrap();
+    assert_eq!(downloaded.as_ref(), file_content, "Content should match");
+}
+
+// ── Test 4: Roles & Hierarchy ──
+
+#[tokio::test]
+async fn test_roles_assign_remove() {
+    let server = FullTestServer::new().await;
+
+    let (_owner_id, owner_token) = server.register_and_auth_full("role_owner").await;
+    let (member_id, member_token) = server.register_and_auth_full("role_member").await;
+
+    let node_id = server.create_node(&owner_token, "RoleNode").await;
+    server.join_node(&member_token, node_id).await;
+
+    // Create a role with MANAGE_ROLES permission
+    let manage_roles_bit: u64 = 1 << 28; // MANAGE_ROLES
+    let resp = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/roles?token={}",
+            server.base_url, node_id, owner_token
+        ))
+        .json(&json!({
+            "name": "Moderator",
+            "permissions": manage_roles_bit,
+            "color": 0xFF0000
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let role: Value = resp.json().await.unwrap();
+    let role_id = role["id"].as_str().unwrap();
+
+    // Assign role to member
+    let resp = server
+        .client
+        .put(&format!(
+            "{}/nodes/{}/members/{}/roles/{}?token={}",
+            server.base_url, node_id, member_id, role_id, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204, "Assign role should succeed");
+
+    // Verify member has the role
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/nodes/{}/members/{}/roles?token={}",
+            server.base_url, node_id, member_id, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let roles = body["roles"].as_array().unwrap();
+    assert!(
+        roles.iter().any(|r| r["id"].as_str() == Some(role_id)),
+        "Member should have the Moderator role"
+    );
+
+    // Remove role from member
+    let resp = server
+        .client
+        .delete(&format!(
+            "{}/nodes/{}/members/{}/roles/{}?token={}",
+            server.base_url, node_id, member_id, role_id, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204, "Remove role should succeed");
+
+    // Verify role is removed
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/nodes/{}/members/{}/roles?token={}",
+            server.base_url, node_id, member_id, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let roles = body["roles"].as_array().unwrap();
+    assert!(
+        !roles.iter().any(|r| r["id"].as_str() == Some(role_id)),
+        "Member should no longer have the Moderator role"
+    );
+}
+
+// ── Test 5: Channel Permissions — restricted send ──
+
+#[tokio::test]
+async fn test_channel_permission_restricted_send() {
+    let server = FullTestServer::new().await;
+
+    let (owner_id, owner_token) = server.register_and_auth_full("perm_owner").await;
+    let (member_id, member_token) = server.register_and_auth_full("perm_member").await;
+
+    let node_id = server.create_node(&owner_token, "PermNode").await;
+    server.join_node(&member_token, node_id).await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "restricted-ch")
+        .await;
+
+    // Get the @everyone role (first role in the list, position 0)
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/nodes/{}/roles?token={}",
+            server.base_url, node_id, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let everyone_role_id = body["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["position"] == 0)
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Set channel overwrite: deny SEND_MESSAGES for @everyone
+    let send_messages_bit: u64 = 1 << 11;
+    let resp = server
+        .client
+        .put(&format!(
+            "{}/channels/{}/permissions/{}?token={}",
+            server.base_url, channel_id, everyone_role_id, owner_token
+        ))
+        .json(&json!({ "allow": 0, "deny": send_messages_bit }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204, "Set overwrite should succeed");
+
+    // Both join the channel
+    server
+        .state
+        .join_channel(owner_id, channel_id)
+        .await
+        .unwrap();
+    server
+        .state
+        .join_channel(member_id, channel_id)
+        .await
+        .unwrap();
+
+    // Member tries to send a message via WS — should be denied
+    let (mut sink, mut stream) = server.connect_ws(&member_token).await;
+    let msg = json!({
+        "message_type": {
+            "ChannelMessage": {
+                "channel_id": channel_id,
+                "encrypted_data": base64::engine::general_purpose::STANDARD.encode(b"should fail")
+            }
+        },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink.send(WsMessage::Text(msg.to_string())).await.unwrap();
+
+    // Should get an error, not a channel_message broadcast
+    let resp = FullTestServer::wait_for_ws_type(&mut stream, "error", 3000).await;
+    assert!(
+        resp.is_some(),
+        "Member should receive error when sending to restricted channel"
+    );
+}
+
+// ── Test 6: Node Creation → Admin → Channels → Delete ──
+
+#[tokio::test]
+async fn test_node_creation_admin_channels() {
+    let server = FullTestServer::new().await;
+
+    let (owner_id, owner_token) = server.register_and_auth_full("node_owner").await;
+
+    // Create node
+    let node_id = server.create_node(&owner_token, "TestNode").await;
+
+    // Verify owner is admin (node owner)
+    let info = server.state.get_node_info(node_id).await.unwrap();
+    assert_eq!(info.node.owner_id, owner_id);
+
+    // Create multiple channels
+    let _ch1 = server
+        .create_channel(&owner_token, node_id, "general")
+        .await;
+    let ch2 = server.create_channel(&owner_token, node_id, "random").await;
+
+    // Verify channels exist
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/nodes/{}/channels?token={}",
+            server.base_url, node_id, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let channels = body.as_array().unwrap();
+    // +1 for the auto-created "general" channel from node creation
+    assert!(channels.len() >= 2, "Should have at least 2 channels");
+
+    // Delete a channel
+    let resp = server
+        .client
+        .delete(&format!(
+            "{}/channels/{}?token={}",
+            server.base_url, ch2, owner_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "Delete channel should succeed");
+
+    // Verify channel is gone
+    let ch = server.state.get_channel(ch2).await.unwrap();
+    assert!(ch.is_none(), "Deleted channel should not exist");
+}
+
+// ── Test 7: Search Messages ──
+
+#[tokio::test]
+async fn test_search_messages() {
+    let server = FullTestServer::new().await;
+
+    let (user_id, token) = server.register_and_auth_full("search_user").await;
+    let node_id = server.create_node(&token, "SearchNode").await;
+    let channel_id = server.create_channel(&token, node_id, "search-ch").await;
+
+    // Join channel
+    server
+        .state
+        .join_channel(user_id, channel_id)
+        .await
+        .unwrap();
+
+    // Store some messages directly (the search searches metadata/sender, not encrypted content)
+    // Since messages are E2EE, search is on metadata — let's use the store_message directly
+    let _msg1 = server
+        .state
+        .store_message(channel_id, user_id, b"hello world")
+        .await
+        .unwrap();
+    let _msg2 = server
+        .state
+        .store_message(channel_id, user_id, b"goodbye world")
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Search by channel name (search matches on channel_name and public_key_hash metadata)
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/nodes/{}/search?token={}&q=search-ch",
+            server.base_url, node_id, token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let results = body["results"].as_array().unwrap();
+    assert!(
+        results.len() >= 2,
+        "Should find at least 2 messages in channel matching 'search-ch', got {}",
+        results.len()
+    );
+
+    // Search with author filter
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/nodes/{}/search?token={}&q=search-ch&author={}",
+            server.base_url, node_id, token, user_id
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let results = body["results"].as_array().unwrap();
+    assert!(
+        results.len() >= 2,
+        "Should find at least 2 messages by author filter"
+    );
+}
+
+// ── Test 8: Presence — online/offline ──
+
+#[tokio::test]
+async fn test_presence_online_offline() {
+    let server = FullTestServer::new().await;
+
+    let (user1_id, token1) = server.register_and_auth_full("pres_u1").await;
+    let (user2_id, token2) = server.register_and_auth_full("pres_u2").await;
+
+    let node_id = server.create_node(&token1, "PresenceNode").await;
+    server.join_node(&token2, node_id).await;
+
+    // User1 connects via WS → should go online
+    let (sink1, mut stream1) = server.connect_ws(&token1).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Check presence via REST
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/api/presence/{}?token={}",
+            server.base_url, node_id, token1
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let members = body["members"].as_array().unwrap();
+    let u1_presence = members
+        .iter()
+        .find(|m| m["user_id"] == user1_id.to_string())
+        .unwrap();
+    assert_eq!(u1_presence["status"], "online");
+
+    // User2 connects → user1 should get presence_update for user2
+    let (_sink2, _stream2) = server.connect_ws(&token2).await;
+
+    // Wait for presence_update
+    let msg = FullTestServer::wait_for_ws_type(&mut stream1, "presence_update", 3000).await;
+    assert!(msg.is_some(), "Should receive presence_update for user2");
+    let msg = msg.unwrap();
+    assert_eq!(msg["user_id"], user2_id.to_string());
+    assert_eq!(msg["status"], "online");
+
+    // Close user1's WS connection fully to trigger offline
+    drop(stream1);
+    drop(sink1);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Check presence again — user1 should be offline
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/api/presence/{}?token={}",
+            server.base_url, node_id, token2
+        ))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let members = body["members"].as_array().unwrap();
+    let u1_presence = members
+        .iter()
+        .find(|m| m["user_id"] == user1_id.to_string())
+        .unwrap();
+    assert_eq!(u1_presence["status"], "offline");
+}
+
+// ── Test 9: Message Editing ──
+
+#[tokio::test]
+async fn test_message_editing() {
+    let server = FullTestServer::new().await;
+
+    let (user_id, token) = server.register_and_auth_full("edit_user").await;
+    let node_id = server.create_node(&token, "EditNode").await;
+    let channel_id = server.create_channel(&token, node_id, "edit-ch").await;
+
+    // Join channel
+    server
+        .state
+        .join_channel(user_id, channel_id)
+        .await
+        .unwrap();
+
+    // Store a message
+    let original = b"original message content";
+    let msg_id = server
+        .state
+        .store_message(channel_id, user_id, original)
+        .await
+        .unwrap();
+
+    // Edit via REST
+    let new_content = b"edited message content";
+    let new_b64 = base64::engine::general_purpose::STANDARD.encode(new_content);
+    let resp = server
+        .client
+        .patch(&format!(
+            "{}/messages/{}?token={}",
+            server.base_url, msg_id, token
+        ))
+        .json(&json!({ "encrypted_data": new_b64 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["success"], true);
+
+    // Verify edited content by fetching messages
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/channels/{}/messages?token={}",
+            server.base_url, channel_id, token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    let edited_msg = messages
+        .iter()
+        .find(|m| m["id"] == msg_id.to_string())
+        .unwrap();
+    assert!(
+        edited_msg["edited_at"].is_number(),
+        "Should have edited_at timestamp"
+    );
+}
+
+// ── Test 10: Message Deletion ──
+
+#[tokio::test]
+async fn test_message_deletion() {
+    let server = FullTestServer::new().await;
+
+    let (user_id, token) = server.register_and_auth_full("del_user").await;
+    let node_id = server.create_node(&token, "DelNode").await;
+    let channel_id = server.create_channel(&token, node_id, "del-ch").await;
+
+    server
+        .state
+        .join_channel(user_id, channel_id)
+        .await
+        .unwrap();
+
+    // Store a message
+    let msg_id = server
+        .state
+        .store_message(channel_id, user_id, b"to be deleted")
+        .await
+        .unwrap();
+
+    // Connect WS to receive broadcast
+    let (_sink, mut stream) = server.connect_ws(&token).await;
+
+    // Delete via REST
+    let resp = server
+        .client
+        .delete(&format!(
+            "{}/messages/{}?token={}",
+            server.base_url, msg_id, token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Should receive message_delete broadcast
+    let msg = FullTestServer::wait_for_ws_type(&mut stream, "message_delete", 3000).await;
+    assert!(msg.is_some(), "Should receive message_delete broadcast");
+    let msg = msg.unwrap();
+    assert_eq!(msg["message_id"], msg_id.to_string());
+    assert_eq!(msg["channel_id"], channel_id.to_string());
+
+    // Verify message is gone from history
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/channels/{}/messages?token={}",
+            server.base_url, channel_id, token
+        ))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let messages = body["messages"].as_array().unwrap();
+    assert!(
+        !messages.iter().any(|m| m["id"] == msg_id.to_string()),
+        "Deleted message should not appear in history"
+    );
+}
+
+// ── Test 11: Rate Limiting ──
+
+#[tokio::test]
+async fn test_rate_limiting_registration() {
+    let server = FullTestServer::new().await;
+
+    // Registration is rate-limited to 3 per hour per IP
+    // Send 4 registration requests — 4th should get 429
+    for i in 0..3 {
+        let resp = server
+            .client
+            .post(&server.url("/register"))
+            .header("X-Forwarded-For", "10.0.0.99")
+            .json(&json!({ "public_key": format!("rate_pk_{}", i) }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "Request {} should succeed", i);
+    }
+
+    // 4th request should be rate limited
+    let resp = server
+        .client
+        .post(&server.url("/register"))
+        .header("X-Forwarded-For", "10.0.0.99")
+        .json(&json!({ "public_key": "rate_pk_overflow" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429, "Should be rate limited");
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], 429);
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("Rate limit"),
+        "Error should mention rate limit"
+    );
+
+    // Requests from different IP should still work
+    let resp = server
+        .client
+        .post(&server.url("/register"))
+        .header("X-Forwarded-For", "10.0.0.100")
+        .json(&json!({ "public_key": "rate_pk_different_ip" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "Different IP should not be rate limited"
+    );
+}
+
+// ── Test 12: Message Edit/Delete via WebSocket ──
+
+#[tokio::test]
+async fn test_message_edit_delete_via_ws() {
+    let server = FullTestServer::new().await;
+
+    let (user1_id, token1) = server.register_and_auth_full("ws_ed_u1").await;
+    let (user2_id, token2) = server.register_and_auth_full("ws_ed_u2").await;
+
+    let node_id = server.create_node(&token1, "WsEditNode").await;
+    server.join_node(&token2, node_id).await;
+    let channel_id = server.create_channel(&token1, node_id, "ws-edit-ch").await;
+
+    // Both join channel
+    server
+        .state
+        .join_channel(user1_id, channel_id)
+        .await
+        .unwrap();
+    server
+        .state
+        .join_channel(user2_id, channel_id)
+        .await
+        .unwrap();
+
+    // Connect both users
+    let (mut sink1, mut stream1) = server.connect_ws(&token1).await;
+    let (_sink2, mut stream2) = server.connect_ws(&token2).await;
+
+    // User1 sends a channel message via WS
+    let original_data = base64::engine::general_purpose::STANDARD.encode(b"original ws msg");
+    let send_msg = json!({
+        "message_type": {
+            "ChannelMessage": {
+                "channel_id": channel_id,
+                "encrypted_data": original_data
+            }
+        },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink1
+        .send(WsMessage::Text(send_msg.to_string()))
+        .await
+        .unwrap();
+
+    // Both should receive channel_message — extract message_id
+    let msg = FullTestServer::wait_for_ws_type(&mut stream1, "channel_message", 3000).await;
+    assert!(msg.is_some(), "User1 should receive channel_message");
+    let message_id = msg.unwrap()["message_id"].as_str().unwrap().to_string();
+
+    // Drain user2's channel_message
+    let _ = FullTestServer::wait_for_ws_type(&mut stream2, "channel_message", 3000).await;
+
+    // User1 edits the message via WS
+    let edited_data = base64::engine::general_purpose::STANDARD.encode(b"edited ws msg");
+    let edit_msg = json!({
+        "message_type": {
+            "EditMessage": {
+                "message_id": message_id,
+                "encrypted_data": edited_data
+            }
+        },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink1
+        .send(WsMessage::Text(edit_msg.to_string()))
+        .await
+        .unwrap();
+
+    // User2 should receive message_edit broadcast
+    let msg = FullTestServer::wait_for_ws_type(&mut stream2, "message_edit", 3000).await;
+    assert!(msg.is_some(), "User2 should receive message_edit");
+    let msg = msg.unwrap();
+    assert_eq!(msg["message_id"], message_id);
+    assert!(msg["edited_at"].is_number());
+
+    // User1 deletes the message via WS
+    let del_msg = json!({
+        "message_type": {
+            "DeleteMessage": {
+                "message_id": message_id
+            }
+        },
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink1
+        .send(WsMessage::Text(del_msg.to_string()))
+        .await
+        .unwrap();
+
+    // User2 should receive message_delete broadcast
+    let msg = FullTestServer::wait_for_ws_type(&mut stream2, "message_delete", 3000).await;
+    assert!(msg.is_some(), "User2 should receive message_delete");
+    assert_eq!(msg.unwrap()["message_id"], message_id);
+}
