@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Accord — Privacy-First Communication</title>
+  <link rel="stylesheet" href="style.css">
+  <meta name="description" content="Accord is a privacy-first, open-source communication platform with end-to-end encryption, voice channels, and zero-knowledge relays.">
+</head>
+<body>
+
+  <nav>
+    <div class="container nav-inner">
+      <a href="#" class="logo">◈ Accord</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#security">Security</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/nicholasgasior/accord" class="btn btn-sm">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="container">
+      <h1>Privacy-First Communication</h1>
+      <p class="tagline">Accord is an open-source platform for secure messaging, voice channels, and community — without surveillance, data harvesting, or trust in a central server.</p>
+      <div class="cta-group">
+        <a href="#download" class="btn btn-primary">Download</a>
+        <a href="https://github.com/nicholasgasior/accord" class="btn btn-outline">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" class="features">
+    <div class="container">
+      <h2>Built for Privacy</h2>
+      <div class="grid">
+        <div class="card">
+          <div class="card-icon">🔐</div>
+          <h3>End-to-End Encryption</h3>
+          <p>Messages are encrypted on your device. Only you and your recipients can read them.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">👁‍🗨</div>
+          <h3>Zero-Knowledge Relay</h3>
+          <p>Relays route encrypted blobs — they never see your content, metadata, or identity.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">🎙</div>
+          <h3>Voice Channels</h3>
+          <p>Real-time encrypted voice communication with low latency, no third-party services.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">🏠</div>
+          <h3>Self-Hostable</h3>
+          <p>Run your own relay. Your infrastructure, your rules, your data sovereignty.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">📜</div>
+          <h3>Open Source (AGPL)</h3>
+          <p>Every line of code is auditable. No hidden telemetry, no secret backends.</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">💻</div>
+          <h3>Cross-Platform</h3>
+          <p>Available on Windows, macOS, and Linux. Same experience everywhere.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how-it-works" class="how-it-works">
+    <div class="container">
+      <h2>How It Works</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Host a Relay</h3>
+          <p>Spin up a relay server — or connect to one someone else runs. It only routes encrypted data.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Create a Node</h3>
+          <p>Your node is your identity. Keys are generated and stored locally on your device.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Invite Friends</h3>
+          <p>Share an invite. Start talking. No phone number, no email, no sign-up form.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="security" class="security">
+    <div class="container">
+      <h2>The Privacy Model</h2>
+      <div class="security-content">
+        <div class="security-point">
+          <h3>The relay can't read your messages</h3>
+          <p>All content is end-to-end encrypted before it leaves your device. Relays see only opaque, encrypted blobs — never plaintext.</p>
+        </div>
+        <div class="security-point">
+          <h3>No personal information required</h3>
+          <p>No phone number. No email. No name. Your identity is a cryptographic key pair generated on your device.</p>
+        </div>
+        <div class="security-point">
+          <h3>Keys never leave your device</h3>
+          <p>Private keys are generated and stored locally. There is no "forgot password" because there is no password — and no server that holds your keys.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" class="download">
+    <div class="container">
+      <h2>Download Accord</h2>
+      <p class="download-sub">Available for desktop. Mobile coming soon.</p>
+      <div class="download-grid">
+        <a href="https://github.com/nicholasgasior/accord/releases/latest" class="download-card">
+          <span class="dl-icon">🪟</span>
+          <span class="dl-platform">Windows</span>
+          <span class="dl-detail">.msi installer</span>
+        </a>
+        <a href="https://github.com/nicholasgasior/accord/releases/latest" class="download-card">
+          <span class="dl-icon">🍎</span>
+          <span class="dl-platform">macOS</span>
+          <span class="dl-detail">.dmg universal</span>
+        </a>
+        <a href="https://github.com/nicholasgasior/accord/releases/latest" class="download-card">
+          <span class="dl-icon">🐧</span>
+          <span class="dl-platform">Linux</span>
+          <span class="dl-detail">.AppImage / .deb</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container footer-inner">
+      <p>Built for privacy, not profit.</p>
+      <p class="footer-links">
+        <a href="https://github.com/nicholasgasior/accord">GitHub</a> ·
+        Licensed under <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>
