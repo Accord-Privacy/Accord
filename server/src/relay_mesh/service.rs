@@ -195,6 +195,10 @@ mod tests {
             listen_port: 9443,
             known_peers: vec![],
             max_peers: 10,
+            mesh_secret: None,
+            mesh_tls_cert: None,
+            mesh_tls_key: None,
+            mesh_rate_limit: 30,
         };
         let env = build_announce(&id, &config);
         assert_eq!(env.payload_type, PayloadType::RelayAnnounce);
