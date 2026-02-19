@@ -422,7 +422,7 @@ mod tests {
     async fn test_coalescing() {
         let apns = MockApnsProvider::new();
         let fcm = MockFcmProvider::new();
-        let apns_sent = apns.sent.clone();
+        let _apns_sent = apns.sent.clone();
 
         let dispatcher = PushDispatcher::new(Box::new(apns), Box::new(fcm));
         // Override coalesce window to 0 for testing
@@ -473,7 +473,7 @@ mod tests {
         let user = db.create_user("key123", "").await.unwrap();
 
         // Register token
-        let token_id = db
+        let _token_id = db
             .register_device_token(
                 user.id,
                 PushPlatform::Ios,

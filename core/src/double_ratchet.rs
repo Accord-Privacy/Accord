@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn test_key_material_is_zeroized() {
         let sk = SecretBytes::new([0xAA; 32]);
-        let ptr = sk.as_bytes().as_ptr();
+        let _ptr = sk.as_bytes().as_ptr();
         drop(sk);
         // After drop, we can't easily verify memory is zeroed without unsafe,
         // but we verify the type implements ZeroizeOnDrop via compilation.

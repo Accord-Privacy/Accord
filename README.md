@@ -45,6 +45,14 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 - **Per-Node encrypted profiles** — different display name/avatar per Node
 - Relay stores only encrypted blobs and routing metadata
 
+### 📱 Native Mobile Apps
+- **iOS** (SwiftUI) and **Android** (Jetpack Compose) — fully native
+- Real **WebSocket + REST** networking
+- E2EE via **native FFI/JNI** to the Rust core (AES-256-GCM channels, Double Ratchet DMs)
+- **WebRTC voice** with relay-routed default
+- **Push notifications** — FCM, UnifiedPush, and APNs with encrypted payloads
+- **3 privacy levels** for notifications (full, sender-only, minimal)
+
 ### 🎙️ Voice Channels
 - **P2P mesh** for small groups (≤4), **relay fallback** for larger ones
 - SRTP encryption on all voice traffic
@@ -70,17 +78,22 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 ## Architecture
 
 ```
-┌─────────┐         ┌──────────────┐         ┌─────────┐
-│  Client  │◄──E2E──►│ Relay Server │◄──E2E──►│  Client  │
-│  (Tauri) │         │(Zero-Knowledge)│        │  (Tauri) │
-└─────────┘         └──────────────┘         └─────────┘
+┌─────────┐                                   ┌─────────┐
+│ Desktop  │◄──E2E──┐                   ┌─E2E──►│ Desktop  │
+│  (Tauri) │        │  ┌──────────────┐ │      │  (Tauri) │
+├──────────┤        ├──►│ Relay Server │◄┤      ├──────────┤
+│  iOS /   │        │  │(Zero-Knowledge)││      │  iOS /   │
+│ Android  │◄──E2E──┘  └──────────────┘ └─E2E──►│ Android  │
+└──────────┘                                    └──────────┘
 ```
 
 **Relay** — routes encrypted blobs. Has no decryption keys. Handles auth, presence, and channel metadata.
 
 **Node** — a community space (like a Discord server). All content is E2E encrypted; the relay sees only opaque ciphertext.
 
-**Client** — Tauri desktop app (Rust backend + React/TypeScript UI). All crypto keys stay local.
+**Desktop** — Tauri app (Rust backend + React/TypeScript UI). All crypto keys stay local.
+
+**Mobile** — Native iOS (SwiftUI) and Android (Jetpack Compose) apps with full E2EE via FFI/JNI to the Rust `core` crate.
 
 ### Workspace Crates
 
@@ -90,6 +103,8 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 | [`server/`](server/) | WebSocket relay server (zero-knowledge routing) |
 | [`desktop/`](desktop/) | Tauri desktop app (Rust + React/TypeScript) |
 | [`accord-cli/`](accord-cli/) | Command-line client |
+| [`mobile/ios/`](mobile/ios/) | iOS app (SwiftUI + Rust FFI) |
+| [`mobile/android/`](mobile/android/) | Android app (Jetpack Compose + Rust JNI) |
 | [`core-minimal/`](core-minimal/) | Lightweight core for resource-constrained targets |
 | [`standalone-demo/`](standalone-demo/) | Self-contained demo |
 
@@ -127,6 +142,11 @@ cargo build --release -p accord-desktop
 # Run tests
 cargo test
 ```
+
+### Mobile
+
+- **iOS** — Xcode 15+, open `mobile/ios/Accord.xcodeproj`. Requires Rust cross-compilation targets (`aarch64-apple-ios`).
+- **Android** — Android Studio + NDK. Open `mobile/android/`. Requires Rust targets (`aarch64-linux-android`, `armv7-linux-androideabi`).
 
 See **[QUICKSTART.md](QUICKSTART.md)** for a more detailed walkthrough.
 
