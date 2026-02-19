@@ -11,6 +11,7 @@ mod backup;
 mod bot_api;
 #[allow(dead_code)]
 mod db;
+mod federation;
 #[allow(dead_code)]
 mod files;
 mod handlers;
@@ -760,6 +761,10 @@ async fn main() -> Result<()> {
         .route("/users/:id/block", post(block_user_handler))
         .route("/users/:id/block", delete(unblock_user_handler))
         .route("/api/blocked-users", get(get_blocked_users_handler))
+        // Federation discovery endpoints
+        .route("/federation/relays", get(federation::list_relays_handler))
+        .route("/federation/register", post(federation::register_relay_handler))
+        .route("/federation/heartbeat", post(federation::heartbeat_handler))
         // Direct Message endpoints
         .route("/dm/:user_id", post(create_dm_channel_handler))
         .route("/dm", get(get_dm_channels_handler))
@@ -858,6 +863,9 @@ async fn main() -> Result<()> {
             }
         });
     }
+
+    // Federation relay health-check background task (every 5 min)
+    federation::spawn_federation_maintenance(state.clone());
 
     // Idle detection background task (check every 60 seconds)
     {

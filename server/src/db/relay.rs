@@ -350,6 +350,32 @@ impl RelayDatabase {
         .execute(&self.pool)
         .await?;
 
+        // Known relays (federation discovery)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS known_relays (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                relay_id TEXT NOT NULL UNIQUE,
+                hostname TEXT NOT NULL,
+                port INTEGER NOT NULL DEFAULT 9443,
+                public_key TEXT NOT NULL DEFAULT '',
+                last_seen INTEGER NOT NULL,
+                registered_at INTEGER NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                missed_heartbeats INTEGER NOT NULL DEFAULT 0
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create known_relays table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_known_relays_active ON known_relays (active)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -1366,6 +1392,131 @@ impl RelayDatabase {
             .execute(&self.pool)
             .await
             .context("Failed to delete auth token")?;
+        Ok(())
+    }
+
+    // ── Federation discovery (known_relays) ──
+
+    /// Insert or update a known relay.
+    pub async fn upsert_known_relay(
+        &self,
+        relay_id: &str,
+        hostname: &str,
+        port: u16,
+        public_key: &str,
+    ) -> Result<()> {
+        let now = super::now() as i64;
+        sqlx::query(
+            r#"INSERT INTO known_relays (relay_id, hostname, port, public_key, last_seen, registered_at, active, missed_heartbeats)
+               VALUES (?, ?, ?, ?, ?, ?, 1, 0)
+               ON CONFLICT(relay_id) DO UPDATE SET
+                 hostname = excluded.hostname,
+                 port = excluded.port,
+                 public_key = CASE WHEN excluded.public_key = '' THEN known_relays.public_key ELSE excluded.public_key END,
+                 last_seen = excluded.last_seen,
+                 active = 1,
+                 missed_heartbeats = 0"#,
+        )
+        .bind(relay_id)
+        .bind(hostname)
+        .bind(port as i64)
+        .bind(public_key)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .context("Failed to upsert known relay")?;
+        Ok(())
+    }
+
+    /// Update last_seen for a relay (heartbeat touch). Returns true if relay existed.
+    pub async fn touch_known_relay(&self, relay_id: &str) -> Result<bool> {
+        let now = super::now() as i64;
+        let result = sqlx::query(
+            "UPDATE known_relays SET last_seen = ?, missed_heartbeats = 0, active = 1 WHERE relay_id = ?",
+        )
+        .bind(now)
+        .bind(relay_id)
+        .execute(&self.pool)
+        .await
+        .context("Failed to touch known relay")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List active known relays (for GET /federation/relays).
+    pub async fn list_known_relays(&self) -> Result<Vec<crate::federation::RelayInfo>> {
+        let rows = sqlx::query(
+            "SELECT relay_id, hostname, port, public_key, last_seen, registered_at, active FROM known_relays WHERE active = 1 ORDER BY last_seen DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list known relays")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| crate::federation::RelayInfo {
+                relay_id: r.get::<String, _>("relay_id"),
+                hostname: r.get::<String, _>("hostname"),
+                port: r.get::<i64, _>("port") as u16,
+                public_key: r.get::<String, _>("public_key"),
+                last_seen: r.get::<i64, _>("last_seen"),
+                status: "active".into(),
+                registered_at: r.get::<i64, _>("registered_at"),
+            })
+            .collect())
+    }
+
+    /// List ALL known relays (including inactive) for health check.
+    pub async fn list_known_relays_all(&self) -> Result<Vec<crate::federation::RelayInfo>> {
+        let rows = sqlx::query(
+            "SELECT relay_id, hostname, port, public_key, last_seen, registered_at, active FROM known_relays ORDER BY last_seen DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list all known relays")?;
+
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let active: bool = r.get::<bool, _>("active");
+                crate::federation::RelayInfo {
+                    relay_id: r.get::<String, _>("relay_id"),
+                    hostname: r.get::<String, _>("hostname"),
+                    port: r.get::<i64, _>("port") as u16,
+                    public_key: r.get::<String, _>("public_key"),
+                    last_seen: r.get::<i64, _>("last_seen"),
+                    status: if active { "active" } else { "inactive" }.into(),
+                    registered_at: r.get::<i64, _>("registered_at"),
+                }
+            })
+            .collect())
+    }
+
+    /// Increment missed heartbeats for a relay. Returns new count.
+    pub async fn increment_missed_heartbeats(&self, relay_id: &str) -> Result<i64> {
+        sqlx::query(
+            "UPDATE known_relays SET missed_heartbeats = missed_heartbeats + 1 WHERE relay_id = ?",
+        )
+        .bind(relay_id)
+        .execute(&self.pool)
+        .await
+        .context("Failed to increment missed heartbeats")?;
+
+        let row = sqlx::query("SELECT missed_heartbeats FROM known_relays WHERE relay_id = ?")
+            .bind(relay_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.get::<i64, _>("missed_heartbeats")).unwrap_or(0))
+    }
+
+    /// Set relay active/inactive status.
+    pub async fn set_relay_active(&self, relay_id: &str, active: bool) -> Result<()> {
+        sqlx::query("UPDATE known_relays SET active = ? WHERE relay_id = ?")
+            .bind(active)
+            .bind(relay_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to set relay active status")?;
         Ok(())
     }
 }

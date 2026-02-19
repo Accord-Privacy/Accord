@@ -60,6 +60,11 @@ impl MeshHandle {
         self.identity.relay_id()
     }
 
+    /// Access the mesh configuration.
+    pub fn config(&self) -> &MeshConfig {
+        &self.config
+    }
+
     /// Number of connected peers.
     pub async fn peer_count(&self) -> usize {
         self.transport.connection_count().await
