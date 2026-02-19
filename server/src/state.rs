@@ -1327,6 +1327,21 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    /// Remove user from all voice channels they're in, returning the channel IDs they left
+    pub async fn leave_all_voice_channels(&self, user_id: Uuid) -> Vec<Uuid> {
+        let mut voice_channels = self.voice_channels.write().await;
+        let mut left_channels = Vec::new();
+
+        voice_channels.retain(|channel_id, participants| {
+            if participants.remove(&user_id) {
+                left_channels.push(*channel_id);
+            }
+            !participants.is_empty()
+        });
+
+        left_channels
+    }
+
     pub async fn send_to_voice_channel(
         &self,
         channel_id: Uuid,

@@ -3538,6 +3538,23 @@ async fn websocket_handler_inner(
 
     state.remove_connection(user_id).await;
 
+    // Auto-leave all voice channels on disconnect
+    let left_channels = state.leave_all_voice_channels(user_id).await;
+    for channel_id in left_channels {
+        let broadcast = serde_json::json!({
+            "type": "voice_peer_left",
+            "channel_id": channel_id,
+            "user_id": user_id
+        });
+        if let Err(err) = state
+            .send_to_voice_channel(channel_id, user_id, broadcast.to_string())
+            .await
+        {
+            error!("Failed to broadcast voice leave on disconnect: {}", err);
+        }
+        info!("User {} auto-left voice channel {} on disconnect", user_id, channel_id);
+    }
+
     // Set user offline when they disconnect
     if let Err(err) = state.set_user_offline(user_id).await {
         error!("Failed to set user offline: {}", err);
@@ -4359,6 +4376,22 @@ async fn handle_ws_message(
 
         // ── Voice operations ──
         WsMessageType::JoinVoiceChannel { channel_id } => {
+            // Verify CONNECT permission before joining
+            {
+                let channel = state
+                    .get_channel(channel_id)
+                    .await?
+                    .ok_or_else(|| "Channel not found".to_string())?;
+                let perms = state
+                    .db
+                    .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)
+                    .await
+                    .map_err(|e| format!("Permission compute error: {}", e))?;
+                if perms & crate::models::permission_bits::CONNECT == 0 {
+                    return Err("Missing CONNECT permission for this voice channel".to_string());
+                }
+            }
+
             // Get existing participants before joining (so new user knows who's there)
             let existing = state.get_voice_channel_participants(channel_id).await;
 
@@ -4519,6 +4552,52 @@ async fn handle_ws_message(
             state
                 .send_to_user(target_user_id, relay.to_string())
                 .await?;
+        }
+
+        // ── WebRTC Voice Signaling ──
+        WsMessageType::VoiceOffer {
+            channel_id,
+            target_user_id,
+            sdp,
+        } => {
+            let relay = serde_json::json!({
+                "type": "voice_offer",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "sdp": sdp,
+                "timestamp": ws_message.timestamp
+            });
+            state.send_to_user(target_user_id, relay.to_string()).await?;
+        }
+
+        WsMessageType::VoiceAnswer {
+            channel_id,
+            target_user_id,
+            sdp,
+        } => {
+            let relay = serde_json::json!({
+                "type": "voice_answer",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "sdp": sdp,
+                "timestamp": ws_message.timestamp
+            });
+            state.send_to_user(target_user_id, relay.to_string()).await?;
+        }
+
+        WsMessageType::VoiceIceCandidate {
+            channel_id,
+            target_user_id,
+            candidate,
+        } => {
+            let relay = serde_json::json!({
+                "type": "voice_ice_candidate",
+                "from": sender_user_id,
+                "channel_id": channel_id,
+                "candidate": candidate,
+                "timestamp": ws_message.timestamp
+            });
+            state.send_to_user(target_user_id, relay.to_string()).await?;
         } // WsMessageType::UpdateChannel is handled above
     }
 

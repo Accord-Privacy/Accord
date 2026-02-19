@@ -547,6 +547,26 @@ pub enum WsMessageType {
         signal_data: String,
     },
 
+    // ── WebRTC Voice Signaling ──
+    /// WebRTC SDP offer — relayed to target peer
+    VoiceOffer {
+        channel_id: Uuid,
+        target_user_id: Uuid,
+        sdp: String,
+    },
+    /// WebRTC SDP answer — relayed to target peer
+    VoiceAnswer {
+        channel_id: Uuid,
+        target_user_id: Uuid,
+        sdp: String,
+    },
+    /// WebRTC ICE candidate — relayed to target peer
+    VoiceIceCandidate {
+        channel_id: Uuid,
+        target_user_id: Uuid,
+        candidate: String,
+    },
+
     /// Heartbeat
     Ping,
     /// Response to ping
