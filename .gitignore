@@ -157,3 +157,4 @@ security-*.txt
 user-config.toml
 local.toml
 accord.db*
+server/data/
