@@ -237,6 +237,7 @@ fn save_identity_index(hashes: &[String]) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|_app| {
             // Initialize Accord core (tracing, etc.)
             let _ = init();

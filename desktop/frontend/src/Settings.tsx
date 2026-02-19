@@ -3,6 +3,7 @@ import { notificationManager, NotificationPreferences } from './notifications';
 import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
+import { UpdateSection } from './UpdateChecker';
 import { themes, applyTheme, getSavedTheme } from './themes';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
@@ -1539,6 +1540,9 @@ export const Settings: React.FC<SettingsProps> = ({
                       Official releases are signed and verified against a known hash registry.
                     </div>
                   </div>
+
+                  {/* Update Checker */}
+                  <UpdateSection />
 
                   <div className="about-description">
                     <p>

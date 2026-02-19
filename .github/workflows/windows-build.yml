@@ -75,6 +75,20 @@ jobs:
           path: target/release/accord-desktop.exe
           if-no-files-found: warn
 
+      - name: Upload NSIS zip (for updater)
+        uses: actions/upload-artifact@v4
+        with:
+          name: accord-windows-nsis-zip
+          path: target/release/bundle/nsis/*.nsis.zip
+          if-no-files-found: warn
+
+      - name: Upload NSIS signature (for updater)
+        uses: actions/upload-artifact@v4
+        with:
+          name: accord-windows-nsis-sig
+          path: target/release/bundle/nsis/*.nsis.zip.sig
+          if-no-files-found: warn
+
   # Create GitHub Release when a tag is pushed
   release:
     name: Create Release
@@ -90,6 +104,38 @@ jobs:
         with:
           path: artifacts
 
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Read update signature
+        id: sig
+        run: |
+          SIG_FILE=$(find artifacts -name '*.nsis.zip.sig' | head -1)
+          if [ -f "$SIG_FILE" ]; then
+            echo "signature=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
+          else
+            echo "signature=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate latest.json for Tauri updater
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SIGNATURE="${{ steps.sig.outputs.signature }}"
+          cat > artifacts/latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "Accord ${GITHUB_REF_NAME} release",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "url": "https://github.com/Accord-Privacy/Accord/releases/download/${GITHUB_REF_NAME}/Accord_${VERSION}_x64-setup.nsis.zip",
+                "signature": "${SIGNATURE}"
+              }
+            }
+          }
+          EOF
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -100,7 +146,7 @@ jobs:
             ## Accord Beta Release ${{ github.ref_name }}
 
             ### Download & Install
-            1. Download `Accord_0.1.0_x64-setup.exe` (NSIS installer, recommended)
+            1. Download `Accord_${{ steps.version.outputs.version }}_x64-setup.exe` (NSIS installer, recommended)
             2. Run the installer — Windows may show a SmartScreen warning, click "More info" → "Run anyway"
             3. Launch Accord from the Start Menu
 
@@ -113,4 +159,6 @@ jobs:
           files: |
             artifacts/**/*.exe
             artifacts/**/*.msi
+            artifacts/**/*.nsis.zip
+            artifacts/latest.json
           fail_on_unmatched_files: false

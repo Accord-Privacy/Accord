@@ -40,6 +40,7 @@ import { E2EEManager, type PreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts, SHORTCUTS } from "./keyboard";
 import { LinkPreview, extractFirstUrl } from "./LinkPreview";
 import { initTheme } from "./themes";
+import { UpdateBanner } from "./UpdateChecker";
 
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
@@ -3260,6 +3261,8 @@ function App() {
 
   return (
     <div className="app">
+      {/* Update notification banner */}
+      <UpdateBanner />
       {/* Server list */}
       <div className="server-list" key={forceUpdate}>
         {servers.map((s, i) => {
