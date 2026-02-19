@@ -183,6 +183,8 @@ pub struct AppState {
     pub connections: RwLock<HashMap<Uuid, broadcast::Sender<String>>>,
     /// Voice channels state (channel_id -> set of user_ids)
     pub voice_channels: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
+    /// Voice mode per channel: true = relay (default), false = p2p
+    pub voice_relay_mode: RwLock<HashMap<Uuid, bool>>,
     /// Server start time
     pub start_time: u64,
     /// Node creation policy
@@ -235,6 +237,7 @@ impl AppState {
             auth_tokens: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             voice_channels: RwLock::new(HashMap::new()),
+            voice_relay_mode: RwLock::new(HashMap::new()),
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
             rate_limiter: RateLimiter::new(),
@@ -1340,6 +1343,18 @@ impl AppState {
         });
 
         left_channels
+    }
+
+    /// Get voice mode for a channel (true = relay, false = p2p). Default is relay.
+    pub async fn get_voice_relay_mode(&self, channel_id: Uuid) -> bool {
+        let modes = self.voice_relay_mode.read().await;
+        modes.get(&channel_id).copied().unwrap_or(true) // default: relay
+    }
+
+    /// Set voice mode for a channel
+    pub async fn set_voice_relay_mode(&self, channel_id: Uuid, relay: bool) {
+        let mut modes = self.voice_relay_mode.write().await;
+        modes.insert(channel_id, relay);
     }
 
     pub async fn send_to_voice_channel(

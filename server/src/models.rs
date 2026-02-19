@@ -537,6 +537,15 @@ pub enum WsMessageType {
     /// Retrieve pending prekey messages
     GetPrekeyMessages,
 
+    /// Set voice mode for a channel (relay or p2p)
+    SetVoiceMode {
+        channel_id: Uuid,
+        /// "relay" (default, server-routed) or "p2p" (direct WebRTC)
+        mode: String,
+    },
+    /// Request current voice mode for a channel
+    GetVoiceMode { channel_id: Uuid },
+
     // ── P2P Voice Signaling ──
     /// P2P voice signaling: relay ICE candidates and offer/answer between peers.
     /// The server forwards this opaquely — it cannot interpret the content.

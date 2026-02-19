@@ -4400,12 +4400,14 @@ async fn handle_ws_message(
 
             state.join_voice_channel(sender_user_id, channel_id).await?;
 
-            // Send the joining user the current participant list
+            // Send the joining user the current participant list + voice mode
+            let is_relay = state.get_voice_relay_mode(channel_id).await;
             let resp = serde_json::json!({
                 "type": "voice_channel_joined",
                 "channel_id": channel_id,
                 "user_id": sender_user_id,
-                "participants": existing
+                "participants": existing,
+                "voice_mode": if is_relay { "relay" } else { "p2p" }
             });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
 
@@ -4495,6 +4497,39 @@ async fn handle_ws_message(
                 .await?;
         }
 
+        WsMessageType::SetVoiceMode { channel_id, mode } => {
+            let relay = mode == "relay";
+            state.set_voice_relay_mode(channel_id, relay).await;
+
+            // Broadcast mode change to all participants
+            let broadcast = serde_json::json!({
+                "type": "voice_mode_changed",
+                "channel_id": channel_id,
+                "voice_mode": mode,
+                "changed_by": sender_user_id,
+            });
+            // Send to all participants including sender
+            let participants = state.get_voice_channel_participants(channel_id).await;
+            for pid in participants {
+                let _ = state.send_to_user(pid, broadcast.to_string()).await;
+            }
+
+            info!(
+                "Voice mode set to '{}' for channel {} by {}",
+                mode, channel_id, sender_user_id
+            );
+        }
+
+        WsMessageType::GetVoiceMode { channel_id } => {
+            let is_relay = state.get_voice_relay_mode(channel_id).await;
+            let resp = serde_json::json!({
+                "type": "voice_mode",
+                "channel_id": channel_id,
+                "voice_mode": if is_relay { "relay" } else { "p2p" }
+            });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
         WsMessageType::VoiceKeyExchange {
             channel_id,
             wrapped_key,
@@ -4544,6 +4579,11 @@ async fn handle_ws_message(
             target_user_id,
             signal_data,
         } => {
+            // Block P2P signaling in relay mode (prevents IP exposure)
+            if state.get_voice_relay_mode(channel_id).await {
+                info!("P2P signaling blocked in relay mode for channel {}", channel_id);
+                return Ok(());
+            }
             // Relay P2P signaling message to the target peer — server cannot interpret content
             let relay = serde_json::json!({
                 "type": "p2p_signal",
@@ -4563,6 +4603,11 @@ async fn handle_ws_message(
             target_user_id,
             sdp,
         } => {
+            // Block WebRTC signaling in relay mode
+            if state.get_voice_relay_mode(channel_id).await {
+                info!("VoiceOffer blocked in relay mode for channel {}", channel_id);
+                return Ok(());
+            }
             let relay = serde_json::json!({
                 "type": "voice_offer",
                 "from": sender_user_id,
@@ -4580,6 +4625,10 @@ async fn handle_ws_message(
             target_user_id,
             sdp,
         } => {
+            if state.get_voice_relay_mode(channel_id).await {
+                info!("VoiceAnswer blocked in relay mode for channel {}", channel_id);
+                return Ok(());
+            }
             let relay = serde_json::json!({
                 "type": "voice_answer",
                 "from": sender_user_id,
@@ -4597,6 +4646,10 @@ async fn handle_ws_message(
             target_user_id,
             candidate,
         } => {
+            if state.get_voice_relay_mode(channel_id).await {
+                info!("VoiceIceCandidate blocked in relay mode for channel {}", channel_id);
+                return Ok(());
+            }
             let relay = serde_json::json!({
                 "type": "voice_ice_candidate",
                 "from": sender_user_id,

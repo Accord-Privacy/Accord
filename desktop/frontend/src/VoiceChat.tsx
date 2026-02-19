@@ -1,13 +1,14 @@
 /**
- * VoiceChat — Real WebRTC voice chat component.
+ * VoiceChat — Voice chat component supporting relay and P2P modes.
  *
- * Uses RTCPeerConnection for audio (SRTP/DTLS encrypted by default).
- * Signaling is relayed through the server's WebSocket via P2PSignal messages.
+ * Relay mode (default): Audio routed through server, preventing IP exposure.
+ * P2P mode (opt-in): Direct WebRTC connections for lower latency.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AccordWebSocket } from './ws';
 import { VoiceConnection } from './voice/webrtc';
+import { RelayVoiceConnection } from './voice/relay';
 import { AudioManager } from './voice/audio';
 
 interface VoiceChatProps {
@@ -25,6 +26,8 @@ interface PeerInfo {
   isConnected: boolean;
 }
 
+type VoiceMode = 'relay' | 'p2p';
+
 export const VoiceChat: React.FC<VoiceChatProps> = ({
   ws,
   currentUserId,
@@ -38,8 +41,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [peers, setPeers] = useState<Map<string, PeerInfo>>(new Map());
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('relay');
 
-  const voiceConnRef = useRef<VoiceConnection | null>(null);
+  const voiceConnRef = useRef<VoiceConnection | RelayVoiceConnection | null>(null);
   const audioManagerRef = useRef<AudioManager | null>(null);
 
   // Connect to voice on mount
@@ -49,7 +53,24 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     const audioManager = new AudioManager();
     audioManagerRef.current = audioManager;
 
-    const vc = new VoiceConnection(ws, channelId, currentUserId, audioManager);
+    // Listen for server-sent voice mode
+    const onModeChanged = (data: any) => {
+      if (data.channel_id !== channelId) return;
+      setVoiceMode(data.voice_mode === 'p2p' ? 'p2p' : 'relay');
+    };
+    ws.on('voice_mode_changed' as any, onModeChanged);
+    ws.on('voice_mode' as any, onModeChanged);
+
+    // Create appropriate connection based on mode
+    const createConnection = (mode: VoiceMode) => {
+      if (mode === 'p2p') {
+        return new VoiceConnection(ws, channelId, currentUserId, audioManager);
+      } else {
+        return new RelayVoiceConnection(ws, channelId, currentUserId, audioManager);
+      }
+    };
+
+    const vc = createConnection(voiceMode);
     voiceConnRef.current = vc;
 
     // Speaking callback
@@ -86,7 +107,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       });
     };
 
-    // Also listen for voice_speaking_state from WS (for users we have peer connections with)
+    // Also listen for voice_speaking_state from WS
     const onSpeakingState = (data: any) => {
       if (data.channel_id !== channelId || data.user_id === currentUserId) return;
       setPeers(prev => {
@@ -100,7 +121,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     };
     ws.on('voice_speaking_state' as any, onSpeakingState);
 
-    // Track peers as they join (before WebRTC connects)
+    // Track peers as they join
     const onPeerJoined = (data: any) => {
       if (data.channel_id !== channelId || data.user_id === currentUserId) return;
       setPeers(prev => {
@@ -113,9 +134,13 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     };
     ws.on('voice_peer_joined' as any, onPeerJoined);
 
-    // On voice_channel_joined, populate initial peers
+    // On voice_channel_joined, populate initial peers and mode
     const onChannelJoined = (data: any) => {
       if (data.channel_id !== channelId) return;
+      // Server sends voice_mode in join response
+      if (data.voice_mode) {
+        setVoiceMode(data.voice_mode === 'p2p' ? 'p2p' : 'relay');
+      }
       const participants: string[] = data.participants || [];
       setPeers(prev => {
         const next = new Map(prev);
@@ -143,8 +168,10 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       ws.off('voice_speaking_state' as any, onSpeakingState);
       ws.off('voice_peer_joined' as any, onPeerJoined);
       ws.off('voice_channel_joined' as any, onChannelJoined);
+      ws.off('voice_mode_changed' as any, onModeChanged);
+      ws.off('voice_mode' as any, onModeChanged);
     };
-  }, [ws, channelId, currentUserId]);
+  }, [ws, channelId, currentUserId, voiceMode]);
 
   // Sync mute state
   useEffect(() => {
@@ -163,7 +190,6 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   }, [outputVolume]);
 
   const toggleMute = useCallback(() => {
-    // Resume audio context on user gesture
     audioManagerRef.current?.resume();
     setIsMuted(prev => !prev);
   }, []);
@@ -177,6 +203,17 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     voiceConnRef.current?.disconnect();
     onLeave();
   }, [onLeave]);
+
+  const toggleVoiceMode = useCallback(() => {
+    if (!ws) return;
+    const newMode: VoiceMode = voiceMode === 'relay' ? 'p2p' : 'relay';
+    ws.send(JSON.stringify({
+      type: 'SetVoiceMode',
+      channel_id: channelId,
+      mode: newMode,
+    }));
+    // Mode will update via voice_mode_changed event, which triggers reconnect via useEffect
+  }, [ws, channelId, voiceMode]);
 
   const peerList = Array.from(peers.values());
 
@@ -207,6 +244,25 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           </span>
           <span style={{ fontSize: '13px', color: '#b9bbbe' }}>
             {connectionError || channelName}
+          </span>
+          {/* Voice mode indicator */}
+          <span
+            onClick={toggleVoiceMode}
+            title={voiceMode === 'relay'
+              ? 'Relay mode — IP protected. Click to switch to P2P (lower latency, exposes IP).'
+              : 'P2P mode — direct connection. Click to switch to Relay (IP protected).'}
+            style={{
+              fontSize: '12px',
+              padding: '2px 8px',
+              borderRadius: '10px',
+              cursor: 'pointer',
+              userSelect: 'none',
+              background: voiceMode === 'relay' ? 'rgba(67, 181, 129, 0.2)' : 'rgba(250, 166, 26, 0.2)',
+              color: voiceMode === 'relay' ? '#43b581' : '#faa61a',
+              border: `1px solid ${voiceMode === 'relay' ? '#43b581' : '#faa61a'}`,
+            }}
+          >
+            {voiceMode === 'relay' ? '🛡️ Relay' : '⚡ P2P'}
           </span>
         </div>
         <button
