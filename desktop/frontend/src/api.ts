@@ -137,12 +137,13 @@ export class AccordApi {
   }
 
   // User registration — keypair-only, no username
-  async register(publicKey: string, password: string): Promise<RegisterResponse> {
+  async register(publicKey: string, password: string, displayName?: string): Promise<RegisterResponse> {
     return this.request<RegisterResponse>('/register', {
       method: 'POST',
       body: JSON.stringify({
         public_key: publicKey,
         password: password,
+        ...(displayName ? { display_name: displayName } : {}),
       }),
     });
   }

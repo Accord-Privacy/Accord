@@ -570,6 +570,9 @@ pub struct RegisterRequest {
     pub public_key: String,
     #[serde(default)]
     pub password: String,
+    /// Optional display name to set during registration
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 /// Registration response
@@ -776,6 +779,9 @@ pub struct MessageMetadata {
     /// Sender's encrypted display name from their Node profile (base64-encoded, if set)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encrypted_display_name: Option<String>,
+    /// Sender's plaintext display name from their global user profile
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub encrypted_payload: String, // Base64 encoded encrypted content
     pub created_at: u64,
     pub edited_at: Option<u64>,
@@ -797,6 +803,9 @@ pub struct RepliedMessage {
     /// Sender's encrypted display name from their Node profile (base64-encoded, if set)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encrypted_display_name: Option<String>,
+    /// Sender's plaintext display name from their global user profile
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub encrypted_payload: String, // Base64 encoded encrypted content (snippet)
     pub created_at: u64,
 }

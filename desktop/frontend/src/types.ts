@@ -231,6 +231,7 @@ export interface Message {
   files?: FileMetadata[];
   sender_public_key_hash?: string;
   sender_id?: string;
+  display_name?: string;
 }
 
 export interface RepliedMessage {

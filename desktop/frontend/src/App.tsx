@@ -689,11 +689,11 @@ function App() {
         }
       }
 
-      // Look up sender display name from member list
+      // Use display name from server payload, fall back to member list, then fingerprint
       const senderMember = members.find(m => m.user_id === data.from);
-      const senderName = senderMember 
-        ? (senderMember.user?.display_name || senderMember.profile?.display_name || fingerprint(senderMember.public_key_hash || data.from || ''))
-        : fingerprint(data.from || '');
+      const senderName = data.sender_display_name
+        || (senderMember && (senderMember.user?.display_name || senderMember.profile?.display_name))
+        || fingerprint(senderMember?.public_key_hash || data.from || '');
 
       const newMessage: Message = {
         id: data.message_id || Math.random().toString(),
@@ -1165,7 +1165,7 @@ function App() {
       // Format messages for display
       const formattedMessages = response.messages.map(msg => ({
         ...msg,
-        author: msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
+        author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
       
@@ -1224,7 +1224,7 @@ function App() {
       // Format messages for display
       const formattedMessages = response.messages.map(msg => ({
         ...msg,
-        author: msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
+        author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
         time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       }));
       
@@ -2893,11 +2893,17 @@ function App() {
           localStorage.setItem('accord_mesh_enabled', 'true');
         }
 
-        // Register on the relay
-        await api.register(result.publicKey, result.password);
+        // Register on the relay (with display name if provided)
+        await api.register(result.publicKey, result.password, result.displayName);
         const response = await api.login(result.publicKey, result.password);
         storeToken(response.token);
         localStorage.setItem('accord_user_id', response.user_id);
+
+        // If display name was provided during setup, also set it via profile update
+        const chosenDisplayName = result.displayName || fingerprint(result.publicKeyHash);
+        if (result.displayName) {
+          try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
+        }
 
         // Save key with token-based wrapping too
         await saveKeyToStorage(result.keyPair, result.publicKeyHash);
@@ -2906,7 +2912,7 @@ function App() {
           ...prev,
           isAuthenticated: true,
           token: response.token,
-          user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: fingerprint(result.publicKeyHash) }
+          user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
         }));
         setIsAuthenticated(true);
 
@@ -2927,8 +2933,10 @@ function App() {
         setShowWelcomeScreen(false);
         setServerAvailable(true);
 
-        // Prompt for display name
-        setShowDisplayNamePrompt(true);
+        // Prompt for display name only if not already set during setup
+        if (!result.displayName) {
+          setShowDisplayNamePrompt(true);
+        }
 
         setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
       } catch (e: any) {

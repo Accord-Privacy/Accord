@@ -19,6 +19,7 @@ export interface SetupResult {
   relayUrl: string;
   inviteCode?: string;
   meshEnabled: boolean;
+  displayName?: string;
 }
 
 interface SetupWizardProps {
@@ -44,6 +45,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
   const [identityReady, setIdentityReady] = useState(false);
   const [identityError, setIdentityError] = useState("");
   const [generating, setGenerating] = useState(false);
+
+  // Display name state
+  const [displayName, setDisplayName] = useState("");
 
   // Step 3 state
   const [relayAddress, setRelayAddress] = useState("");
@@ -156,6 +160,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         relayUrl: verifiedUrl,
         inviteCode,
         meshEnabled,
+        displayName: displayName.trim() || undefined,
       });
     } catch (e: any) {
       setConnectError(e.message || "Failed to connect to relay server");
@@ -360,7 +365,19 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
             <>
               <button onClick={() => setStep(2)} className="auth-back-btn">← Back</button>
               <h2 className="auth-title">Connect to a Relay</h2>
-              <p className="auth-subtitle">Enter a relay address to start chatting</p>
+              <p className="auth-subtitle">Choose a display name and enter a relay address</p>
+
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label">Display Name</label>
+                <input
+                  type="text"
+                  placeholder="How others will see you"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className="form-input"
+                  maxLength={32}
+                />
+              </div>
 
               {!useInviteLink ? (
                 <>

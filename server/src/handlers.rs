@@ -153,11 +153,21 @@ pub async fn register_handler(
         ));
     }
 
+    let display_name = request.display_name.clone();
     match state
         .register_user(request.public_key, request.password)
         .await
     {
         Ok(user_id) => {
+            // Set display name in user profile if provided
+            if let Some(ref name) = display_name {
+                let trimmed = name.trim();
+                if !trimmed.is_empty() {
+                    let _ = state
+                        .update_user_profile(user_id, Some(trimmed), None, None, None)
+                        .await;
+                }
+            }
             info!("Registered new user: {}", user_id);
             Ok(Json(RegisterResponse {
                 user_id,
@@ -3302,6 +3312,22 @@ async fn handle_ws_message(
             // without complex database operations that might hang in tests
             let message_id = uuid::Uuid::new_v4();
 
+            // Look up sender's plaintext display name
+            let dm_sender_display_name = state
+                .db
+                .get_user_profile(sender_user_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|p| {
+                    let name = p.display_name;
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(name)
+                    }
+                });
+
             // Create a simple relay message
             let relay = serde_json::json!({
                 "type": "channel_message",
@@ -3310,7 +3336,8 @@ async fn handle_ws_message(
                 "encrypted_data": encrypted_data,
                 "message_id": message_id,
                 "timestamp": ws_message.timestamp,
-                "is_dm": true
+                "is_dm": true,
+                "sender_display_name": dm_sender_display_name
             });
 
             // Send to both users directly
@@ -3394,11 +3421,28 @@ async fn handle_ws_message(
                     None
                 };
 
+            // Look up sender's plaintext display name from user profile
+            let sender_display_name = state
+                .db
+                .get_user_profile(sender_user_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|p| {
+                    let name = p.display_name;
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(name)
+                    }
+                });
+
             let relay = serde_json::json!({
                 "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
                 "encrypted_data": encrypted_data, "message_id": message_id,
                 "timestamp": ws_message.timestamp, "reply_to": reply_to,
-                "encrypted_display_name": sender_display_name_b64
+                "encrypted_display_name": sender_display_name_b64,
+                "sender_display_name": sender_display_name
             });
             state.send_to_channel(channel_id, relay.to_string()).await?;
         }
