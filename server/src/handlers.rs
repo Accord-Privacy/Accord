@@ -4581,7 +4581,10 @@ async fn handle_ws_message(
         } => {
             // Block P2P signaling in relay mode (prevents IP exposure)
             if state.get_voice_relay_mode(channel_id).await {
-                info!("P2P signaling blocked in relay mode for channel {}", channel_id);
+                info!(
+                    "P2P signaling blocked in relay mode for channel {}",
+                    channel_id
+                );
                 return Ok(());
             }
             // Relay P2P signaling message to the target peer — server cannot interpret content
@@ -4605,7 +4608,10 @@ async fn handle_ws_message(
         } => {
             // Block WebRTC signaling in relay mode
             if state.get_voice_relay_mode(channel_id).await {
-                info!("VoiceOffer blocked in relay mode for channel {}", channel_id);
+                info!(
+                    "VoiceOffer blocked in relay mode for channel {}",
+                    channel_id
+                );
                 return Ok(());
             }
             let relay = serde_json::json!({
@@ -4626,7 +4632,10 @@ async fn handle_ws_message(
             sdp,
         } => {
             if state.get_voice_relay_mode(channel_id).await {
-                info!("VoiceAnswer blocked in relay mode for channel {}", channel_id);
+                info!(
+                    "VoiceAnswer blocked in relay mode for channel {}",
+                    channel_id
+                );
                 return Ok(());
             }
             let relay = serde_json::json!({
@@ -4647,7 +4656,10 @@ async fn handle_ws_message(
             candidate,
         } => {
             if state.get_voice_relay_mode(channel_id).await {
-                info!("VoiceIceCandidate blocked in relay mode for channel {}", channel_id);
+                info!(
+                    "VoiceIceCandidate blocked in relay mode for channel {}",
+                    channel_id
+                );
                 return Ok(());
             }
             let relay = serde_json::json!({
