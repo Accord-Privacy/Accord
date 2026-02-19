@@ -38,6 +38,19 @@ struct SettingsView: View {
                 Section("Privacy & Security") {
                     Label("End-to-end encrypted", systemImage: "lock.shield.fill")
                         .foregroundStyle(.green)
+
+                    // Push notification privacy
+                    NavigationLink {
+                        PushPrivacySettingsView()
+                    } label: {
+                        HStack {
+                            Label("Push Notifications", systemImage: "bell.badge")
+                            Spacer()
+                            Text(PushService.shared.privacyLevel.displayName)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     // TODO: Session verification UI
                     NavigationLink("Active Sessions") {
                         // TODO: List active E2EE sessions
@@ -66,9 +79,27 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // Notifications
+                Section("Notifications") {
+                    Button("Enable Push Notifications") {
+                        Task {
+                            await PushService.shared.requestPermissionAndRegister()
+                        }
+                    }
+                    .disabled(PushService.shared.isRegistered)
+
+                    if PushService.shared.isRegistered {
+                        Label("Push notifications active", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+
                 // About
                 Section {
                     Button("Log Out", role: .destructive) {
+                        Task {
+                            await PushService.shared.deregister()
+                        }
                         appState.logout()
                     }
                 } footer: {
@@ -80,5 +111,46 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
         }
+    }
+}
+
+// MARK: - Push Privacy Settings
+
+struct PushPrivacySettingsView: View {
+    @State private var selectedLevel = PushService.shared.privacyLevel
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(PushPrivacyLevel.allCases, id: \.self) { level in
+                    Button {
+                        selectedLevel = level
+                        Task {
+                            await PushService.shared.updatePrivacyLevel(level)
+                        }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(level.displayName)
+                                    .foregroundStyle(.primary)
+                                Text(level.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selectedLevel == level {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Notification Privacy")
+            } footer: {
+                Text("Controls how much information is shown in push notifications. \"Minimal\" is the most private — notifications only say \"New message\" with no sender or content details.")
+            }
+        }
+        .navigationTitle("Push Notifications")
     }
 }
