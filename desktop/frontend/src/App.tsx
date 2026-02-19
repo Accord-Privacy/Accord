@@ -1035,14 +1035,14 @@ function App() {
       const userNodes = await api.getUserNodes(appState.token);
       setNodes(Array.isArray(userNodes) ? userNodes : []);
       
-      // Auto-select first node if none selected
-      if (userNodes.length > 0 && !selectedNodeId) {
-        setSelectedNodeId(userNodes[0].id);
+      // Auto-select first node if none selected (use functional update to avoid dep on selectedNodeId)
+      if (userNodes.length > 0) {
+        setSelectedNodeId(prev => prev ?? userNodes[0].id);
       }
     } catch (error) {
       console.error('Failed to load nodes:', error);
     }
-  }, [appState.token, serverAvailable, selectedNodeId]);
+  }, [appState.token, serverAvailable]);
 
   // Keep ref updated for use in WS handlers (avoids stale closures)
   loadNodesRef.current = loadNodes;
@@ -1056,15 +1056,15 @@ function App() {
       setChannels(Array.isArray(nodeChannels) ? nodeChannels : []);
       
       // Auto-select first channel if none selected
-      if (nodeChannels.length > 0 && !selectedChannelId) {
-        setSelectedChannelId(nodeChannels[0].id);
+      if (nodeChannels.length > 0) {
+        setSelectedChannelId(prev => prev ?? nodeChannels[0].id);
       }
     } catch (error) {
       console.error('Failed to load channels:', error);
       handleApiError(error);
       setChannels([]);
     }
-  }, [appState.token, serverAvailable, selectedChannelId]);
+  }, [appState.token, serverAvailable]);
 
   // Load slow mode setting when channel changes
   useEffect(() => {
@@ -1090,9 +1090,15 @@ function App() {
     return () => clearInterval(timer);
   }, [slowModeCooldown]);
 
-  // Load members for selected node
+  // Load members for selected node (debounced — skip if loaded recently)
+  const lastMembersLoadRef = useRef<{ nodeId: string; time: number }>({ nodeId: '', time: 0 });
   const loadMembers = useCallback(async (nodeId: string) => {
     if (!appState.token || !serverAvailable) return;
+    
+    // Debounce: skip if same node was loaded within 2 seconds
+    const now = Date.now();
+    if (lastMembersLoadRef.current.nodeId === nodeId && now - lastMembersLoadRef.current.time < 2000) return;
+    lastMembersLoadRef.current = { nodeId, time: now };
     
     try {
       const rawMembers = await api.getNodeMembers(nodeId, appState.token);
@@ -2562,8 +2568,12 @@ function App() {
     }
   };
 
-  // Check for existing session on mount
+  // Check for existing session on mount (runs once when server becomes available)
+  const sessionCheckedRef = useRef(false);
   useEffect(() => {
+    if (sessionCheckedRef.current || !serverAvailable) return;
+    sessionCheckedRef.current = true;
+
     const checkExistingSession = async () => {
       const token = await getToken();
       const userId = localStorage.getItem('accord_user_id');
@@ -2611,7 +2621,8 @@ function App() {
     };
 
     checkExistingSession();
-  }, [serverAvailable, setupWebSocketHandlers, encryptionEnabled, loadNodes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverAvailable]);
 
   // Load channels and members when node is selected
   useEffect(() => {

@@ -157,8 +157,19 @@ export class AccordWebSocket {
   connect(): void {
     if (this.isDestroyed) return;
     
-    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
-      return; // Already connecting
+    if (this.ws) {
+      if (this.ws.readyState === WebSocket.CONNECTING) {
+        return; // Already connecting
+      }
+      if (this.ws.readyState === WebSocket.OPEN) {
+        return; // Already connected
+      }
+      // Clean up dead socket before creating a new one
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      this.ws.onopen = null;
+      this.ws = null;
     }
 
     // Connect WITHOUT token in URL — authenticate post-upgrade via Authenticate message.
