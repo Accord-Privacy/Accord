@@ -76,7 +76,7 @@ impl MeshService {
         let identity = Arc::new(node.identity);
         let peers = Arc::new(RwLock::new(node.peers));
 
-        let mut transport = MeshTransport::new();
+        let mut transport = MeshTransport::from_config(&config)?;
         let inbound_rx = transport
             .take_inbound_rx()
             .expect("inbound_rx already taken");

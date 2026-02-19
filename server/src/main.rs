@@ -242,6 +242,18 @@ struct Args {
     /// Mesh data directory for relay identity and peer state
     #[arg(long, default_value = "mesh_data")]
     mesh_data_dir: String,
+
+    /// Shared secret for relay mesh authentication (all relays must share this)
+    #[arg(long)]
+    mesh_secret: Option<String>,
+
+    /// Path to TLS certificate PEM file for mesh relay-to-relay connections
+    #[arg(long)]
+    mesh_tls_cert: Option<String>,
+
+    /// Path to TLS private key PEM file for mesh relay-to-relay connections
+    #[arg(long)]
+    mesh_tls_key: Option<String>,
 }
 
 /// TOML config file schema. All fields optional — CLI flags override.
@@ -262,6 +274,9 @@ struct FileConfig {
     mesh_port: Option<u16>,
     mesh_peers: Option<String>,
     mesh_data_dir: Option<String>,
+    mesh_secret: Option<String>,
+    mesh_tls_cert: Option<String>,
+    mesh_tls_key: Option<String>,
 }
 
 impl FileConfig {
@@ -310,6 +325,9 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
     apply_opt!(tls_cert);
     apply_opt!(tls_key);
     apply_opt!(frontend);
+    apply_opt!(mesh_secret);
+    apply_opt!(mesh_tls_cert);
+    apply_opt!(mesh_tls_key);
 
     if let Some(true) = cfg.mesh_enabled {
         if !args.mesh_enabled {
@@ -446,6 +464,10 @@ async fn main() -> Result<()> {
             listen_port: args.mesh_port,
             known_peers: mesh_peers,
             max_peers: 50,
+            mesh_secret: args.mesh_secret.clone(),
+            mesh_tls_cert: args.mesh_tls_cert.clone(),
+            mesh_tls_key: args.mesh_tls_key.clone(),
+            mesh_rate_limit: 30,
         };
 
         let data_dir = std::path::Path::new(&args.mesh_data_dir);
