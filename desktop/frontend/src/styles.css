@@ -1557,6 +1557,7 @@ input, textarea, select, button {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  position: relative;
   flex-wrap: wrap;
 }
 

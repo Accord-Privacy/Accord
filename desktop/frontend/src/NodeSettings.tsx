@@ -29,7 +29,7 @@ export function NodeSettings({
   onNodeUpdated,
   onLeaveNode 
 }: NodeSettingsProps) {
-  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit' | 'moderation'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [error, setError] = useState('');
@@ -68,6 +68,14 @@ export function NodeSettings({
   const [editRoleMentionable, setEditRoleMentionable] = useState(false);
   const [editRolePermissions, setEditRolePermissions] = useState(0);
   const [savingRole, setSavingRole] = useState(false);
+
+  // Moderation state
+  const [autoModWords, setAutoModWords] = useState<Array<{ word: string; action: string; created_at: number }>>([]);
+  const [loadingAutoMod, setLoadingAutoMod] = useState(false);
+  const [newWord, setNewWord] = useState('');
+  const [newWordAction, setNewWordAction] = useState<'block' | 'warn'>('block');
+  const [slowModeChannels, setSlowModeChannels] = useState<Record<string, number>>({});
+  const [nodeChannels, setNodeChannels] = useState<Array<{ id: string; name: string }>>([]);
 
   const isAdmin = userRole === 'admin';
   const canManageInvites = userRole === 'admin' || userRole === 'moderator';
@@ -315,6 +323,68 @@ export function NodeSettings({
     }
   };
 
+  // Moderation functions
+  const loadAutoModWords = useCallback(async () => {
+    if (!isAdmin) return;
+    setLoadingAutoMod(true);
+    try {
+      const result = await api.getAutoModWords(node.id, token);
+      setAutoModWords(result.words || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load auto-mod words');
+    } finally {
+      setLoadingAutoMod(false);
+    }
+  }, [node.id, token, isAdmin]);
+
+  const handleAddWord = useCallback(async () => {
+    if (!newWord.trim()) return;
+    try {
+      await api.addAutoModWord(node.id, newWord.trim(), newWordAction, token);
+      setNewWord('');
+      setSuccess('Word added to filter!');
+      await loadAutoModWords();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add word');
+    }
+  }, [node.id, token, newWord, newWordAction, loadAutoModWords]);
+
+  const handleRemoveWord = useCallback(async (word: string) => {
+    try {
+      await api.removeAutoModWord(node.id, word, token);
+      setSuccess('Word removed from filter!');
+      await loadAutoModWords();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove word');
+    }
+  }, [node.id, token, loadAutoModWords]);
+
+  const loadNodeChannelsForMod = useCallback(async () => {
+    try {
+      const channels = await api.getNodeChannels(node.id, token);
+      setNodeChannels(channels.map((c: any) => ({ id: c.id, name: c.name })));
+      // Load slow mode for each channel
+      const modes: Record<string, number> = {};
+      for (const ch of channels) {
+        try {
+          const result = await api.getSlowMode(ch.id, token);
+          modes[ch.id] = result.slow_mode_seconds || 0;
+        } catch { /* ignore */ }
+      }
+      setSlowModeChannels(modes);
+    } catch { /* ignore */ }
+  }, [node.id, token]);
+
+  const handleSetSlowMode = useCallback(async (channelId: string, seconds: number) => {
+    try {
+      await api.setSlowMode(channelId, seconds, token);
+      setSlowModeChannels(prev => ({ ...prev, [channelId]: seconds }));
+      setSuccess(`Slow mode ${seconds > 0 ? `set to ${seconds}s` : 'disabled'}!`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to set slow mode');
+    }
+  }, [token]);
+
   const handleUpdateNode = useCallback(async () => {
     if (!isAdmin) return;
     
@@ -385,6 +455,14 @@ export function NodeSettings({
   const isInviteMaxedOut = (invite: Invite): boolean => {
     return !!(invite.max_uses && invite.uses >= invite.max_uses);
   };
+
+  // Load moderation data when opening the moderation tab
+  useEffect(() => {
+    if (isOpen && activeTab === 'moderation' && isAdmin) {
+      loadAutoModWords();
+      loadNodeChannelsForMod();
+    }
+  }, [isOpen, activeTab, isAdmin, loadAutoModWords, loadNodeChannelsForMod]);
 
   // Load roles when opening the roles tab
   useEffect(() => {
@@ -522,6 +600,22 @@ export function NodeSettings({
               }}
             >
               Invites
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('moderation')}
+              style={{
+                background: activeTab === 'moderation' ? '#40444b' : 'transparent',
+                border: 'none',
+                color: activeTab === 'moderation' ? '#ffffff' : '#b9bbbe',
+                padding: '12px 20px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Moderation
             </button>
           )}
           {canViewAuditLog && (
@@ -1088,6 +1182,105 @@ export function NodeSettings({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Moderation Tab */}
+          {activeTab === 'moderation' && isAdmin && (
+            <div>
+              {/* Slow Mode Section */}
+              <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>⏱️ Slow Mode</h4>
+              <p style={{ fontSize: '13px', color: '#b9bbbe', marginBottom: '16px' }}>
+                Limit how often users can send messages in a channel.
+              </p>
+              {nodeChannels.length === 0 ? (
+                <div style={{ color: '#72767d', fontSize: '14px', marginBottom: '24px' }}>Loading channels...</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '32px' }}>
+                  {nodeChannels.map(ch => (
+                    <div key={ch.id} style={{ background: '#40444b', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ flex: 1, fontSize: '14px', color: '#dcddde' }}>#{ch.name}</span>
+                      <select
+                        value={slowModeChannels[ch.id] || 0}
+                        onChange={(e) => handleSetSlowMode(ch.id, parseInt(e.target.value))}
+                        style={{ padding: '6px 10px', borderRadius: '4px', border: 'none', background: '#36393f', color: '#fff', fontSize: '13px', cursor: 'pointer' }}
+                      >
+                        <option value="0">Off</option>
+                        <option value="5">5 seconds</option>
+                        <option value="10">10 seconds</option>
+                        <option value="30">30 seconds</option>
+                        <option value="60">60 seconds</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Auto-Mod Word Filter Section */}
+              <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>🛡️ Word Filter</h4>
+              <p style={{ fontSize: '13px', color: '#b9bbbe', marginBottom: '16px' }}>
+                Block or warn when messages contain specific words.
+              </p>
+
+              {/* Add word form */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <input
+                  type="text"
+                  placeholder="Enter word to filter..."
+                  value={newWord}
+                  onChange={(e) => setNewWord(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddWord(); }}
+                  maxLength={100}
+                  style={{ flex: 1, padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#fff', fontSize: '14px' }}
+                />
+                <select
+                  value={newWordAction}
+                  onChange={(e) => setNewWordAction(e.target.value as 'block' | 'warn')}
+                  style={{ padding: '8px 10px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#fff', fontSize: '13px', cursor: 'pointer' }}
+                >
+                  <option value="block">Block</option>
+                  <option value="warn">Warn</option>
+                </select>
+                <button
+                  onClick={handleAddWord}
+                  disabled={!newWord.trim()}
+                  style={{ background: '#43b581', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: newWord.trim() ? 'pointer' : 'not-allowed', fontSize: '13px', opacity: newWord.trim() ? 1 : 0.5 }}
+                >
+                  Add
+                </button>
+              </div>
+
+              {/* Word list */}
+              {loadingAutoMod ? (
+                <div style={{ color: '#b9bbbe', textAlign: 'center', padding: '20px' }}>Loading...</div>
+              ) : autoModWords.length === 0 ? (
+                <div style={{ color: '#72767d', textAlign: 'center', padding: '20px' }}>No filtered words yet</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {autoModWords.map(w => (
+                    <div key={w.word} style={{ background: '#40444b', padding: '8px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ flex: 1, fontSize: '14px', color: '#dcddde', fontFamily: 'monospace' }}>{w.word}</span>
+                      <span style={{
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                        borderRadius: '3px',
+                        background: w.action === 'block' ? '#f04747' : '#faa61a',
+                        color: '#fff',
+                        fontWeight: 600
+                      }}>
+                        {w.action.toUpperCase()}
+                      </span>
+                      <button
+                        onClick={() => handleRemoveWord(w.word)}
+                        style={{ background: 'none', border: 'none', color: '#f04747', cursor: 'pointer', fontSize: '16px', padding: '0 4px' }}
+                        title="Remove word"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

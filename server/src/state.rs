@@ -203,6 +203,8 @@ pub struct AppState {
     pub link_preview_cache: RwLock<HashMap<String, (serde_json::Value, u64)>>,
     /// Last activity timestamp per user (for idle detection)
     pub last_activity: RwLock<HashMap<Uuid, u64>>,
+    /// Slow mode cooldowns: (channel_id, user_id) -> last_message_timestamp
+    pub slow_mode_cooldowns: RwLock<HashMap<(Uuid, Uuid), u64>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -243,6 +245,7 @@ impl AppState {
             mesh_handle: RwLock::new(None),
             link_preview_cache: RwLock::new(HashMap::new()),
             last_activity: RwLock::new(HashMap::new()),
+            slow_mode_cooldowns: RwLock::new(HashMap::new()),
         })
     }
 

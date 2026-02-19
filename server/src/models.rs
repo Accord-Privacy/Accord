@@ -1202,6 +1202,28 @@ pub struct AuditLogRaw {
     pub created_at: u64,
 }
 
+/// Auto-mod word filter entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoModWord {
+    pub node_id: Uuid,
+    pub word: String,
+    pub action: String, // "block" or "warn"
+    pub created_at: u64,
+}
+
+/// Request to add an auto-mod word
+#[derive(Debug, Deserialize)]
+pub struct AddAutoModWordRequest {
+    pub word: String,
+    pub action: String, // "block" or "warn"
+}
+
+/// Request to set slow mode on a channel
+#[derive(Debug, Deserialize)]
+pub struct SetSlowModeRequest {
+    pub seconds: u32,
+}
+
 /// Request to set a per-Node user profile
 #[derive(Debug, Deserialize)]
 pub struct SetNodeUserProfileRequest {

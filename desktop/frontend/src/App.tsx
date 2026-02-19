@@ -178,6 +178,9 @@ function App() {
   });
 
   const [message, setMessage] = useState("");
+  const [slowModeCooldown, setSlowModeCooldown] = useState(0); // seconds remaining
+  const [slowModeSeconds, setSlowModeSeconds] = useState(0); // channel's slow mode setting
+  const [messageError, setMessageError] = useState<string>(''); // auto-mod / slow mode errors
   const [activeChannel, setActiveChannel] = useState("# general");
   const [activeServer, setActiveServer] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(false);
@@ -622,8 +625,15 @@ function App() {
       setConnectionInfo(info);
     });
 
-    socket.on('error', (err: Error) => {
-      setLastConnectionError(err.message || 'Connection error');
+    socket.on('error', (err: any) => {
+      // Server-sent errors (auto-mod, slow mode) have { type: "error", error: "..." }
+      if (err && typeof err === 'object' && err.error && typeof err.error === 'string') {
+        // Show as a user-facing message error toast
+        setMessageError(err.error);
+        setTimeout(() => setMessageError(''), 5000);
+      } else {
+        setLastConnectionError(err?.message || 'Connection error');
+      }
     });
 
     socket.on('auth_error', async () => {
@@ -1051,6 +1061,30 @@ function App() {
       setChannels([]);
     }
   }, [appState.token, serverAvailable, selectedChannelId]);
+
+  // Load slow mode setting when channel changes
+  useEffect(() => {
+    const channelId = selectedChannelId || appState.activeChannel;
+    if (!channelId || !appState.token) {
+      setSlowModeSeconds(0);
+      return;
+    }
+    api.getSlowMode(channelId, appState.token).then(result => {
+      setSlowModeSeconds(result.slow_mode_seconds || 0);
+    }).catch(() => setSlowModeSeconds(0));
+  }, [selectedChannelId, appState.activeChannel, appState.token]);
+
+  // Slow mode countdown timer
+  useEffect(() => {
+    if (slowModeCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setSlowModeCooldown(prev => {
+        if (prev <= 1) { clearInterval(timer); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [slowModeCooldown]);
 
   // Load members for selected node
   const loadMembers = useCallback(async (nodeId: string) => {
@@ -2278,6 +2312,11 @@ function App() {
 
     setMessage("");
     setReplyingTo(null);
+
+    // Start slow mode cooldown if active
+    if (slowModeSeconds > 0) {
+      setSlowModeCooldown(slowModeSeconds);
+    }
   };
 
   // Message editing functionality removed
@@ -4081,12 +4120,53 @@ function App() {
               onFilesStaged={handleFilesStaged}
             />
           )}
+          {messageError && (
+            <div style={{
+              position: 'absolute',
+              top: '-36px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: '#f04747',
+              color: '#fff',
+              padding: '6px 14px',
+              borderRadius: '4px',
+              fontSize: '13px',
+              fontWeight: 500,
+              zIndex: 11,
+              maxWidth: '90%',
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}>
+              {messageError}
+            </div>
+          )}
+          {slowModeCooldown > 0 && !messageError && (
+            <div style={{
+              position: 'absolute',
+              top: '-28px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: '#faa61a',
+              color: '#fff',
+              padding: '4px 12px',
+              borderRadius: '4px',
+              fontSize: '12px',
+              fontWeight: 600,
+              zIndex: 10,
+              whiteSpace: 'nowrap',
+            }}>
+              ⏱️ Slow mode: wait {slowModeCooldown}s
+            </div>
+          )}
           <textarea
             ref={messageInputRef}
             className="message-input"
-            placeholder={`Message ${activeChannel}`}
+            placeholder={slowModeCooldown > 0 ? `Slow mode — wait ${slowModeCooldown}s` : `Message ${activeChannel}`}
             value={message}
             rows={1}
+            disabled={slowModeCooldown > 0}
             onChange={(e) => {
               setMessage(e.target.value);
               e.target.style.height = 'auto';

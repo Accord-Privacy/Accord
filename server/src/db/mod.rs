@@ -952,6 +952,35 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // ── Slow mode column on channels ──
+        sqlx::query("ALTER TABLE channels ADD COLUMN slow_mode_seconds INTEGER NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // ── Auto-mod word filter table ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS auto_mod_words (
+                node_id TEXT NOT NULL,
+                word TEXT NOT NULL,
+                action TEXT NOT NULL DEFAULT 'block',
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (node_id, word),
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create auto_mod_words table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_auto_mod_words_node ON auto_mod_words (node_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -4860,6 +4889,102 @@ impl Database {
                 ))
             })
             .collect()
+    }
+
+    // ── Slow mode operations ──
+
+    /// Set slow mode seconds for a channel (0 = off)
+    pub async fn set_channel_slow_mode(&self, channel_id: Uuid, seconds: u32) -> Result<()> {
+        sqlx::query("UPDATE channels SET slow_mode_seconds = ? WHERE id = ?")
+            .bind(seconds as i64)
+            .bind(channel_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to set slow mode")?;
+        Ok(())
+    }
+
+    /// Get slow mode seconds for a channel
+    pub async fn get_channel_slow_mode(&self, channel_id: Uuid) -> Result<u32> {
+        let row = sqlx::query("SELECT slow_mode_seconds FROM channels WHERE id = ?")
+            .bind(channel_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to get slow mode")?;
+        Ok(row
+            .map(|r| r.get::<i64, _>("slow_mode_seconds") as u32)
+            .unwrap_or(0))
+    }
+
+    // ── Auto-mod word filter operations ──
+
+    /// Add a filtered word for a node
+    pub async fn add_auto_mod_word(&self, node_id: Uuid, word: &str, action: &str) -> Result<bool> {
+        let created_at = now();
+        let result = sqlx::query(
+            "INSERT OR REPLACE INTO auto_mod_words (node_id, word, action, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(node_id.to_string())
+        .bind(word.to_lowercase())
+        .bind(action)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to add auto-mod word")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Remove a filtered word from a node
+    pub async fn remove_auto_mod_word(&self, node_id: Uuid, word: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM auto_mod_words WHERE node_id = ? AND word = ?")
+            .bind(node_id.to_string())
+            .bind(word.to_lowercase())
+            .execute(&self.pool)
+            .await
+            .context("Failed to remove auto-mod word")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List all filtered words for a node
+    pub async fn get_auto_mod_words(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::AutoModWord>> {
+        let rows = sqlx::query(
+            "SELECT node_id, word, action, created_at FROM auto_mod_words WHERE node_id = ? ORDER BY word",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query auto-mod words")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::AutoModWord> {
+                Ok(crate::models::AutoModWord {
+                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                    word: row.get("word"),
+                    action: row.get("action"),
+                    created_at: row.get::<i64, _>("created_at") as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Check message text against auto-mod words for a node.
+    /// Returns the matching word and its action, or None if clean.
+    pub async fn check_auto_mod(
+        &self,
+        node_id: Uuid,
+        text: &str,
+    ) -> Result<Option<(String, String)>> {
+        let words = self.get_auto_mod_words(node_id).await?;
+        let text_lower = text.to_lowercase();
+        for w in words {
+            if text_lower.contains(&w.word) {
+                return Ok(Some((w.word, w.action)));
+            }
+        }
+        Ok(None)
     }
 }
 

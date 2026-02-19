@@ -731,6 +731,41 @@ export class AccordApi {
     return this.request(`/keys/bundle/${targetUserId}?token=${encodeURIComponent(token)}`);
   }
 
+  // ── Moderation endpoints ──
+
+  // Set slow mode for a channel
+  async setSlowMode(channelId: string, seconds: number, token: string): Promise<any> {
+    return this.request(`/channels/${channelId}/slow-mode?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ seconds }),
+    });
+  }
+
+  // Get slow mode for a channel
+  async getSlowMode(channelId: string, token: string): Promise<{ slow_mode_seconds: number }> {
+    return this.request(`/channels/${channelId}/slow-mode?token=${encodeURIComponent(token)}`);
+  }
+
+  // Add auto-mod word
+  async addAutoModWord(nodeId: string, word: string, action: string, token: string): Promise<any> {
+    return this.request(`/nodes/${nodeId}/auto-mod/words?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify({ word, action }),
+    });
+  }
+
+  // Remove auto-mod word
+  async removeAutoModWord(nodeId: string, word: string, token: string): Promise<any> {
+    return this.request(`/nodes/${nodeId}/auto-mod/words/${encodeURIComponent(word)}?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // List auto-mod words
+  async getAutoModWords(nodeId: string, token: string): Promise<{ words: Array<{ word: string; action: string; created_at: number }> }> {
+    return this.request(`/nodes/${nodeId}/auto-mod/words?token=${encodeURIComponent(token)}`);
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

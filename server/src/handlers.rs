@@ -2951,6 +2951,285 @@ pub async fn get_prekey_messages_handler(
     Ok(Json(serde_json::json!({ "messages": response })))
 }
 
+// ── Moderation endpoints ──
+
+/// Set slow mode for a channel (PUT /channels/:id/slow-mode)
+pub async fn set_slow_mode_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::SetSlowModeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Get channel to find node
+    let channel = state
+        .get_channel(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    // Check admin/mod permission
+    let user_role = state
+        .get_user_role_in_node(user_id, channel.node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 500,
+                }),
+            )
+        })?;
+    if !has_permission(user_role, Permission::ManageChannels) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions to manage slow mode".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Cap at 3600 seconds (1 hour)
+    let seconds = request.seconds.min(3600);
+    state
+        .db
+        .set_channel_slow_mode(channel_id, seconds)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to set slow mode: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    info!(
+        "Slow mode set to {}s for channel {} by {}",
+        seconds, channel_id, user_id
+    );
+    Ok(Json(
+        serde_json::json!({ "status": "updated", "channel_id": channel_id, "slow_mode_seconds": seconds }),
+    ))
+}
+
+/// Get slow mode for a channel (GET /channels/:id/slow-mode)
+pub async fn get_slow_mode_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &params).await?;
+
+    let seconds = state
+        .db
+        .get_channel_slow_mode(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get slow mode: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(
+        serde_json::json!({ "channel_id": channel_id, "slow_mode_seconds": seconds }),
+    ))
+}
+
+/// Add auto-mod word (POST /nodes/:id/auto-mod/words)
+pub async fn add_auto_mod_word_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::AddAutoModWordRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let user_role = state
+        .get_user_role_in_node(user_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 500,
+                }),
+            )
+        })?;
+    if !has_permission(user_role, Permission::ManageNode) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    if !matches!(request.action.as_str(), "block" | "warn") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Action must be 'block' or 'warn'".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let word = request.word.trim().to_lowercase();
+    if word.is_empty() || word.len() > 100 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Word must be 1-100 characters".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    state
+        .db
+        .add_auto_mod_word(node_id, &word, &request.action)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to add word: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    info!(
+        "Auto-mod word '{}' added to node {} by {}",
+        word, node_id, user_id
+    );
+    Ok(Json(
+        serde_json::json!({ "status": "added", "word": word, "action": request.action }),
+    ))
+}
+
+/// Remove auto-mod word (DELETE /nodes/:id/auto-mod/words/:word)
+pub async fn remove_auto_mod_word_handler(
+    State(state): State<SharedState>,
+    Path((node_id, word)): Path<(Uuid, String)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let user_role = state
+        .get_user_role_in_node(user_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 500,
+                }),
+            )
+        })?;
+    if !has_permission(user_role, Permission::ManageNode) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let removed = state
+        .db
+        .remove_auto_mod_word(node_id, &word)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to remove word: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if removed {
+        Ok(Json(
+            serde_json::json!({ "status": "removed", "word": word }),
+        ))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Word not found".into(),
+                code: 404,
+            }),
+        ))
+    }
+}
+
+/// List auto-mod words (GET /nodes/:id/auto-mod/words)
+pub async fn list_auto_mod_words_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    // Must be a member
+    if !state
+        .is_node_member(user_id, node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must be a member of the node".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    let words = state.db.get_auto_mod_words(node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to list words: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "words": words })))
+}
+
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -3449,6 +3728,57 @@ async fn handle_ws_message(
                         );
                     }
                 }
+
+                // ── Slow mode enforcement ──
+                let slow_mode = state
+                    .db
+                    .get_channel_slow_mode(channel_id)
+                    .await
+                    .unwrap_or(0);
+                if slow_mode > 0 {
+                    let current_time = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let cooldowns = state.slow_mode_cooldowns.read().await;
+                    if let Some(&last_sent) = cooldowns.get(&(channel_id, sender_user_id)) {
+                        let elapsed = current_time.saturating_sub(last_sent);
+                        if elapsed < slow_mode as u64 {
+                            let remaining = slow_mode as u64 - elapsed;
+                            return Err(format!(
+                                "Slow mode active. Wait {} more seconds before sending another message.",
+                                remaining
+                            ));
+                        }
+                    }
+                    drop(cooldowns);
+                }
+
+                // ── Auto-mod word filter ──
+                // We check the encrypted_data base64 payload — for plaintext messages
+                // the content is visible. For truly E2E encrypted content the server
+                // can't check, but the client still sends plaintext in many setups.
+                if let Ok(Some((matched_word, action))) = state
+                    .db
+                    .check_auto_mod(channel.node_id, &encrypted_data)
+                    .await
+                {
+                    if action == "block" {
+                        return Err(format!(
+                            "Message blocked by auto-mod: contains filtered word '{}'",
+                            matched_word
+                        ));
+                    }
+                    // "warn" action: let through but we could flag it (for now, just log)
+                    if action == "warn" {
+                        tracing::warn!(
+                            "Auto-mod warning: message from {} contains '{}' in channel {}",
+                            sender_user_id,
+                            matched_word,
+                            channel_id
+                        );
+                    }
+                }
             }
 
             // Decode and store the message
@@ -3461,6 +3791,19 @@ async fn handle_ws_message(
                 .store_message(channel_id, sender_user_id, &encrypted_payload, reply_to)
                 .await
                 .map_err(|e| format!("Failed to store message: {}", e))?;
+
+            // Record slow mode cooldown timestamp
+            {
+                let current_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                state
+                    .slow_mode_cooldowns
+                    .write()
+                    .await
+                    .insert((channel_id, sender_user_id), current_time);
+            }
 
             // Look up sender's encrypted display name for this node
             let sender_display_name_b64 =
