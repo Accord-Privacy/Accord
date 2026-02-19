@@ -155,4 +155,5 @@ security-*.txt
 
 # Exclude user-specific configuration
 user-config.toml
-local.tomlaccord.db*
+local.toml
+accord.db*

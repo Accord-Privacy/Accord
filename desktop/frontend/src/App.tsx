@@ -38,6 +38,7 @@ import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildH
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts, SHORTCUTS } from "./keyboard";
+import { ProfileCard } from "./ProfileCard";
 import { LinkPreview, extractFirstUrl } from "./LinkPreview";
 import { initTheme } from "./themes";
 import { UpdateBanner } from "./UpdateChecker";
@@ -352,6 +353,9 @@ function App() {
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; userId: string; publicKeyHash: string; displayName: string; bio?: string; user?: User } | null>(null);
+
+  // Profile card popup state
+  const [profileCardTarget, setProfileCardTarget] = useState<{ userId: string; x: number; y: number; user?: User; profile?: import('./types').UserProfile; roles?: Role[]; joinedAt?: number; roleColor?: string } | null>(null);
 
   // User blocking state
   const [blockedUsers, setBlockedUsers] = useState<Set<string>>(new Set());
@@ -3825,7 +3829,14 @@ function App() {
               <div className="message-body">
                 {!isGrouped && (
                 <div className="message-header">
-                  <span className="message-author" style={{ color: (() => { const am = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author); return am ? getMemberRoleColor(am.user_id) : undefined; })() || undefined }} onContextMenu={(e) => {
+                  <span className="message-author" style={{ cursor: 'pointer', color: (() => { const am = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author); return am ? getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
+                  onClick={(e) => {
+                    const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
+                    if (authorMember) {
+                      setProfileCardTarget({ userId: authorMember.user_id, x: e.clientX, y: e.clientY, user: authorMember.user, profile: authorMember.profile, roles: memberRolesMap[authorMember.user_id], joinedAt: authorMember.joined_at, roleColor: getMemberRoleColor(authorMember.user_id) });
+                    }
+                  }}
+                  onContextMenu={(e) => {
                     const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
                     if (authorMember) {
                       handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
@@ -4230,6 +4241,7 @@ function App() {
             const presence = getPresenceStatus(member.user_id);
             return (
               <div key={member.user?.id || member.user_id} className={`member ${presence === 'offline' ? 'member-offline' : ''}`}
+                onClick={(e) => { setProfileCardTarget({ userId: member.user_id, x: e.clientX, y: e.clientY, user: member.user, profile: member.profile, roles: memberRolesMap[member.user_id], joinedAt: member.joined_at, roleColor: getMemberRoleColor(member.user_id) }); }}
                 onContextMenu={(e) => handleContextMenu(e, member.user_id, member.public_key_hash, displayName(member.user), member.profile?.bio, member.user)}
               >
                 <div className="member-avatar-wrapper">
@@ -4947,6 +4959,27 @@ function App() {
         </div>
       )}
 
+      {/* Profile Card Popup */}
+      {profileCardTarget && (
+        <ProfileCard
+          userId={profileCardTarget.userId}
+          anchorX={profileCardTarget.x}
+          anchorY={profileCardTarget.y}
+          currentUserId={localStorage.getItem('accord_user_id') || ''}
+          token={appState.token || ''}
+          nodeId={selectedNodeId || undefined}
+          profile={profileCardTarget.profile}
+          user={profileCardTarget.user}
+          roles={profileCardTarget.roles}
+          joinedAt={profileCardTarget.joinedAt}
+          roleColor={profileCardTarget.roleColor}
+          onClose={() => setProfileCardTarget(null)}
+          onSendDm={(user) => { openDmWithUser(user); setProfileCardTarget(null); }}
+          onBlock={(uid, name) => { setShowBlockConfirm({ userId: uid, displayName: name }); setProfileCardTarget(null); }}
+          onEditProfile={() => { setProfileCardTarget(null); setShowSettings(true); }}
+        />
+      )}
+
       {/* Context Menu */}
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
@@ -4957,9 +4990,17 @@ function App() {
           </div>
           <div className="context-menu-separator"></div>
           <div className="context-menu-item" onClick={() => {
-            // View profile - show alert with details for now
-            const info = `Display Name: ${contextMenu.displayName}\nFingerprint: ${fingerprint(contextMenu.publicKeyHash)}\nFull Hash: ${contextMenu.publicKeyHash}${contextMenu.bio ? `\nBio: ${contextMenu.bio}` : ''}`;
-            alert(info);
+            const member = members.find(m => m.user_id === contextMenu.userId);
+            setProfileCardTarget({
+              userId: contextMenu.userId,
+              x: contextMenu.x,
+              y: contextMenu.y,
+              user: contextMenu.user,
+              profile: member?.profile,
+              roles: memberRolesMap[contextMenu.userId],
+              joinedAt: member?.joined_at,
+              roleColor: getMemberRoleColor(contextMenu.userId),
+            });
             setContextMenu(null);
           }}>👤 View Profile</div>
           {contextMenu.user && contextMenu.userId !== localStorage.getItem('accord_user_id') && (
