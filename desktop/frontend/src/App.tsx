@@ -349,6 +349,10 @@ function App() {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; userId: string; publicKeyHash: string; displayName: string; bio?: string; user?: User } | null>(null);
 
+  // User blocking state
+  const [blockedUsers, setBlockedUsers] = useState<Set<string>>(new Set());
+  const [showBlockConfirm, setShowBlockConfirm] = useState<{ userId: string; displayName: string } | null>(null);
+
   // Typing indicators state
   const [typingUsers, setTypingUsers] = useState<Map<string, TypingUser[]>>(new Map());
   const [typingTimeouts, setTypingTimeouts] = useState<Map<string, number>>(new Map());
@@ -388,6 +392,36 @@ function App() {
       default: return '';
     }
   };
+
+  // Block/unblock user handlers
+  const handleBlockUser = useCallback(async (userId: string) => {
+    if (!appState.token) return;
+    try {
+      await api.blockUser(userId, appState.token);
+      setBlockedUsers(prev => new Set(prev).add(userId));
+      setShowBlockConfirm(null);
+    } catch (err) {
+      console.error('Failed to block user:', err);
+      setError('Failed to block user');
+      setTimeout(() => setError(''), 3000);
+    }
+  }, [appState.token]);
+
+  const handleUnblockUser = useCallback(async (userId: string) => {
+    if (!appState.token) return;
+    try {
+      await api.unblockUser(userId, appState.token);
+      setBlockedUsers(prev => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+    } catch (err) {
+      console.error('Failed to unblock user:', err);
+      setError('Failed to unblock user');
+      setTimeout(() => setError(''), 3000);
+    }
+  }, [appState.token]);
 
   const handleApiError = (error: any) => {
     if (error.message && error.message.includes('403')) {
@@ -524,6 +558,15 @@ function App() {
       initializeE2EE(appState.token);
     }
   }, [isAuthenticated, appState.token, initializeE2EE]);
+
+  // Fetch blocked users on login
+  useEffect(() => {
+    if (isAuthenticated && appState.token) {
+      api.getBlockedUsers(appState.token).then(resp => {
+        setBlockedUsers(new Set(resp.blocked_users.map(b => b.user_id)));
+      }).catch(err => console.warn('Failed to load blocked users:', err));
+    }
+  }, [isAuthenticated, appState.token]);
 
   // Async identity check for Tauri keyring (supplement synchronous check)
   useEffect(() => {
@@ -3668,8 +3711,8 @@ function App() {
               <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
             </div>
           )}
-          {appState.messages.map((msg, i) => {
-            const prevMsg = i > 0 ? appState.messages[i - 1] : null;
+          {appState.messages.filter(msg => !msg.sender_id || !blockedUsers.has(msg.sender_id)).map((msg, i, filteredMsgs) => {
+            const prevMsg = i > 0 ? filteredMsgs[i - 1] : null;
             const isGrouped = prevMsg
               && prevMsg.author === msg.author
               && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
@@ -4512,6 +4555,8 @@ function App() {
             }));
           }
         }}
+        blockedUsers={blockedUsers}
+        onUnblockUser={handleUnblockUser}
         onRelayChange={async (newUrl) => {
           // Disconnect existing WS and reconnect to new relay
           if (ws) {
@@ -4837,6 +4882,41 @@ function App() {
             navigator.clipboard.writeText(contextMenu.publicKeyHash).catch(() => {});
             setContextMenu(null);
           }}>📋 Copy Public Key Hash</div>
+          {contextMenu.userId !== localStorage.getItem('accord_user_id') && (
+            <>
+              <div className="context-menu-separator"></div>
+              {blockedUsers.has(contextMenu.userId) ? (
+                <div className="context-menu-item" onClick={() => {
+                  handleUnblockUser(contextMenu.userId);
+                  setContextMenu(null);
+                }}>✅ Unblock User</div>
+              ) : (
+                <div className="context-menu-item context-menu-item-danger" onClick={() => {
+                  setShowBlockConfirm({ userId: contextMenu.userId, displayName: contextMenu.displayName });
+                  setContextMenu(null);
+                }}>🚫 Block User</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Block Confirmation Dialog */}
+      {showBlockConfirm && (
+        <div className="modal-overlay" onClick={() => setShowBlockConfirm(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <h3>🚫 Block User</h3>
+            <p style={{ color: 'var(--text-secondary)', margin: '12px 0' }}>
+              Are you sure you want to block <strong>{showBlockConfirm.displayName}</strong>?
+            </p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '8px 0' }}>
+              They won't be able to send you direct messages. Their messages in channels will be hidden for you.
+            </p>
+            <div className="modal-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowBlockConfirm(null)} className="btn btn-outline" style={{ width: 'auto' }}>Cancel</button>
+              <button onClick={() => handleBlockUser(showBlockConfirm.userId)} className="btn" style={{ width: 'auto', background: 'var(--red, #ed4245)', color: '#fff' }}>Block</button>
+            </div>
+          </div>
         </div>
       )}
 

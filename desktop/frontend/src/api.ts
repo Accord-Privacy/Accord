@@ -548,6 +548,29 @@ export class AccordApi {
     );
   }
 
+  // Block a user
+  async blockUser(userId: string, token: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/users/${userId}/block?token=${encodeURIComponent(token)}`,
+      { method: 'POST' }
+    );
+  }
+
+  // Unblock a user
+  async unblockUser(userId: string, token: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/users/${userId}/block?token=${encodeURIComponent(token)}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  // Get blocked users list
+  async getBlockedUsers(token: string): Promise<{ blocked_users: Array<{ user_id: string; created_at: number }> }> {
+    return this.request<{ blocked_users: Array<{ user_id: string; created_at: number }> }>(
+      `/api/blocked-users?token=${encodeURIComponent(token)}`
+    );
+  }
+
   // Mark channel as read up to a message
   async markChannelRead(channelId: string, messageId: string, token: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(

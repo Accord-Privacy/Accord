@@ -65,6 +65,12 @@ interface SettingsProps {
   serverInfo?: ServerInfo;
   /** Called when the user changes the relay URL from Advanced settings */
   onRelayChange?: (newUrl: string) => void;
+  /** Server-side blocked users */
+  blockedUsers?: Set<string>;
+  /** Called to unblock a user */
+  onUnblockUser?: (userId: string) => void;
+  /** Map of user IDs to display names for blocked users */
+  blockedUserNames?: Map<string, string>;
 }
 
 type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'server' | 'about';
@@ -107,7 +113,10 @@ export const Settings: React.FC<SettingsProps> = ({
   onUserUpdate,
   serverInfo,
   knownHashes,
-  onRelayChange
+  onRelayChange,
+  blockedUsers: blockedUsersProp,
+  onUnblockUser,
+  blockedUserNames,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
   
@@ -1255,18 +1264,15 @@ export const Settings: React.FC<SettingsProps> = ({
                 <div className="settings-group">
                   <label className="settings-label">Block List</label>
                   <div className="blocked-users">
-                    {privacySettings.blockedUsers.length === 0 ? (
+                    {(!blockedUsersProp || blockedUsersProp.size === 0) ? (
                       <div className="settings-help">No blocked users</div>
                     ) : (
-                      privacySettings.blockedUsers.map(user => (
-                        <div key={user} className="blocked-user">
-                          <span>{user}</span>
+                      Array.from(blockedUsersProp).map(userId => (
+                        <div key={userId} className="blocked-user">
+                          <span>{blockedUserNames?.get(userId) || userId.substring(0, 16) + '...'}</span>
                           <button
                             className="unblock-button"
-                            onClick={() => savePrivacySettings({
-                              ...privacySettings,
-                              blockedUsers: privacySettings.blockedUsers.filter(u => u !== user)
-                            })}
+                            onClick={() => onUnblockUser?.(userId)}
                           >
                             Unblock
                           </button>

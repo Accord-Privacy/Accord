@@ -918,6 +918,34 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Create user_blocks table for user blocking
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS user_blocks (
+                blocker_id TEXT NOT NULL,
+                blocked_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (blocker_id, blocked_id),
+                FOREIGN KEY (blocker_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (blocked_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create user_blocks table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_user_blocks_blocker ON user_blocks (blocker_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks (blocked_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -3450,6 +3478,29 @@ impl Database {
         }
     }
 
+    /// Get a DM channel by its ID
+    pub async fn get_dm_channel(
+        &self,
+        channel_id: Uuid,
+    ) -> Result<Option<crate::models::DmChannel>> {
+        let row =
+            sqlx::query("SELECT id, user1_id, user2_id, created_at FROM dm_channels WHERE id = ?")
+                .bind(channel_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to get DM channel")?;
+
+        row.map(|r| -> Result<crate::models::DmChannel> {
+            Ok(crate::models::DmChannel {
+                id: Uuid::parse_str(&r.get::<String, _>("id"))?,
+                user1_id: Uuid::parse_str(&r.get::<String, _>("user1_id"))?,
+                user2_id: Uuid::parse_str(&r.get::<String, _>("user2_id"))?,
+                created_at: r.get::<i64, _>("created_at") as u64,
+            })
+        })
+        .transpose()
+    }
+
     /// Check if a channel is a DM channel
     pub async fn is_dm_channel(&self, channel_id: Uuid) -> Result<bool> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM dm_channels WHERE id = ?")
@@ -4592,6 +4643,66 @@ impl Database {
             .await
             .context("Failed to get user avatar hash")?;
         Ok(row.and_then(|r| r.get("avatar_hash")))
+    }
+
+    // ── User block operations ──
+
+    /// Block a user. Returns true if newly blocked, false if already blocked.
+    pub async fn block_user(&self, blocker_id: Uuid, blocked_id: Uuid) -> Result<bool> {
+        let created_at = now();
+        let result = sqlx::query(
+            "INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)",
+        )
+        .bind(blocker_id.to_string())
+        .bind(blocked_id.to_string())
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to block user")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Unblock a user. Returns true if unblocked, false if wasn't blocked.
+    pub async fn unblock_user(&self, blocker_id: Uuid, blocked_id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?")
+            .bind(blocker_id.to_string())
+            .bind(blocked_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to unblock user")?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Check if blocker has blocked blocked_id.
+    pub async fn is_user_blocked(&self, blocker_id: Uuid, blocked_id: Uuid) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?",
+        )
+        .bind(blocker_id.to_string())
+        .bind(blocked_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    /// List all users blocked by blocker_id. Returns Vec of (blocked_id, created_at).
+    pub async fn get_blocked_users(&self, blocker_id: Uuid) -> Result<Vec<(Uuid, u64)>> {
+        let rows = sqlx::query(
+            "SELECT blocked_id, created_at FROM user_blocks WHERE blocker_id = ? ORDER BY created_at DESC",
+        )
+        .bind(blocker_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get blocked users")?;
+
+        rows.iter()
+            .map(|row| -> Result<(Uuid, u64)> {
+                Ok((
+                    Uuid::parse_str(&row.get::<String, _>("blocked_id"))?,
+                    row.get::<i64, _>("created_at") as u64,
+                ))
+            })
+            .collect()
     }
 }
 

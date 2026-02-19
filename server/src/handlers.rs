@@ -3288,6 +3288,16 @@ async fn handle_ws_message(
             to_user,
             encrypted_data,
         } => {
+            // Check if the recipient has blocked the sender
+            if state
+                .db
+                .is_user_blocked(to_user, sender_user_id)
+                .await
+                .unwrap_or(false)
+            {
+                return Err("Cannot send DM to this user".to_string());
+            }
+
             // For now, simplify DM handling by just relaying the message directly
             // without complex database operations that might hang in tests
             let message_id = uuid::Uuid::new_v4();
@@ -3313,6 +3323,27 @@ async fn handle_ws_message(
             encrypted_data,
             reply_to,
         } => {
+            // Check if this is a DM channel and enforce blocks
+            if let Ok(true) = state.db.is_dm_channel(channel_id).await {
+                if let Ok(Some(dm)) = state.db.get_dm_channel(channel_id).await {
+                    let other_user = if dm.user1_id == sender_user_id {
+                        dm.user2_id
+                    } else {
+                        dm.user1_id
+                    };
+                    if state
+                        .db
+                        .is_user_blocked(other_user, sender_user_id)
+                        .await
+                        .unwrap_or(false)
+                    {
+                        return Err(
+                            "Cannot send message: you have been blocked by this user".to_string()
+                        );
+                    }
+                }
+            }
+
             // Check SEND_MESSAGES permission and build hash allowlist
             if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
                 // Check build hash allowlist
@@ -7817,6 +7848,132 @@ fn extract_content(tag: &str) -> Option<String> {
             .unwrap_or(after.len());
         Some(html_decode(&after[..end]))
     }
+}
+
+// ── User block endpoints ──
+
+/// Block a user (POST /users/:id/block)
+pub async fn block_user_handler(
+    State(state): State<SharedState>,
+    Path(target_user_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    if user_id == target_user_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Cannot block yourself".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Verify target user exists
+    if state
+        .db
+        .get_user_by_id(target_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("DB error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .is_none()
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "User not found".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    state
+        .db
+        .block_user(user_id, target_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to block user: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(
+        serde_json::json!({ "status": "blocked", "user_id": target_user_id }),
+    ))
+}
+
+/// Unblock a user (DELETE /users/:id/block)
+pub async fn unblock_user_handler(
+    State(state): State<SharedState>,
+    Path(target_user_id): Path<Uuid>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let removed = state
+        .db
+        .unblock_user(user_id, target_user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to unblock user: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    if removed {
+        Ok(Json(
+            serde_json::json!({ "status": "unblocked", "user_id": target_user_id }),
+        ))
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "User was not blocked".into(),
+                code: 404,
+            }),
+        ))
+    }
+}
+
+/// List blocked users (GET /api/blocked-users)
+pub async fn get_blocked_users_handler(
+    State(state): State<SharedState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &params).await?;
+
+    let blocked = state.db.get_blocked_users(user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to get blocked users: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let blocked_json: Vec<serde_json::Value> = blocked
+        .into_iter()
+        .map(|(id, created_at)| serde_json::json!({ "user_id": id, "created_at": created_at }))
+        .collect();
+
+    Ok(Json(serde_json::json!({ "blocked_users": blocked_json })))
 }
 
 /// Basic HTML entity decoding

@@ -34,17 +34,18 @@ use clap::Parser;
 use handlers::{
     accept_friend_request_handler, add_build_allowlist_handler, add_reaction_handler,
     assign_member_role_handler, auth_handler, ban_check_handler, ban_user_handler,
-    build_info_handler, create_channel_category_handler, create_channel_handler,
-    create_dm_channel_handler, create_invite_handler, create_node_handler, create_role_handler,
-    delete_channel_category_handler, delete_channel_handler, delete_channel_overwrite_handler,
-    delete_file_handler, delete_message_handler, delete_role_handler,
-    deregister_push_token_handler, download_file_handler, edit_message_handler,
-    fetch_key_bundle_handler, get_build_allowlist_handler, get_channel_messages_handler,
-    get_channel_threads_handler, get_dm_channels_handler, get_effective_permissions_handler,
-    get_member_roles_handler, get_message_reactions_handler, get_message_thread_handler,
-    get_node_audit_log_handler, get_node_handler, get_node_icon_handler, get_node_members_handler,
-    get_node_presence_handler, get_node_user_profiles_handler, get_pinned_messages_handler,
-    get_prekey_messages_handler, get_user_avatar_handler, get_user_profile_handler, health_handler,
+    block_user_handler, build_info_handler, create_channel_category_handler,
+    create_channel_handler, create_dm_channel_handler, create_invite_handler, create_node_handler,
+    create_role_handler, delete_channel_category_handler, delete_channel_handler,
+    delete_channel_overwrite_handler, delete_file_handler, delete_message_handler,
+    delete_role_handler, deregister_push_token_handler, download_file_handler,
+    edit_message_handler, fetch_key_bundle_handler, get_blocked_users_handler,
+    get_build_allowlist_handler, get_channel_messages_handler, get_channel_threads_handler,
+    get_dm_channels_handler, get_effective_permissions_handler, get_member_roles_handler,
+    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
+    get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
+    get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
+    get_user_avatar_handler, get_user_profile_handler, health_handler,
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
     link_preview_handler, list_bans_handler, list_channel_files_handler,
     list_channel_overwrites_handler, list_friend_requests_handler, list_friends_handler,
@@ -55,10 +56,10 @@ use handlers::{
     reorder_roles_handler, revoke_invite_handler, search_messages_handler,
     send_friend_request_handler, set_build_allowlist_handler, set_channel_overwrite_handler,
     set_node_user_profile_handler, store_prekey_message_handler, unban_user_handler,
-    unpin_message_handler, update_channel_category_handler, update_channel_handler,
-    update_node_handler, update_push_preferences_handler, update_role_handler,
-    update_user_profile_handler, upload_file_handler, upload_node_icon_handler,
-    upload_user_avatar_handler, use_invite_handler, ws_handler,
+    unblock_user_handler, unpin_message_handler, update_channel_category_handler,
+    update_channel_handler, update_node_handler, update_push_preferences_handler,
+    update_role_handler, update_user_profile_handler, upload_file_handler,
+    upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler, ws_handler,
 };
 use serde::Deserialize;
 use state::{AppState, SharedState};
@@ -697,6 +698,10 @@ async fn main() -> Result<()> {
         .route("/friends", get(list_friends_handler))
         .route("/friends/requests", get(list_friend_requests_handler))
         .route("/friends/:user_id", delete(remove_friend_handler))
+        // User block endpoints
+        .route("/users/:id/block", post(block_user_handler))
+        .route("/users/:id/block", delete(unblock_user_handler))
+        .route("/api/blocked-users", get(get_blocked_users_handler))
         // Direct Message endpoints
         .route("/dm/:user_id", post(create_dm_channel_handler))
         .route("/dm", get(get_dm_channels_handler))
