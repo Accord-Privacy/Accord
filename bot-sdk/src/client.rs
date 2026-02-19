@@ -29,6 +29,7 @@ type ReactionHandler = Arc<
 ///     bot.send_message("channel-id", "Hello!").await.unwrap();
 /// }
 /// ```
+#[allow(clippy::type_complexity)]
 pub struct AccordBot {
     relay_url: String,
     token: String,
@@ -99,7 +100,7 @@ impl AccordBot {
         let auth_msg = json!({ "Authenticate": { "token": self.token } });
         sink.lock()
             .await
-            .send(WsMessage::Text(auth_msg.to_string().into()))
+            .send(WsMessage::Text(auth_msg.to_string()))
             .await?;
 
         // Wait for authentication response
@@ -171,7 +172,7 @@ impl AccordBot {
         });
         sink.lock()
             .await
-            .send(WsMessage::Text(msg.to_string().into()))
+            .send(WsMessage::Text(msg.to_string()))
             .await?;
         Ok(())
     }
@@ -240,7 +241,7 @@ impl AccordBot {
         });
         sink.lock()
             .await
-            .send(WsMessage::Text(msg.to_string().into()))
+            .send(WsMessage::Text(msg.to_string()))
             .await?;
         Ok(())
     }

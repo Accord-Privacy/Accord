@@ -114,7 +114,7 @@ fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> String {
     }
     let mut outer_hasher = Sha256::new();
     outer_hasher.update(&opad);
-    outer_hasher.update(&inner_hash);
+    outer_hasher.update(inner_hash);
     let result = outer_hasher.finalize();
 
     hex::encode(result)
@@ -151,7 +151,7 @@ impl Database {
         .fetch_all(self.pool())
         .await?;
 
-        rows.iter().map(|r| parse_webhook(r)).collect()
+        rows.iter().map(parse_webhook).collect()
     }
 
     pub async fn get_webhook(&self, webhook_id: Uuid) -> anyhow::Result<Option<Webhook>> {
@@ -239,7 +239,7 @@ impl Database {
 
         let webhooks: Vec<Webhook> = rows
             .iter()
-            .map(|r| parse_webhook(r))
+            .map(parse_webhook)
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(webhooks
