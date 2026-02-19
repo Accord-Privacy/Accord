@@ -116,6 +116,9 @@ async fn main() -> accord_bot_sdk::Result<()> {
     })
     .await;
 
-    println!("Moderation bot running! Listening on channel {}", channel_id);
+    println!(
+        "Moderation bot running! Listening on channel {}",
+        channel_id
+    );
     bot.run().await
 }

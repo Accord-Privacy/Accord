@@ -70,7 +70,10 @@ const VALID_EVENTS: &[&str] = &[
 fn validate_events(events: &[String]) -> Result<(), String> {
     for e in events {
         if !VALID_EVENTS.contains(&e.as_str()) {
-            return Err(format!("Invalid event type: {}. Valid types: {:?}", e, VALID_EVENTS));
+            return Err(format!(
+                "Invalid event type: {}. Valid types: {:?}",
+                e, VALID_EVENTS
+            ));
         }
     }
     if events.is_empty() {
@@ -234,7 +237,10 @@ impl Database {
         .fetch_all(self.pool())
         .await?;
 
-        let webhooks: Vec<Webhook> = rows.iter().map(|r| parse_webhook(r)).collect::<anyhow::Result<Vec<_>>>()?;
+        let webhooks: Vec<Webhook> = rows
+            .iter()
+            .map(|r| parse_webhook(r))
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(webhooks
             .into_iter()
@@ -246,9 +252,9 @@ impl Database {
                 }
                 // Check channel filter: null channel_id means all channels
                 match (w.channel_id, channel_id) {
-                    (None, _) => true,           // webhook listens to all channels
+                    (None, _) => true,                // webhook listens to all channels
                     (Some(wc), Some(ec)) => wc == ec, // must match
-                    (Some(_), None) => true,     // event has no channel context, deliver anyway
+                    (Some(_), None) => true, // event has no channel context, deliver anyway
                 }
             })
             .collect())
@@ -291,9 +297,13 @@ fn parse_webhook(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<Webhook> {
     Ok(Webhook {
         id: Uuid::parse_str(&row.get::<String, _>("id"))?,
         node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
-        channel_id: row
-            .get::<Option<String>, _>("channel_id")
-            .and_then(|s| if s.is_empty() { None } else { Uuid::parse_str(&s).ok() }),
+        channel_id: row.get::<Option<String>, _>("channel_id").and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                Uuid::parse_str(&s).ok()
+            }
+        }),
         url: row.get("url"),
         secret: row.get("secret"),
         events: row.get("events"),
@@ -392,33 +402,41 @@ async fn extract_admin_for_webhook(
         )
     })?;
 
-    let webhook = state.db.get_webhook(webhook_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Database error: {}", e),
-                code: 500,
-            }),
-        )
-    })?.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "Webhook not found".into(),
-                code: 404,
-            }),
-        )
-    })?;
+    let webhook = state
+        .db
+        .get_webhook(webhook_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Database error: {}", e),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Webhook not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
 
-    let member = state.get_node_member(webhook.node_id, user_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to check membership: {}", e),
-                code: 500,
-            }),
-        )
-    })?;
+    let member = state
+        .get_node_member(webhook.node_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to check membership: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
 
     match member {
         Some(m) => {
@@ -510,7 +528,10 @@ pub async fn create_webhook_handler(
         )
     })?;
 
-    info!("Webhook {} created for node {} by {}", webhook.id, node_id, user_id);
+    info!(
+        "Webhook {} created for node {} by {}",
+        webhook.id, node_id, user_id
+    );
 
     Ok(Json(serde_json::json!({
         "id": webhook.id,
@@ -704,7 +725,11 @@ pub fn dispatch_webhook_event(
 ) {
     let event = event.to_string();
     tokio::spawn(async move {
-        let webhooks = match state.db.get_matching_webhooks(node_id, &event, channel_id).await {
+        let webhooks = match state
+            .db
+            .get_matching_webhooks(node_id, &event, channel_id)
+            .await
+        {
             Ok(w) => w,
             Err(e) => {
                 error!("Failed to query webhooks for node {}: {}", node_id, e);

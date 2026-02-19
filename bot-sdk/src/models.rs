@@ -95,10 +95,7 @@ pub enum Event {
         emoji: String,
     },
     /// A user started typing.
-    TypingStart {
-        channel_id: String,
-        user_id: String,
-    },
+    TypingStart { channel_id: String, user_id: String },
     /// Unknown/unhandled event.
     Unknown(serde_json::Value),
 }

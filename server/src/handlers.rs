@@ -3552,7 +3552,10 @@ async fn websocket_handler_inner(
         {
             error!("Failed to broadcast voice leave on disconnect: {}", err);
         }
-        info!("User {} auto-left voice channel {} on disconnect", user_id, channel_id);
+        info!(
+            "User {} auto-left voice channel {} on disconnect",
+            user_id, channel_id
+        );
     }
 
     // Set user offline when they disconnect
@@ -4567,7 +4570,9 @@ async fn handle_ws_message(
                 "sdp": sdp,
                 "timestamp": ws_message.timestamp
             });
-            state.send_to_user(target_user_id, relay.to_string()).await?;
+            state
+                .send_to_user(target_user_id, relay.to_string())
+                .await?;
         }
 
         WsMessageType::VoiceAnswer {
@@ -4582,7 +4587,9 @@ async fn handle_ws_message(
                 "sdp": sdp,
                 "timestamp": ws_message.timestamp
             });
-            state.send_to_user(target_user_id, relay.to_string()).await?;
+            state
+                .send_to_user(target_user_id, relay.to_string())
+                .await?;
         }
 
         WsMessageType::VoiceIceCandidate {
@@ -4597,7 +4604,9 @@ async fn handle_ws_message(
                 "candidate": candidate,
                 "timestamp": ws_message.timestamp
             });
-            state.send_to_user(target_user_id, relay.to_string()).await?;
+            state
+                .send_to_user(target_user_id, relay.to_string())
+                .await?;
         } // WsMessageType::UpdateChannel is handled above
     }
 

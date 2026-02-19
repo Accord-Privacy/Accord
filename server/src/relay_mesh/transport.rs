@@ -278,10 +278,7 @@ impl MeshTransport {
                         {
                             let mut rl = rate_limiter.lock().await;
                             if !rl.check(ip) {
-                                warn!(
-                                    "Mesh: rate limit exceeded for {}, rejecting connection",
-                                    ip
-                                );
+                                warn!("Mesh: rate limit exceeded for {}, rejecting connection", ip);
                                 drop(stream);
                                 continue;
                             }
@@ -345,13 +342,11 @@ impl MeshTransport {
     )> {
         if let Some(tls_config) = tls {
             // TLS accept
-            let tls_stream = tokio::time::timeout(
-                HANDSHAKE_TIMEOUT,
-                tls_config.acceptor.accept(stream),
-            )
-            .await
-            .with_context(|| format!("mesh TLS handshake timeout from {}", addr))?
-            .with_context(|| format!("mesh TLS handshake failed from {}", addr))?;
+            let tls_stream =
+                tokio::time::timeout(HANDSHAKE_TIMEOUT, tls_config.acceptor.accept(stream))
+                    .await
+                    .with_context(|| format!("mesh TLS handshake timeout from {}", addr))?
+                    .with_context(|| format!("mesh TLS handshake failed from {}", addr))?;
 
             let (reader, writer) = tokio::io::split(tls_stream);
             let mut reader: Box<dyn AsyncRead + Unpin + Send> = Box::new(reader);

@@ -1011,11 +1011,9 @@ impl Database {
         .await
         .context("Failed to create known_relays table")?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_known_relays_active ON known_relays (active)",
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_known_relays_active ON known_relays (active)")
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -5133,7 +5131,9 @@ impl Database {
             .bind(relay_id)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(|r| r.get::<i64, _>("missed_heartbeats")).unwrap_or(0))
+        Ok(row
+            .map(|r| r.get::<i64, _>("missed_heartbeats"))
+            .unwrap_or(0))
     }
 
     /// Set relay active/inactive status.

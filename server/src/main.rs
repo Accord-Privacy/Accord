@@ -68,10 +68,6 @@ use handlers::{
 };
 use serde::Deserialize;
 use state::{AppState, SharedState};
-use webhooks::{
-    create_webhook_handler, delete_webhook_handler, list_webhooks_handler,
-    test_webhook_handler, update_webhook_handler,
-};
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{
@@ -80,6 +76,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::{info, warn};
+use webhooks::{
+    create_webhook_handler, delete_webhook_handler, list_webhooks_handler, test_webhook_handler,
+    update_webhook_handler,
+};
 
 mod rate_limit_middleware {
     use crate::rate_limit::ActionType;
@@ -763,7 +763,10 @@ async fn main() -> Result<()> {
         .route("/api/blocked-users", get(get_blocked_users_handler))
         // Federation discovery endpoints
         .route("/federation/relays", get(federation::list_relays_handler))
-        .route("/federation/register", post(federation::register_relay_handler))
+        .route(
+            "/federation/register",
+            post(federation::register_relay_handler),
+        )
         .route("/federation/heartbeat", post(federation::heartbeat_handler))
         // Direct Message endpoints
         .route("/dm/:user_id", post(create_dm_channel_handler))

@@ -65,7 +65,10 @@ pub struct ErrorBody {
 
 // ── Auth helper ──
 
-fn validate_mesh_secret(state: &SharedState, headers: &HeaderMap) -> Result<(), (StatusCode, Json<ErrorBody>)> {
+fn validate_mesh_secret(
+    state: &SharedState,
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<ErrorBody>)> {
     let mesh_handle = state.mesh_handle.try_read();
     let expected_secret = match &mesh_handle {
         Ok(guard) => match guard.as_ref() {
@@ -104,18 +107,14 @@ fn validate_mesh_secret(state: &SharedState, headers: &HeaderMap) -> Result<(), 
 pub async fn list_relays_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<RelayListResponse>, (StatusCode, Json<ErrorBody>)> {
-    let relays = state
-        .db
-        .list_known_relays()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorBody {
-                    error: format!("Database error: {}", e),
-                }),
-            )
-        })?;
+    let relays = state.db.list_known_relays().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorBody {
+                error: format!("Database error: {}", e),
+            }),
+        )
+    })?;
 
     Ok(Json(RelayListResponse { relays }))
 }
@@ -243,7 +242,10 @@ async fn run_federation_health_check(state: &SharedState) -> anyhow::Result<()> 
     };
 
     for relay in &relays {
-        let url = format!("https://{}:{}/federation/heartbeat", relay.hostname, relay.port);
+        let url = format!(
+            "https://{}:{}/federation/heartbeat",
+            relay.hostname, relay.port
+        );
         let mut req_builder = client
             .post(&url)
             .json(&serde_json::json!({ "relay_id": our_relay_id }));
@@ -259,7 +261,10 @@ async fn run_federation_health_check(state: &SharedState) -> anyhow::Result<()> 
             }
             _ => {
                 // Failed — increment missed heartbeats
-                let missed = state.db.increment_missed_heartbeats(&relay.relay_id).await
+                let missed = state
+                    .db
+                    .increment_missed_heartbeats(&relay.relay_id)
+                    .await
                     .unwrap_or(0);
                 if missed >= 3 {
                     let _ = state.db.set_relay_active(&relay.relay_id, false).await;
@@ -302,9 +307,7 @@ pub async fn dns_bootstrap_discovery(state: &SharedState, domain: &str) -> anyho
             .upsert_known_relay(&relay_id, &hostname, port, "")
             .await?;
         count += 1;
-        info!(
-            "Federation DNS: discovered relay at {}:{}", hostname, port
-        );
+        info!("Federation DNS: discovered relay at {}:{}", hostname, port);
     }
 
     Ok(count)
