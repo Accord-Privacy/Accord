@@ -365,6 +365,9 @@ export async function saveKeyToStorage(keyPair: CryptoKeyPair, pkHash?: string):
   const keys = STORAGE_KEYS_FOR(pkHash);
   localStorage.setItem(keys.PRIVATE_KEY, encryptedPrivateKey);
   localStorage.setItem(keys.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
+  // Also save to legacy keys for backwards compat with session restore
+  localStorage.setItem(STORAGE_KEYS.PRIVATE_KEY, encryptedPrivateKey);
+  localStorage.setItem(STORAGE_KEYS.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
 }
 
 export async function loadKeyFromStorage(pkHash?: string): Promise<CryptoKeyPair | null> {

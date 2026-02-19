@@ -101,6 +101,9 @@ export class AccordApi {
     options: RequestInit = {},
     _isRetry = false
   ): Promise<T> {
+    if (!this.baseUrl) {
+      throw new Error('API base URL not set — cannot make request');
+    }
     const url = `${this.baseUrl}${endpoint}`;
     
     const response = await fetch(url, {

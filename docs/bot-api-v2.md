@@ -156,36 +156,85 @@ Embeds support these section types (all rendered by the Node):
 ### 6. Security Model
 
 ```
-┌──────────────────────────────────────────┐
-│                  NODE                     │
-│                                           │
-│  Messages (E2EE) ◄──── WALL ────► Bots   │
-│  Members                          │       │
-│  Encryption Keys                  │       │
-│  User Identities                  ▼       │
-│                            Command Manifest│
-│                            Invocations     │
-│                            Responses       │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                                                      │
+│  User ◄──E2EE (Double Ratchet)──► Node ◄──E2EE──► Bot│
+│                                    │                 │
+│  Relay sees: opaque blobs only     │                 │
+│                                    ▼                 │
+│                             WALL: Bot never sees     │
+│                             messages, members,       │
+│                             encryption keys,         │
+│                             or user identities       │
+└──────────────────────────────────────────────────────┘
 ```
 
 - Bots run **outside** the Node's trust boundary
+- **Every hop is E2EE** — user↔Node (Double Ratchet), Node↔bot (X25519 + AES-256-GCM)
 - Bots authenticate with a bot token (scoped to command invocation only)
 - Bot tokens grant NO read access to any Node data
 - Bots cannot enumerate members, read messages, or access any E2EE content
 - Node admins can install/remove bots and restrict which channels they operate in
 - Users can see exactly what data each command sends to the bot (transparency)
+- Relay is a dumb pipe — sees only encrypted blobs for all traffic
 
-### 7. Bot Hosting
+### 7. Bot ↔ Node Encryption
 
-Bots are external services that communicate via HTTP webhooks:
+All communication between a bot and a Node is end-to-end encrypted:
 
-- **Node → Bot**: POST to bot's registered webhook URL with command invocations
-- **Bot → Node**: POST to Node's bot-response endpoint with responses
-- All communication signed with HMAC-SHA256 for authenticity
+#### Key Exchange (on bot install)
+1. Bot generates an X25519 keypair and publishes its public key
+2. Node generates a per-bot X25519 keypair
+3. Both derive a shared secret via X25519 ECDH + HKDF-SHA256
+4. Shared secret used for AES-256-GCM encryption of all command traffic
+
+#### Encrypt-Then-Sign
+All messages use encrypt-then-sign:
+1. Sender encrypts payload with AES-256-GCM (shared key, random 12-byte IV)
+2. Sender signs the encrypted blob with Ed25519 (their identity key)
+3. Receiver verifies signature first (reject if invalid)
+4. Receiver decrypts payload
+
+This provides:
+- **Confidentiality**: Only bot and Node can read command/response content
+- **Authenticity**: Signatures prove who sent each message
+- **Integrity**: AES-GCM tag + Ed25519 signature = double tamper protection
+- **Non-repudiation**: Bot can't deny sending a response (signature proves it)
+
+#### Key Rotation
+- Shared key rotates every 24 hours or 1000 invocations (whichever first)
+- Node can force rotation at any time (e.g., after compromise suspicion)
+- Old keys are zeroized after rotation
+
+#### Client-Side Verification
+- Bot signs each response with its Ed25519 key
+- The **user's client** can independently verify the bot's signature
+- If the Node tampers with a bot response, the signature check fails
+- UI shows: ✅ "Verified bot response" or ⚠️ "Response signature invalid"
+
+#### Transparency
+- Before sending a command, client shows the user exactly what data will leave the Node boundary
+- User can inspect: command name, parameters, display name being shared
+- "📋 Sent to bot" disclosure log available in channel
+
+### 8. Bot Hosting
+
+Bots are external services that communicate via encrypted webhooks:
+
+- **Node → Bot**: POST encrypted command invocation to bot's registered endpoint
+- **Bot → Node**: POST encrypted response to Node's bot-response endpoint
+- All payloads are E2EE (AES-256-GCM) + signed (Ed25519)
+- TLS on transport layer as defense-in-depth (but E2EE means TLS compromise is not fatal)
 - Bots can be self-hosted or third-party
 
-### 8. Permissions
+### 9. Bot Key Pinning
+
+- On first install, bot's Ed25519 public key is pinned by the Node
+- If the bot's key changes, Node admin sees a warning (like Signal safety numbers)
+- Users can inspect the bot's key fingerprint at any time
+- Prevents silent bot replacement or key compromise going unnoticed
+
+### 10. Permissions
 
 Node admins control:
 - Which bots are installed
@@ -194,7 +243,7 @@ Node admins control:
 - Rate limits per bot
 - Whether to show "data sent to bot" transparency notices to users
 
-### 9. Comparison with v1 (Discord-style)
+### 11. Comparison with v1 (Discord-style)
 
 | Feature | v1 (removed) | v2 (airgapped) |
 |---------|-------------|-----------------|

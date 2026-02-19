@@ -156,7 +156,8 @@ function App() {
   // Mnemonic / Recovery state
   const [showMnemonicModal, setShowMnemonicModal] = useState(false);
   const [mnemonicPhrase, setMnemonicPhrase] = useState("");
-  const [mnemonicAcknowledged, setMnemonicAcknowledged] = useState(false);
+  const [copyButtonText, setCopyButtonText] = useState('Copy to Clipboard');
+  const [mnemonicConfirmStep, setMnemonicConfirmStep] = useState(0);
   const [showRecoverModal, setShowRecoverModal] = useState(false);
   const [recoverMnemonic, setRecoverMnemonic] = useState("");
   const [recoverPassword, setRecoverPassword] = useState("");
@@ -1867,7 +1868,7 @@ function App() {
 
       // Show mnemonic backup modal, then land in app
       setShowMnemonicModal(true);
-      setMnemonicAcknowledged(false);
+      setMnemonicConfirmStep(0);
       setShowWelcomeScreen(false);
 
       // Prompt for display name after first join
@@ -2069,7 +2070,7 @@ function App() {
         
         // Show mnemonic backup modal (replaces old key backup)
         setShowMnemonicModal(true);
-        setMnemonicAcknowledged(false);
+        setMnemonicConfirmStep(0);
 
         // Prompt for display name after registration
         setTimeout(() => { setShowDisplayNamePrompt(true); }, 500);
@@ -2585,7 +2586,10 @@ function App() {
         // Load existing keys if available
         let existingKeyPair: CryptoKeyPair | null = null;
         if (encryptionEnabled) {
-          existingKeyPair = await loadKeyFromStorage();
+          // Set active identity so namespaced storage keys are used
+          const storedHash = localStorage.getItem('accord_public_key_hash');
+          if (storedHash) setActiveIdentity(storedHash);
+          existingKeyPair = await loadKeyFromStorage(storedHash || undefined);
           if (existingKeyPair) {
             setKeyPair(existingKeyPair);
           }
@@ -2780,30 +2784,37 @@ function App() {
                 {mnemonicPhrase}
               </div>
             </div>
-            <div className="form-group" style={{ marginTop: '16px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={mnemonicAcknowledged}
-                  onChange={(e) => setMnemonicAcknowledged(e.target.checked)}
-                />
-                I have written down my recovery phrase and stored it safely
-              </label>
-            </div>
-            <div className="key-backup-actions">
+            <div className="key-backup-actions" style={{ marginTop: '16px' }}>
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText(mnemonicPhrase).catch(() => {});
-                  alert('Recovery phrase copied to clipboard! Store it safely and clear your clipboard.');
+                  try {
+                    const ta = document.createElement('textarea');
+                    ta.value = mnemonicPhrase;
+                    ta.style.position = 'fixed';
+                    ta.style.left = '-9999px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                  } catch {
+                    navigator.clipboard.writeText(mnemonicPhrase).catch(() => {});
+                  }
+                  setCopyButtonText('Copied!');
+                  setTimeout(() => setCopyButtonText('Copy to Clipboard'), 2000);
                 }}
                 className="btn btn-green"
               >
-                Copy to Clipboard
+                {copyButtonText}
               </button>
               <button
                 onClick={() => {
+                  if (mnemonicConfirmStep < 2) {
+                    setMnemonicConfirmStep(mnemonicConfirmStep + 1);
+                    return;
+                  }
                   setShowMnemonicModal(false);
                   setMnemonicPhrase("");
+                  setMnemonicConfirmStep(0);
                   // After registration, go to login
                   if (!isAuthenticated) {
                     setIsLoginMode(true);
@@ -2811,11 +2822,14 @@ function App() {
                     setAuthError("");
                   }
                 }}
-                disabled={!mnemonicAcknowledged}
                 className="btn btn-primary"
-                title={!mnemonicAcknowledged ? "Please acknowledge you saved your phrase" : ""}
+                style={mnemonicConfirmStep === 1 ? { background: '#e67e22' } : mnemonicConfirmStep === 2 ? { background: '#e74c3c' } : {}}
               >
-                {isAuthenticated ? 'Continue' : 'Continue to Login'}
+                {mnemonicConfirmStep === 0
+                  ? (isAuthenticated ? 'I\'ve saved my phrase' : 'I\'ve saved my phrase — Continue to Login')
+                  : mnemonicConfirmStep === 1
+                  ? 'Are you absolutely sure?'
+                  : 'This is your ONLY way to recover your account!'}
               </button>
             </div>
           </div>
