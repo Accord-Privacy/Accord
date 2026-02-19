@@ -368,10 +368,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
               <p className="auth-subtitle">Choose a display name and enter a relay address</p>
 
               <div className="form-group" style={{ marginTop: 16 }}>
-                <label className="form-label">Display Name</label>
+                <label className="form-label">Display Name <span style={{color: 'var(--accent)'}}>*</span></label>
                 <input
                   type="text"
-                  placeholder="How others will see you"
+                  placeholder="How others will see you (required)"
+                  required
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="form-input"
@@ -475,7 +476,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
               <button
                 className="btn btn-primary"
-                disabled={connecting || (!relayAddress.trim() && !inviteLinkInput.trim())}
+                disabled={connecting || !displayName.trim() || (!relayAddress.trim() && !inviteLinkInput.trim())}
                 onClick={handleConnect}
               >
                 {connecting ? "Checking server..." : "Connect"}
