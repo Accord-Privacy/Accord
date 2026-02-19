@@ -2546,6 +2546,154 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
 .settings-info { background: var(--bg-input); padding: 16px; border-radius: 6px; color: var(--text-primary); font-size: 14px; line-height: 1.5; }
 .settings-error { background: var(--red); color: #fff; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
 
+/* Section description below h3 */
+.settings-section-desc {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: -16px 0 24px;
+  line-height: 1.5;
+}
+
+/* Subsection card */
+.settings-subsection {
+  background: var(--bg-dark);
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-md, 8px);
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.settings-subsection-title {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.settings-subsection-desc {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 16px;
+  line-height: 1.4;
+}
+
+.settings-subsection .settings-group:last-of-type {
+  margin-bottom: 0;
+}
+
+/* Label with value on the right */
+.settings-label-value {
+  float: right;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Slider labels (e.g. Sensitive / Aggressive) */
+.settings-slider-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+/* Toggle switch */
+.settings-toggle-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+  cursor: pointer;
+}
+
+.settings-toggle-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.settings-toggle-row:first-child {
+  padding-top: 0;
+}
+
+.settings-toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  margin-right: 16px;
+}
+
+.settings-toggle-label {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.settings-toggle-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.settings-toggle {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.settings-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-toggle-knob {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.settings-toggle.active .settings-toggle-knob {
+  transform: translateX(20px);
+}
+
+/* Secondary button for test/refresh actions */
+.settings-btn-secondary {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.settings-btn-secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* Status / Theme / Font buttons */
 .status-buttons, .theme-buttons, .font-size-buttons, .notification-mode-buttons, .test-buttons {
   display: flex;

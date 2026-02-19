@@ -1049,15 +1049,18 @@ export const Settings: React.FC<SettingsProps> = ({
             {/* =================== VOICE =================== */}
             {activeTab === 'voice' && (
               <div className="settings-section">
-                <h3>Voice & Audio Settings</h3>
+                <h3>Voice & Audio</h3>
+                <p className="settings-section-desc">Configure your microphone, speakers, and voice processing settings.</p>
                 
                 {devicesError && (
                   <div className="settings-error">{devicesError}</div>
                 )}
-                
-                <div className="settings-group">
-                  <label className="settings-label">
-                    Input Device
+
+                {/* Input Device */}
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">🎤 Input Device</h4>
+                  <div className="settings-group">
+                    <label className="settings-label">Microphone</label>
                     <select
                       className="settings-select"
                       value={voiceSettings.inputDevice}
@@ -1073,12 +1076,34 @@ export const Settings: React.FC<SettingsProps> = ({
                         </option>
                       ))}
                     </select>
-                  </label>
+                  </div>
+                  <div className="settings-group">
+                    <label className="settings-label">
+                      Input Volume
+                      <span className="settings-label-value">{voiceSettings.inputVolume}%</span>
+                    </label>
+                    <input
+                      type="range"
+                      className="settings-slider"
+                      min="0"
+                      max="100"
+                      value={voiceSettings.inputVolume}
+                      onChange={(e) => saveVoiceSettings({
+                        ...voiceSettings,
+                        inputVolume: parseInt(e.target.value)
+                      })}
+                    />
+                  </div>
+                  <button className="settings-btn-secondary" onClick={testMicrophone}>
+                    Test Microphone
+                  </button>
                 </div>
 
-                <div className="settings-group">
-                  <label className="settings-label">
-                    Output Device
+                {/* Output Device */}
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">🔊 Output Device</h4>
+                  <div className="settings-group">
+                    <label className="settings-label">Speakers</label>
                     <select
                       className="settings-select"
                       value={voiceSettings.outputDevice}
@@ -1094,29 +1119,12 @@ export const Settings: React.FC<SettingsProps> = ({
                         </option>
                       ))}
                     </select>
-                  </label>
-                </div>
-
-                <div className="settings-group">
-                  <label className="settings-label">
-                    Input Volume: {voiceSettings.inputVolume}%
-                    <input
-                      type="range"
-                      className="settings-slider"
-                      min="0"
-                      max="100"
-                      value={voiceSettings.inputVolume}
-                      onChange={(e) => saveVoiceSettings({
-                        ...voiceSettings,
-                        inputVolume: parseInt(e.target.value)
-                      })}
-                    />
-                  </label>
-                </div>
-
-                <div className="settings-group">
-                  <label className="settings-label">
-                    Output Volume: {voiceSettings.outputVolume}%
+                  </div>
+                  <div className="settings-group">
+                    <label className="settings-label">
+                      Output Volume
+                      <span className="settings-label-value">{voiceSettings.outputVolume}%</span>
+                    </label>
                     <input
                       type="range"
                       className="settings-slider"
@@ -1128,12 +1136,21 @@ export const Settings: React.FC<SettingsProps> = ({
                         outputVolume: parseInt(e.target.value)
                       })}
                     />
-                  </label>
+                  </div>
+                  <button className="settings-btn-secondary" onClick={testSpeakers}>
+                    Test Speakers
+                  </button>
                 </div>
 
-                <div className="settings-group">
-                  <label className="settings-label">
-                    Voice Activity Sensitivity: {voiceSettings.vadSensitivity}%
+                {/* Voice Activity Detection */}
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">🗣️ Input Sensitivity</h4>
+                  <p className="settings-subsection-desc">Controls how loud you need to be before your mic activates. Higher values require louder audio.</p>
+                  <div className="settings-group">
+                    <label className="settings-label">
+                      Voice Activity Sensitivity
+                      <span className="settings-label-value">{voiceSettings.vadSensitivity}%</span>
+                    </label>
                     <input
                       type="range"
                       className="settings-slider"
@@ -1145,78 +1162,55 @@ export const Settings: React.FC<SettingsProps> = ({
                         vadSensitivity: parseInt(e.target.value)
                       })}
                     />
-                  </label>
-                  <div className="settings-help">
-                    Higher values require louder audio to trigger voice activation.
+                    <div className="settings-slider-labels">
+                      <span>Sensitive</span><span>Aggressive</span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="settings-group">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={voiceSettings.echoCancellation}
-                      onChange={(e) => saveVoiceSettings({
-                        ...voiceSettings,
-                        echoCancellation: e.target.checked
-                      })}
-                    />
-                    <span className="checkmark"></span>
-                    Echo Cancellation
-                  </label>
-                </div>
-
-                <div className="settings-group">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={voiceSettings.noiseSuppression}
-                      onChange={(e) => saveVoiceSettings({
-                        ...voiceSettings,
-                        noiseSuppression: e.target.checked
-                      })}
-                    />
-                    <span className="checkmark"></span>
-                    Noise Suppression
-                  </label>
-                </div>
-
-                <div className="settings-group">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={voiceSettings.autoGainControl}
-                      onChange={(e) => saveVoiceSettings({
-                        ...voiceSettings,
-                        autoGainControl: e.target.checked
-                      })}
-                    />
-                    <span className="checkmark"></span>
-                    Automatic Gain Control
-                  </label>
-                </div>
-
-                <div className="settings-group">
-                  <div className="test-buttons">
-                    <button
-                      className="test-button"
-                      onClick={testMicrophone}
-                    >
-                      Test Microphone
-                    </button>
-                    <button
-                      className="test-button"
-                      onClick={testSpeakers}
-                    >
-                      Test Speakers
-                    </button>
-                    <button
-                      className="refresh-button"
-                      onClick={loadMediaDevices}
-                    >
-                      Refresh Devices
-                    </button>
+                {/* Voice Processing */}
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">⚡ Voice Processing</h4>
+                  <p className="settings-subsection-desc">Audio processing filters applied to your microphone input.</p>
+                  <div className="settings-toggle-group">
+                    <label className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <span className="settings-toggle-label">Echo Cancellation</span>
+                        <span className="settings-toggle-desc">Removes echo from your speakers being picked up by your mic</span>
+                      </div>
+                      <div className={`settings-toggle ${voiceSettings.echoCancellation ? 'active' : ''}`}
+                        onClick={() => saveVoiceSettings({ ...voiceSettings, echoCancellation: !voiceSettings.echoCancellation })}>
+                        <div className="settings-toggle-knob" />
+                      </div>
+                    </label>
+                    <label className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <span className="settings-toggle-label">Noise Suppression</span>
+                        <span className="settings-toggle-desc">Filters out background noise like fans, keyboards, and ambient sounds</span>
+                      </div>
+                      <div className={`settings-toggle ${voiceSettings.noiseSuppression ? 'active' : ''}`}
+                        onClick={() => saveVoiceSettings({ ...voiceSettings, noiseSuppression: !voiceSettings.noiseSuppression })}>
+                        <div className="settings-toggle-knob" />
+                      </div>
+                    </label>
+                    <label className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <span className="settings-toggle-label">Automatic Gain Control</span>
+                        <span className="settings-toggle-desc">Automatically adjusts your mic volume to maintain consistent levels</span>
+                      </div>
+                      <div className={`settings-toggle ${voiceSettings.autoGainControl ? 'active' : ''}`}
+                        onClick={() => saveVoiceSettings({ ...voiceSettings, autoGainControl: !voiceSettings.autoGainControl })}>
+                        <div className="settings-toggle-knob" />
+                      </div>
+                    </label>
                   </div>
+                </div>
+
+                {/* Refresh Devices */}
+                <div className="settings-group" style={{ paddingTop: '8px' }}>
+                  <button className="settings-btn-secondary" onClick={loadMediaDevices}>
+                    🔄 Refresh Devices
+                  </button>
                 </div>
               </div>
             )}
