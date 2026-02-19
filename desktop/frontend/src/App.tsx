@@ -1992,6 +1992,8 @@ function App() {
             setKeyPair(existingKeyPair);
             // Re-save with password for future logins
             await saveKeyWithPassword(existingKeyPair, password, pkHash);
+            // Also save with token-based encryption so session restore works without password
+            await saveKeyToStorage(existingKeyPair, pkHash);
           }
         }
         setHasExistingKey(true);
@@ -3722,8 +3724,11 @@ function App() {
             {encryptionEnabled && keyPair && (
               <span className="e2ee-badge enabled" title="End-to-end encryption enabled">🔐 E2EE</span>
             )}
-            {encryptionEnabled && !keyPair && (
-              <span className="e2ee-badge warning" title="Encryption not available">🔓 No Keys</span>
+            {encryptionEnabled && !keyPair && hasExistingKey && (
+              <span className="e2ee-badge pending" title="Key stored but locked — enter password to decrypt">🔑 Key Locked</span>
+            )}
+            {encryptionEnabled && !keyPair && !hasExistingKey && (
+              <span className="e2ee-badge warning" title="No encryption keys found">🔓 No Keys</span>
             )}
             {!encryptionEnabled && (
               <span className="e2ee-badge disabled" title="Encryption not supported">🚫 No E2EE</span>

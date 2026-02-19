@@ -1100,6 +1100,10 @@ input, textarea, select, button {
   color: var(--green);
 }
 
+.e2ee-badge.pending {
+  color: var(--yellow);
+}
+
 .e2ee-badge.warning {
   color: var(--yellow);
 }
