@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import React from 'react';
 import { SearchOverlay } from '../SearchOverlay';
+import type { Channel } from '../types';
 
-// Mock api and crypto
 vi.mock('../api', () => ({
   api: {
     searchMessages: vi.fn().mockResolvedValue({ results: [] }),
@@ -14,22 +13,31 @@ vi.mock('../crypto', () => ({
   getChannelKey: vi.fn(),
 }));
 
+const mockChannel = (overrides: Partial<Channel> = {}): Channel => ({
+  id: 'ch1',
+  name: 'general',
+  node_id: 'node-1',
+  channel_type: 'text' as const,
+  position: 0,
+  members: [],
+  created_at: Date.now(),
+  ...overrides,
+});
+
 const baseProps = {
   isVisible: true,
   onClose: vi.fn(),
   nodeId: 'node-1',
   channels: [
-    { id: 'ch1', name: 'general', node_id: 'node-1', channel_type: 'text' as const, position: 0 },
-    { id: 'ch2', name: 'random', node_id: 'node-1', channel_type: 'text' as const, position: 1 },
+    mockChannel({ id: 'ch1', name: 'general' }),
+    mockChannel({ id: 'ch2', name: 'random', position: 1 }),
   ],
   token: 'test-token',
   onNavigateToMessage: vi.fn(),
 };
 
 describe('SearchOverlay', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('renders search input when visible', () => {
     render(<SearchOverlay {...baseProps} />);
