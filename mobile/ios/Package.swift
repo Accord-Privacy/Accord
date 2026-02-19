@@ -6,10 +6,11 @@ import PackageDescription
 let package = Package(
     name: "Accord",
     platforms: [
-        .iOS(.v16),
+        .iOS(.v17),
     ],
     products: [
         .library(name: "AccordCore", targets: ["AccordCore"]),
+        .library(name: "AccordApp", targets: ["AccordApp"]),
     ],
     targets: [
         // Swift wrapper around the Rust FFI
@@ -23,6 +24,19 @@ let package = Package(
         .systemLibrary(
             name: "AccordCoreFFI",
             path: "AccordCore"
+        ),
+        // Full SwiftUI app (models, views, services)
+        .target(
+            name: "AccordApp",
+            dependencies: ["AccordCore"],
+            path: "Accord",
+            exclude: ["AccordCore.swift"],
+            sources: [
+                "AccordApp.swift",
+                "Models",
+                "Views",
+                "Services",
+            ]
         ),
     ]
 )
