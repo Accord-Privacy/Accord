@@ -488,6 +488,11 @@ async fn main() -> Result<()> {
         .route("/admin/users", get(admin::admin_users_handler))
         .route("/admin/nodes", get(admin::admin_nodes_handler))
         // Relay-level build hash allowlist admin endpoints
+        .route("/api/admin/audit-log", get(admin::admin_audit_log_handler))
+        .route(
+            "/api/admin/audit-log/actions",
+            get(admin::admin_audit_log_actions_handler),
+        )
         .route(
             "/api/admin/build-allowlist",
             get(admin::admin_build_allowlist_get_handler)

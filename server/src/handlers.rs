@@ -169,6 +169,21 @@ pub async fn register_handler(
                 }
             }
             info!("Registered new user: {}", user_id);
+
+            // Log audit event for registration (relay-level, use nil node_id)
+            let _ = state
+                .db
+                .log_audit_event_with_ip(
+                    Uuid::nil(),
+                    user_id,
+                    "user_register",
+                    "user",
+                    Some(user_id),
+                    Some(&serde_json::json!({"display_name": display_name}).to_string()),
+                    Some(&client_ip),
+                )
+                .await;
+
             Ok(Json(RegisterResponse {
                 user_id,
                 message: "User registered successfully".into(),
@@ -246,6 +261,21 @@ pub async fn auth_handler(
     {
         Ok(auth_token) => {
             info!("User authenticated: {}", auth_token.user_id);
+
+            // Log audit event for login
+            let _ = state
+                .db
+                .log_audit_event_with_ip(
+                    Uuid::nil(),
+                    auth_token.user_id,
+                    "user_login",
+                    "user",
+                    Some(auth_token.user_id),
+                    None,
+                    Some(&client_ip),
+                )
+                .await;
+
             Ok(Json(AuthResponse {
                 token: auth_token.token,
                 user_id: auth_token.user_id,
@@ -911,6 +941,22 @@ pub async fn ban_user_handler(
         user_id
     );
 
+    // Log audit event for ban
+    let details = serde_json::json!({
+        "public_key_hash": request.public_key_hash,
+        "expires_at": request.expires_at,
+    });
+    log_audit_event(
+        &state,
+        node_id,
+        user_id,
+        "user_ban",
+        "user",
+        None,
+        Some(&details.to_string()),
+    )
+    .await;
+
     Ok(Json(serde_json::json!({
         "status": "banned",
         "node_id": node_id,
@@ -975,6 +1021,19 @@ pub async fn unban_user_handler(
         })?;
 
     if removed {
+        // Log audit event for unban
+        let details = serde_json::json!({"public_key_hash": request.public_key_hash});
+        log_audit_event(
+            &state,
+            node_id,
+            user_id,
+            "user_unban",
+            "user",
+            None,
+            Some(&details.to_string()),
+        )
+        .await;
+
         Ok(Json(serde_json::json!({
             "status": "unbanned",
             "node_id": node_id,

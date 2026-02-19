@@ -561,6 +561,12 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Add ip_address column to audit_log if not exists
+        sqlx::query("ALTER TABLE audit_log ADD COLUMN ip_address TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Create device_tokens table for push notifications
         sqlx::query(
             r#"
@@ -1779,6 +1785,112 @@ impl Database {
                 })
             })
             .collect())
+    }
+
+    /// Get admin audit log: paginated, filterable by action and date range
+    pub async fn get_admin_audit_log(
+        &self,
+        page: u32,
+        per_page: u32,
+        action_filter: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+    ) -> Result<(Vec<serde_json::Value>, u64)> {
+        let offset = (page.saturating_sub(1) * per_page) as i64;
+        let limit = per_page as i64;
+
+        // Build WHERE clauses dynamically
+        let mut conditions = Vec::new();
+        if action_filter.is_some() {
+            conditions.push("a.action = ?".to_string());
+        }
+        if start_time.is_some() {
+            conditions.push("a.created_at >= ?".to_string());
+        }
+        if end_time.is_some() {
+            conditions.push("a.created_at <= ?".to_string());
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // Count query
+        let count_sql = format!("SELECT COUNT(*) as count FROM audit_log a {}", where_clause);
+        let mut count_query = sqlx::query(&count_sql);
+        if let Some(ref action) = action_filter {
+            count_query = count_query.bind(action.to_string());
+        }
+        if let Some(st) = start_time {
+            count_query = count_query.bind(st);
+        }
+        if let Some(et) = end_time {
+            count_query = count_query.bind(et);
+        }
+        let count_row = count_query.fetch_one(&self.pool).await?;
+        let total: u64 = count_row.get::<i64, _>("count") as u64;
+
+        // Data query
+        let data_sql = format!(
+            r#"SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, a.ip_address,
+                      COALESCE(u.public_key_hash, '') as actor_public_key_hash,
+                      COALESCE(up.display_name, '') as actor_display_name
+               FROM audit_log a
+               LEFT JOIN users u ON a.actor_id = u.id
+               LEFT JOIN user_profiles up ON a.actor_id = up.user_id
+               {}
+               ORDER BY a.created_at DESC
+               LIMIT ? OFFSET ?"#,
+            where_clause
+        );
+        let mut data_query = sqlx::query(&data_sql);
+        if let Some(ref action) = action_filter {
+            data_query = data_query.bind(action.to_string());
+        }
+        if let Some(st) = start_time {
+            data_query = data_query.bind(st);
+        }
+        if let Some(et) = end_time {
+            data_query = data_query.bind(et);
+        }
+        data_query = data_query.bind(limit).bind(offset);
+
+        let rows = data_query
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query admin audit log")?;
+
+        let entries: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.get::<String, _>("id"),
+                    "node_id": r.get::<String, _>("node_id"),
+                    "actor_id": r.get::<String, _>("actor_id"),
+                    "actor_public_key_hash": r.get::<String, _>("actor_public_key_hash"),
+                    "actor_display_name": r.get::<String, _>("actor_display_name"),
+                    "action": r.get::<String, _>("action"),
+                    "target_type": r.get::<String, _>("target_type"),
+                    "target_id": r.get::<Option<String>, _>("target_id"),
+                    "details": r.get::<Option<String>, _>("details"),
+                    "ip_address": r.get::<Option<String>, _>("ip_address"),
+                    "created_at": r.get::<i64, _>("created_at"),
+                })
+            })
+            .collect();
+
+        Ok((entries, total))
+    }
+
+    /// Get distinct action types from audit log
+    pub async fn get_audit_action_types(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SELECT DISTINCT action FROM audit_log ORDER BY action")
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to query audit action types")?;
+        Ok(rows.iter().map(|r| r.get::<String, _>("action")).collect())
     }
 
     /// Count total messages
@@ -3542,11 +3654,35 @@ impl Database {
         target_id: Option<Uuid>,
         details: Option<&str>,
     ) -> Result<Uuid> {
+        self.log_audit_event_with_ip(
+            node_id,
+            actor_id,
+            action,
+            target_type,
+            target_id,
+            details,
+            None,
+        )
+        .await
+    }
+
+    /// Log an audit event for a Node with optional IP address
+    #[allow(clippy::too_many_arguments)]
+    pub async fn log_audit_event_with_ip(
+        &self,
+        node_id: Uuid,
+        actor_id: Uuid,
+        action: &str,
+        target_type: &str,
+        target_id: Option<Uuid>,
+        details: Option<&str>,
+        ip_address: Option<&str>,
+    ) -> Result<Uuid> {
         let audit_id = Uuid::new_v4();
         let created_at = now();
 
         sqlx::query(
-            "INSERT INTO audit_log (id, node_id, actor_id, action, target_type, target_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO audit_log (id, node_id, actor_id, action, target_type, target_id, details, created_at, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(audit_id.to_string())
         .bind(node_id.to_string())
@@ -3556,6 +3692,7 @@ impl Database {
         .bind(target_id.map(|id| id.to_string()))
         .bind(details)
         .bind(created_at as i64)
+        .bind(ip_address)
         .execute(&self.pool)
         .await
         .context("Failed to log audit event")?;

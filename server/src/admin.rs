@@ -309,6 +309,71 @@ pub async fn admin_build_allowlist_remove_handler(
     }
 }
 
+// ── Audit Log endpoint ──
+
+/// Return paginated, filterable audit log (GET /api/admin/audit-log)
+pub async fn admin_audit_log_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+
+    let page = params
+        .get("page")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("per_page")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(25)
+        .min(100);
+    let action_filter = params
+        .get("action")
+        .filter(|s| !s.is_empty())
+        .map(|s| s.as_str());
+    let start_time = params.get("start").and_then(|s| s.parse::<i64>().ok());
+    let end_time = params.get("end").and_then(|s| s.parse::<i64>().ok());
+
+    match state
+        .db
+        .get_admin_audit_log(page, per_page, action_filter, start_time, end_time)
+        .await
+    {
+        Ok((entries, total)) => {
+            let total_pages = (total as f64 / per_page as f64).ceil() as u64;
+            Ok(Json(json!({
+                "entries": entries,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+            })))
+        }
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Failed to query audit log: {}", e)})),
+        )),
+    }
+}
+
+/// Return distinct action types for filter dropdown (GET /api/admin/audit-log/actions)
+pub async fn admin_audit_log_actions_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+
+    let actions = state.db.get_audit_action_types().await.unwrap_or_default();
+    Ok(Json(json!({ "actions": actions })))
+}
+
 // ── Helpers ──
 
 fn get_rss_bytes() -> Option<u64> {
@@ -395,6 +460,7 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
       <div class="tab active" onclick="switchTab('stats')">📊 Stats</div>
       <div class="tab" onclick="switchTab('users')">👤 Users</div>
       <div class="tab" onclick="switchTab('nodes')">🏠 Nodes</div>
+      <div class="tab" onclick="switchTab('audit')">🔍 Audit Log</div>
       <div class="tab" onclick="switchTab('logs')">📜 Logs</div>
     </div>
 
@@ -427,6 +493,24 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
         <input class="search" placeholder="Search nodes..." oninput="filterTable('nodes-table', this.value)">
         <table><thead><tr><th>Name</th><th>ID</th><th>Members</th><th>Channels</th><th>Created</th><th>Description</th></tr></thead>
         <tbody id="nodes-table"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Audit Log panel -->
+    <div id="panel-audit" class="panel">
+      <div class="section">
+        <h2>Audit Log</h2>
+        <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+          <select id="audit-action-filter" class="search" style="width:200px" onchange="loadAuditLog(1)">
+            <option value="">All actions</option>
+          </select>
+          <input id="audit-start" type="date" class="search" style="width:160px" onchange="loadAuditLog(1)" title="Start date">
+          <input id="audit-end" type="date" class="search" style="width:160px" onchange="loadAuditLog(1)" title="End date">
+          <span id="audit-total" style="color:#888;font-size:0.82em"></span>
+        </div>
+        <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
+        <tbody id="audit-table"></tbody></table>
+        <div id="audit-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:12px"></div>
       </div>
     </div>
 
@@ -486,6 +570,7 @@ function switchTab(name) {
   event.target.classList.add('active');
   if (name === 'users') loadUsers();
   if (name === 'nodes') loadNodes();
+  if (name === 'audit') { loadAuditActions(); loadAuditLog(1); }
   if (name === 'logs') connectLogWs();
 }
 
@@ -580,6 +665,58 @@ function filterTable(tableId, query) {
   rows.forEach(row => {
     row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
+}
+
+let auditActionsLoaded = false;
+async function loadAuditActions() {
+  if (auditActionsLoaded) return;
+  try {
+    const r = await apiFetch('/api/admin/audit-log/actions');
+    if (!r.ok) return;
+    const d = await r.json();
+    const sel = document.getElementById('audit-action-filter');
+    d.actions.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a; opt.textContent = a.replace(/_/g, ' ');
+      sel.appendChild(opt);
+    });
+    auditActionsLoaded = true;
+  } catch(e) { console.error('Failed to load audit actions:', e); }
+}
+
+async function loadAuditLog(page) {
+  try {
+    const action = document.getElementById('audit-action-filter').value;
+    const startDate = document.getElementById('audit-start').value;
+    const endDate = document.getElementById('audit-end').value;
+    let url = `/api/admin/audit-log?page=${page}&per_page=25`;
+    if (action) url += `&action=${encodeURIComponent(action)}`;
+    if (startDate) url += `&start=${Math.floor(new Date(startDate).getTime()/1000)}`;
+    if (endDate) url += `&end=${Math.floor(new Date(endDate + 'T23:59:59').getTime()/1000)}`;
+    const r = await apiFetch(url);
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('audit-total').textContent = `${d.total} total entries`;
+    const tb = document.getElementById('audit-table');
+    tb.innerHTML = d.entries.map(e => {
+      const actor = e.actor_display_name || (e.actor_public_key_hash ? e.actor_public_key_hash.substring(0,12)+'…' : e.actor_id.substring(0,8)+'…');
+      const target = e.target_id ? e.target_type + ' ' + e.target_id.substring(0,8)+'…' : e.target_type || '-';
+      let details = '-';
+      if (e.details) { try { const p = JSON.parse(e.details); details = Object.entries(p).map(([k,v])=>k+': '+v).join(', '); } catch { details = e.details; } }
+      if (details.length > 80) details = details.substring(0,77)+'…';
+      return `<tr><td>${fmtTime(e.created_at)}</td><td class="mono">${esc(actor)}</td><td><span class="badge">${esc(e.action)}</span></td><td class="mono">${esc(target)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${esc(details)}</td><td class="mono">${esc(e.ip_address||'-')}</td></tr>`;
+    }).join('');
+    // Pagination
+    const pg = document.getElementById('audit-pagination');
+    pg.innerHTML = '';
+    for (let i = 1; i <= d.total_pages && i <= 20; i++) {
+      const btn = document.createElement('button');
+      btn.textContent = i;
+      btn.className = 'tab' + (i === d.page ? ' active' : '');
+      btn.onclick = () => loadAuditLog(i);
+      pg.appendChild(btn);
+    }
+  } catch(e) { console.error('Failed to load audit log:', e); }
 }
 
 init();
