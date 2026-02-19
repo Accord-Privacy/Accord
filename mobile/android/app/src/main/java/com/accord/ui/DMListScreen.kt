@@ -8,18 +8,27 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.accord.data.model.Channel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.accord.ui.viewmodel.DMListViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DMListScreen(onDMClick: (String) -> Unit) {
-    // TODO: Load DM channels from ApiService via ViewModel
-    val dms = remember { mutableStateListOf<Channel>() }
+    val viewModel: DMListViewModel = viewModel()
+    val conversations by viewModel.conversations.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title = { Text("Direct Messages") })
 
-        if (dms.isEmpty()) {
+        if (isLoading && conversations.isEmpty()) {
+            Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (conversations.isEmpty()) {
             Box(
                 Modifier.fillMaxSize().padding(24.dp),
                 contentAlignment = androidx.compose.ui.Alignment.Center,
@@ -28,10 +37,10 @@ fun DMListScreen(onDMClick: (String) -> Unit) {
             }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
-                items(dms, key = { it.id }) { dm ->
+                items(conversations, key = { it.channelId }) { convo ->
                     ListItem(
-                        headlineContent = { Text(dm.name) },
-                        modifier = Modifier.clickable { onDMClick(dm.id) },
+                        headlineContent = { Text(convo.peerDisplayName) },
+                        modifier = Modifier.clickable { onDMClick(convo.channelId) },
                     )
                     HorizontalDivider()
                 }

@@ -6,6 +6,7 @@ struct ChannelListView: View {
     let node: Node
     @Environment(AppState.self) private var appState
     @State private var channels: [Channel] = []
+    @State private var isLoading = false
 
     private var grouped: [(String, [Channel])] {
         let dict = Dictionary(grouping: channels) { $0.category ?? "General" }
@@ -31,13 +32,28 @@ struct ChannelListView: View {
             }
         }
         .navigationTitle(node.name)
-        .task {
-            // TODO: Fetch channels from API
-            do {
-                channels = try await appState.apiService?.fetchChannels(nodeId: node.id) ?? []
-            } catch {
-                // TODO: Error handling
+        .refreshable {
+            await fetchChannels()
+        }
+        .overlay {
+            if isLoading && channels.isEmpty {
+                ProgressView()
             }
+        }
+        .task {
+            await fetchChannels()
+        }
+    }
+
+    private func fetchChannels() async {
+        guard let api = appState.apiService else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let dtos = try await api.fetchChannels(nodeId: node.id)
+            channels = dtos.map { APIService.channelFromDTO($0) }
+        } catch {
+            print("[ChannelList] Failed to fetch channels: \(error)")
         }
     }
 }

@@ -6,16 +6,17 @@ import SwiftUI
 final class NodeListViewModel {
     var nodes: [Node] = []
     var isLoading = false
+    var errorMessage: String?
 
     func load(api: APIService?) async {
         guard let api else { return }
         isLoading = true
         defer { isLoading = false }
-        // TODO: Fetch real data
         do {
-            nodes = try await api.fetchNodes()
+            let dtos = try await api.fetchNodes()
+            nodes = dtos.map { APIService.nodeFromDTO($0) }
         } catch {
-            // TODO: Error handling
+            errorMessage = error.localizedDescription
         }
     }
 }
@@ -29,7 +30,6 @@ struct NodeListView: View {
             List(viewModel.nodes) { node in
                 NavigationLink(value: node) {
                     HStack {
-                        // TODO: Node icon
                         Circle()
                             .fill(.secondary)
                             .frame(width: 40, height: 40)
@@ -55,8 +55,13 @@ struct NodeListView: View {
             .navigationDestination(for: Node.self) { node in
                 ChannelListView(node: node)
             }
+            .refreshable {
+                await viewModel.load(api: appState.apiService)
+            }
             .overlay {
-                if viewModel.nodes.isEmpty && !viewModel.isLoading {
+                if viewModel.isLoading && viewModel.nodes.isEmpty {
+                    ProgressView()
+                } else if viewModel.nodes.isEmpty {
                     ContentUnavailableView("No Nodes", systemImage: "server.rack", description: Text("Join or create a Node to get started."))
                 }
             }

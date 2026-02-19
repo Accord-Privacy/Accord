@@ -6,14 +6,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.accord.data.model.Category
-import com.accord.data.model.Channel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.accord.data.model.ChannelType
+import com.accord.ui.viewmodel.ChannelListViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,14 +21,16 @@ fun ChannelListScreen(
     onTextChannelClick: (String) -> Unit,
     onVoiceChannelClick: (String) -> Unit,
     onBack: () -> Unit,
+    viewModel: ChannelListViewModel = viewModel(factory = ChannelListViewModel.Factory(nodeId)),
 ) {
-    // TODO: Load channels grouped by category from ApiService via ViewModel
-    val channels = remember { mutableStateListOf<Channel>() }
+    val grouped by viewModel.grouped.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val nodeName by viewModel.nodeName.collectAsState()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Channels") },
+                title = { Text(nodeName.ifBlank { "Channels" }) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
@@ -38,25 +39,44 @@ fun ChannelListScreen(
             )
         }
     ) { padding ->
-        LazyColumn(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            items(channels, key = { it.id }) { channel ->
-                ListItem(
-                    headlineContent = {
+        if (isLoading && grouped.isEmpty()) {
+            Box(
+                Modifier.fillMaxSize().padding(padding),
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LazyColumn(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                grouped.forEach { group ->
+                    item {
                         Text(
-                            "${if (channel.type == ChannelType.VOICE) "🔊" else "#"} ${channel.name}"
+                            group.categoryName.uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                         )
-                    },
-                    modifier = Modifier.clickable {
-                        when (channel.type) {
-                            ChannelType.VOICE -> onVoiceChannelClick(channel.id)
-                            else -> onTextChannelClick(channel.id)
-                        }
-                    },
-                )
+                    }
+                    items(group.channels, key = { it.id }) { channel ->
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    "${if (channel.type == ChannelType.VOICE) "🔊" else "#"} ${channel.name}"
+                                )
+                            },
+                            modifier = Modifier.clickable {
+                                when (channel.type) {
+                                    ChannelType.VOICE -> onVoiceChannelClick(channel.id)
+                                    else -> onTextChannelClick(channel.id)
+                                }
+                            },
+                        )
+                    }
+                }
             }
         }
     }

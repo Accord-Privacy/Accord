@@ -3,7 +3,7 @@
 import Foundation
 
 struct User: Identifiable, Codable, Hashable {
-    let id: String           // Public key hex or unique ID
+    var id: String           // Public key hex or unique ID
     var displayName: String
     var avatarURL: URL?
     var isOnline: Bool = false

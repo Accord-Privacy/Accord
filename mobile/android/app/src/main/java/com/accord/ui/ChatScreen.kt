@@ -12,23 +12,30 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.accord.data.model.Message
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.accord.ui.viewmodel.ChatViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     channelId: String,
     onBack: () -> Unit,
+    isDm: Boolean = false,
+    peerUserId: String? = null,
+    viewModel: ChatViewModel = viewModel(
+        factory = ChatViewModel.Factory(channelId, isDm, peerUserId)
+    ),
 ) {
-    // TODO: Wire to ViewModel that observes WebSocket messages + loads history from API
-    val messages = remember { mutableStateListOf<Message>() }
+    val messages by viewModel.messages.collectAsState()
+    val channelName by viewModel.channelName.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("# channel") }, // TODO: Resolve channel name
+                title = { Text(if (isDm) "DM" else "# $channelName") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
@@ -45,7 +52,10 @@ fun ChatScreen(
             ) {
                 OutlinedTextField(
                     value = input,
-                    onValueChange = { input = it },
+                    onValueChange = {
+                        input = it
+                        viewModel.sendTyping()
+                    },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message…") },
                     maxLines = 4,
@@ -54,7 +64,7 @@ fun ChatScreen(
                 IconButton(
                     onClick = {
                         if (input.isNotBlank()) {
-                            // TODO: Encrypt via CryptoService, send via WebSocket
+                            viewModel.sendMessage(input)
                             input = ""
                         }
                     },
@@ -65,21 +75,38 @@ fun ChatScreen(
             }
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            state = listState,
-            reverseLayout = true,
-        ) {
-            items(messages, key = { it.id }) { msg ->
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                    Text(
-                        msg.authorId, // TODO: Resolve to display name
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            if (isLoading && messages.isEmpty()) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center))
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                reverseLayout = true,
+            ) {
+                items(messages, key = { it.id }) { msg ->
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        Row {
+                            Text(
+                                msg.authorId,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            if (msg.edited) {
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "(edited)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Text(msg.content, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                // Load more trigger
+                item {
+                    LaunchedEffect(Unit) { viewModel.loadMore() }
                 }
             }
         }
