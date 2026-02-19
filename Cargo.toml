@@ -6,7 +6,8 @@ members = [
     "desktop",
     "core-minimal",
     "accord-cli",
-    "standalone-demo"
+    "standalone-demo",
+    "bot-sdk"
 ]
 
 [workspace.package]
