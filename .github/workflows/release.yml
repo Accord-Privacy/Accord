@@ -1,0 +1,362 @@
+name: Signed Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build Linux Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libssl-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build accord-server (release)
+        run: cargo build --release -p accord-server
+
+      - name: Strip binary
+        run: strip target/release/accord-server
+
+      - name: Create tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          tar -czf "accord-server-${VERSION}-linux-x86_64.tar.gz" \
+            -C target/release accord-server
+
+      - name: Install minisign
+        run: |
+          curl -sSL https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz \
+            | tar xz --strip-components=2
+          chmod +x minisign
+          sudo mv minisign /usr/local/bin/
+
+      - name: Sign artifact
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARTIFACT="accord-server-${VERSION}-linux-x86_64.tar.gz"
+          echo "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          minisign -Sm "$ARTIFACT" -s /tmp/minisign.key -t "Accord ${GITHUB_REF_NAME}"
+          rm -f /tmp/minisign.key
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-server
+          path: |
+            accord-server-*-linux-x86_64.tar.gz
+            accord-server-*-linux-x86_64.tar.gz.minisig
+
+  build-windows:
+    name: Build Windows Desktop
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0"
+
+      - name: Build Tauri app
+        working-directory: desktop
+        run: cargo tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Install minisign
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/jedisct1/minisign/releases/download/0.11/minisign-win64.zip" -OutFile minisign.zip
+          Expand-Archive minisign.zip -DestinationPath minisign
+          Copy-Item minisign/minisign.exe C:/Windows/System32/
+
+      - name: Collect and sign artifacts
+        shell: pwsh
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $staging = "staging"
+          New-Item -ItemType Directory -Force -Path $staging
+
+          # Collect NSIS installer
+          Get-ChildItem -Path target/release/bundle/nsis -Filter "*.exe" | ForEach-Object {
+            Copy-Item $_.FullName "$staging/Accord_${version}_x64-setup.exe"
+          }
+
+          # Collect MSI
+          Get-ChildItem -Path target/release/bundle/msi -Filter "*.msi" | ForEach-Object {
+            Copy-Item $_.FullName "$staging/Accord_${version}_x64.msi"
+          }
+
+          # Collect portable
+          if (Test-Path "target/release/accord-desktop.exe") {
+            Copy-Item "target/release/accord-desktop.exe" "$staging/Accord_${version}_x64-portable.exe"
+          }
+
+          # Collect NSIS zip for updater
+          Get-ChildItem -Path target/release/bundle/nsis -Filter "*.nsis.zip" | ForEach-Object {
+            Copy-Item $_.FullName "$staging/"
+          }
+          Get-ChildItem -Path target/release/bundle/nsis -Filter "*.nsis.zip.sig" | ForEach-Object {
+            Copy-Item $_.FullName "$staging/"
+          }
+
+          # Sign with minisign
+          $env:MINISIGN_SECRET_KEY | Out-File -Encoding ascii "$env:TEMP\minisign.key"
+          Get-ChildItem "$staging" -Exclude "*.minisig","*.sig" | ForEach-Object {
+            minisign -Sm $_.FullName -s "$env:TEMP\minisign.key" -t "Accord ${{ github.ref_name }}"
+          }
+          Remove-Item "$env:TEMP\minisign.key" -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop
+          path: staging/*
+
+  build-macos:
+    name: Build macOS Desktop
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0"
+
+      - name: Build Tauri app
+        working-directory: desktop
+        run: cargo tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Install minisign
+        run: brew install minisign
+
+      - name: Collect and sign artifacts
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p staging
+
+          # Collect DMG
+          find target/release/bundle/dmg -name "*.dmg" -exec cp {} "staging/Accord_${VERSION}_aarch64.dmg" \;
+
+          # Sign with minisign
+          echo "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          for f in staging/*; do
+            [ -f "$f" ] && [[ "$f" != *.minisig ]] && \
+              minisign -Sm "$f" -s /tmp/minisign.key -t "Accord ${GITHUB_REF_NAME}"
+          done
+          rm -f /tmp/minisign.key
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-desktop
+          path: staging/*
+
+  release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" --no-merges -50)
+          fi
+          {
+            echo "changes<<CHANGES_EOF"
+            echo "$CHANGES"
+            echo "CHANGES_EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Install minisign
+        run: |
+          curl -sSL https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz \
+            | tar xz --strip-components=2
+          chmod +x minisign
+          sudo mv minisign /usr/local/bin/
+
+      - name: Sign checksums file
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          echo "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          minisign -Sm release/SHA256SUMS -s /tmp/minisign.key -t "Accord ${GITHUB_REF_NAME} checksums"
+          rm -f /tmp/minisign.key
+
+      - name: Read updater signature
+        id: sig
+        run: |
+          SIG_FILE=$(find release -name '*.nsis.zip.sig' | head -1)
+          if [ -f "$SIG_FILE" ]; then
+            echo "signature=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
+          else
+            echo "signature=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate latest.json for Tauri updater
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SIGNATURE="${{ steps.sig.outputs.signature }}"
+          cat > release/latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "Accord ${GITHUB_REF_NAME} release",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "url": "https://github.com/Accord-Privacy/Accord/releases/download/${GITHUB_REF_NAME}/Accord_${VERSION}_x64-setup.nsis.zip",
+                "signature": "${SIGNATURE}"
+              }
+            }
+          }
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          name: "Accord ${{ github.ref_name }}"
+          body: |
+            ## Accord ${{ github.ref_name }}
+
+            ### Downloads
+
+            | Platform | File | Description |
+            |----------|------|-------------|
+            | 🐧 Linux | `accord-server-${{ steps.version.outputs.version }}-linux-x86_64.tar.gz` | Server binary |
+            | 🪟 Windows | `Accord_${{ steps.version.outputs.version }}_x64-setup.exe` | NSIS installer (recommended) |
+            | 🪟 Windows | `Accord_${{ steps.version.outputs.version }}_x64.msi` | MSI installer |
+            | 🪟 Windows | `Accord_${{ steps.version.outputs.version }}_x64-portable.exe` | Portable executable |
+            | 🍎 macOS | `Accord_${{ steps.version.outputs.version }}_aarch64.dmg` | Disk image (Apple Silicon) |
+
+            ### Changelog
+            ${{ steps.changelog.outputs.changes }}
+
+            ### Verify Signatures
+
+            All artifacts are signed with [minisign](https://jedisct1.github.io/minisign/).
+
+            ```bash
+            # Install minisign (brew install minisign / apt install minisign)
+
+            # Verify a file
+            minisign -Vm <file> -P <PUBLIC_KEY>
+
+            # Verify checksums, then verify file integrity
+            minisign -Vm SHA256SUMS -P <PUBLIC_KEY>
+            sha256sum -c SHA256SUMS
+            ```
+
+            Each artifact has a corresponding `.minisig` signature file. The `SHA256SUMS` file covers all artifacts and is also signed.
+          files: release/*
+          fail_on_unmatched_files: false
