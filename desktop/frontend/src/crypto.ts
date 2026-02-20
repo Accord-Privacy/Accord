@@ -67,10 +67,8 @@ const ECDH_PARAMS = {
   namedCurve: 'P-256'
 };
 
-const AES_PARAMS = {
-  name: 'AES-GCM',
-  length: 256
-};
+// @ts-ignore — Referenced by identity key wrapping; channel encryption uses noble exclusively
+const AES_PARAMS = { name: 'AES-GCM', length: 256 }; void AES_PARAMS;
 
 // ---------------------------------------------------------------------------
 // Detect environment
@@ -438,10 +436,10 @@ async function createChannelKeyFromId(channelId: string): Promise<CryptoKey | Ui
   const material = `${channelId}:${FIXED_SALT}`;
   const data = enc.encode(material);
 
-  if (HAS_SUBTLE) {
-    const digest = await window.crypto.subtle.digest('SHA-256', data);
-    return window.crypto.subtle.importKey('raw', digest, AES_PARAMS, false, ['encrypt', 'decrypt']);
-  }
+  // ALWAYS use noble (pure JS) for channel keys to ensure cross-client compatibility.
+  // crypto.subtle and noble AES-GCM should be compatible, but in practice
+  // HTTP origins (no subtle) and Tauri (has subtle) were producing incompatible
+  // ciphertext. Using noble everywhere eliminates the discrepancy.
   return sha256(data);
 }
 
@@ -474,15 +472,7 @@ export async function encryptMessage(key: CryptoKey | Uint8Array, plaintext: str
   const data = new TextEncoder().encode(plaintext);
   const iv = randomBytes(12);
 
-  if (HAS_SUBTLE && key instanceof CryptoKey) {
-    const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, data);
-    const combined = new Uint8Array(iv.length + encrypted.byteLength);
-    combined.set(iv);
-    combined.set(new Uint8Array(encrypted), iv.length);
-    return arrayBufferToBase64(combined.buffer);
-  }
-
-  // Noble fallback
+  // Always use noble for channel message encryption (cross-client compatibility)
   const keyBytes = key instanceof Uint8Array ? key : new Uint8Array(0);
   const cipher = gcm(keyBytes, iv);
   const encrypted = cipher.encrypt(data);
@@ -497,12 +487,7 @@ export async function decryptMessage(key: CryptoKey | Uint8Array, ciphertext: st
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
 
-  if (HAS_SUBTLE && key instanceof CryptoKey) {
-    const decrypted = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, encrypted);
-    return new TextDecoder().decode(decrypted);
-  }
-
-  // Noble fallback
+  // Always use noble for channel message decryption (cross-client compatibility)
   const keyBytes = key instanceof Uint8Array ? key : new Uint8Array(0);
   const cipher = gcm(keyBytes, iv);
   const decrypted = cipher.decrypt(encrypted);
