@@ -30,9 +30,10 @@ use uuid::Uuid;
 pub async fn get_node_presence_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Must be a member of the node
     if !state
@@ -297,10 +298,11 @@ pub async fn auth_handler(
 /// Create a new Node
 pub async fn create_node_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<CreateNodeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state
         .create_node(request.name, user_id, request.description)
@@ -329,9 +331,10 @@ pub async fn create_node_handler(
 /// List nodes the authenticated user belongs to
 pub async fn list_user_nodes_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.db.get_user_nodes(user_id).await {
         Ok(nodes) => Ok(Json(
@@ -363,10 +366,11 @@ pub async fn list_user_nodes_handler(
 pub async fn create_channel_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let name = request
         .get("name")
@@ -394,9 +398,10 @@ pub async fn create_channel_handler(
 pub async fn list_node_channels_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.db.get_node_channels(node_id).await {
         Ok(channels) => {
@@ -466,7 +471,7 @@ pub async fn join_node_handler(
     Query(params): Query<HashMap<String, String>>,
     body: Option<Json<JoinNodeRequest>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
     let fingerprint_hash = body.and_then(|b| b.0.device_fingerprint_hash);
 
     // Check build hash allowlist
@@ -534,9 +539,10 @@ pub async fn join_node_handler(
 pub async fn leave_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.leave_node(user_id, node_id).await {
         Ok(()) => Ok(Json(
@@ -556,10 +562,11 @@ pub async fn leave_node_handler(
 pub async fn update_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let name = request
         .get("name")
@@ -633,9 +640,10 @@ pub async fn update_node_handler(
 pub async fn kick_user_handler(
     State(state): State<SharedState>,
     Path((node_id, target_user_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let admin_user_id = extract_user_from_token(&state, &params).await?;
+    let admin_user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state
         .kick_from_node(admin_user_id, target_user_id, node_id)
@@ -694,10 +702,11 @@ pub async fn kick_user_handler(
 pub async fn create_invite_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     body: Option<Json<CreateInviteRequest>>,
 ) -> Result<Json<CreateInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
     let request = body.map(|b| b.0).unwrap_or(CreateInviteRequest {
         max_uses: None,
         expires_in_hours: None,
@@ -765,9 +774,10 @@ pub async fn create_invite_handler(
 pub async fn list_invites_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.list_invites(node_id, user_id).await {
         Ok(invites) => Ok(Json(serde_json::json!({ "invites": invites }))),
@@ -785,9 +795,10 @@ pub async fn list_invites_handler(
 pub async fn revoke_invite_handler(
     State(state): State<SharedState>,
     Path(invite_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.revoke_invite(invite_id, user_id).await {
         Ok(()) => {
@@ -829,9 +840,10 @@ pub async fn revoke_invite_handler(
 pub async fn use_invite_handler(
     State(state): State<SharedState>,
     Path(invite_code): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<UseInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.use_invite(&invite_code, user_id).await {
         Ok((node_id, node_name)) => {
@@ -861,10 +873,11 @@ pub async fn use_invite_handler(
 pub async fn ban_user_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::BanUserRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check permissions (admin/mod only)
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
@@ -968,10 +981,11 @@ pub async fn ban_user_handler(
 pub async fn unban_user_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::UnbanUserRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check permissions
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
@@ -1054,9 +1068,10 @@ pub async fn unban_user_handler(
 pub async fn ban_check_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let public_key_hash = params.get("public_key_hash");
     let device_fingerprint_hash = params.get("device_fingerprint_hash");
@@ -1103,9 +1118,10 @@ pub async fn ban_check_handler(
 pub async fn list_bans_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::NodeBansResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check membership
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
@@ -1159,9 +1175,10 @@ pub async fn list_bans_handler(
 pub async fn get_build_allowlist_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check admin permission
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
@@ -1217,10 +1234,11 @@ pub async fn get_build_allowlist_handler(
 pub async fn set_build_allowlist_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<Vec<crate::models::BuildHashAllowlistInput>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
         (
@@ -1285,10 +1303,11 @@ pub async fn set_build_allowlist_handler(
 pub async fn add_build_allowlist_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::BuildHashAllowlistInput>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
         (
@@ -1362,9 +1381,10 @@ pub async fn add_build_allowlist_handler(
 pub async fn remove_build_allowlist_handler(
     State(state): State<SharedState>,
     Path((node_id, build_hash)): Path<(Uuid, String)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
         (
@@ -1438,10 +1458,11 @@ pub async fn remove_build_allowlist_handler(
 pub async fn set_node_user_profile_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::SetNodeUserProfileRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Must be a member
     if !state
@@ -1492,9 +1513,10 @@ pub async fn set_node_user_profile_handler(
 pub async fn get_node_user_profiles_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Must be a member
     if !state
@@ -1548,10 +1570,11 @@ pub async fn get_node_user_profiles_handler(
 pub async fn create_channel_category_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::CreateChannelCategoryRequest>,
 ) -> Result<Json<crate::models::CreateChannelCategoryResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user is admin of the node
     let user_role = state
@@ -1607,10 +1630,11 @@ pub async fn create_channel_category_handler(
 pub async fn update_channel_category_handler(
     State(state): State<SharedState>,
     Path(category_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::UpdateChannelCategoryRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get the category to determine the node it belongs to
     let category = state.get_channel_category(category_id).await.map_err(|e| {
@@ -1684,9 +1708,10 @@ pub async fn update_channel_category_handler(
 pub async fn delete_channel_category_handler(
     State(state): State<SharedState>,
     Path(category_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get the category to determine the node it belongs to
     let category = state.get_channel_category(category_id).await.map_err(|e| {
@@ -1757,10 +1782,11 @@ pub async fn delete_channel_category_handler(
 pub async fn update_channel_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::UpdateChannelRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get the channel to determine the node it belongs to
     let channel = state.get_channel(channel_id).await.map_err(|e| {
@@ -1836,9 +1862,10 @@ pub async fn update_channel_handler(
 pub async fn delete_channel_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.delete_channel(channel_id, user_id).await {
         Ok(()) => {
@@ -1883,9 +1910,10 @@ pub async fn delete_channel_handler(
 pub async fn get_channel_messages_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::MessageHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user has access to this channel
     let can_access = state
@@ -1974,10 +2002,11 @@ pub async fn get_channel_messages_handler(
 pub async fn mark_channel_read_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(body): Json<MarkChannelReadRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check channel access
     let can_access = state
@@ -2044,9 +2073,10 @@ pub async fn mark_channel_read_handler(
 pub async fn search_messages_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::SearchResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user is member of this node
     let is_member = state.is_node_member(user_id, node_id).await.map_err(|e| {
@@ -2123,9 +2153,10 @@ pub async fn search_messages_handler(
 pub async fn get_user_profile_handler(
     State(state): State<SharedState>,
     Path(user_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::UserProfile>, (StatusCode, Json<ErrorResponse>)> {
-    let _requesting_user_id = extract_user_from_token(&state, &params).await?;
+    let _requesting_user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.get_user_profile(user_id).await {
         Ok(Some(profile)) => Ok(Json(profile)),
@@ -2149,10 +2180,11 @@ pub async fn get_user_profile_handler(
 /// Update own profile (PATCH /users/me/profile)
 pub async fn update_user_profile_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::UpdateProfileRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Validate bio length if provided
     if let Some(ref bio) = request.bio {
@@ -2210,9 +2242,10 @@ pub async fn update_user_profile_handler(
 pub async fn get_node_members_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user is a member of the node
     match state.get_node_member(node_id, user_id).await {
@@ -2252,9 +2285,10 @@ pub async fn get_node_members_handler(
 /// Helper to extract user_id from Authorization: Bearer header or query param fallback
 async fn extract_user_from_token(
     state: &SharedState,
+    headers: &HeaderMap,
     params: &HashMap<String, String>,
 ) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
-    let token = params.get("token").ok_or_else(|| {
+    let token = extract_token_from_headers_or_params(headers, params).ok_or_else(|| {
         (
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
@@ -2777,10 +2811,11 @@ pub async fn get_user_avatar_handler(
 /// Publish a prekey bundle (POST /keys/bundle)
 pub async fn publish_key_bundle_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::PublishKeyBundleRequest>,
 ) -> Result<Json<crate::models::PublishKeyBundleResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let identity_key = base64::engine::general_purpose::STANDARD
         .decode(&request.identity_key)
@@ -2849,9 +2884,10 @@ pub async fn publish_key_bundle_handler(
 pub async fn fetch_key_bundle_handler(
     State(state): State<SharedState>,
     Path(target_user_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::FetchKeyBundleResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.db.fetch_key_bundle(target_user_id).await {
         Ok(Some((identity_key, signed_prekey, one_time_prekey))) => {
@@ -2883,10 +2919,11 @@ pub async fn fetch_key_bundle_handler(
 /// Store a prekey message (POST /keys/prekey-message)
 pub async fn store_prekey_message_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::StorePrekeyMessageRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let sender_id = extract_user_from_token(&state, &params).await?;
+    let sender_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let message_data = base64::engine::general_purpose::STANDARD
         .decode(&request.message_data)
@@ -2922,9 +2959,10 @@ pub async fn store_prekey_message_handler(
 /// Get pending prekey messages (GET /keys/prekey-messages)
 pub async fn get_prekey_messages_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let messages = state.db.get_prekey_messages(user_id).await.map_err(|e| {
         (
@@ -2957,10 +2995,11 @@ pub async fn get_prekey_messages_handler(
 pub async fn set_slow_mode_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::SetSlowModeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get channel to find node
     let channel = state
@@ -3037,9 +3076,10 @@ pub async fn set_slow_mode_handler(
 pub async fn get_slow_mode_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let seconds = state
         .db
@@ -3064,10 +3104,11 @@ pub async fn get_slow_mode_handler(
 pub async fn add_auto_mod_word_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::AddAutoModWordRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let user_role = state
         .get_user_role_in_node(user_id, node_id)
@@ -3139,9 +3180,10 @@ pub async fn add_auto_mod_word_handler(
 pub async fn remove_auto_mod_word_handler(
     State(state): State<SharedState>,
     Path((node_id, word)): Path<(Uuid, String)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let user_role = state
         .get_user_role_in_node(user_id, node_id)
@@ -3198,9 +3240,10 @@ pub async fn remove_auto_mod_word_handler(
 pub async fn list_auto_mod_words_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Must be a member
     if !state
@@ -5217,6 +5260,7 @@ fn now_secs() -> u64 {
 /// Add reaction to message (PUT /messages/:id/reactions/:emoji)
 pub async fn add_reaction_handler(
     Path((message_id, emoji)): Path<(String, String)>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -5230,7 +5274,7 @@ pub async fn add_reaction_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Validate emoji (basic check for empty string)
     if emoji.trim().is_empty() {
@@ -5356,6 +5400,7 @@ pub async fn add_reaction_handler(
 /// Remove reaction from message (DELETE /messages/:id/reactions/:emoji)
 pub async fn remove_reaction_handler(
     Path((message_id, emoji)): Path<(String, String)>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -5369,7 +5414,7 @@ pub async fn remove_reaction_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user has access to the message
     let message_details = state
@@ -5468,6 +5513,7 @@ pub async fn remove_reaction_handler(
 /// Get reactions for a message (GET /messages/:id/reactions)
 pub async fn get_message_reactions_handler(
     Path(message_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<MessageReactionsResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -5481,7 +5527,7 @@ pub async fn get_message_reactions_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user has access to the message
     let message_details = state
@@ -5670,6 +5716,7 @@ pub async fn get_message_thread_handler(
 /// Get thread starters in a channel (GET /channels/:id/threads)
 pub async fn get_channel_threads_handler(
     Path(channel_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -5683,7 +5730,7 @@ pub async fn get_channel_threads_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check membership
     let channel_members = state
@@ -5739,6 +5786,7 @@ pub async fn get_channel_threads_handler(
 /// Pin a message (PUT /messages/:id/pin)
 pub async fn pin_message_handler(
     Path(message_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -5752,7 +5800,7 @@ pub async fn pin_message_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get message details to find the channel
     let message_details = state
@@ -5917,6 +5965,7 @@ pub async fn pin_message_handler(
 /// Unpin a message (DELETE /messages/:id/pin)
 pub async fn unpin_message_handler(
     Path(message_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -5930,7 +5979,7 @@ pub async fn unpin_message_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get message details to find the channel
     let message_details = state
@@ -6091,6 +6140,7 @@ pub async fn unpin_message_handler(
 /// Get pinned messages for a channel (GET /channels/:id/pins)
 pub async fn get_pinned_messages_handler(
     Path(channel_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -6104,7 +6154,7 @@ pub async fn get_pinned_messages_handler(
         )
     })?;
 
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user has access to the channel
     let channel_members = state
@@ -6160,10 +6210,11 @@ pub async fn get_pinned_messages_handler(
 /// Send a friend request (POST /friends/request)
 pub async fn send_friend_request_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::SendFriendRequestRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Cannot friend yourself
     if user_id == request.to_user_id {
@@ -6331,10 +6382,11 @@ pub async fn send_friend_request_handler(
 /// Accept a friend request (POST /friends/accept)
 pub async fn accept_friend_request_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::AcceptFriendRequestRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Verify the request is addressed to this user
     let fr = state
@@ -6409,10 +6461,11 @@ pub async fn accept_friend_request_handler(
 /// Reject a friend request (POST /friends/reject)
 pub async fn reject_friend_request_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::RejectFriendRequestRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Verify the request is addressed to this user
     let fr = state
@@ -6478,9 +6531,10 @@ pub async fn reject_friend_request_handler(
 /// List friends (GET /friends)
 pub async fn list_friends_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let user_hash = state
         .db
@@ -6521,9 +6575,10 @@ pub async fn list_friends_handler(
 /// List pending friend requests (GET /friends/requests)
 pub async fn list_friend_requests_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let requests = state.db.get_pending_requests(user_id).await.map_err(|e| {
         (
@@ -6542,9 +6597,10 @@ pub async fn list_friend_requests_handler(
 pub async fn remove_friend_handler(
     State(state): State<SharedState>,
     Path(target_user_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let user_hash = state
         .db
@@ -6837,9 +6893,10 @@ pub async fn get_dm_channels_handler(
 pub async fn get_node_audit_log_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<AuditLogResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Check if user is a member of the Node
     let user_member = state
@@ -6952,10 +7009,11 @@ pub async fn log_audit_event(
 /// Register a device token for push notifications (POST /push/register)
 pub async fn register_push_token_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::RegisterDeviceTokenRequest>,
 ) -> Result<Json<crate::models::RegisterDeviceTokenResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     if request.token.is_empty() {
         return Err((
@@ -6999,10 +7057,11 @@ pub async fn register_push_token_handler(
 /// Deregister a device token (DELETE /push/register)
 pub async fn deregister_push_token_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::DeregisterDeviceTokenRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state.db.remove_device_token(user_id, &request.token).await {
         Ok(true) => Ok(Json(serde_json::json!({ "status": "deregistered" }))),
@@ -7026,10 +7085,11 @@ pub async fn deregister_push_token_handler(
 /// Update push notification preferences (PUT /push/preferences)
 pub async fn update_push_preferences_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::UpdatePushPreferencesRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     match state
         .db
@@ -7074,11 +7134,12 @@ use crate::models::{
 /// Returns Ok(user_id) on success, or a 403 error response.
 async fn require_node_permission(
     state: &SharedState,
+    headers: &HeaderMap,
     params: &HashMap<String, String>,
     node_id: Uuid,
     required_bit: u64,
 ) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(state, params).await?;
+    let user_id = extract_user_from_token(state, headers, params).await?;
 
     // Check membership first
     if !state
@@ -7130,9 +7191,10 @@ async fn require_node_permission(
 pub async fn list_roles_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let roles = state.db.get_node_roles(node_id).await.map_err(|e| {
         (
@@ -7151,11 +7213,12 @@ pub async fn list_roles_handler(
 pub async fn create_role_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<CreateRoleRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let _user_id =
-        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
     let position = state.db.next_role_position(node_id).await.map_err(|e| {
         (
@@ -7197,11 +7260,12 @@ pub async fn create_role_handler(
 pub async fn update_role_handler(
     State(state): State<SharedState>,
     Path((node_id, role_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<UpdateRoleRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let _user_id =
-        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
     // Can't rename @everyone
     let role = state.db.get_role(role_id).await.map_err(|e| {
@@ -7271,10 +7335,11 @@ pub async fn update_role_handler(
 pub async fn delete_role_handler(
     State(state): State<SharedState>,
     Path((node_id, role_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let _user_id =
-        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
     // Prevent deleting @everyone (position 0)
     let role = state.db.get_role(role_id).await.map_err(|e| {
@@ -7322,11 +7387,12 @@ pub async fn delete_role_handler(
 pub async fn reorder_roles_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<ReorderRolesRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let _user_id =
-        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
     let entries: Vec<(Uuid, i32)> = request.roles.iter().map(|e| (e.id, e.position)).collect();
     state.db.reorder_roles(&entries).await.map_err(|e| {
@@ -7346,9 +7412,10 @@ pub async fn reorder_roles_handler(
 pub async fn get_member_roles_handler(
     State(state): State<SharedState>,
     Path((node_id, target_user_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let roles = state
         .db
@@ -7371,10 +7438,11 @@ pub async fn get_member_roles_handler(
 pub async fn assign_member_role_handler(
     State(state): State<SharedState>,
     Path((node_id, target_user_id, role_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let _user_id =
-        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
     // Verify the role belongs to this node
     let role = state.db.get_role(role_id).await.map_err(|e| {
@@ -7442,10 +7510,11 @@ pub async fn assign_member_role_handler(
 pub async fn remove_member_role_handler(
     State(state): State<SharedState>,
     Path((node_id, target_user_id, role_id)): Path<(Uuid, Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let _user_id =
-        require_node_permission(&state, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
 
     state
         .db
@@ -7468,9 +7537,10 @@ pub async fn remove_member_role_handler(
 pub async fn list_channel_overwrites_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let overwrites = state
         .db
@@ -7493,10 +7563,11 @@ pub async fn list_channel_overwrites_handler(
 pub async fn set_channel_overwrite_handler(
     State(state): State<SharedState>,
     Path((channel_id, role_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<SetChannelOverwriteRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get the channel's node to check permissions
     let channel = state
@@ -7570,9 +7641,10 @@ pub async fn set_channel_overwrite_handler(
 pub async fn delete_channel_overwrite_handler(
     State(state): State<SharedState>,
     Path((channel_id, role_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let channel = state
         .db
@@ -7644,9 +7716,10 @@ pub async fn delete_channel_overwrite_handler(
 pub async fn get_effective_permissions_handler(
     State(state): State<SharedState>,
     Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let channel = state
         .db
@@ -7752,10 +7825,11 @@ fn discord_bit_name(bit: u32) -> &'static str {
 pub async fn import_discord_template_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<ImportDiscordTemplateRequest>,
 ) -> Result<Json<ImportTemplateSummary>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Permission check: require Admin (ManageNode implies admin-level)
     let user_role = state
@@ -8166,10 +8240,11 @@ pub async fn import_discord_template_handler(
 /// Link preview endpoint — fetches Open Graph metadata for a URL
 pub async fn link_preview_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     // Auth check
-    let _user_id = extract_user_from_token(&state, &params).await?;
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let url = params.get("url").ok_or_else(|| {
         (
@@ -8417,9 +8492,10 @@ fn extract_content(tag: &str) -> Option<String> {
 pub async fn block_user_handler(
     State(state): State<SharedState>,
     Path(target_user_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     if user_id == target_user_id {
         return Err((
@@ -8479,9 +8555,10 @@ pub async fn block_user_handler(
 pub async fn unblock_user_handler(
     State(state): State<SharedState>,
     Path(target_user_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let removed = state
         .db
@@ -8515,9 +8592,10 @@ pub async fn unblock_user_handler(
 /// List blocked users (GET /api/blocked-users)
 pub async fn get_blocked_users_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     let blocked = state.db.get_blocked_users(user_id).await.map_err(|e| {
         (

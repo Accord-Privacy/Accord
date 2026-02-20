@@ -61,6 +61,7 @@ export async function detectSameOriginRelay(): Promise<string | null> {
 
 export class AccordApi {
   private baseUrl: string;
+  private _token: string | null = null;
   private _tokenRefresher: (() => Promise<string | null>) | null = null;
   private _refreshingToken: Promise<string | null> | null = null;
 
@@ -75,6 +76,15 @@ export class AccordApi {
   setBaseUrl(url: string) {
     this.baseUrl = url.replace(/\/+$/, '');
     localStorage.setItem('accord_server_url', url);
+  }
+
+  /** Store the auth token for use in Authorization headers on all subsequent requests. */
+  setToken(token: string | null) {
+    this._token = token;
+  }
+
+  getToken(): string | null {
+    return this._token;
   }
 
   /**
@@ -106,21 +116,30 @@ export class AccordApi {
     }
     const url = `${this.baseUrl}${endpoint}`;
     
+    // Build headers: always include Content-Type and merge caller-provided headers.
+    // Automatically attach Authorization: Bearer header when a token is stored.
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this._token) {
+      headers['Authorization'] = `Bearer ${this._token}`;
+    }
+    // Merge any caller-provided headers (may override the above)
+    if (options.headers) {
+      Object.assign(headers, options.headers);
+    }
+
     const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
       ...options,
+      headers,
     });
 
     // On 401, try to refresh the token and retry once
     if (response.status === 401 && !_isRetry && this._tokenRefresher) {
       const newToken = await this.refreshToken();
       if (newToken) {
-        // Replace token in the endpoint URL and retry
-        const refreshedEndpoint = endpoint.replace(/([?&])token=[^&]*/, `$1token=${encodeURIComponent(newToken)}`);
-        return this.request<T>(refreshedEndpoint, options, true);
+        this._token = newToken;
+        return this.request<T>(endpoint, options, true);
       }
     }
 
@@ -163,60 +182,56 @@ export class AccordApi {
   }
 
   // Create a new Node
-  async createNode(name: string, token: string, description?: string): Promise<NodeInfo> {
+  async createNode(name: string, _token: string, description?: string): Promise<NodeInfo> {
     const request: CreateNodeRequest = {
       name,
       description,
     };
 
-    return this.request<NodeInfo>(`/nodes?token=${encodeURIComponent(token)}`, {
+    return this.request<NodeInfo>(`/nodes`, {
       method: 'POST',
       body: JSON.stringify(request),
     });
   }
 
   // Get Node information
-  async getNodeInfo(nodeId: string, token?: string): Promise<NodeInfo> {
-    const url = token 
-      ? `/nodes/${nodeId}?token=${encodeURIComponent(token)}`
-      : `/nodes/${nodeId}`;
+  async getNodeInfo(nodeId: string, _token?: string): Promise<NodeInfo> {
+    const url = `/nodes/${nodeId}`;
     
     return this.request<NodeInfo>(url);
   }
 
   // Join a Node
-  async joinNode(nodeId: string, token: string): Promise<{ status: string; node_id: string }> {
+  async joinNode(nodeId: string, _token: string): Promise<{ status: string; node_id: string }> {
     return this.request<{ status: string; node_id: string }>(
-      `/nodes/${nodeId}/join?token=${encodeURIComponent(token)}`,
-      {
+      `/nodes/${nodeId}/join`, {
         method: 'POST',
       }
     );
   }
 
   // Leave a Node
-  async leaveNode(nodeId: string, token: string): Promise<{ status: string; node_id: string }> {
+  async leaveNode(nodeId: string, _token: string): Promise<{ status: string; node_id: string }> {
     return this.request<{ status: string; node_id: string }>(
-      `/nodes/${nodeId}/leave?token=${encodeURIComponent(token)}`,
-      {
+      `/nodes/${nodeId}/leave`, {
         method: 'POST',
       }
     );
   }
 
   // Get user's nodes
-  async getUserNodes(token: string): Promise<Node[]> {
-    return this.request<Node[]>(`/nodes?token=${encodeURIComponent(token)}`);
+  async getUserNodes(_token: string): Promise<Node[]> {
+    return this.request<Node[]>(`/nodes`);
   }
 
   // Get Node's channels
-  async getNodeChannels(nodeId: string, token: string): Promise<Channel[]> {
-    return this.request<Channel[]>(`/nodes/${nodeId}/channels?token=${encodeURIComponent(token)}`);
+  async getNodeChannels(nodeId: string, _token: string): Promise<Channel[]> {
+    return this.request<Channel[]>(`/nodes/${nodeId}/channels`);
   }
 
   // Get Node's members
-  async getNodeMembers(nodeId: string, token: string): Promise<Array<NodeMember & { user: User }>> {
-    const result = await this.request<any>(`/nodes/${nodeId}/members?token=${encodeURIComponent(token)}`);
+  async getNodeMembers(nodeId: string, _token: string): Promise<Array<NodeMember & { user: User }>> {
+    const result = await this.request<any>(`/nodes/${nodeId}/members`);
     // Server returns {members: [...]} — unwrap if needed
     if (result && result.members && Array.isArray(result.members)) return result.members;
     if (Array.isArray(result)) return result;
@@ -224,8 +239,8 @@ export class AccordApi {
   }
 
   // Get channel message history
-  async getChannelMessages(channelId: string, token: string, limit: number = 50, before?: string): Promise<MessagePaginationResponse> {
-    let url = `/channels/${channelId}/messages?limit=${limit}&token=${encodeURIComponent(token)}`;
+  async getChannelMessages(channelId: string, _token: string, limit: number = 50, before?: string): Promise<MessagePaginationResponse> {
+    let url = `/channels/${channelId}/messages?limit=${limit}`;
     if (before) {
       url += `&before=${encodeURIComponent(before)}`;
     }
@@ -277,14 +292,21 @@ export class AccordApi {
         reject(new Error('Upload failed'));
       });
 
-      xhr.open('POST', `${this.baseUrl}/channels/${channelId}/files?token=${encodeURIComponent(token)}`);
+      xhr.open('POST', `${this.baseUrl}/channels/${channelId}/files`);
+      const authToken = token || this._token;
+      if (authToken) {
+        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+      }
       xhr.send(formData);
     });
   }
 
   // Download file by ID
   async downloadFile(fileId: string, token: string): Promise<ArrayBuffer> {
-    const response = await fetch(`${this.baseUrl}/files/${fileId}?token=${encodeURIComponent(token)}`);
+    const authToken = token || this._token;
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const response = await fetch(`${this.baseUrl}/files/${fileId}`, { headers });
     
     if (!response.ok) {
       const error = await response.json();
@@ -295,85 +317,81 @@ export class AccordApi {
   }
 
   // List files in channel
-  async getChannelFiles(channelId: string, token: string): Promise<FileMetadata[]> {
-    return this.request<FileMetadata[]>(`/channels/${channelId}/files?token=${encodeURIComponent(token)}`);
+  async getChannelFiles(channelId: string, _token: string): Promise<FileMetadata[]> {
+    return this.request<FileMetadata[]>(`/channels/${channelId}/files`);
   }
 
   // Delete file by ID  
-  async deleteFile(fileId: string, token: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/files/${fileId}?token=${encodeURIComponent(token)}`, {
+  async deleteFile(fileId: string, _token: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/files/${fileId}`, {
       method: 'DELETE',
     });
   }
 
   // Create a new channel in a node
-  async createChannel(nodeId: string, name: string, channelType: string, token: string): Promise<Channel> {
+  async createChannel(nodeId: string, name: string, channelType: string, _token: string): Promise<Channel> {
     const request = {
       name,
       channel_type: channelType,
     };
 
-    return this.request<Channel>(`/nodes/${nodeId}/channels?token=${encodeURIComponent(token)}`, {
+    return this.request<Channel>(`/nodes/${nodeId}/channels`, {
       method: 'POST',
       body: JSON.stringify(request),
     });
   }
 
   // Delete a channel
-  async deleteChannel(channelId: string, token: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/channels/${channelId}?token=${encodeURIComponent(token)}`, {
+  async deleteChannel(channelId: string, _token: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/channels/${channelId}`, {
       method: 'DELETE',
     });
   }
 
   // Generate an invite for a node
-  async createInvite(nodeId: string, token: string): Promise<{ invite_code: string; expires_at?: number }> {
+  async createInvite(nodeId: string, _token: string): Promise<{ invite_code: string; expires_at?: number }> {
     return this.request<{ invite_code: string; expires_at?: number }>(
-      `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`,
-      {
+      `/nodes/${nodeId}/invites`, {
         method: 'POST',
       }
     );
   }
 
   // Kick a member from a node
-  async kickMember(nodeId: string, userId: string, token: string): Promise<{ message: string }> {
+  async kickMember(nodeId: string, userId: string, _token: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(
-      `/nodes/${nodeId}/members/${userId}?token=${encodeURIComponent(token)}`,
-      {
+      `/nodes/${nodeId}/members/${userId}`, {
         method: 'DELETE',
       }
     );
   }
 
   // Get user profile
-  async getUserProfile(userId: string, token?: string): Promise<UserProfile> {
-    const url = token 
-      ? `/users/${userId}/profile?token=${encodeURIComponent(token)}`
-      : `/users/${userId}/profile`;
+  async getUserProfile(userId: string, _token?: string): Promise<UserProfile> {
+    const url = `/users/${userId}/profile`;
     
     return this.request<UserProfile>(url);
   }
 
   // Update own profile
-  async updateProfile(profile: UpdateProfileRequest, token: string): Promise<UserProfile> {
-    return this.request<UserProfile>(`/users/me/profile?token=${encodeURIComponent(token)}`, {
+  async updateProfile(profile: UpdateProfileRequest, _token: string): Promise<UserProfile> {
+    return this.request<UserProfile>(`/users/me/profile`, {
       method: 'PATCH',
       body: JSON.stringify(profile),
     });
   }
 
   // Join a Node via invite code
-  async joinNodeByInvite(inviteCode: string, token: string): Promise<NodeInfo> {
-    return this.request<NodeInfo>(`/invites/${inviteCode}/join?token=${encodeURIComponent(token)}`, {
+  async joinNodeByInvite(inviteCode: string, _token: string): Promise<NodeInfo> {
+    return this.request<NodeInfo>(`/invites/${inviteCode}/join`, {
       method: 'POST',
     });
   }
 
   // Get invites for a node (admin/mod only)
-  async getNodeInvites(nodeId: string, token: string): Promise<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>> {
+  async getNodeInvites(nodeId: string, _token: string): Promise<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>> {
     const result = await this.request<any>(
-      `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`
+      `/nodes/${nodeId}/invites`
     );
     // Server returns {invites: [...]} — unwrap if needed
     if (result && result.invites && Array.isArray(result.invites)) return result.invites;
@@ -382,14 +400,13 @@ export class AccordApi {
   }
 
   // Create an invite with options
-  async createInviteWithOptions(nodeId: string, token: string, maxUses?: number, expiresHours?: number): Promise<{ invite_code: string; expires_at?: number }> {
+  async createInviteWithOptions(nodeId: string, _token: string, maxUses?: number, expiresHours?: number): Promise<{ invite_code: string; expires_at?: number }> {
     const body: any = {};
     if (maxUses !== undefined) body.max_uses = maxUses;
     if (expiresHours !== undefined) body.expires_hours = expiresHours;
 
     return this.request<{ invite_code: string; expires_at?: number }>(
-      `/nodes/${nodeId}/invites?token=${encodeURIComponent(token)}`,
-      {
+      `/nodes/${nodeId}/invites`, {
         method: 'POST',
         body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
       }
@@ -397,17 +414,16 @@ export class AccordApi {
   }
 
   // Revoke an invite
-  async revokeInvite(nodeId: string, inviteCode: string, token: string): Promise<{ message: string }> {
+  async revokeInvite(nodeId: string, inviteCode: string, _token: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(
-      `/nodes/${nodeId}/invites/${inviteCode}?token=${encodeURIComponent(token)}`,
-      {
+      `/nodes/${nodeId}/invites/${inviteCode}`, {
         method: 'DELETE',
       }
     );
   }
 
   // Search messages in a node
-  async searchMessages(nodeId: string, query: string, token: string, filters?: {
+  async searchMessages(nodeId: string, query: string, _token: string, filters?: {
     channelId?: string;
     authorId?: string;
     before?: number;
@@ -426,7 +442,7 @@ export class AccordApi {
     total_count: number;
     note?: string;
   }> {
-    let url = `/nodes/${nodeId}/search?q=${encodeURIComponent(query)}&token=${encodeURIComponent(token)}`;
+    let url = `/nodes/${nodeId}/search?q=${encodeURIComponent(query)}`;
     if (filters?.channelId) url += `&channel=${encodeURIComponent(filters.channelId)}`;
     if (filters?.authorId) url += `&author=${encodeURIComponent(filters.authorId)}`;
     if (filters?.before) url += `&before=${filters.before}`;
@@ -463,123 +479,114 @@ export class AccordApi {
   }
 
   // Delete a message
-  async deleteMessage(messageId: string, token: string): Promise<{ success: boolean }> {
+  async deleteMessage(messageId: string, _token: string): Promise<{ success: boolean }> {
     return this.request<{ success: boolean }>(
-      `/messages/${messageId}?token=${encodeURIComponent(token)}`,
-      {
+      `/messages/${messageId}`, {
         method: 'DELETE',
       }
     );
   }
 
   // Get message thread (replies to a message)
-  async getMessageThread(messageId: string, token: string): Promise<MessagePaginationResponse> {
+  async getMessageThread(messageId: string, _token: string): Promise<MessagePaginationResponse> {
     return this.request<MessagePaginationResponse>(
-      `/messages/${messageId}/thread?token=${encodeURIComponent(token)}`
+      `/messages/${messageId}/thread`
     );
   }
 
   // Get message reactions
-  async getMessageReactions(messageId: string, token: string): Promise<MessageReactionsResponse> {
+  async getMessageReactions(messageId: string, _token: string): Promise<MessageReactionsResponse> {
     return this.request<MessageReactionsResponse>(
-      `/messages/${messageId}/reactions?token=${encodeURIComponent(token)}`
+      `/messages/${messageId}/reactions`
     );
   }
 
   // Add reaction to message
-  async addReaction(messageId: string, emoji: string, token: string): Promise<{ success: boolean; reactions: MessageReaction[] }> {
+  async addReaction(messageId: string, emoji: string, _token: string): Promise<{ success: boolean; reactions: MessageReaction[] }> {
     return this.request<{ success: boolean; reactions: MessageReaction[] }>(
-      `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}?token=${encodeURIComponent(token)}`,
-      {
+      `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`, {
         method: 'PUT',
       }
     );
   }
 
   // Remove reaction from message
-  async removeReaction(messageId: string, emoji: string, token: string): Promise<{ success: boolean; reactions: MessageReaction[] }> {
+  async removeReaction(messageId: string, emoji: string, _token: string): Promise<{ success: boolean; reactions: MessageReaction[] }> {
     return this.request<{ success: boolean; reactions: MessageReaction[] }>(
-      `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}?token=${encodeURIComponent(token)}`,
-      {
+      `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`, {
         method: 'DELETE',
       }
     );
   }
 
   // Pin a message (admin/mod only)
-  async pinMessage(messageId: string, token: string): Promise<{ success: boolean; message: string }> {
+  async pinMessage(messageId: string, _token: string): Promise<{ success: boolean; message: string }> {
     return this.request<{ success: boolean; message: string }>(
-      `/messages/${messageId}/pin?token=${encodeURIComponent(token)}`,
-      {
+      `/messages/${messageId}/pin`, {
         method: 'PUT',
       }
     );
   }
 
   // Unpin a message (admin/mod only)
-  async unpinMessage(messageId: string, token: string): Promise<{ success: boolean; message: string }> {
+  async unpinMessage(messageId: string, _token: string): Promise<{ success: boolean; message: string }> {
     return this.request<{ success: boolean; message: string }>(
-      `/messages/${messageId}/pin?token=${encodeURIComponent(token)}`,
-      {
+      `/messages/${messageId}/pin`, {
         method: 'DELETE',
       }
     );
   }
 
   // Get pinned messages for a channel
-  async getPinnedMessages(channelId: string, token: string): Promise<{ pinned_messages: any[] }> {
+  async getPinnedMessages(channelId: string, _token: string): Promise<{ pinned_messages: any[] }> {
     return this.request<{ pinned_messages: any[] }>(
-      `/channels/${channelId}/pins?token=${encodeURIComponent(token)}`
+      `/channels/${channelId}/pins`
     );
   }
 
   // Direct Message operations
 
   // Create or get DM channel with a user
-  async createDmChannel(targetUserId: string, token: string): Promise<DmChannel> {
+  async createDmChannel(targetUserId: string, _token: string): Promise<DmChannel> {
     return this.request<DmChannel>(
-      `/dm/${targetUserId}?token=${encodeURIComponent(token)}`,
-      {
+      `/dm/${targetUserId}`, {
         method: 'POST',
       }
     );
   }
 
   // Get user's DM channels list
-  async getDmChannels(token: string): Promise<DmChannelsResponse> {
+  async getDmChannels(_token: string): Promise<DmChannelsResponse> {
     return this.request<DmChannelsResponse>(
-      `/dm?token=${encodeURIComponent(token)}`
+      `/dm`
     );
   }
 
   // Block a user
-  async blockUser(userId: string, token: string): Promise<{ status: string }> {
+  async blockUser(userId: string, _token: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(
-      `/users/${userId}/block?token=${encodeURIComponent(token)}`,
-      { method: 'POST' }
+      `/users/${userId}/block`, { method: 'POST' }
     );
   }
 
   // Unblock a user
-  async unblockUser(userId: string, token: string): Promise<{ status: string }> {
+  async unblockUser(userId: string, _token: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(
-      `/users/${userId}/block?token=${encodeURIComponent(token)}`,
-      { method: 'DELETE' }
+      `/users/${userId}/block`, { method: 'DELETE' }
     );
   }
 
   // Get blocked users list
-  async getBlockedUsers(token: string): Promise<{ blocked_users: Array<{ user_id: string; created_at: number }> }> {
+  async getBlockedUsers(_token: string): Promise<{ blocked_users: Array<{ user_id: string; created_at: number }> }> {
     return this.request<{ blocked_users: Array<{ user_id: string; created_at: number }> }>(
-      `/api/blocked-users?token=${encodeURIComponent(token)}`
+      `/api/blocked-users`
     );
   }
 
   // Mark channel as read up to a message
-  async markChannelRead(channelId: string, messageId: string, token: string): Promise<{ status: string }> {
+  async markChannelRead(channelId: string, messageId: string, _token: string): Promise<{ status: string }> {
     return this.request<{ status: string }>(
-      `/channels/${channelId}/read?token=${encodeURIComponent(token)}`,
-      {
+      `/channels/${channelId}/read`, {
         method: 'POST',
         body: JSON.stringify({ message_id: messageId }),
       }
@@ -589,12 +596,11 @@ export class AccordApi {
   // Get Node audit log (admin/mod only)
   async getNodeAuditLog(
     nodeId: string,
-    token: string,
+    _token: string,
     limit: number = 50,
     beforeId?: string
   ): Promise<AuditLogResponse> {
     const params = new URLSearchParams({
-      token,
       limit: limit.toString(),
     });
     
@@ -608,61 +614,61 @@ export class AccordApi {
   }
 
   // Get Node roles
-  async getRoles(nodeId: string, token: string): Promise<any[]> {
-    const result = await this.request<any>(`/nodes/${nodeId}/roles?token=${encodeURIComponent(token)}`);
+  async getRoles(nodeId: string, _token: string): Promise<any[]> {
+    const result = await this.request<any>(`/nodes/${nodeId}/roles`);
     if (result && Array.isArray(result.roles)) return result.roles;
     if (Array.isArray(result)) return result;
     return [];
   }
 
   // Create a role
-  async createRole(nodeId: string, token: string, data: { name: string; color?: string; hoist?: boolean; permissions?: number; mentionable?: boolean }): Promise<any> {
-    return this.request<any>(`/nodes/${nodeId}/roles?token=${encodeURIComponent(token)}`, {
+  async createRole(nodeId: string, _token: string, data: { name: string; color?: string; hoist?: boolean; permissions?: number; mentionable?: boolean }): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/roles`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   // Update a role
-  async updateRole(nodeId: string, roleId: string, token: string, data: { name?: string; color?: string | null; hoist?: boolean; permissions?: number; mentionable?: boolean; position?: number }): Promise<any> {
-    return this.request<any>(`/nodes/${nodeId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+  async updateRole(nodeId: string, roleId: string, _token: string, data: { name?: string; color?: string | null; hoist?: boolean; permissions?: number; mentionable?: boolean; position?: number }): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/roles/${roleId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   // Delete a role
-  async deleteRole(nodeId: string, roleId: string, token: string): Promise<any> {
-    return this.request<any>(`/nodes/${nodeId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+  async deleteRole(nodeId: string, roleId: string, _token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/roles/${roleId}`, {
       method: 'DELETE',
     });
   }
 
   // Get member's roles
-  async getMemberRoles(nodeId: string, userId: string, token: string): Promise<any[]> {
-    const result = await this.request<any>(`/nodes/${nodeId}/members/${userId}/roles?token=${encodeURIComponent(token)}`);
+  async getMemberRoles(nodeId: string, userId: string, _token: string): Promise<any[]> {
+    const result = await this.request<any>(`/nodes/${nodeId}/members/${userId}/roles`);
     if (result && Array.isArray(result.roles)) return result.roles;
     if (Array.isArray(result)) return result;
     return [];
   }
 
   // Assign a role to a member
-  async assignMemberRole(nodeId: string, userId: string, roleId: string, token: string): Promise<any> {
-    return this.request<any>(`/nodes/${nodeId}/members/${userId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+  async assignMemberRole(nodeId: string, userId: string, roleId: string, _token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/members/${userId}/roles/${roleId}`, {
       method: 'PUT',
     });
   }
 
   // Remove a role from a member
-  async removeMemberRole(nodeId: string, userId: string, roleId: string, token: string): Promise<any> {
-    return this.request<any>(`/nodes/${nodeId}/members/${userId}/roles/${roleId}?token=${encodeURIComponent(token)}`, {
+  async removeMemberRole(nodeId: string, userId: string, roleId: string, _token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/members/${userId}/roles/${roleId}`, {
       method: 'DELETE',
     });
   }
 
   // Import Discord template
-  async importDiscordTemplate(nodeId: string, templateCode: string, token: string): Promise<any> {
-    return this.request<any>(`/nodes/${nodeId}/import-discord-template?token=${encodeURIComponent(token)}`, {
+  async importDiscordTemplate(nodeId: string, templateCode: string, _token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}/import-discord-template`, {
       method: 'POST',
       body: JSON.stringify({ template_code: templateCode }),
     });
@@ -672,8 +678,12 @@ export class AccordApi {
   async uploadNodeIcon(nodeId: string, file: File, token: string): Promise<{ status: string; icon_hash: string }> {
     const formData = new FormData();
     formData.append('icon', file);
-    const response = await fetch(`${this.baseUrl}/nodes/${nodeId}/icon?token=${encodeURIComponent(token)}`, {
+    const authToken = token || this._token;
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const response = await fetch(`${this.baseUrl}/nodes/${nodeId}/icon`, {
       method: 'PUT',
+      headers,
       body: formData,
     });
     if (!response.ok) {
@@ -692,8 +702,12 @@ export class AccordApi {
   async uploadUserAvatar(file: File, token: string): Promise<{ status: string; avatar_hash: string }> {
     const formData = new FormData();
     formData.append('avatar', file);
-    const response = await fetch(`${this.baseUrl}/users/me/avatar?token=${encodeURIComponent(token)}`, {
+    const authToken = token || this._token;
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const response = await fetch(`${this.baseUrl}/users/me/avatar`, {
       method: 'PUT',
+      headers,
       body: formData,
     });
     if (!response.ok) {
@@ -713,9 +727,9 @@ export class AccordApi {
     identityKey: string,
     signedPrekey: string,
     oneTimePrekeys: string[],
-    token: string,
+    _token: string,
   ): Promise<{ status: string; one_time_prekeys_stored: number }> {
-    return this.request(`/keys/bundle?token=${encodeURIComponent(token)}`, {
+    return this.request(`/keys/bundle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -729,44 +743,44 @@ export class AccordApi {
   // Fetch a user's E2EE prekey bundle
   async fetchKeyBundle(
     targetUserId: string,
-    token: string,
+    _token: string,
   ): Promise<{ user_id: string; identity_key: string; signed_prekey: string; one_time_prekey?: string }> {
-    return this.request(`/keys/bundle/${targetUserId}?token=${encodeURIComponent(token)}`);
+    return this.request(`/keys/bundle/${targetUserId}`);
   }
 
   // ── Moderation endpoints ──
 
   // Set slow mode for a channel
-  async setSlowMode(channelId: string, seconds: number, token: string): Promise<any> {
-    return this.request(`/channels/${channelId}/slow-mode?token=${encodeURIComponent(token)}`, {
+  async setSlowMode(channelId: string, seconds: number, _token: string): Promise<any> {
+    return this.request(`/channels/${channelId}/slow-mode`, {
       method: 'PUT',
       body: JSON.stringify({ seconds }),
     });
   }
 
   // Get slow mode for a channel
-  async getSlowMode(channelId: string, token: string): Promise<{ slow_mode_seconds: number }> {
-    return this.request(`/channels/${channelId}/slow-mode?token=${encodeURIComponent(token)}`);
+  async getSlowMode(channelId: string, _token: string): Promise<{ slow_mode_seconds: number }> {
+    return this.request(`/channels/${channelId}/slow-mode`);
   }
 
   // Add auto-mod word
-  async addAutoModWord(nodeId: string, word: string, action: string, token: string): Promise<any> {
-    return this.request(`/nodes/${nodeId}/auto-mod/words?token=${encodeURIComponent(token)}`, {
+  async addAutoModWord(nodeId: string, word: string, action: string, _token: string): Promise<any> {
+    return this.request(`/nodes/${nodeId}/auto-mod/words`, {
       method: 'POST',
       body: JSON.stringify({ word, action }),
     });
   }
 
   // Remove auto-mod word
-  async removeAutoModWord(nodeId: string, word: string, token: string): Promise<any> {
-    return this.request(`/nodes/${nodeId}/auto-mod/words/${encodeURIComponent(word)}?token=${encodeURIComponent(token)}`, {
+  async removeAutoModWord(nodeId: string, word: string, _token: string): Promise<any> {
+    return this.request(`/nodes/${nodeId}/auto-mod/words/${encodeURIComponent(word)}`, {
       method: 'DELETE',
     });
   }
 
   // List auto-mod words
-  async getAutoModWords(nodeId: string, token: string): Promise<{ words: Array<{ word: string; action: string; created_at: number }> }> {
-    return this.request(`/nodes/${nodeId}/auto-mod/words?token=${encodeURIComponent(token)}`);
+  async getAutoModWords(nodeId: string, _token: string): Promise<{ words: Array<{ word: string; action: string; created_at: number }> }> {
+    return this.request(`/nodes/${nodeId}/auto-mod/words`);
   }
 
   // Test server connectivity

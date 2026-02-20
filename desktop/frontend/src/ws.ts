@@ -172,8 +172,12 @@ export class AccordWebSocket {
       this.ws = null;
     }
 
-    // Connect WITHOUT token in URL — authenticate post-upgrade via Authenticate message.
-    // This prevents token leakage in server/proxy access logs and browser history.
+    // SECURITY NOTE: WebSocket connections authenticate via a post-connect Authenticate
+    // message (not via URL query params or headers). The browser WebSocket API does not
+    // support custom headers, so token-in-URL would be the only alternative — but we
+    // avoid that to prevent token leakage in server/proxy access logs. Instead, the
+    // token is sent as the first message after the connection opens and the server
+    // validates it within a 5-second window.
     const wsUrl = `${this.baseUrl}/ws`;
     
     try {
