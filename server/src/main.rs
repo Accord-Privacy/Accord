@@ -204,6 +204,14 @@ struct Args {
     #[arg(long)]
     tls_key: Option<String>,
 
+    /// Disable TLS entirely (plain HTTP, for development or behind a reverse proxy)
+    #[arg(long)]
+    no_tls: bool,
+
+    /// Auto-generate a self-signed TLS certificate on startup (default when no cert is provided)
+    #[arg(long)]
+    auto_tls: bool,
+
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
@@ -271,6 +279,8 @@ struct FileConfig {
     port: Option<u16>,
     tls_cert: Option<String>,
     tls_key: Option<String>,
+    no_tls: Option<bool>,
+    auto_tls: Option<bool>,
     cors_origins: Option<String>,
     database: Option<String>,
     database_encryption: Option<bool>,
@@ -331,6 +341,16 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
 
     apply_opt!(tls_cert);
     apply_opt!(tls_key);
+    if let Some(true) = cfg.no_tls {
+        if !args.no_tls {
+            args.no_tls = true;
+        }
+    }
+    if let Some(true) = cfg.auto_tls {
+        if !args.auto_tls {
+            args.auto_tls = true;
+        }
+    }
     apply_opt!(frontend);
     apply_opt!(mesh_secret);
     apply_opt!(mesh_tls_cert);
@@ -341,6 +361,67 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
             args.mesh_enabled = true;
         }
     }
+}
+
+/// Generate or reuse a self-signed TLS certificate for local/dev use.
+/// Stores cert at `data/tls/cert.pem` and key at `data/tls/key.pem`.
+/// Returns `(cert_path, key_path)`.
+fn ensure_auto_tls_cert() -> Result<(String, String)> {
+    let tls_dir = std::path::Path::new("data/tls");
+    let cert_path = tls_dir.join("cert.pem");
+    let key_path = tls_dir.join("key.pem");
+
+    // Reuse existing cert if both files exist
+    if cert_path.exists() && key_path.exists() {
+        info!(
+            "Auto-TLS: reusing existing certificate at {}",
+            cert_path.display()
+        );
+        return Ok((
+            cert_path.to_string_lossy().into_owned(),
+            key_path.to_string_lossy().into_owned(),
+        ));
+    }
+
+    std::fs::create_dir_all(tls_dir)?;
+
+    // Gather SANs: localhost, 127.0.0.1, and machine hostname
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let mut san_names: Vec<String> = vec!["localhost".to_string()];
+    if !hostname.is_empty() && hostname != "localhost" {
+        san_names.push(hostname.clone());
+    }
+
+    let mut params = rcgen::CertificateParams::new(san_names.clone())?;
+    params
+        .subject_alt_names
+        .push(rcgen::SanType::IpAddress(std::net::IpAddr::V4(
+            std::net::Ipv4Addr::new(127, 0, 0, 1),
+        )));
+
+    // Valid for 365 days
+    params.not_before = rcgen::date_time_ymd(2024, 1, 1);
+    params.not_after = rcgen::date_time_ymd(2030, 1, 1);
+
+    let key_pair = rcgen::KeyPair::generate()?;
+    let cert = params.self_signed(&key_pair)?;
+
+    std::fs::write(&cert_path, cert.pem())?;
+    std::fs::write(&key_path, key_pair.serialize_pem())?;
+
+    info!(
+        "Auto-TLS: generated self-signed certificate at {} (SANs: {:?})",
+        cert_path.display(),
+        san_names
+    );
+
+    Ok((
+        cert_path.to_string_lossy().into_owned(),
+        key_path.to_string_lossy().into_owned(),
+    ))
 }
 
 #[tokio::main]
@@ -426,10 +507,20 @@ async fn main() -> Result<()> {
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
     info!("Bind address: {}:{}", args.host, args.port);
 
-    if args.tls_cert.is_some() && args.tls_key.is_some() {
-        info!("TLS configured - will serve HTTPS/WSS");
-    } else {
-        warn!("Running without TLS - only use for development or behind a reverse proxy!");
+    // Resolve TLS mode: --no-tls > --tls-cert/--tls-key > --auto-tls > default (auto-tls)
+    if !args.no_tls && args.tls_cert.is_none() && args.tls_key.is_none() {
+        // Default behaviour: auto-generate self-signed cert
+        let (cert, key) = ensure_auto_tls_cert()?;
+        args.tls_cert = Some(cert);
+        args.tls_key = Some(key);
+        info!("TLS mode: auto-generated self-signed certificate (HTTPS/WSS)");
+    } else if args.no_tls {
+        // Explicitly strip any cert paths when --no-tls is passed
+        args.tls_cert = None;
+        args.tls_key = None;
+        warn!("TLS mode: disabled (--no-tls) — plain HTTP/WS only. Use for development or behind a reverse proxy.");
+    } else if args.tls_cert.is_some() && args.tls_key.is_some() {
+        info!("TLS mode: using provided certificate (HTTPS/WSS)");
     }
 
     // Parse metadata mode

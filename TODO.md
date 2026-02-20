@@ -2,11 +2,11 @@
 
 ## NEXT
 - [ ] Split App.tsx (~5200 lines) into modular components
-- [ ] Implement Bot API v2 (airgapped command model — spec at `docs/bot-api-v2.md`)
+- [ ] TLS by default (in progress — auto-generated self-signed certs)
 
 ## High Priority
 - [ ] Proper channel E2EE — Sender Keys or MLS (current `channelId + salt` is placeholder)
-- [ ] TLS by default for relay connections
+- [x] ~~Bot API v2 server + frontend~~ (shipped)
 - [ ] N+1 member/role API — batch endpoint instead of per-member queries
 
 ## Medium Priority
