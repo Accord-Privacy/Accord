@@ -433,6 +433,7 @@ export async function loadKeyFromStorage(pkHash?: string): Promise<CryptoKeyPair
  * 
  * Returns raw 32 bytes (noble path) or CryptoKey (subtle path).
  */
+// WARNING: Placeholder — NOT real E2EE. All users derive the same key from channelId.
 async function createChannelKeyFromId(channelId: string): Promise<CryptoKey | Uint8Array> {
   const enc = new TextEncoder();
   const FIXED_SALT = 'accord-channel-key-v1';
@@ -507,19 +508,12 @@ export async function decryptMessage(key: CryptoKey | Uint8Array, ciphertext: st
 // AES-GCM Encrypt / Decrypt (files)
 // ---------------------------------------------------------------------------
 export async function encryptFile(key: CryptoKey | Uint8Array, fileBuffer: ArrayBuffer): Promise<ArrayBuffer> {
-  const iv = randomBytes(12);
-
-  if (HAS_SUBTLE && key instanceof CryptoKey) {
-    const encrypted = await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, fileBuffer);
-    const combined = new Uint8Array(iv.length + encrypted.byteLength);
-    combined.set(iv);
-    combined.set(new Uint8Array(encrypted), iv.length);
-    return combined.buffer;
-  }
-
   if (!(key instanceof Uint8Array)) {
     throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
   }
+  const iv = randomBytes(12);
+
+  // Always use noble for file encryption (cross-client compatibility)
   const cipher = gcm(key, iv);
   const encrypted = cipher.encrypt(new Uint8Array(fileBuffer));
   const combined = new Uint8Array(iv.length + encrypted.length);
@@ -529,17 +523,14 @@ export async function encryptFile(key: CryptoKey | Uint8Array, fileBuffer: Array
 }
 
 export async function decryptFile(key: CryptoKey | Uint8Array, encryptedBuffer: ArrayBuffer): Promise<ArrayBuffer> {
+  if (!(key instanceof Uint8Array)) {
+    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
+  }
   const all = new Uint8Array(encryptedBuffer);
   const iv = all.slice(0, 12);
   const encrypted = all.slice(12);
 
-  if (HAS_SUBTLE && key instanceof CryptoKey) {
-    return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, encrypted);
-  }
-
-  if (!(key instanceof Uint8Array)) {
-    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
-  }
+  // Always use noble for file decryption (cross-client compatibility)
   const cipher = gcm(key, iv);
   const decrypted = cipher.decrypt(encrypted);
   return decrypted.buffer.slice(decrypted.byteOffset, decrypted.byteOffset + decrypted.byteLength) as ArrayBuffer;
