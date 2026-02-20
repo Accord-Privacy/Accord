@@ -28,7 +28,7 @@ tracing-subscriber.workspace = true
 axum = { version = "0.7", features = ["ws", "multipart"] }
 futures-util = "0.3"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs", "set-header"] }
 
 # Database (optional - could use SQLite for persistence)
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "uuid", "chrono", "migrate"] }

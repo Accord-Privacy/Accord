@@ -3,7 +3,8 @@
 ## NEXT
 - [ ] Add Accord logo/favicon to frontend (index.html, login screen, sidebar header)
 - [ ] Wire frontend to batch API endpoints (in progress)
-- [ ] Token refresh mutex — prevent multiple simultaneous 401 re-auth races (audit #12)
+- [x] ~~Token refresh mutex~~ — already implemented (`_refreshingToken` dedup in api.ts)
+- [ ] CSRF protection + security headers (in progress)
 
 ## Security — Critical
 - [ ] **Proper channel E2EE** — Sender Keys or MLS (current `channelId + salt` is placeholder, server can derive same key) (audit #3)
@@ -12,7 +13,7 @@
 - [ ] Client-side search for E2EE content — server search returns metadata only, frontend SearchOverlay needs local decryption search (audit #13)
 
 ## Security — Medium
-- [ ] Message ordering — add monotonic sequence number per channel instead of relying on timestamps (audit #22)
+- [x] ~~Message ordering~~ — seq numbers implemented
 - [ ] File encryption consistency — ensure noble crypto used everywhere, not mixed subtle/noble (audit #23)
 - [ ] DER encoding assumes small sizes in crypto.ts (audit #24)
 - [ ] Auth tokens reload on server restart — document or fix that in-memory tokens clear on restart (audit #2)
@@ -26,12 +27,15 @@
 - [ ] cargo audit in CI (audit #25 — install and add to workflow)
 - [ ] Message scroll-to on search result click (TODO in App.tsx:1885)
 - [ ] Notification sounds / desktop notifications polish
-- [ ] Thread/reply support in channels
-- [ ] Message reactions (emoji)
-- [ ] Typing indicators in DMs (currently only channels)
-- [ ] User blocking
+- [x] ~~Thread/reply support~~ — already implemented
+- [x] ~~Message reactions~~ — already implemented
+- [x] ~~Message pinning~~ — already implemented
+- [x] ~~User blocking~~ — already implemented
 - [ ] Channel categories drag-and-drop reorder
 - [ ] Rich link previews for shared URLs
+- [ ] Custom emoji support (server-hosted)
+- [ ] Screen sharing in voice channels
+- [ ] Video calls
 
 ## Code Quality
 - [ ] Frontend build in QA script verified working (nvm sourcing added, needs CI test)

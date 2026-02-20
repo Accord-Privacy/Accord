@@ -30,6 +30,7 @@ mod validation;
 mod webhooks;
 
 use anyhow::Result;
+use axum::http::HeaderValue;
 use axum::{
     routing::{delete, get, post},
     Router,
@@ -74,6 +75,7 @@ use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
     services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
 use tracing::{info, warn};
@@ -892,18 +894,53 @@ async fn main() -> Result<()> {
     .layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
+            // ── Security response headers ──
+            .layer(SetResponseHeaderLayer::overriding(
+                axum::http::header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                axum::http::header::X_FRAME_OPTIONS,
+                HeaderValue::from_static("DENY"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                axum::http::header::X_XSS_PROTECTION,
+                HeaderValue::from_static("0"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                axum::http::header::REFERRER_POLICY,
+                HeaderValue::from_static("strict-origin-when-cross-origin"),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static(
+                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+                     img-src 'self' data: blob:; connect-src 'self' wss: ws:; frame-ancestors 'none'",
+                ),
+            ))
+            .layer(SetResponseHeaderLayer::overriding(
+                axum::http::HeaderName::from_static("permissions-policy"),
+                HeaderValue::from_static("camera=(), microphone=(self), geolocation=()"),
+            ))
+            // ── CORS ──
             .layer({
                 let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
                 let effective_cors = args.cors_origins.clone().unwrap_or_else(|| {
-                    if args.host == "0.0.0.0" || args.host == "::" {
-                        "*".to_string()
+                    if args.no_tls {
+                        // Dev mode: allow common local dev origins
+                        "http://localhost:3000,http://localhost:5173,http://localhost:8080"
+                            .to_string()
                     } else {
-                        "http://localhost:3000,http://localhost:5173".to_string()
+                        // Production: same-origin only (no extra origins)
+                        String::new()
                     }
                 });
                 if effective_cors.trim() == "*" {
-                    info!("CORS: allowing any origin (bind address: {})", args.host);
+                    warn!("CORS: allowing any origin — use --cors-origins to restrict in production");
                     cors.allow_origin(Any)
+                } else if effective_cors.is_empty() {
+                    info!("CORS: same-origin only (no additional origins allowed)");
+                    cors.allow_origin(AllowOrigin::list(Vec::<HeaderValue>::new()))
                 } else {
                     let origins: Vec<_> = effective_cors
                         .split(',')
