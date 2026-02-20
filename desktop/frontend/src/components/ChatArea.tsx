@@ -1,4 +1,4 @@
-import React, { Suspense } from "react";
+import React, { Suspense, useState, useCallback } from "react";
 import { useAppContext } from "./AppContext";
 import { api } from "../api";
 import { notificationManager } from "../notifications";
@@ -7,10 +7,32 @@ import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPr
 import { EmojiPickerButton } from "../EmojiPicker";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
+import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
+import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
 
 export const ChatArea: React.FC = () => {
   const ctx = useAppContext();
+  const [pendingCommand, setPendingCommand] = useState<{ bot: InstalledBot; command: BotCommand } | null>(null);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+
+  const handleSlashSelect = useCallback((bot: InstalledBot, command: BotCommand) => {
+    setShowSlashMenu(false);
+    if (command.params.length > 0) {
+      setPendingCommand({ bot, command });
+    } else {
+      ctx.handleInvokeBot(bot.bot_id, command.name, {});
+    }
+    ctx.setMessage('');
+  }, [ctx]);
+
+  const handleCommandSubmit = useCallback((params: Record<string, any>) => {
+    if (pendingCommand) {
+      ctx.handleInvokeBot(pendingCommand.bot.bot_id, pendingCommand.command.name, params);
+      setPendingCommand(null);
+    }
+  }, [pendingCommand, ctx]);
 
   const formatRelativeTime = (ts: number) => {
     const diff = Date.now() - ts;
@@ -186,6 +208,9 @@ export const ChatArea: React.FC = () => {
                     <div className="message-body">
                       {!isGrouped && (
                         <div className="message-header">
+                          {(msg as any)._botResponse && (
+                            <span className="message-bot-badge">🤖 BOT</span>
+                          )}
                           <span className="message-author" style={{ cursor: 'pointer', color: (() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); return am ? ctx.getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
                           onClick={(e) => {
                             const authorMember = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author);
@@ -257,6 +282,18 @@ export const ChatArea: React.FC = () => {
                             __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) 
                           }}
                         />
+                      )}
+
+                      {/* Bot Response Embed */}
+                      {(msg as any)._botResponse?.content?.type === 'embed' && (
+                        <BotResponseRenderer
+                          content={(msg as any)._botResponse.content}
+                          botId={(msg as any)._botResponse.bot_id}
+                          onInvokeCommand={(botId, cmd, params) => ctx.handleInvokeBot(botId, cmd, params)}
+                        />
+                      )}
+                      {(msg as any)._botResponse && (
+                        <div className="bot-sent-disclosure">📋 Sent to bot</div>
                       )}
 
                       {/* Link Preview */}
@@ -401,8 +438,24 @@ export const ChatArea: React.FC = () => {
             onClear={ctx.handleClearStagedFiles}
           />
 
+          {/* Bot Command Param Form */}
+          {pendingCommand && (
+            <CommandParamForm
+              bot={pendingCommand.bot}
+              command={pendingCommand.command}
+              onSubmit={handleCommandSubmit}
+              onCancel={() => setPendingCommand(null)}
+            />
+          )}
+
           {/* Message Input */}
-          <div className="message-input-container">
+          <div className="message-input-container" style={{ position: 'relative' }}>
+            <SlashCommandAutocomplete
+              query={slashQuery}
+              bots={ctx.installedBots}
+              onSelect={handleSlashSelect}
+              visible={showSlashMenu}
+            />
             {ctx.replyingTo && (
               <div className="reply-input-preview">
                 <div className="reply-input-bar"></div>
@@ -450,9 +503,17 @@ export const ChatArea: React.FC = () => {
               rows={1}
               disabled={ctx.slowModeCooldown > 0}
               onChange={(e) => {
-                ctx.setMessage(e.target.value);
+                const val = e.target.value;
+                ctx.setMessage(val);
                 e.target.style.height = 'auto';
                 e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+                // Slash command detection
+                if (val.startsWith('/') && val.length > 1 && !val.includes(' ')) {
+                  setSlashQuery(val.substring(1));
+                  setShowSlashMenu(true);
+                } else {
+                  setShowSlashMenu(false);
+                }
                 if (ctx.selectedChannelId) {
                   ctx.sendTypingIndicator(ctx.selectedChannelId);
                 }

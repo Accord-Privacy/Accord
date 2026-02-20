@@ -4,6 +4,7 @@ import { api } from "../api";
 import { notificationManager } from "../notifications";
 import { Channel } from "../types";
 import { getCombinedTrust, getTrustIndicator, CLIENT_BUILD_HASH } from "../buildHash";
+import { BotPanel } from "./BotPanel";
 
 // Voice Connection Panel (sidebar bottom, above user panel)
 const VoiceConnectionPanel: React.FC<{
@@ -234,6 +235,14 @@ export const ChannelSidebar: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Bot Panel */}
+      {ctx.selectedNodeId && (
+        <BotPanel
+          nodeId={ctx.selectedNodeId}
+          isAdmin={ctx.selectedNodeId ? ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') : false}
+        />
+      )}
 
       {/* Direct Messages Section */}
       <DMSection />

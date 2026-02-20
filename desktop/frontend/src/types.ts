@@ -409,6 +409,99 @@ export interface ParsedInviteLink {
   inviteCode: string;  // e.g. "abc123def"
 }
 
+// Bot API v2 types
+
+export interface BotCommandParam {
+  name: string;
+  type: string;
+  required: boolean;
+  default?: any;
+  description?: string;
+}
+
+export interface BotCommand {
+  name: string;
+  description: string;
+  params: BotCommandParam[];
+}
+
+export interface BotManifest {
+  bot_id: string;
+  name: string;
+  icon?: string;
+  description?: string;
+  commands: BotCommand[];
+}
+
+export interface InstalledBot {
+  bot_id: string;
+  name: string;
+  icon?: string;
+  description?: string;
+  commands: BotCommand[];
+  installed_at: number;
+  invocation_count: number;
+}
+
+export interface ActionButton {
+  label: string;
+  command?: string;
+  params?: Record<string, any>;
+  params_prompt?: string[];
+}
+
+export interface FieldEntry {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+export interface EmbedSection {
+  type: 'text' | 'grid' | 'image' | 'actions' | 'divider' | 'fields' | 'progress' | 'code' | 'input';
+  // text
+  text?: string;
+  // grid
+  columns?: string[];
+  rows?: string[][];
+  // image
+  url?: string;
+  alt?: string;
+  // actions
+  buttons?: ActionButton[];
+  // fields
+  fields?: FieldEntry[];
+  // progress
+  label?: string;
+  value?: number;
+  max?: number;
+  // code
+  code?: string;
+  language?: string;
+  // input
+  name?: string;
+  placeholder?: string;
+  command?: string;
+}
+
+export interface BotResponseContent {
+  type: 'text' | 'embed';
+  text?: string;
+  title?: string;
+  sections?: EmbedSection[];
+}
+
+export interface BotResponseMessage {
+  type: 'bot_response';
+  bot_id: string;
+  bot_name: string;
+  bot_icon?: string;
+  invocation_id: string;
+  channel_id: string;
+  content: BotResponseContent;
+  timestamp: number;
+  signature_valid?: boolean;
+}
+
 // Audit log types
 export interface AuditLogEntry {
   id: string;

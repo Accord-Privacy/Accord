@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage, InstalledBot, BotResponseMessage } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -343,6 +343,10 @@ function App() {
 
   // Read receipts state: channelId -> ReadReceipt[]
   const [readReceipts, setReadReceipts] = useState<Map<string, ReadReceipt[]>>(new Map());
+
+  // Bot API v2 state
+  const [installedBots, setInstalledBots] = useState<InstalledBot[]>([]);
+  const [botResponses, setBotResponses] = useState<BotResponseMessage[]>([]);
   const lastReadSent = useRef<Map<string, string>>(new Map()); // channelId -> last message_id sent
 
   // Permission checking utilities
@@ -1000,6 +1004,29 @@ function App() {
       });
     });
 
+    // Handle bot responses
+    socket.on('bot_response', (data: BotResponseMessage) => {
+      setBotResponses(prev => [...prev, data]);
+      // Also add as a message in the channel
+      const botMsg: Message = {
+        id: `bot_${data.invocation_id}_${Date.now()}`,
+        author: data.bot_name,
+        content: data.content.type === 'text' ? (data.content.text || '') : `[${data.content.title || 'Bot Response'}]`,
+        time: new Date(data.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: data.timestamp * 1000,
+        channel_id: data.channel_id,
+        isEncrypted: false,
+        e2eeType: 'none',
+        display_name: data.bot_name,
+        // Store bot metadata in the message for rendering
+        _botResponse: data,
+      } as any;
+      const currentChannelId = selectedDmChannelRef.current?.id || selectedChannelIdRef.current;
+      if (data.channel_id === currentChannelId) {
+        setAppState(prev => ({ ...prev, messages: [...prev.messages, botMsg] }));
+      }
+    });
+
     // Handle presence updates
     socket.on('presence_update', (data: any) => {
       if (data.user_id && data.status) {
@@ -1411,6 +1438,32 @@ function App() {
     }
   }, []);
 
+  // Bot API v2
+  const loadBots = useCallback(async (nodeId: string) => {
+    try {
+      const bots = await api.listBots(nodeId);
+      setInstalledBots(bots);
+    } catch (err) {
+      console.warn('Failed to load bots:', err);
+      setInstalledBots([]);
+    }
+  }, []);
+
+  const handleInvokeBot = useCallback(async (botId: string, command: string, params: Record<string, any>) => {
+    const nodeId = selectedNodeId;
+    const channelId = selectedDmChannel?.id || selectedChannelId;
+    if (!nodeId || !channelId) return;
+    try {
+      const result = await api.invokeCommand(
+        nodeId, botId, command, params, channelId
+      );
+      console.log('Bot command invoked:', result);
+    } catch (err: any) {
+      console.error('Bot invoke failed:', err);
+      setError(`Bot command failed: ${err.message}`);
+    }
+  }, [selectedNodeId, selectedDmChannel, selectedChannelId]);
+
   // Handle node selection
   const handleNodeSelect = useCallback((nodeId: string, index: number) => {
     setSelectedNodeId(nodeId);
@@ -1429,9 +1482,9 @@ function App() {
     loadChannels(nodeId);
     loadMembers(nodeId);
     loadRoles(nodeId);
-  }, [loadChannels, loadMembers, loadRoles]);
+    loadBots(nodeId);
+  }, [loadChannels, loadMembers, loadRoles, loadBots]);
 
-  // Load user's DM channels
   const loadDmChannels = useCallback(async () => {
     if (!appState.token || !serverAvailable) return;
     
@@ -3049,7 +3102,10 @@ function App() {
     handleFilesStaged, handleRemoveStagedFile, handleClearStagedFiles,
     handleInsertEmoji, handleContextMenu, togglePinnedPanel,
     toggleMemberRole, sendTypingIndicator, formatTypingUsers,
-    loadChannels, loadRoles, loadNodes, loadDmChannels,
+    loadChannels, loadRoles, loadNodes, loadDmChannels, loadBots,
+
+    // Bots
+    installedBots, botResponses, handleInvokeBot,
 
     // Permission helpers
     hasPermission, getRoleBadge, canDeleteMessage, getPresenceStatus,

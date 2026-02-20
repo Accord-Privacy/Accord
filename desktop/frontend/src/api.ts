@@ -783,6 +783,42 @@ export class AccordApi {
     return this.request(`/nodes/${nodeId}/auto-mod/words`);
   }
 
+  // ── Bot API v2 ──
+
+  async listBots(nodeId: string): Promise<any[]> {
+    const result = await this.request<any>(`/api/nodes/${nodeId}/bots`);
+    if (result && Array.isArray(result.bots)) return result.bots;
+    if (Array.isArray(result)) return result;
+    return [];
+  }
+
+  async installBot(nodeId: string, manifest: any, webhookUrl: string): Promise<any> {
+    return this.request<any>(`/api/nodes/${nodeId}/bots`, {
+      method: 'POST',
+      body: JSON.stringify({ manifest, webhook_url: webhookUrl }),
+    });
+  }
+
+  async uninstallBot(nodeId: string, botId: string): Promise<any> {
+    return this.request<any>(`/api/nodes/${nodeId}/bots/${encodeURIComponent(botId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getBotCommands(nodeId: string, botId: string): Promise<any[]> {
+    const result = await this.request<any>(`/api/nodes/${nodeId}/bots/${encodeURIComponent(botId)}/commands`);
+    if (result && Array.isArray(result.commands)) return result.commands;
+    if (Array.isArray(result)) return result;
+    return [];
+  }
+
+  async invokeCommand(nodeId: string, botId: string, command: string, params: Record<string, any>, channelId: string): Promise<any> {
+    return this.request<any>(`/api/nodes/${nodeId}/bots/${encodeURIComponent(botId)}/invoke`, {
+      method: 'POST',
+      body: JSON.stringify({ command, params, channel_id: channelId }),
+    });
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

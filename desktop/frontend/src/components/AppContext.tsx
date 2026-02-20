@@ -1,5 +1,5 @@
 import React, { createContext, useContext } from "react";
-import { AppState, Message, Node, Channel, NodeMember, User, TypingUser, DmChannelWithInfo, Role, ReadReceipt } from "../types";
+import { AppState, Message, Node, Channel, NodeMember, User, TypingUser, DmChannelWithInfo, Role, ReadReceipt, InstalledBot, BotResponseMessage } from "../types";
 import { ConnectionInfo } from "../ws";
 import { NotificationPreferences } from "../notifications";
 import { AccordWebSocket } from "../ws";
@@ -265,6 +265,12 @@ export interface AppContextType {
 
   // Read receipts
   readReceipts: Map<string, ReadReceipt[]>;
+
+  // Bots
+  installedBots: InstalledBot[];
+  botResponses: BotResponseMessage[];
+  loadBots: (nodeId: string) => Promise<void>;
+  handleInvokeBot: (botId: string, command: string, params: Record<string, any>) => Promise<void>;
 
   // Message density
   messageDensity: string;
