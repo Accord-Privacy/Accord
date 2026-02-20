@@ -365,6 +365,15 @@ function App() {
   const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
   const creatingNodeRef = useRef(false);
 
+  // Refs to avoid stale closures in setupWebSocketHandlers
+  const membersRef = useRef(members);
+  const dmChannelsRef = useRef(dmChannels);
+  const nodesRef = useRef(nodes);
+  const channelsRef = useRef(channels);
+  const selectedChannelIdRef = useRef(selectedChannelId);
+  const selectedDmChannelRef = useRef(selectedDmChannel);
+  const serverUrlRef = useRef(serverUrl);
+
   // E2EE manager for 1:1 DM Double Ratchet encryption
   const e2eeManagerRef = useRef<E2EEManager | null>(null);
   // Cache of fetched prekey bundles by user ID
@@ -632,6 +641,15 @@ function App() {
     checkServer();
   }, []);
 
+  // Keep refs in sync for WebSocket handler closure
+  useEffect(() => { membersRef.current = members; }, [members]);
+  useEffect(() => { dmChannelsRef.current = dmChannels; }, [dmChannels]);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { channelsRef.current = channels; }, [channels]);
+  useEffect(() => { selectedChannelIdRef.current = selectedChannelId; }, [selectedChannelId]);
+  useEffect(() => { selectedDmChannelRef.current = selectedDmChannel; }, [selectedDmChannel]);
+  useEffect(() => { serverUrlRef.current = serverUrl; }, [serverUrl]);
+
   // WebSocket event handlers
   const setupWebSocketHandlers = useCallback((socket: AccordWebSocket) => {
     socket.on('connected', () => {
@@ -680,7 +698,7 @@ function App() {
           setAppState(prev => ({ ...prev, token: response.token }));
           // Reconnect WebSocket with new token
           socket.disconnect();
-          const newSocket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
+          const newSocket = new AccordWebSocket(response.token, serverUrlRef.current.replace(/^http/, "ws"));
           setupWebSocketHandlers(newSocket);
           setWs(newSocket);
           newSocket.connect();
@@ -701,7 +719,7 @@ function App() {
       let isEncrypted = false;
 
       // Check if this is a DM message
-      const isIncomingDm = data.is_dm || dmChannels.some(dm => dm.id === data.channel_id);
+      const isIncomingDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
 
       if (isIncomingDm && e2eeManagerRef.current?.isInitialized && data.from) {
         // DM: try Double Ratchet E2EE decryption
@@ -733,7 +751,7 @@ function App() {
       }
 
       // Use display name from server payload, fall back to member list, then fingerprint
-      const senderMember = members.find(m => m.user_id === data.from);
+      const senderMember = membersRef.current.find(m => m.user_id === data.from);
       const senderName = data.sender_display_name
         || (senderMember && (senderMember.user?.display_name || senderMember.profile?.display_name))
         || fingerprint(senderMember?.public_key_hash || data.from || '');
@@ -767,22 +785,22 @@ function App() {
       }
 
       // Check if this is a DM message
-      const isDm = data.is_dm || dmChannels.some(dm => dm.id === data.channel_id);
+      const isDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
       
       if (isDm) {
         // Handle DM message - refresh DM channels to update last message
         loadDmChannels();
         
         // Add to notifications for DM
-        const dmChannel = dmChannels.find(dm => dm.id === data.channel_id);
+        const dmChannel = dmChannelsRef.current.find(dm => dm.id === data.channel_id);
         if (dmChannel) {
           notificationManager.addMessage(`dm-${dmChannel.id}`, data.channel_id, newMessage, true);
           setForceUpdate(prev => prev + 1);
         }
       } else {
         // Find which node this channel belongs to for regular messages
-        const nodeId = nodes.find(node => 
-          channels.some(channel => channel.id === data.channel_id && channel.node_id === node.id)
+        const nodeId = nodesRef.current.find(node => 
+          channelsRef.current.some(channel => channel.id === data.channel_id && channel.node_id === node.id)
         )?.id;
 
         // Add message to notification system
@@ -793,7 +811,7 @@ function App() {
       }
 
       // Check if this message belongs to the currently selected channel
-      const currentChannelId = selectedDmChannel?.id || selectedChannelId;
+      const currentChannelId = selectedDmChannelRef.current?.id || selectedChannelIdRef.current;
       const isCurrentChannel = data.channel_id === currentChannelId;
 
       // Check if user is scrolled to the bottom before adding new message
@@ -832,7 +850,7 @@ function App() {
           container.scrollTop = container.scrollHeight;
         }, 0);
         // Send read receipt for the new message since user is at bottom
-        if (data.channel_id === selectedChannelId && newMessage.id) {
+        if (data.channel_id === selectedChannelIdRef.current && newMessage.id) {
           sendReadReceipt(data.channel_id, newMessage.id);
         }
       } else {
