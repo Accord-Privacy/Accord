@@ -320,14 +320,19 @@ impl AppState {
             .map_err(|e| format!("Database error: {}", e))?
             .unwrap_or_default();
 
-        if !stored_hash.is_empty() {
+        if stored_hash.is_empty() {
+            if !password.is_empty() {
+                return Err("This account has no password set. Authenticate without a password or re-register.".to_string());
+            }
+            // Legacy keyless user — allow through
+        } else {
+            // Normal password verification with Argon2
             let parsed_hash = PasswordHash::new(&stored_hash)
                 .map_err(|e| format!("Invalid stored password hash: {}", e))?;
             Argon2::default()
                 .verify_password(password.as_bytes(), &parsed_hash)
                 .map_err(|_| "Invalid password".to_string())?;
         }
-        // If no password hash is stored, skip verification (legacy/keyless users)
 
         let token = format!("tok_{}", Uuid::new_v4().simple());
         let expires_at = now() + 86400;

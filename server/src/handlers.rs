@@ -3543,9 +3543,18 @@ async fn websocket_handler_inner(
     }
 
     let outgoing_task = tokio::spawn(async move {
-        while let Ok(message) = rx.recv().await {
-            if sender.send(Message::Text(message)).await.is_err() {
-                break;
+        loop {
+            match rx.recv().await {
+                Ok(message) => {
+                    if sender.send(Message::Text(message)).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("Client lagged, skipped {} messages for user", n);
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -3774,9 +3783,11 @@ async fn handle_ws_message(
                 }
 
                 // ── Auto-mod word filter ──
-                // We check the encrypted_data base64 payload — for plaintext messages
-                // the content is visible. For truly E2E encrypted content the server
-                // can't check, but the client still sends plaintext in many setups.
+                // NOTE: This checks the wire-format payload (encrypted_data). For
+                // unencrypted/plaintext messages during development this works fine.
+                // With real E2EE enabled, the server cannot inspect message content
+                // and this check becomes non-functional. At that point auto-mod
+                // should either move to client-side enforcement or be removed.
                 if let Ok(Some((matched_word, action))) = state
                     .db
                     .check_auto_mod(channel.node_id, &encrypted_data)

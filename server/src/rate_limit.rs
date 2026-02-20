@@ -92,9 +92,8 @@ impl RateLimiter {
         let window_duration = action.window_duration();
         let limit = action.default_limit();
 
-        let window = windows
-            .entry((ip.to_string(), action))
-            .or_insert_with(VecDeque::new);
+        let key = (ip.to_string(), action);
+        let window = windows.entry(key).or_insert_with(VecDeque::new);
 
         // Remove entries older than the window duration
         while let Some(&front_time) = window.front() {
@@ -124,6 +123,11 @@ impl RateLimiter {
         }
 
         window.push_back(now);
+
+        // Opportunistic cleanup: remove empty entries to prevent memory leaks
+        // from IPs that never return. Cheap since we already hold the write lock.
+        windows.retain(|_, w| !w.is_empty());
+
         Ok(())
     }
 
@@ -167,6 +171,10 @@ impl RateLimiter {
 
         // Add the current action to the window
         window.push_back(now);
+
+        // Opportunistic cleanup: remove empty entries to prevent memory leaks
+        // from users that never return. Cheap since we already hold the write lock.
+        windows.retain(|_, w| !w.is_empty());
 
         Ok(())
     }
