@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage, InstalledBot, BotResponseMessage } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -1464,8 +1464,32 @@ function App() {
     }
   }, [selectedNodeId, selectedDmChannel, selectedChannelId]);
 
-  // Handle node selection
-  const handleNodeSelect = useCallback((nodeId: string, index: number) => {
+  // Convert a BatchMemberEntry to the NodeMember & { user: User } shape used by the UI
+  const batchMemberToUiMember = useCallback((m: BatchMemberEntry, nodeId: string): NodeMember & { user: User } => ({
+    node_id: nodeId,
+    user_id: m.user_id,
+    public_key_hash: '',
+    role: m.node_role,
+    joined_at: m.joined_at,
+    profile: {
+      user_id: m.user_id,
+      display_name: m.display_name,
+      avatar_url: m.avatar_url,
+      status: m.status as any,
+      custom_status: m.custom_status,
+      updated_at: 0,
+    },
+    user: {
+      id: m.user_id,
+      public_key_hash: '',
+      public_key: '',
+      created_at: m.joined_at || 0,
+      display_name: m.display_name,
+    },
+  }), []);
+
+  // Handle node selection — uses batch overview endpoint for a single round-trip
+  const handleNodeSelect = useCallback(async (nodeId: string, index: number) => {
     setSelectedNodeId(nodeId);
     setSelectedChannelId(null);
     setActiveServer(index);
@@ -1478,12 +1502,81 @@ function App() {
     setHasMoreMessages(true);
     setOldestMessageCursor(undefined);
     
-    // Load channels and members for the selected node
-    loadChannels(nodeId);
-    loadMembers(nodeId);
-    loadRoles(nodeId);
-    loadBots(nodeId);
-  }, [loadChannels, loadMembers, loadRoles, loadBots]);
+    // Try batch overview first, fall back to individual calls
+    try {
+      const overview = await api.getNodeOverview(nodeId);
+      
+      // Set channels — map batch shape to Channel shape
+      const uiChannels: Channel[] = overview.channels.map(ch => ({
+        id: ch.id,
+        name: ch.name,
+        node_id: ch.node_id,
+        members: [],
+        created_at: 0,
+        parent_id: ch.category_id,
+        position: ch.position,
+        unread_count: ch.unread_count,
+      }));
+      setChannels(uiChannels);
+      
+      // Auto-select first channel
+      if (uiChannels.length > 0) {
+        setSelectedChannelId(prev => prev ?? uiChannels[0].id);
+      }
+      
+      // Set members — map batch shape to UI shape
+      const uiMembers = overview.members.map(m => batchMemberToUiMember(m, nodeId));
+      setMembers(uiMembers);
+      
+      // Set roles
+      setNodeRoles(Array.isArray(overview.roles) ? overview.roles : []);
+      
+      // Build memberRolesMap from batch member data
+      const rolesMap: Record<string, Role[]> = {};
+      for (const m of overview.members) {
+        rolesMap[m.user_id] = (m.roles || []).map(r => ({
+          id: r.id,
+          node_id: nodeId,
+          name: r.name,
+          color: r.color,
+          position: r.position,
+          permissions: 0,
+          hoist: r.hoist ?? false,
+          mentionable: false,
+          created_at: 0,
+        }));
+      }
+      setMemberRolesMap(rolesMap);
+      
+      // Set current user's role
+      const currentUserId = localStorage.getItem('accord_user_id');
+      if (currentUserId) {
+        const currentMember = overview.members.find(m => m.user_id === currentUserId);
+        if (currentMember) {
+          setUserRoles(prev => ({ ...prev, [nodeId]: currentMember.node_role }));
+        }
+      }
+      
+      // Set presence map from online status
+      setPresenceMap(prev => {
+        const newMap = new Map(prev);
+        for (const m of overview.members) {
+          newMap.set(m.user_id, m.status as any);
+        }
+        return newMap;
+      });
+      
+      // Load bots separately (not in overview)
+      loadBots(nodeId);
+    } catch (err) {
+      console.warn('Batch overview failed, falling back to individual calls:', err);
+      // Fallback to individual calls
+      loadChannels(nodeId);
+      loadMembers(nodeId);
+      loadRoles(nodeId);
+      loadBots(nodeId);
+    }
+  }, [loadChannels, loadMembers, loadRoles, loadBots, batchMemberToUiMember]);
 
   const loadDmChannels = useCallback(async () => {
     if (!appState.token || !serverAvailable) return;

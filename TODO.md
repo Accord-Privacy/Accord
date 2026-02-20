@@ -2,15 +2,12 @@
 
 ## NEXT
 - [ ] Split App.tsx (~5200 lines) into modular components
-- [ ] TLS by default (in progress — auto-generated self-signed certs)
+- [ ] Landing page / marketing site
 
 ## High Priority
 - [ ] Proper channel E2EE — Sender Keys or MLS (current `channelId + salt` is placeholder)
-- [x] ~~Bot API v2 server + frontend~~ (shipped)
-- [ ] N+1 member/role API — batch endpoint instead of per-member queries
 
 ## Medium Priority
-- [ ] Landing page / marketing site
 - [ ] App store submissions (blocked: need Apple/Google developer accounts)
 - [ ] On-device mobile testing (blocked: need Gage's devices)
 - [ ] Frontend build in QA script (npx not in PATH for pre-push-qa.sh)
@@ -21,6 +18,10 @@
 - [ ] Federation discovery (future)
 
 ## Done (recent)
+- [x] TLS by default with auto-generated self-signed certs
+- [x] Bot API v2 — server + frontend (airgapped commands)
+- [x] Batch API endpoints (members, channels, overview)
+- [x] App.tsx split into modular components (5257 → 3233 lines)
 - [x] Full codebase audit — 25 issues found and fixed
 - [x] Auth tokens → Authorization headers
 - [x] Crypto zero-key fallback fixed

@@ -21,6 +21,9 @@ import {
   DmChannel,
   DmChannelsResponse,
   AuditLogResponse,
+  NodeOverviewResponse,
+  BatchMembersResponse,
+  BatchChannelsResponse,
 } from './types';
 
 // Configuration - check for environment variable or use localStorage or default
@@ -817,6 +820,23 @@ export class AccordApi {
       method: 'POST',
       body: JSON.stringify({ command, params, channel_id: channelId }),
     });
+  }
+
+  // ── Batch API endpoints ──
+
+  // Get full node overview (info + channels + members + roles) in a single call
+  async getNodeOverview(nodeId: string): Promise<NodeOverviewResponse> {
+    return this.request<NodeOverviewResponse>(`/api/nodes/${nodeId}/overview`);
+  }
+
+  // Get all members with roles and online status in a single call
+  async getMembersBatch(nodeId: string): Promise<BatchMembersResponse> {
+    return this.request<BatchMembersResponse>(`/api/nodes/${nodeId}/members/batch`);
+  }
+
+  // Get all channels with permissions and unread counts in a single call
+  async getChannelsBatch(nodeId: string): Promise<BatchChannelsResponse> {
+    return this.request<BatchChannelsResponse>(`/api/nodes/${nodeId}/channels/batch`);
   }
 
   // Test server connectivity

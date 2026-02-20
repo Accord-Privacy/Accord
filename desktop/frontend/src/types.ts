@@ -502,6 +502,47 @@ export interface BotResponseMessage {
   signature_valid?: boolean;
 }
 
+// Batch API response types
+
+export interface BatchMemberEntry {
+  user_id: string;
+  display_name: string;
+  avatar_url?: string;
+  roles: Array<{ id: string; name: string; color?: string | null; position: number; hoist?: boolean }>;
+  online: boolean;
+  status: string;
+  custom_status?: string;
+  joined_at: number;
+  node_role: 'admin' | 'moderator' | 'member';
+}
+
+export interface BatchChannelEntry {
+  id: string;
+  name: string;
+  node_id: string;
+  category_id?: string | null;
+  category_name?: string | null;
+  position?: number;
+  permission_overrides?: Array<{ role_id: string; allow: number; deny: number }>;
+  unread_count?: number;
+}
+
+export interface BatchMembersResponse {
+  members: BatchMemberEntry[];
+  roles: Role[];
+}
+
+export interface BatchChannelsResponse {
+  channels: BatchChannelEntry[];
+}
+
+export interface NodeOverviewResponse {
+  node: NodeInfo;
+  channels: BatchChannelEntry[];
+  members: BatchMemberEntry[];
+  roles: Role[];
+}
+
 // Audit log types
 export interface AuditLogEntry {
   id: string;
