@@ -3230,11 +3230,11 @@ function App() {
               </>
             )}
 
-            {welcomeMode === 'admin' && (
+            {(welcomeMode === 'admin' || welcomeMode === 'recover') && (
               <>
-                <button onClick={() => { setWelcomeMode('choose'); setAuthError(''); }} className="auth-back-btn">← Back</button>
-                <h2 className="auth-title">Connect to Relay</h2>
-                <p className="auth-subtitle">Enter the relay server URL (admin/power-user)</p>
+                <button onClick={() => { setWelcomeMode('choose'); setAuthError(''); setServerVersion(''); }} className="auth-back-btn">← Back</button>
+                <h2 className="auth-title">{welcomeMode === 'recover' ? 'Connect to Relay' : 'Connect to Relay'}</h2>
+                <p className="auth-subtitle">{welcomeMode === 'recover' ? 'Enter your relay URL to recover your identity' : 'Enter the relay server URL (admin/power-user)'}</p>
                 
                 <div className="form-group">
                   <label className="form-label">Server URL</label>
@@ -3251,13 +3251,30 @@ function App() {
                 {authError && <div className="auth-error">{authError}</div>}
                 {serverVersion && <div className="auth-success">✅ Connected — server v{serverVersion}</div>}
 
-                <button
-                  onClick={handleServerConnect}
-                  disabled={serverConnecting}
-                  className="btn btn-primary"
-                >
-                  {serverConnecting ? 'Connecting...' : 'Connect'}
-                </button>
+                {!serverVersion ? (
+                  <button
+                    onClick={handleServerConnect}
+                    disabled={serverConnecting}
+                    className="btn btn-primary"
+                  >
+                    {serverConnecting ? 'Connecting...' : 'Connect'}
+                  </button>
+                ) : welcomeMode === 'recover' ? (
+                  <button
+                    onClick={() => { setShowWelcomeScreen(false); setShowRecoverModal(true); setRecoverError(''); }}
+                    className="btn btn-green"
+                  >
+                    Continue to Recovery
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleServerConnect}
+                    disabled={serverConnecting}
+                    className="btn btn-primary"
+                  >
+                    {serverConnecting ? 'Connecting...' : 'Connect'}
+                  </button>
+                )}
               </>
             )}
           </div>
