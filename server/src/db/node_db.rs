@@ -128,6 +128,11 @@ impl NodeDatabase {
             .await
             .ok();
 
+        sqlx::query("ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Message reactions
         sqlx::query(
             r#"
@@ -671,20 +676,30 @@ impl NodeDatabase {
         sender_id: Uuid,
         encrypted_payload: &[u8],
         reply_to: Option<Uuid>,
-    ) -> Result<Uuid> {
+    ) -> Result<(Uuid, i64)> {
         let message_id = Uuid::new_v4();
         let created_at = super::now();
-        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to) VALUES (?, ?, ?, ?, ?, ?)")
+
+        let seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE channel_id = ?",
+        )
+        .bind(channel_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to compute next sequence number")?;
+
+        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to, seq) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(message_id.to_string())
             .bind(channel_id.to_string())
             .bind(sender_id.to_string())
             .bind(encrypted_payload)
             .bind(created_at as i64)
             .bind(reply_to.map(|id| id.to_string()))
+            .bind(seq)
             .execute(&self.pool)
             .await
             .context("Failed to store message")?;
-        Ok(message_id)
+        Ok((message_id, seq))
     }
 
     pub async fn get_channel_messages(

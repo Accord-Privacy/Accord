@@ -3873,7 +3873,7 @@ async fn handle_ws_message(
                 .decode(&encrypted_data)
                 .map_err(|_| "Invalid base64 encoded data".to_string())?;
 
-            let message_id = state
+            let (message_id, seq) = state
                 .db
                 .store_message(channel_id, sender_user_id, &encrypted_payload, reply_to)
                 .await
@@ -3929,6 +3929,7 @@ async fn handle_ws_message(
             let relay = serde_json::json!({
                 "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
                 "encrypted_data": encrypted_data, "message_id": message_id,
+                "seq": seq,
                 "timestamp": ws_message.timestamp, "reply_to": reply_to,
                 "encrypted_display_name": sender_display_name_b64,
                 "sender_display_name": sender_display_name

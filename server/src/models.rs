@@ -810,6 +810,8 @@ pub struct MessageMetadata {
     pub id: Uuid,
     pub channel_id: Uuid,
     pub sender_id: Uuid,
+    /// Monotonic per-channel sequence number for reliable ordering
+    pub seq: i64,
     /// Sender's public_key_hash (hex). Display name comes from Node-level profile.
     pub sender_public_key_hash: String,
     /// Sender's encrypted display name from their Node profile (base64-encoded, if set)

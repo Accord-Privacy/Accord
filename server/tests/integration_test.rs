@@ -2156,7 +2156,7 @@ async fn test_message_editing() {
 
     // Store a message
     let original = b"original message content";
-    let msg_id = server
+    let (msg_id, _seq) = server
         .state
         .store_message(channel_id, user_id, original)
         .await
@@ -2219,7 +2219,7 @@ async fn test_message_deletion() {
         .unwrap();
 
     // Store a message
-    let msg_id = server
+    let (msg_id, _seq) = server
         .state
         .store_message(channel_id, user_id, b"to be deleted")
         .await

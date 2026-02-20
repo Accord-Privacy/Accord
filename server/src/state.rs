@@ -935,7 +935,7 @@ impl AppState {
         channel_id: Uuid,
         sender_id: Uuid,
         encrypted_payload: &[u8],
-    ) -> Result<Uuid, String> {
+    ) -> Result<(Uuid, i64), String> {
         self.db
             .store_message(channel_id, sender_id, encrypted_payload, None)
             .await

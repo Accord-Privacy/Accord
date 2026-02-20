@@ -293,6 +293,12 @@ impl Database {
             .await
             .ok(); // Ignore error if column already exists
 
+        // Add seq column for monotonic per-channel message ordering
+        sqlx::query("ALTER TABLE messages ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
+
         // Create node_invites table
         sqlx::query(
             r#"
@@ -2523,22 +2529,32 @@ impl Database {
         sender_id: Uuid,
         encrypted_payload: &[u8],
         reply_to: Option<Uuid>,
-    ) -> Result<Uuid> {
+    ) -> Result<(Uuid, i64)> {
         let message_id = Uuid::new_v4();
         let created_at = now();
 
-        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to) VALUES (?, ?, ?, ?, ?, ?)")
+        // Assign monotonic per-channel sequence number
+        let seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE channel_id = ?",
+        )
+        .bind(channel_id.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .context("Failed to compute next sequence number")?;
+
+        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to, seq) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(message_id.to_string())
             .bind(channel_id.to_string())
             .bind(sender_id.to_string())
             .bind(encrypted_payload)
             .bind(created_at as i64)
             .bind(reply_to.map(|id| id.to_string()))
+            .bind(seq)
             .execute(&self.pool)
             .await
             .context("Failed to store message")?;
 
-        Ok(message_id)
+        Ok((message_id, seq))
     }
 
     pub async fn get_channel_messages(
@@ -2549,14 +2565,14 @@ impl Database {
     ) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
         let query = if let Some(before_timestamp) = before {
             sqlx::query(
-                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY seq DESC, created_at DESC LIMIT ?",
             )
             .bind(channel_id.to_string())
             .bind(before_timestamp as i64)
             .bind(limit as i64)
         } else {
             sqlx::query(
-                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?",
+                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? ORDER BY seq DESC, created_at DESC LIMIT ?",
             )
             .bind(channel_id.to_string())
             .bind(limit as i64)
@@ -2590,18 +2606,17 @@ impl Database {
         before_id: Option<Uuid>,
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let query = if let Some(before_message_id) = before_id {
-            // Get the timestamp of the before_id message for cursor pagination
-            let before_timestamp: i64 =
-                sqlx::query_scalar("SELECT created_at FROM messages WHERE id = ?")
-                    .bind(before_message_id.to_string())
-                    .fetch_optional(&self.pool)
-                    .await
-                    .context("Failed to get before message timestamp")?
-                    .unwrap_or(0);
+            // Get the seq of the before_id message for cursor pagination
+            let before_seq: i64 = sqlx::query_scalar("SELECT seq FROM messages WHERE id = ?")
+                .bind(before_message_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to get before message seq")?
+                .unwrap_or(0);
 
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, m.seq, u.public_key_hash,
                        nup.encrypted_display_name as sender_encrypted_display_name,
                        up.display_name as sender_display_name,
                        rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
@@ -2617,18 +2632,18 @@ impl Database {
                 LEFT JOIN users ru ON rm.sender_id = ru.id
                 LEFT JOIN node_user_profiles rnup ON rnup.user_id = rm.sender_id AND rnup.node_id = c.node_id
                 LEFT JOIN user_profiles rup ON rup.user_id = rm.sender_id
-                WHERE m.channel_id = ? AND m.created_at < ?
-                ORDER BY m.created_at DESC
+                WHERE m.channel_id = ? AND m.seq < ?
+                ORDER BY m.seq DESC
                 LIMIT ?
                 "#,
             )
             .bind(channel_id.to_string())
-            .bind(before_timestamp)
+            .bind(before_seq)
             .bind(limit as i64)
         } else {
             sqlx::query(
                 r#"
-                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+                SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, m.seq, u.public_key_hash,
                        nup.encrypted_display_name as sender_encrypted_display_name,
                        up.display_name as sender_display_name,
                        rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
@@ -2645,7 +2660,7 @@ impl Database {
                 LEFT JOIN node_user_profiles rnup ON rnup.user_id = rm.sender_id AND rnup.node_id = c.node_id
                 LEFT JOIN user_profiles rup ON rup.user_id = rm.sender_id
                 WHERE m.channel_id = ?
-                ORDER BY m.created_at DESC
+                ORDER BY m.seq DESC
                 LIMIT ?
                 "#,
             )
@@ -3369,7 +3384,7 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let rows = sqlx::query(
             r#"
-            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, m.seq, u.public_key_hash,
                    up.display_name as sender_display_name,
                    rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
                    rup.display_name as replied_display_name
@@ -3403,7 +3418,7 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let rows = sqlx::query(
             r#"
-            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, m.seq, u.public_key_hash,
                    nup.encrypted_display_name as sender_encrypted_display_name,
                    up.display_name as sender_display_name,
                    rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
@@ -3444,7 +3459,7 @@ impl Database {
     ) -> Result<Vec<crate::models::MessageMetadata>> {
         let rows = sqlx::query(
             r#"
-            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, u.public_key_hash,
+            SELECT m.id, m.channel_id, m.sender_id, m.encrypted_payload, m.created_at, m.edited_at, m.pinned_at, m.pinned_by, m.reply_to, m.seq, u.public_key_hash,
                    nup.encrypted_display_name as sender_encrypted_display_name,
                    up.display_name as sender_display_name,
                    rm.id as replied_message_id, rm.sender_id as replied_sender_id, rm.encrypted_payload as replied_payload, rm.created_at as replied_created_at, ru.public_key_hash as replied_public_key_hash,
@@ -5500,6 +5515,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
         row.try_get("sender_encrypted_display_name").ok().flatten();
     let sender_display_name: Option<String> = row.try_get("sender_display_name").ok().flatten();
     let encrypted_payload: Vec<u8> = row.get("encrypted_payload");
+    let seq = row.get::<i64, _>("seq");
     let created_at = row.get::<i64, _>("created_at") as u64;
     let edited_at = row.get::<Option<i64>, _>("edited_at").map(|t| t as u64);
     let pinned_at = row.get::<Option<i64>, _>("pinned_at").map(|t| t as u64);
@@ -5537,6 +5553,7 @@ fn parse_message_metadata(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models
         id: message_id,
         channel_id,
         sender_id,
+        seq,
         sender_public_key_hash,
         encrypted_display_name: sender_encrypted_display_name
             .map(|b| base64::engine::general_purpose::STANDARD.encode(&b)),
@@ -5766,10 +5783,11 @@ mod tests {
             .unwrap();
 
         let encrypted_data = b"encrypted_message_data";
-        let message_id = db
+        let (message_id, seq) = db
             .store_message(channel.id, user.id, encrypted_data, None)
             .await
             .unwrap();
+        assert_eq!(seq, 1);
 
         let messages = db.get_channel_messages(channel.id, 10, None).await.unwrap();
         assert_eq!(messages.len(), 1);
