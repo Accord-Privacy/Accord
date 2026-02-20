@@ -1,10 +1,11 @@
-import React, { Suspense, useState, useCallback } from "react";
+import React, { Suspense, useState, useCallback, useEffect } from "react";
 import { useAppContext } from "./AppContext";
 import { api } from "../api";
 import { notificationManager } from "../notifications";
 import { renderMessageMarkdown } from "../markdown";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
 import { EmojiPickerButton } from "../EmojiPicker";
+import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
@@ -13,6 +14,8 @@ const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: 
 
 export const ChatArea: React.FC = () => {
   const ctx = useAppContext();
+  const [customEmojis, setCustomEmojisState] = useState(getNodeCustomEmojis());
+  useEffect(() => subscribeCustomEmojis(() => setCustomEmojisState(getNodeCustomEmojis())), []);
   const [pendingCommand, setPendingCommand] = useState<{ bot: InstalledBot; command: BotCommand } | null>(null);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
@@ -530,6 +533,8 @@ export const ChatArea: React.FC = () => {
               onToggle={() => ctx.setShowInputEmojiPicker(prev => !prev)}
               onSelect={ctx.handleInsertEmoji}
               onClose={() => ctx.setShowInputEmojiPicker(false)}
+              customEmojis={customEmojis}
+              getEmojiUrl={getCustomEmojiUrl}
             />
             {ctx.serverAvailable && ctx.appState.activeChannel && (
               <FileList

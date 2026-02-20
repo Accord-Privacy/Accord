@@ -1,6 +1,6 @@
 // API client module for REST endpoints
 
-import type { ParsedInviteLink } from './types';
+import type { ParsedInviteLink, CustomEmoji } from './types';
 import {
   RegisterResponse,
   AuthResponse,
@@ -820,6 +820,48 @@ export class AccordApi {
       method: 'POST',
       body: JSON.stringify({ command, params, channel_id: channelId }),
     });
+  }
+
+  // ── Custom Emoji endpoints ──
+
+  // List custom emojis for a node
+  async listCustomEmojis(nodeId: string): Promise<CustomEmoji[]> {
+    const result = await this.request<any>(`/nodes/${nodeId}/emojis`);
+    if (result && Array.isArray(result.emojis)) return result.emojis;
+    if (Array.isArray(result)) return result;
+    return [];
+  }
+
+  // Upload a custom emoji
+  async uploadEmoji(nodeId: string, name: string, file: File, token: string): Promise<CustomEmoji> {
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('name', name);
+    const authToken = token || this._token;
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const response = await fetch(`${this.baseUrl}/nodes/${nodeId}/emojis`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  // Delete a custom emoji
+  async deleteEmoji(nodeId: string, emojiId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/nodes/${nodeId}/emojis/${emojiId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Get emoji image URL by content hash
+  getEmojiUrl(contentHash: string): string {
+    return `${this.baseUrl}/api/emojis/${contentHash}`;
   }
 
   // ── Batch API endpoints ──

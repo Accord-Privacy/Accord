@@ -1240,6 +1240,17 @@ pub struct AuditLogRaw {
     pub created_at: u64,
 }
 
+/// Custom emoji stored per-Node
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomEmoji {
+    pub id: Uuid,
+    pub node_id: Uuid,
+    pub name: String,
+    pub uploaded_by: Uuid,
+    pub content_hash: String,
+    pub created_at: String,
+}
+
 /// Auto-mod word filter entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoModWord {

@@ -30,6 +30,8 @@ import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifi
 import { E2EEManager, type PreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
+import { setCustomEmojis } from "./markdown";
+import { setNodeCustomEmojis } from "./customEmojiStore";
 import { UpdateBanner } from "./UpdateChecker";
 import {
   AppContext,
@@ -1575,6 +1577,18 @@ function App() {
       loadMembers(nodeId);
       loadRoles(nodeId);
       loadBots(nodeId);
+    }
+
+    // Load custom emojis for the node
+    try {
+      const emojis = await api.listCustomEmojis(nodeId);
+      const getUrl = (hash: string) => api.getEmojiUrl(hash);
+      setCustomEmojis(emojis, getUrl);
+      setNodeCustomEmojis(emojis, getUrl);
+    } catch (err) {
+      console.warn('Failed to load custom emojis:', err);
+      setCustomEmojis([], () => '');
+      setNodeCustomEmojis([], () => '');
     }
   }, [loadChannels, loadMembers, loadRoles, loadBots, batchMemberToUiMember]);
 

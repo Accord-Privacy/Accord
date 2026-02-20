@@ -8729,6 +8729,351 @@ pub async fn get_blocked_users_handler(
     Ok(Json(serde_json::json!({ "blocked_users": blocked_json })))
 }
 
+// ── Custom Emoji endpoints ──
+
+/// Upload a custom emoji (POST /nodes/:id/emojis)
+pub async fn upload_custom_emoji_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
+
+    // Check admin or MANAGE_EMOJIS permission
+    let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e,
+                code: 500,
+            }),
+        )
+    })?;
+    match member {
+        Some(m) if has_permission(m.role, Permission::ManageEmojis) => {}
+        _ => {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Insufficient permissions to manage emojis".into(),
+                    code: 403,
+                }),
+            ));
+        }
+    }
+
+    let mut file_data: Option<Vec<u8>> = None;
+    let mut emoji_name: Option<String> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "file" | "image" => {
+                if let Ok(data) = field.bytes().await {
+                    file_data = Some(data.to_vec());
+                }
+            }
+            "name" => {
+                if let Ok(text) = field.text().await {
+                    emoji_name = Some(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let data = file_data.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing image file".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let name = emoji_name.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing emoji name".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    // Validate name: alphanumeric + underscores, 2-32 chars
+    if name.len() < 2 || name.len() > 32 || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Emoji name must be 2-32 alphanumeric characters or underscores".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Max 256KB
+    if data.len() > 256 * 1024 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Emoji must be under 256KB".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Validate content type
+    let content_type = detect_content_type(&data).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Unsupported image format. Use PNG, GIF, or WebP".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    // Only PNG, GIF, WebP for emojis
+    if content_type == "image/jpeg" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "JPEG not supported for emojis. Use PNG, GIF, or WebP".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Hash content
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(&data));
+    let ext = content_type_to_ext(content_type);
+    let filename = format!("{}.{}", hash, ext);
+
+    // Save to disk
+    let dir = std::path::PathBuf::from("./data/emojis");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to create emoji dir: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+    tokio::fs::write(dir.join(&filename), &data)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to write emoji: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Store in DB
+    let emoji = state
+        .db
+        .create_custom_emoji(node_id, &name, user_id, &hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::CONFLICT,
+                Json(ErrorResponse {
+                    error: format!("Failed to create emoji (name may already exist): {}", e),
+                    code: 409,
+                }),
+            )
+        })?;
+
+    info!(
+        "Custom emoji '{}' uploaded for node {} by {}",
+        name, node_id, user_id
+    );
+
+    Ok(Json(serde_json::json!({
+        "id": emoji.id,
+        "node_id": emoji.node_id,
+        "name": emoji.name,
+        "uploaded_by": emoji.uploaded_by,
+        "content_hash": emoji.content_hash,
+        "created_at": emoji.created_at,
+    })))
+}
+
+/// List custom emojis for a node (GET /nodes/:id/emojis)
+pub async fn list_custom_emojis_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
+
+    let emojis = state.db.list_custom_emojis(node_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to list emojis: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(Json(serde_json::json!({ "emojis": emojis })))
+}
+
+/// Delete a custom emoji (DELETE /nodes/:id/emojis/:emoji_id)
+pub async fn delete_custom_emoji_handler(
+    State(state): State<SharedState>,
+    Path((node_id, emoji_id)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+
+    // Get the emoji to check ownership
+    let emoji = state.db.get_custom_emoji(emoji_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("{}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let emoji = emoji.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Emoji not found".into(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    if emoji.node_id != node_id {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Emoji not found in this node".into(),
+                code: 404,
+            }),
+        ));
+    }
+
+    // Allow deletion by uploader or admin/mod with ManageEmojis permission
+    if emoji.uploaded_by != user_id {
+        let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 500,
+                }),
+            )
+        })?;
+        match member {
+            Some(m) if has_permission(m.role, Permission::ManageEmojis) => {}
+            _ => {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Only the uploader or an admin can delete this emoji".into(),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+    }
+
+    state.db.delete_custom_emoji(emoji_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("{}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    info!(
+        "Custom emoji '{}' deleted from node {} by {}",
+        emoji.name, node_id, user_id
+    );
+
+    Ok(Json(
+        serde_json::json!({ "status": "deleted", "emoji_id": emoji_id }),
+    ))
+}
+
+/// Serve a custom emoji image by content hash (GET /api/emojis/:content_hash)
+pub async fn get_emoji_image_handler(
+    Path(content_hash): Path<String>,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    // Validate content_hash is hex only (prevent path traversal)
+    if !content_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid content hash".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let dir = std::path::PathBuf::from("./data/emojis");
+    let mut found_path = None;
+    for ext in &["png", "gif", "webp"] {
+        let p = dir.join(format!("{}.{}", content_hash, ext));
+        if p.exists() {
+            found_path = Some((p, *ext));
+            break;
+        }
+    }
+
+    let (path, ext) = found_path.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Emoji not found".into(),
+                code: 404,
+            }),
+        )
+    })?;
+
+    let data = tokio::fs::read(&path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to read emoji: {}", e),
+                code: 500,
+            }),
+        )
+    })?;
+
+    let ct = match ext {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ct)
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .body(Body::from(data))
+        .unwrap())
+}
+
 /// Basic HTML entity decoding
 fn html_decode(s: &str) -> String {
     s.replace("&amp;", "&")

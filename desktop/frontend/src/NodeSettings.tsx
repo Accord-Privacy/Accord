@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api } from './api';
-import { Node, AuditLogEntry, Role } from './types';
+import { Node, AuditLogEntry, Role, CustomEmoji } from './types';
 
 interface Invite {
   code: string;
@@ -29,7 +29,7 @@ export function NodeSettings({
   onNodeUpdated,
   onLeaveNode 
 }: NodeSettingsProps) {
-  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit' | 'moderation'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit' | 'moderation' | 'emojis'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [error, setError] = useState('');
@@ -76,6 +76,13 @@ export function NodeSettings({
   const [newWordAction, setNewWordAction] = useState<'block' | 'warn'>('block');
   const [slowModeChannels, setSlowModeChannels] = useState<Record<string, number>>({});
   const [nodeChannels, setNodeChannels] = useState<Array<{ id: string; name: string }>>([]);
+
+  // Custom emoji state
+  const [customEmojis, setCustomEmojis] = useState<CustomEmoji[]>([]);
+  const [loadingEmojis, setLoadingEmojis] = useState(false);
+  const [newEmojiName, setNewEmojiName] = useState('');
+  const [newEmojiFile, setNewEmojiFile] = useState<File | null>(null);
+  const [uploadingEmoji, setUploadingEmoji] = useState(false);
 
   const isAdmin = userRole === 'admin';
   const canManageInvites = userRole === 'admin' || userRole === 'moderator';
@@ -458,6 +465,13 @@ export function NodeSettings({
 
   // Load moderation data when opening the moderation tab
   useEffect(() => {
+    if (isOpen && activeTab === 'emojis' && isAdmin) {
+      setLoadingEmojis(true);
+      api.listCustomEmojis(node.id).then(emojis => {
+        setCustomEmojis(emojis);
+      }).catch(() => {}).finally(() => setLoadingEmojis(false));
+    }
+
     if (isOpen && activeTab === 'moderation' && isAdmin) {
       loadAutoModWords();
       loadNodeChannelsForMod();
@@ -616,6 +630,22 @@ export function NodeSettings({
               }}
             >
               Moderation
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('emojis')}
+              style={{
+                background: activeTab === 'emojis' ? '#40444b' : 'transparent',
+                border: 'none',
+                color: activeTab === 'emojis' ? '#ffffff' : '#b9bbbe',
+                padding: '12px 20px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Emojis
             </button>
           )}
           {canViewAuditLog && (
@@ -1276,6 +1306,99 @@ export function NodeSettings({
                         title="Remove word"
                       >
                         ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Emojis Tab */}
+          {activeTab === 'emojis' && isAdmin && (
+            <div>
+              <h3 style={{ color: '#ffffff', marginBottom: '16px' }}>Custom Emojis</h3>
+              
+              {/* Upload new emoji */}
+              <div style={{ marginBottom: '20px', padding: '16px', background: '#2f3136', borderRadius: '8px' }}>
+                <h4 style={{ color: '#b9bbbe', marginBottom: '12px' }}>Upload Emoji</h4>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div>
+                    <label style={{ color: '#b9bbbe', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Name</label>
+                    <input
+                      type="text"
+                      value={newEmojiName}
+                      onChange={e => setNewEmojiName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+                      placeholder="emoji_name"
+                      maxLength={32}
+                      style={{ padding: '8px 12px', background: '#202225', border: '1px solid #40444b', borderRadius: '4px', color: '#dcddde', fontSize: '14px', width: '200px' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ color: '#b9bbbe', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Image (PNG/GIF/WebP, max 256KB)</label>
+                    <input
+                      type="file"
+                      accept="image/png,image/gif,image/webp"
+                      onChange={e => setNewEmojiFile(e.target.files?.[0] || null)}
+                      style={{ color: '#b9bbbe', fontSize: '13px' }}
+                    />
+                  </div>
+                  <button
+                    disabled={uploadingEmoji || !newEmojiName || newEmojiName.length < 2 || !newEmojiFile}
+                    onClick={async () => {
+                      if (!newEmojiFile || !newEmojiName) return;
+                      setUploadingEmoji(true);
+                      setError('');
+                      setSuccess('');
+                      try {
+                        await api.uploadEmoji(node.id, newEmojiName, newEmojiFile, token);
+                        setSuccess(`Emoji :${newEmojiName}: uploaded!`);
+                        setNewEmojiName('');
+                        setNewEmojiFile(null);
+                        // Reload emojis
+                        const emojis = await api.listCustomEmojis(node.id);
+                        setCustomEmojis(emojis);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : 'Failed to upload emoji');
+                      } finally {
+                        setUploadingEmoji(false);
+                      }
+                    }}
+                    style={{ padding: '8px 16px', background: uploadingEmoji ? '#4f545c' : '#5865f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: uploadingEmoji ? 'default' : 'pointer', fontSize: '14px' }}
+                  >
+                    {uploadingEmoji ? 'Uploading...' : 'Upload'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Emoji list */}
+              {loadingEmojis ? (
+                <div style={{ color: '#b9bbbe' }}>Loading emojis...</div>
+              ) : customEmojis.length === 0 ? (
+                <div style={{ color: '#72767d', fontStyle: 'italic' }}>No custom emojis yet. Upload one above!</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
+                  {customEmojis.map(emoji => (
+                    <div key={emoji.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: '#2f3136', borderRadius: '6px' }}>
+                      <img src={api.getEmojiUrl(emoji.content_hash)} alt={`:${emoji.name}:`} style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: '#dcddde', fontSize: '14px', fontWeight: '500' }}>:{emoji.name}:</div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setError('');
+                          try {
+                            await api.deleteEmoji(node.id, emoji.id);
+                            setCustomEmojis(prev => prev.filter(e => e.id !== emoji.id));
+                            setSuccess(`Emoji :${emoji.name}: deleted`);
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : 'Failed to delete emoji');
+                          }
+                        }}
+                        style={{ background: 'transparent', border: 'none', color: '#ed4245', cursor: 'pointer', fontSize: '16px', padding: '4px' }}
+                        title="Delete emoji"
+                      >
+                        ✕
                       </button>
                     </div>
                   ))}

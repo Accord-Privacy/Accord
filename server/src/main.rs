@@ -42,31 +42,32 @@ use handlers::{
     ban_user_handler, block_user_handler, build_info_handler, create_channel_category_handler,
     create_channel_handler, create_dm_channel_handler, create_invite_handler, create_node_handler,
     create_role_handler, delete_channel_category_handler, delete_channel_handler,
-    delete_channel_overwrite_handler, delete_file_handler, delete_message_handler,
-    delete_role_handler, deregister_push_token_handler, download_file_handler,
-    edit_message_handler, fetch_key_bundle_handler, get_blocked_users_handler,
-    get_build_allowlist_handler, get_channel_messages_handler, get_channel_threads_handler,
-    get_dm_channels_handler, get_effective_permissions_handler, get_member_roles_handler,
-    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
-    get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
+    delete_channel_overwrite_handler, delete_custom_emoji_handler, delete_file_handler,
+    delete_message_handler, delete_role_handler, deregister_push_token_handler,
+    download_file_handler, edit_message_handler, fetch_key_bundle_handler,
+    get_blocked_users_handler, get_build_allowlist_handler, get_channel_messages_handler,
+    get_channel_threads_handler, get_dm_channels_handler, get_effective_permissions_handler,
+    get_emoji_image_handler, get_member_roles_handler, get_message_reactions_handler,
+    get_message_thread_handler, get_node_audit_log_handler, get_node_handler,
+    get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
     get_node_user_profiles_handler, get_pinned_messages_handler, get_prekey_messages_handler,
     get_slow_mode_handler, get_user_avatar_handler, get_user_profile_handler, health_handler,
     import_discord_template_handler, join_node_handler, kick_user_handler, leave_node_handler,
     link_preview_handler, list_auto_mod_words_handler, list_bans_handler,
-    list_channel_files_handler, list_channel_overwrites_handler, list_friend_requests_handler,
-    list_friends_handler, list_invites_handler, list_node_channels_handler, list_roles_handler,
-    list_user_nodes_handler, mark_channel_read_handler, pin_message_handler,
-    publish_key_bundle_handler, register_handler, register_push_token_handler,
-    reject_friend_request_handler, remove_auto_mod_word_handler, remove_build_allowlist_handler,
-    remove_friend_handler, remove_member_role_handler, remove_reaction_handler,
-    reorder_roles_handler, revoke_invite_handler, search_messages_handler,
+    list_channel_files_handler, list_channel_overwrites_handler, list_custom_emojis_handler,
+    list_friend_requests_handler, list_friends_handler, list_invites_handler,
+    list_node_channels_handler, list_roles_handler, list_user_nodes_handler,
+    mark_channel_read_handler, pin_message_handler, publish_key_bundle_handler, register_handler,
+    register_push_token_handler, reject_friend_request_handler, remove_auto_mod_word_handler,
+    remove_build_allowlist_handler, remove_friend_handler, remove_member_role_handler,
+    remove_reaction_handler, reorder_roles_handler, revoke_invite_handler, search_messages_handler,
     send_friend_request_handler, set_build_allowlist_handler, set_channel_overwrite_handler,
     set_node_user_profile_handler, set_slow_mode_handler, store_prekey_message_handler,
     unban_user_handler, unblock_user_handler, unpin_message_handler,
     update_channel_category_handler, update_channel_handler, update_node_handler,
     update_push_preferences_handler, update_role_handler, update_user_profile_handler,
-    upload_file_handler, upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler,
-    ws_handler,
+    upload_custom_emoji_handler, upload_file_handler, upload_node_icon_handler,
+    upload_user_avatar_handler, use_invite_handler, ws_handler,
 };
 use serde::Deserialize;
 use state::{AppState, SharedState};
@@ -706,6 +707,16 @@ async fn main() -> Result<()> {
             "/nodes/:id/members/:user_id/roles/:role_id",
             axum::routing::put(assign_member_role_handler).delete(remove_member_role_handler),
         )
+        // Custom emoji endpoints
+        .route(
+            "/nodes/:id/emojis",
+            get(list_custom_emojis_handler).post(upload_custom_emoji_handler),
+        )
+        .route(
+            "/nodes/:id/emojis/:emoji_id",
+            delete(delete_custom_emoji_handler),
+        )
+        .route("/api/emojis/:content_hash", get(get_emoji_image_handler))
         // Auto-mod endpoints
         .route(
             "/nodes/:id/auto-mod/words",

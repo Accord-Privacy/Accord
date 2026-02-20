@@ -1096,6 +1096,30 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // ── Custom emojis table ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS custom_emojis (
+                id TEXT PRIMARY KEY NOT NULL,
+                node_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                uploaded_by TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(node_id, name),
+                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE,
+                FOREIGN KEY (uploaded_by) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create custom_emojis table")?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_custom_emojis_node ON custom_emojis (node_id)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -5479,6 +5503,105 @@ impl Database {
         .await
         .context("Failed to increment invocation count")?;
         Ok(())
+    }
+
+    // ── Custom emoji operations ──
+
+    /// Create a custom emoji for a node
+    pub async fn create_custom_emoji(
+        &self,
+        node_id: Uuid,
+        name: &str,
+        uploaded_by: Uuid,
+        content_hash: &str,
+    ) -> Result<crate::models::CustomEmoji> {
+        let id = Uuid::new_v4();
+        let created_at = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO custom_emojis (id, node_id, name, uploaded_by, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(node_id.to_string())
+        .bind(name)
+        .bind(uploaded_by.to_string())
+        .bind(content_hash)
+        .bind(&created_at)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create custom emoji")?;
+
+        Ok(crate::models::CustomEmoji {
+            id,
+            node_id,
+            name: name.to_string(),
+            uploaded_by,
+            content_hash: content_hash.to_string(),
+            created_at,
+        })
+    }
+
+    /// List all custom emojis for a node
+    pub async fn list_custom_emojis(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::models::CustomEmoji>> {
+        let rows = sqlx::query(
+            "SELECT id, node_id, name, uploaded_by, content_hash, created_at FROM custom_emojis WHERE node_id = ? ORDER BY name ASC",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list custom emojis")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::CustomEmoji> {
+                Ok(crate::models::CustomEmoji {
+                    id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
+                    name: row.get("name"),
+                    uploaded_by: Uuid::parse_str(&row.get::<String, _>("uploaded_by"))?,
+                    content_hash: row.get("content_hash"),
+                    created_at: row.get("created_at"),
+                })
+            })
+            .collect()
+    }
+
+    /// Get a custom emoji by ID
+    pub async fn get_custom_emoji(
+        &self,
+        emoji_id: Uuid,
+    ) -> Result<Option<crate::models::CustomEmoji>> {
+        let row = sqlx::query(
+            "SELECT id, node_id, name, uploaded_by, content_hash, created_at FROM custom_emojis WHERE id = ?",
+        )
+        .bind(emoji_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get custom emoji")?;
+
+        row.map(|r| -> Result<crate::models::CustomEmoji> {
+            Ok(crate::models::CustomEmoji {
+                id: Uuid::parse_str(&r.get::<String, _>("id"))?,
+                node_id: Uuid::parse_str(&r.get::<String, _>("node_id"))?,
+                name: r.get("name"),
+                uploaded_by: Uuid::parse_str(&r.get::<String, _>("uploaded_by"))?,
+                content_hash: r.get("content_hash"),
+                created_at: r.get("created_at"),
+            })
+        })
+        .transpose()
+    }
+
+    /// Delete a custom emoji
+    pub async fn delete_custom_emoji(&self, emoji_id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM custom_emojis WHERE id = ?")
+            .bind(emoji_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete custom emoji")?;
+        Ok(result.rows_affected() > 0)
     }
 }
 

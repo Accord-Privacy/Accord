@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from "react";
+import type { CustomEmoji } from "./types";
 
 const EMOJI_CATEGORIES = [
   { name: "Smileys", emojis: ["😀", "😂", "🥲", "😊", "😎", "🤔", "😴", "🤯", "🥳", "😤", "😭", "🫡"] },
@@ -9,9 +10,11 @@ const EMOJI_CATEGORIES = [
 interface EmojiPickerProps {
   onSelect: (emoji: string) => void;
   onClose: () => void;
+  customEmojis?: CustomEmoji[];
+  getEmojiUrl?: (hash: string) => string;
 }
 
-export const EmojiPickerButton: React.FC<EmojiPickerProps & { isOpen: boolean; onToggle: () => void }> = ({ isOpen, onToggle, onSelect, onClose }) => {
+export const EmojiPickerButton: React.FC<EmojiPickerProps & { isOpen: boolean; onToggle: () => void }> = ({ isOpen, onToggle, onSelect, onClose, customEmojis, getEmojiUrl }) => {
   const pickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,6 +40,24 @@ export const EmojiPickerButton: React.FC<EmojiPickerProps & { isOpen: boolean; o
       </button>
       {isOpen && (
         <div className="emoji-picker-popup">
+          {customEmojis && customEmojis.length > 0 && getEmojiUrl && (
+            <div className="emoji-picker-category">
+              <div className="emoji-picker-category-label">Custom</div>
+              <div className="emoji-picker-grid">
+                {customEmojis.map((emoji) => (
+                  <button
+                    key={emoji.id}
+                    className="emoji-picker-item"
+                    onClick={() => onSelect(`:${emoji.name}:`)}
+                    type="button"
+                    title={`:${emoji.name}:`}
+                  >
+                    <img src={getEmojiUrl(emoji.content_hash)} alt={`:${emoji.name}:`} style={{ width: '22px', height: '22px', objectFit: 'contain' }} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {EMOJI_CATEGORIES.map((cat) => (
             <div key={cat.name} className="emoji-picker-category">
               <div className="emoji-picker-category-label">{cat.name}</div>

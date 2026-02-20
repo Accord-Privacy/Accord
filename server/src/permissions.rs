@@ -29,6 +29,8 @@ pub enum Permission {
     ManageNode,
     /// View audit logs and Node management history
     ViewAuditLog,
+    /// Manage custom emojis (upload/delete)
+    ManageEmojis,
 }
 
 /// Get all permissions for a given role
@@ -49,6 +51,7 @@ pub fn role_permissions(role: NodeRole) -> HashSet<Permission> {
                 SendMessages,
                 ManageNode,
                 ViewAuditLog,
+                ManageEmojis,
             ]
             .into_iter()
             .collect()

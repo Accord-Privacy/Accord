@@ -1,5 +1,6 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import type { CustomEmoji } from './types';
 
 // Configure marked for chat messages
 marked.setOptions({
@@ -12,13 +13,24 @@ const ALLOWED_TAGS = [
   'a', 'p', 'br', 'ul', 'ol', 'li', 'blockquote',
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'span', 'div', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
-  'hr',
+  'hr', 'img',
 ];
 
-const ALLOWED_ATTR = ['href', 'target', 'rel', 'class'];
+const ALLOWED_ATTR = ['href', 'target', 'rel', 'class', 'src', 'alt', 'title', 'width', 'height'];
+
+/** Map of custom emoji name → image URL, set by the app when a node is selected */
+let _customEmojiMap: Map<string, string> = new Map();
+
+/** Update the custom emoji map (call when switching nodes or when emojis are loaded) */
+export function setCustomEmojis(emojis: CustomEmoji[], getUrl: (hash: string) => string): void {
+  _customEmojiMap = new Map();
+  for (const e of emojis) {
+    _customEmojiMap.set(e.name, getUrl(e.content_hash));
+  }
+}
 
 /**
- * Render markdown to sanitized HTML, then apply mention highlighting.
+ * Render markdown to sanitized HTML, then apply mention highlighting and custom emojis.
  * Replaces the old `highlightMentions(msg.content)` call.
  */
 export function renderMessageMarkdown(raw: string, currentUsername?: string): string {
@@ -70,6 +82,17 @@ export function renderMessageMarkdown(raw: string, currentUsername?: string): st
       }
     }
     clean = div.innerHTML;
+  }
+
+  // Replace custom emoji syntax :name: with <img> tags
+  if (_customEmojiMap.size > 0) {
+    clean = clean.replace(/:([a-zA-Z0-9_]{2,32}):/g, (_match, name) => {
+      const url = _customEmojiMap.get(name);
+      if (url) {
+        return `<img class="custom-emoji" src="${url}" alt=":${name}:" title=":${name}:" width="24" height="24" />`;
+      }
+      return _match;
+    });
   }
 
   return clean;

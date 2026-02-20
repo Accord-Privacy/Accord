@@ -543,6 +543,16 @@ export interface NodeOverviewResponse {
   roles: Role[];
 }
 
+// Custom emoji types
+export interface CustomEmoji {
+  id: string;
+  node_id: string;
+  name: string;
+  uploaded_by: string;
+  content_hash: string;
+  created_at: string;
+}
+
 // Audit log types
 export interface AuditLogEntry {
   id: string;

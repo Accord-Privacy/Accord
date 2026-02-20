@@ -4445,3 +4445,18 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
 .bot-signature-badge {
   font-size: 10px; margin-left: 6px; vertical-align: middle;
 }
+
+
+/* Custom emoji in messages */
+.custom-emoji {
+  display: inline-block;
+  vertical-align: middle;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  margin: 0 2px;
+}
+.message-content .custom-emoji:only-child {
+  width: 48px;
+  height: 48px;
+}
