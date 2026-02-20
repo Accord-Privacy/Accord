@@ -34,6 +34,8 @@ const baseProps = {
   ],
   token: 'test-token',
   onNavigateToMessage: vi.fn(),
+  messages: [] as any[],
+  currentChannelId: 'ch1',
 };
 
 describe('SearchOverlay', () => {
@@ -41,7 +43,7 @@ describe('SearchOverlay', () => {
 
   it('renders search input when visible', () => {
     render(<SearchOverlay {...baseProps} />);
-    expect(screen.getByPlaceholderText(/search messages/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/search.*messages/i)).toBeInTheDocument();
   });
 
   it('does not render when not visible', () => {
@@ -51,6 +53,9 @@ describe('SearchOverlay', () => {
 
   it('shows filter panel when Filters button is clicked', () => {
     render(<SearchOverlay {...baseProps} />);
+    // Switch to server mode first (filters only show in server mode)
+    const serverTab = screen.getByText('🔍 Server');
+    fireEvent.click(serverTab);
     fireEvent.click(screen.getByText(/filters/i));
     expect(screen.getByText('Channel:')).toBeInTheDocument();
     expect(screen.getByText(/from \(user id\)/i)).toBeInTheDocument();
@@ -58,6 +63,8 @@ describe('SearchOverlay', () => {
 
   it('renders channel options in filter dropdown', () => {
     render(<SearchOverlay {...baseProps} />);
+    const serverTab = screen.getByText('🔍 Server');
+    fireEvent.click(serverTab);
     fireEvent.click(screen.getByText(/filters/i));
     const select = screen.getByDisplayValue('All channels');
     expect(select).toBeInTheDocument();
