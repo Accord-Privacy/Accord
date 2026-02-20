@@ -1729,6 +1729,10 @@ function App() {
     setCreatingNode(true);
     try {
       const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
+      // Close modal immediately on success
+      setShowCreateNodeModal(false);
+      setNewNodeName("");
+      setNewNodeDescription("");
       // Only create #general if the server didn't already create default channels
       try {
         const existingChannels = await api.getNodeChannels(newNode.id, appState.token);
@@ -1743,9 +1747,6 @@ function App() {
       await loadNodes();
       setSelectedNodeId(newNode.id);
       setActiveServer(nodes.length); // will be the last index after reload
-      setShowCreateNodeModal(false);
-      setNewNodeName("");
-      setNewNodeDescription("");
       // Load channels for the new node
       await loadChannels(newNode.id);
       await loadMembers(newNode.id);
