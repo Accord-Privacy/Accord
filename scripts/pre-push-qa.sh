@@ -4,6 +4,8 @@
 
 set -euo pipefail
 source ~/.cargo/env 2>/dev/null || true
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" 2>/dev/null || true
 
 echo "=== PRE-PUSH QA ==="
 echo ""
