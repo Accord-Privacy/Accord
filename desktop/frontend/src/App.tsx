@@ -805,8 +805,12 @@ function App() {
 
       if (isCurrentChannel) {
         setAppState(prev => {
+          // Dedup: check if message with this ID already exists
+          if (data.message_id && prev.messages.some(m => m.id === data.message_id)) {
+            return prev;
+          }
           if (isOwnMessage) {
-            // Replace the optimistic temp message with the real server message
+            // Replace the oldest optimistic temp message with the real server message
             const tempIdx = prev.messages.findIndex(
               m => m.id.startsWith('temp_') && m.channel_id === data.channel_id && m.sender_id === currentUserId
             );
@@ -815,8 +819,7 @@ function App() {
               updated[tempIdx] = newMessage;
               return { ...prev, messages: updated };
             }
-            // If no temp message found, skip to avoid duplicate
-            return prev;
+            // No temp message found — might be from another tab/device, add it
           }
           return { ...prev, messages: [...prev.messages, newMessage] };
         });
@@ -1248,6 +1251,39 @@ function App() {
     }
   }, [selectedNodeId, appState.token]);
 
+  // Decrypt a message's encrypted_payload using symmetric channel key
+  const decryptPayload = useCallback(async (encrypted: string, channelId: string): Promise<{ content: string; isEncrypted: boolean }> => {
+    if (encryptionEnabled && keyPair && channelId) {
+      try {
+        const channelKey = await getChannelKey(keyPair.privateKey, channelId);
+        const content = await decryptMessage(channelKey, encrypted);
+        return { content, isEncrypted: true };
+      } catch {
+        // Decryption failed — show raw payload (old key or corrupted)
+      }
+    }
+    return { content: encrypted, isEncrypted: false };
+  }, [encryptionEnabled, keyPair]);
+
+  // Map server MessageMetadata to frontend Message type
+  const mapServerMessage = useCallback(async (msg: any, channelId: string): Promise<Message> => {
+    // Server returns created_at (seconds), encrypted_payload (base64)
+    const ts = (msg.created_at || msg.timestamp || 0) * (msg.created_at ? 1000 : 1); // created_at is seconds, timestamp might already be ms
+    const payload = msg.encrypted_payload || msg.content || '';
+    const { content, isEncrypted } = await decryptPayload(payload, channelId);
+    
+    return {
+      ...msg,
+      content,
+      isEncrypted,
+      author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '') || 'Unknown',
+      time: new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: ts,
+      channel_id: channelId,
+      sender_id: msg.sender_id?.toString(),
+    };
+  }, [decryptPayload]);
+
   // Load message history for selected channel (initial load)
   const loadMessages = useCallback(async (channelId: string) => {
     if (!appState.token || !serverAvailable) return;
@@ -1255,12 +1291,10 @@ function App() {
     try {
       const response = await api.getChannelMessages(channelId, appState.token);
       
-      // Format messages for display
-      const formattedMessages = response.messages.map(msg => ({
-        ...msg,
-        author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
-        time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }));
+      // Format and decrypt messages for display
+      const formattedMessages = await Promise.all(
+        response.messages.map(msg => mapServerMessage(msg, channelId))
+      );
       
       // Sort messages by timestamp (oldest first for display)
       formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
@@ -1295,7 +1329,7 @@ function App() {
       setHasMoreMessages(false);
       setOldestMessageCursor(undefined);
     }
-  }, [appState.token, serverAvailable]);
+  }, [appState.token, serverAvailable, mapServerMessage]);
 
   // Load older messages (for pagination)
   const loadOlderMessages = useCallback(async (channelId: string) => {
@@ -1314,12 +1348,10 @@ function App() {
         return;
       }
       
-      // Format messages for display
-      const formattedMessages = response.messages.map(msg => ({
-        ...msg,
-        author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '' ) || 'Unknown',
-        time: msg.time || new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }));
+      // Format and decrypt messages for display
+      const formattedMessages = await Promise.all(
+        response.messages.map(msg => mapServerMessage(msg, channelId))
+      );
       
       // Sort new messages by timestamp (oldest first)
       formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
@@ -1354,7 +1386,7 @@ function App() {
     } finally {
       setIsLoadingOlderMessages(false);
     }
-  }, [appState.token, serverAvailable, isLoadingOlderMessages, hasMoreMessages, oldestMessageCursor]);
+  }, [appState.token, serverAvailable, isLoadingOlderMessages, hasMoreMessages, oldestMessageCursor, mapServerMessage]);
 
   // Handle staging files for preview before upload
   const handleFilesStaged = useCallback((files: StagedFile[]) => {
@@ -2179,6 +2211,7 @@ function App() {
       }));
       setIsAuthenticated(true);
       setShowRecoverModal(false);
+      setShowWelcomeScreen(false);
       setRecoverMnemonic("");
       setRecoverPassword("");
       setHasExistingKey(true);
