@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use base64::Engine as _;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -22,10 +23,11 @@ use uuid::Uuid;
 // Import the server modules
 use accord_server::{
     handlers::{
-        auth_handler, ban_user_handler, create_channel_handler, create_node_handler,
-        fetch_key_bundle_handler, get_prekey_messages_handler, health_handler, join_node_handler,
-        list_node_channels_handler, publish_key_bundle_handler, register_handler,
-        store_prekey_message_handler, ws_handler,
+        ack_sender_keys_handler, auth_handler, ban_user_handler, create_channel_handler,
+        create_node_handler, fetch_key_bundle_handler, get_pending_sender_keys_handler,
+        get_prekey_messages_handler, health_handler, join_node_handler, list_node_channels_handler,
+        publish_key_bundle_handler, register_handler, store_prekey_message_handler,
+        store_sender_key_handler, ws_handler,
     },
     state::{AppState, SharedState},
 };
@@ -54,6 +56,10 @@ impl TestServer {
             .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
             .route("/keys/prekey-message", post(store_prekey_message_handler))
             .route("/keys/prekey-messages", get(get_prekey_messages_handler))
+            // Sender Key distribution endpoints
+            .route("/channels/:id/sender-keys", post(store_sender_key_handler))
+            .route("/sender-keys/pending", get(get_pending_sender_keys_handler))
+            .route("/sender-keys/ack", post(ack_sender_keys_handler))
             // Node endpoints
             .route("/nodes", post(create_node_handler))
             .route(
@@ -684,13 +690,25 @@ async fn test_channel_join_leave_and_messaging() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Get channel_id from response
-    let ch_response = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
-    let channel_id: Uuid = if let Ok(Some(Ok(WsMessage::Text(text)))) = ch_response {
-        let data: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(data["type"], "channel_created");
-        Uuid::parse_str(data["channel"]["id"].as_str().unwrap()).unwrap()
-    } else {
-        panic!("Expected channel_created response");
+    // Loop to skip interleaved sender_key events
+    let channel_id: Uuid = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("Timed out waiting for channel_created");
+            }
+            match tokio::time::timeout(remaining, stream1.next()).await {
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    let data: Value = serde_json::from_str(&text).unwrap();
+                    if data["type"] == "channel_created" {
+                        break Uuid::parse_str(data["channel"]["id"].as_str().unwrap()).unwrap();
+                    }
+                    // skip sender_key_* and other events
+                }
+                _ => panic!("Expected channel_created response"),
+            }
+        }
     };
 
     // User2 joins the channel
@@ -2715,4 +2733,252 @@ async fn test_node_overview_batch_endpoint() {
     assert_eq!(resp.status(), 200);
     let batch: Value = resp.json().await.unwrap();
     assert!(batch["channels"].is_array());
+}
+
+// ── Sender Key Distribution Tests ──
+
+#[tokio::test]
+async fn test_sender_key_store_and_fetch() {
+    let server = TestServer::new().await;
+
+    // Register two users
+    let token_alice = server.register_and_auth("alice_sk").await;
+    let token_bob = server.register_and_auth("bob_sk").await;
+
+    // Get user IDs
+    let alice_id = server.state.validate_token(&token_alice).await.unwrap();
+    let bob_id = server.state.validate_token(&token_bob).await.unwrap();
+
+    // Create a node and channel
+    let node_resp = server
+        .client
+        .post(&server.url("/nodes"))
+        .query(&[("token", &token_alice)])
+        .json(&json!({ "name": "SK Test Node" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(node_resp.status(), 200);
+    let node: Value = node_resp.json().await.unwrap();
+    let node_id = node["id"].as_str().unwrap();
+
+    // Bob joins the node
+    let join_resp = server
+        .client
+        .post(&server.url(&format!("/nodes/{}/join", node_id)))
+        .query(&[("token", &token_bob)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(join_resp.status(), 200);
+
+    // Create a channel
+    let ch_resp = server
+        .client
+        .post(&server.url(&format!("/nodes/{}/channels", node_id)))
+        .query(&[("token", &token_alice)])
+        .json(&json!({ "name": "sk-channel" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ch_resp.status(), 200);
+    let channel: Value = ch_resp.json().await.unwrap();
+    let channel_id = channel["id"].as_str().unwrap();
+
+    // Alice stores a sender key distribution for Bob
+    let fake_payload =
+        base64::engine::general_purpose::STANDARD.encode(b"encrypted-sender-key-blob");
+    let store_resp = server
+        .client
+        .post(&server.url(&format!("/channels/{}/sender-keys", channel_id)))
+        .query(&[("token", &token_alice)])
+        .json(&json!({
+            "to_user_id": bob_id,
+            "payload": fake_payload,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(store_resp.status(), 200);
+    let store_body: Value = store_resp.json().await.unwrap();
+    assert_eq!(store_body["status"], "stored");
+    let dist_id = store_body["id"].as_str().unwrap().to_string();
+
+    // Bob fetches pending sender keys
+    let pending_resp = server
+        .client
+        .get(&server.url("/sender-keys/pending"))
+        .query(&[("token", &token_bob)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pending_resp.status(), 200);
+    let pending: Value = pending_resp.json().await.unwrap();
+    let distributions = pending["distributions"].as_array().unwrap();
+    assert_eq!(distributions.len(), 1);
+    assert_eq!(distributions[0]["from_user_id"], alice_id.to_string());
+    assert_eq!(distributions[0]["channel_id"], channel_id);
+    assert_eq!(distributions[0]["encrypted_payload"], fake_payload);
+
+    // Bob acknowledges the distribution
+    let ack_resp = server
+        .client
+        .post(&server.url("/sender-keys/ack"))
+        .query(&[("token", &token_bob)])
+        .json(&json!({ "ids": [dist_id] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ack_resp.status(), 200);
+    let ack_body: Value = ack_resp.json().await.unwrap();
+    assert_eq!(ack_body["acknowledged"], 1);
+
+    // Bob fetches again — should be empty
+    let pending_resp2 = server
+        .client
+        .get(&server.url("/sender-keys/pending"))
+        .query(&[("token", &token_bob)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pending_resp2.status(), 200);
+    let pending2: Value = pending_resp2.json().await.unwrap();
+    assert_eq!(pending2["distributions"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_sender_key_non_member_rejected() {
+    let server = TestServer::new().await;
+
+    let token_alice = server.register_and_auth("alice_sk2").await;
+    let token_bob = server.register_and_auth("bob_sk2").await;
+    let bob_id = server.state.validate_token(&token_bob).await.unwrap();
+
+    // Create a node and channel (Bob does NOT join)
+    let node_resp = server
+        .client
+        .post(&server.url("/nodes"))
+        .query(&[("token", &token_alice)])
+        .json(&json!({ "name": "SK Test Node 2" }))
+        .send()
+        .await
+        .unwrap();
+    let node: Value = node_resp.json().await.unwrap();
+    let node_id = node["id"].as_str().unwrap();
+
+    let ch_resp = server
+        .client
+        .post(&server.url(&format!("/nodes/{}/channels", node_id)))
+        .query(&[("token", &token_alice)])
+        .json(&json!({ "name": "sk-channel-2" }))
+        .send()
+        .await
+        .unwrap();
+    let channel: Value = ch_resp.json().await.unwrap();
+    let channel_id = channel["id"].as_str().unwrap();
+
+    // Alice tries to send SK to Bob who is NOT a node member
+    let fake_payload = base64::engine::general_purpose::STANDARD.encode(b"bad-sk");
+    let store_resp = server
+        .client
+        .post(&server.url(&format!("/channels/{}/sender-keys", channel_id)))
+        .query(&[("token", &token_alice)])
+        .json(&json!({
+            "to_user_id": bob_id,
+            "payload": fake_payload,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(store_resp.status(), 400);
+}
+
+#[tokio::test]
+async fn test_sender_key_cleanup_on_leave() {
+    let server = TestServer::new().await;
+
+    let token_alice = server.register_and_auth("alice_sk3").await;
+    let token_bob = server.register_and_auth("bob_sk3").await;
+    let alice_id = server.state.validate_token(&token_alice).await.unwrap();
+    let bob_id = server.state.validate_token(&token_bob).await.unwrap();
+
+    // Create node, both join
+    let node_resp = server
+        .client
+        .post(&server.url("/nodes"))
+        .query(&[("token", &token_alice)])
+        .json(&json!({ "name": "SK Leave Test" }))
+        .send()
+        .await
+        .unwrap();
+    let node: Value = node_resp.json().await.unwrap();
+    let node_id = node["id"].as_str().unwrap();
+
+    server
+        .client
+        .post(&server.url(&format!("/nodes/{}/join", node_id)))
+        .query(&[("token", &token_bob)])
+        .send()
+        .await
+        .unwrap();
+
+    let ch_resp = server
+        .client
+        .post(&server.url(&format!("/nodes/{}/channels", node_id)))
+        .query(&[("token", &token_alice)])
+        .json(&json!({ "name": "sk-leave-ch" }))
+        .send()
+        .await
+        .unwrap();
+    let channel: Value = ch_resp.json().await.unwrap();
+    let channel_id = channel["id"].as_str().unwrap();
+
+    // Bob sends a SK distribution to Alice
+    let payload = base64::engine::general_purpose::STANDARD.encode(b"bob-sk-for-alice");
+    server
+        .client
+        .post(&server.url(&format!("/channels/{}/sender-keys", channel_id)))
+        .query(&[("token", &token_bob)])
+        .json(&json!({
+            "to_user_id": alice_id,
+            "payload": payload,
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // Verify Alice has a pending distribution
+    let pending = server
+        .client
+        .get(&server.url("/sender-keys/pending"))
+        .query(&[("token", &token_alice)])
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(pending["distributions"].as_array().unwrap().len(), 1);
+
+    // Bob's distributions from him should be cleaned up when he leaves
+    // (This happens via the DB method; the WS leave handler calls it)
+    server
+        .state
+        .db
+        .delete_sender_key_distributions_from_user(Uuid::parse_str(channel_id).unwrap(), bob_id)
+        .await
+        .unwrap();
+
+    // Alice should now have no pending distributions from Bob
+    let pending2 = server
+        .client
+        .get(&server.url("/sender-keys/pending"))
+        .query(&[("token", &token_alice)])
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(pending2["distributions"].as_array().unwrap().len(), 0);
 }

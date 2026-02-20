@@ -125,6 +125,9 @@ export type WsMessageType =
   | { PinMessage: { message_id: string } }
   | { UnpinMessage: { message_id: string } }
   | { TypingStart: { channel_id: string } }
+  | { StoreSenderKey: { channel_id: string; to_user_id: string; payload: string } }
+  | { GetPendingSenderKeys: Record<string, never> }
+  | { AckSenderKeys: { ids: string[] } }
   | 'Ping'
   | 'Pong';
 
@@ -224,7 +227,7 @@ export interface Message {
   pinned_at?: number;
   pinned_by?: string;
   isEncrypted?: boolean;
-  e2eeType?: 'double-ratchet' | 'symmetric' | 'none';
+  e2eeType?: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none';
   reactions?: MessageReaction[];
   reply_to?: string;
   replied_message?: RepliedMessage;

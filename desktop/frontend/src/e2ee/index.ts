@@ -45,6 +45,30 @@ export type { MessageHeader, DoubleRatchetMessage, RatchetSessionState } from '.
 
 export { SessionManager } from './session';
 
+export {
+  SenderKeyStore,
+  generateSenderKey,
+  senderKeyFingerprint,
+  senderKeyToPublic,
+  createSenderKeyState,
+  senderKeyEncrypt,
+  senderKeyDecrypt,
+  buildDistributionMessage,
+  parseDistributionMessage,
+  isSenderKeyEnvelope,
+  parseSenderKeyEnvelope,
+  encryptChannelMessage,
+  decryptChannelMessage,
+} from './senderKeys';
+
+export type {
+  SenderKeyPrivate,
+  SenderKeyPublic,
+  SenderKeyState,
+  SenderKeyEnvelope,
+  SenderKeyDistributionMessage,
+} from './senderKeys';
+
 import type { IdentityKeyPair, SignedPreKeyPair, OneTimePreKeyPair, PreKeyBundle } from './keys';
 import { generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from './keys';
 import { x3dhInitiate, x3dhRespond } from './x3dh';

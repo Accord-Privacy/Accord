@@ -1120,6 +1120,52 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // ── Sender Key distribution table (E2EE Sender Keys) ──
+        // Stores encrypted Sender Key distribution messages (opaque to server).
+        // Keys flow through Double Ratchet DMs; this table is purely for
+        // store-and-forward when recipients are offline.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sender_key_distributions (
+                id TEXT PRIMARY KEY NOT NULL,
+                channel_id TEXT NOT NULL,
+                from_user_id TEXT NOT NULL,
+                to_user_id TEXT NOT NULL,
+                encrypted_payload BLOB NOT NULL,
+                created_at INTEGER NOT NULL,
+                claimed INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE,
+                FOREIGN KEY (from_user_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (to_user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create sender_key_distributions table")?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_skd_recipient ON sender_key_distributions (to_user_id, claimed)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_skd_channel ON sender_key_distributions (channel_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_skd_from ON sender_key_distributions (from_user_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Add encryption_version column to messages (0 = placeholder, 1 = Sender Keys)
+        sqlx::query(
+            "ALTER TABLE messages ADD COLUMN encryption_version INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
         Ok(())
     }
 
@@ -4104,6 +4150,122 @@ impl Database {
             .await?;
 
         Ok(messages)
+    }
+
+    // ── Sender Key distribution operations ──
+
+    /// Store a Sender Key distribution message (encrypted, opaque to server)
+    pub async fn store_sender_key_distribution(
+        &self,
+        channel_id: Uuid,
+        from_user_id: Uuid,
+        to_user_id: Uuid,
+        encrypted_payload: &[u8],
+    ) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        let created_at = now();
+        sqlx::query(
+            "INSERT INTO sender_key_distributions (id, channel_id, from_user_id, to_user_id, encrypted_payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(channel_id.to_string())
+        .bind(from_user_id.to_string())
+        .bind(to_user_id.to_string())
+        .bind(encrypted_payload)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to store sender key distribution")?;
+        Ok(id)
+    }
+
+    /// Fetch pending (unclaimed) Sender Key distributions for a user
+    pub async fn get_pending_sender_key_distributions(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::SenderKeyDistribution>> {
+        let rows = sqlx::query(
+            "SELECT id, channel_id, from_user_id, to_user_id, encrypted_payload, created_at FROM sender_key_distributions WHERE to_user_id = ? AND claimed = 0 ORDER BY created_at ASC",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get pending sender key distributions")?;
+
+        rows.iter()
+            .map(|row| -> Result<crate::models::SenderKeyDistribution> {
+                Ok(crate::models::SenderKeyDistribution {
+                    id: Uuid::parse_str(&row.get::<String, _>("id"))?,
+                    channel_id: Uuid::parse_str(&row.get::<String, _>("channel_id"))?,
+                    from_user_id: Uuid::parse_str(&row.get::<String, _>("from_user_id"))?,
+                    to_user_id: Uuid::parse_str(&row.get::<String, _>("to_user_id"))?,
+                    encrypted_payload: base64::engine::general_purpose::STANDARD
+                        .encode(row.get::<Vec<u8>, _>("encrypted_payload")),
+                    created_at: row.get::<i64, _>("created_at") as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Acknowledge (claim) Sender Key distributions by their IDs
+    pub async fn ack_sender_key_distributions(&self, user_id: Uuid, ids: &[Uuid]) -> Result<u64> {
+        let mut acked = 0u64;
+        for id in ids {
+            let result = sqlx::query(
+                "UPDATE sender_key_distributions SET claimed = 1 WHERE id = ? AND to_user_id = ? AND claimed = 0",
+            )
+            .bind(id.to_string())
+            .bind(user_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to ack sender key distribution")?;
+            acked += result.rows_affected();
+        }
+        Ok(acked)
+    }
+
+    /// Delete all sender key distributions for a channel (e.g., on channel deletion)
+    pub async fn delete_sender_key_distributions_for_channel(
+        &self,
+        channel_id: Uuid,
+    ) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sender_key_distributions WHERE channel_id = ?")
+            .bind(channel_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to delete sender key distributions for channel")?;
+        Ok(result.rows_affected())
+    }
+
+    /// Delete all sender key distributions from a specific user in a channel
+    /// (used when a user leaves/is removed — their old SKDs are invalid)
+    pub async fn delete_sender_key_distributions_from_user(
+        &self,
+        channel_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM sender_key_distributions WHERE channel_id = ? AND from_user_id = ?",
+        )
+        .bind(channel_id.to_string())
+        .bind(user_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to delete sender key distributions from user")?;
+        Ok(result.rows_affected())
+    }
+
+    /// Clean up old claimed sender key distributions (garbage collection)
+    pub async fn cleanup_old_sender_key_distributions(&self, older_than_secs: u64) -> Result<u64> {
+        let cutoff = now().saturating_sub(older_than_secs);
+        let result = sqlx::query(
+            "DELETE FROM sender_key_distributions WHERE claimed = 1 AND created_at < ?",
+        )
+        .bind(cutoff as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to cleanup old sender key distributions")?;
+        Ok(result.rows_affected())
     }
 
     // ── Push notification device token operations ──

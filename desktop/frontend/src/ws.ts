@@ -453,6 +453,19 @@ export class AccordWebSocket {
   // Note: encryptedData should be base64-encoded encrypted content
   // The App component handles encryption before calling this method
 
+  // Sender Key operations
+  storeSenderKey(channelId: string, toUserId: string, payload: string): void {
+    this.sendMessage({ StoreSenderKey: { channel_id: channelId, to_user_id: toUserId, payload } });
+  }
+
+  getPendingSenderKeys(): void {
+    this.sendMessage({ GetPendingSenderKeys: {} });
+  }
+
+  ackSenderKeys(ids: string[]): void {
+    this.sendMessage({ AckSenderKeys: { ids } });
+  }
+
   // Ping/Pong
   ping(): void {
     this.sendMessage('Ping');

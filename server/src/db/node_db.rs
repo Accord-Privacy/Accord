@@ -133,6 +133,41 @@ impl NodeDatabase {
             .await
             .ok();
 
+        // Add encryption_version column (0 = placeholder, 1 = Sender Keys)
+        sqlx::query(
+            "ALTER TABLE messages ADD COLUMN encryption_version INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
+        // Sender Key distributions (store-and-forward for offline members)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sender_key_distributions (
+                id TEXT PRIMARY KEY NOT NULL,
+                channel_id TEXT NOT NULL,
+                from_user_id TEXT NOT NULL,
+                to_user_id TEXT NOT NULL,
+                encrypted_payload BLOB NOT NULL,
+                created_at INTEGER NOT NULL,
+                claimed INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (channel_id) REFERENCES channels (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create sender_key_distributions table")?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_skd_recipient ON sender_key_distributions (to_user_id, claimed)")
+            .execute(&self.pool).await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_skd_channel ON sender_key_distributions (channel_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Message reactions
         sqlx::query(
             r#"

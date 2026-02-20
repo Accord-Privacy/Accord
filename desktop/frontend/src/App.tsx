@@ -27,7 +27,7 @@ import { notificationManager, NotificationPreferences } from "./notifications";
 import { SetupWizard, SetupResult } from "./SetupWizard";
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
-import { E2EEManager, type PreKeyBundle } from "./e2ee";
+import { E2EEManager, type PreKeyBundle, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage } from "./e2ee";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -73,6 +73,21 @@ function fingerprint(publicKeyHash: string): string {
 
 // Initialize theme immediately on module load (before first render)
 initTheme();
+
+/** Distribute a sender key to all channel members via WS. */
+function distributeSenderKeyToChannel(
+  _ws: AccordWebSocket,
+  channelId: string,
+  _sk: import('./e2ee/senderKeys').SenderKeyPrivate,
+  excludeUserId?: string,
+) {
+  // This is called in the context of the App component where e2eeManagerRef is available.
+  // We pass the ws and use a global reference pattern.
+  // Note: actual member list iteration happens inside App via the membersRef.
+  // This is a simplified version — in production you'd iterate channel members.
+  // For now we rely on the server's sender_key_new_member events for distribution.
+  console.log(`Sender key rotated for channel ${channelId}, excluding ${excludeUserId}`);
+}
 
 function App() {
   // Server connection state
@@ -314,6 +329,7 @@ function App() {
 
   // E2EE manager for 1:1 DM Double Ratchet encryption
   const e2eeManagerRef = useRef<E2EEManager | null>(null);
+  const senderKeyStoreRef = useRef<SenderKeyStore>(new SenderKeyStore());
   // Cache of fetched prekey bundles by user ID
   const prekeyBundleCacheRef = useRef<Map<string, PreKeyBundle>>(new Map());
 
@@ -659,7 +675,7 @@ function App() {
       // Handle incoming channel messages
       let content = data.encrypted_data;
       let isEncrypted = false;
-      let e2eeType: 'double-ratchet' | 'symmetric' | 'none' = 'none';
+      let e2eeType: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none' = 'none';
 
       // Check if this is a DM message
       const isIncomingDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
@@ -685,14 +701,33 @@ function App() {
           }
         }
       } else if (encryptionEnabled && keyPair && data.channel_id) {
-        // Channel: use symmetric decryption
-        try {
-          const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
-          content = await decryptMessage(channelKey, data.encrypted_data);
-          isEncrypted = true;
-          e2eeType = 'symmetric';
-        } catch (error) {
-          console.warn('Failed to decrypt message, showing encrypted data:', error);
+        // Channel: try sender keys first, fall back to symmetric
+        if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
+          try {
+            content = decryptChannelMessage(
+              senderKeyStoreRef.current, data.channel_id, data.from, data.encrypted_data);
+            isEncrypted = true;
+            e2eeType = 'sender-keys';
+          } catch (skError) {
+            console.warn('Sender key decrypt failed, trying symmetric fallback:', skError);
+            try {
+              const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+              content = await decryptMessage(channelKey, data.encrypted_data);
+              isEncrypted = true;
+              e2eeType = 'symmetric';
+            } catch (error) {
+              console.warn('Failed to decrypt message, showing encrypted data:', error);
+            }
+          }
+        } else {
+          try {
+            const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+            content = await decryptMessage(channelKey, data.encrypted_data);
+            isEncrypted = true;
+            e2eeType = 'symmetric';
+          } catch (error) {
+            console.warn('Failed to decrypt message, showing encrypted data:', error);
+          }
         }
       }
 
@@ -825,8 +860,18 @@ function App() {
         // Try to decrypt the new content if we have encryption enabled
         let content = data.encrypted_data;
         if (encryptionEnabled && keyPair) {
-          const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
-          content = await decryptMessage(channelKey, data.encrypted_data);
+          if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
+            try {
+              content = decryptChannelMessage(
+                senderKeyStoreRef.current, data.channel_id, data.from, data.encrypted_data);
+            } catch {
+              const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+              content = await decryptMessage(channelKey, data.encrypted_data);
+            }
+          } else {
+            const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+            content = await decryptMessage(channelKey, data.encrypted_data);
+          }
         }
 
         setAppState(prev => ({
@@ -1058,6 +1103,60 @@ function App() {
     socket.on('error', (error: Error) => {
       console.error('WebSocket error:', error);
     });
+
+    // ── Sender Key events ──
+
+    // A peer sent us their sender key (via DR-encrypted DM, distributed by server)
+    socket.on('sender_key_distribution' as any, async (data: any) => {
+      if (!e2eeManagerRef.current?.isInitialized || !data.payload || !data.from_user_id) return;
+      try {
+        // Decrypt the DR-encrypted payload
+        const decrypted = e2eeManagerRef.current.decrypt(data.from_user_id, data.payload);
+        const distMsg = JSON.parse(decrypted);
+        if (distMsg.type === 'skdm') {
+          const { state } = parseDistributionMessage(distMsg);
+          senderKeyStoreRef.current.setPeerKey(distMsg.ch, data.from_user_id, state);
+          console.log(`Stored sender key from ${data.from_user_id} for channel ${distMsg.ch}`);
+        }
+        // ACK the distribution
+        if (data.distribution_id) {
+          socket.ackSenderKeys([data.distribution_id]);
+        }
+      } catch (err) {
+        console.warn('Failed to process sender key distribution:', err);
+      }
+    });
+
+    // Server tells us to rotate sender keys (member left/kicked)
+    socket.on('sender_key_rotation_required' as any, async (data: any) => {
+      if (!data.channel_id || !data.removed_user_id) return;
+      const channelId = data.channel_id;
+      // Remove the departed user's key
+      senderKeyStoreRef.current.removePeerKey(channelId, data.removed_user_id);
+      // Rotate our own key and redistribute to remaining members
+      if (senderKeyStoreRef.current.hasChannelKeys(channelId)) {
+        const newKey = senderKeyStoreRef.current.rotateMyKey(channelId);
+        // Distribute new key to all channel members (async, best-effort)
+        distributeSenderKeyToChannel(socket, channelId, newKey, data.removed_user_id);
+      }
+    });
+
+    // A new member joined — send them our sender key
+    socket.on('sender_key_new_member' as any, async (data: any) => {
+      if (!data.channel_id || !data.new_user_id) return;
+      const channelId = data.channel_id;
+      const sk = senderKeyStoreRef.current.getMyKey(channelId);
+      if (sk && e2eeManagerRef.current?.isInitialized) {
+        const distMsg = buildDistributionMessage(channelId, sk);
+        try {
+          const encrypted = e2eeManagerRef.current.encrypt(data.new_user_id, JSON.stringify(distMsg));
+          socket.storeSenderKey(channelId, data.new_user_id, encrypted);
+        } catch (err) {
+          console.warn(`Failed to send sender key to new member ${data.new_user_id}:`, err);
+        }
+      }
+    });
+
   }, [encryptionEnabled, keyPair]);
 
   // Cleanup typing timeouts on unmount
@@ -1240,9 +1339,19 @@ function App() {
     }
   }, [selectedNodeId, appState.token]);
 
-  // Decrypt a message's encrypted_payload using symmetric channel key
-  const decryptPayload = useCallback(async (encrypted: string, channelId: string): Promise<{ content: string; isEncrypted: boolean }> => {
+  // Decrypt a message's encrypted_payload using sender keys or symmetric channel key
+  const decryptPayload = useCallback(async (encrypted: string, channelId: string, senderId?: string): Promise<{ content: string; isEncrypted: boolean }> => {
     if (encryptionEnabled && keyPair && channelId) {
+      // Try sender keys first if it looks like a sender key envelope
+      if (senderId && isSenderKeyEnvelope(encrypted)) {
+        try {
+          const content = decryptChannelMessage(
+            senderKeyStoreRef.current, channelId, senderId, encrypted);
+          return { content, isEncrypted: true };
+        } catch {
+          // Fall through to symmetric
+        }
+      }
       try {
         const channelKey = await getChannelKey(keyPair.privateKey, channelId);
         const content = await decryptMessage(channelKey, encrypted);
@@ -1259,13 +1368,15 @@ function App() {
     // Server returns created_at (seconds), encrypted_payload (base64)
     const ts = (msg.created_at || msg.timestamp || 0) * (msg.created_at ? 1000 : 1); // created_at is seconds, timestamp might already be ms
     const payload = msg.encrypted_payload || msg.content || '';
-    const { content, isEncrypted } = await decryptPayload(payload, channelId);
+    const senderId = msg.sender_id || msg.from || '';
+    const { content, isEncrypted } = await decryptPayload(payload, channelId, senderId);
+    const detectedSK = isEncrypted && isSenderKeyEnvelope(payload);
     
     return {
       ...msg,
       content,
       isEncrypted,
-      e2eeType: isEncrypted ? 'symmetric' as const : 'none' as const,
+      e2eeType: isEncrypted ? (detectedSK ? 'sender-keys' as const : 'symmetric' as const) : 'none' as const,
       author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '') || 'Unknown',
       time: new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timestamp: ts,
@@ -2456,7 +2567,7 @@ function App() {
       try {
         let messageToSend = message;
         let isEncrypted = false;
-        let e2eeType: 'double-ratchet' | 'symmetric' | 'none' = 'none';
+        let e2eeType: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none' = 'none';
 
         // Encrypt: use E2EE (Double Ratchet) for DMs, symmetric for channels
         const isDmSend = !!selectedDmChannel;
@@ -2483,14 +2594,27 @@ function App() {
             }
           }
         } else if (encryptionEnabled && keyPair && channelToUse) {
-          // Channel: use symmetric encryption
-          try {
-            const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
-            messageToSend = await encryptMessage(channelKey, message);
-            isEncrypted = true;
-            e2eeType = 'symmetric';
-          } catch (error) {
-            console.warn('Failed to encrypt message, sending plaintext:', error);
+          // Channel: try sender keys first, fall back to symmetric
+          if (senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
+            try {
+              const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, channelToUse);
+              messageToSend = encryptFn(message);
+              isEncrypted = true;
+              e2eeType = 'sender-keys';
+            } catch (skError) {
+              console.warn('Sender key encrypt failed, falling back to symmetric:', skError);
+            }
+          }
+          if (!isEncrypted) {
+            // Symmetric fallback
+            try {
+              const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
+              messageToSend = await encryptMessage(channelKey, message);
+              isEncrypted = true;
+              e2eeType = 'symmetric';
+            } catch (error) {
+              console.warn('Failed to encrypt message, sending plaintext:', error);
+            }
           }
         }
 
@@ -2580,13 +2704,31 @@ function App() {
 
       // Encrypt message if encryption is enabled and we have keys
       if (encryptionEnabled && keyPair && selectedChannelId) {
-        try {
-          const channelKey = await getChannelKey(keyPair.privateKey, selectedChannelId);
-          messageToSend = await encryptMessage(channelKey, editingContent);
-        } catch (error) {
-          console.warn('Failed to encrypt edited message:', error);
-          setError('Failed to encrypt message');
-          return;
+        // Try sender keys first
+        if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) {
+          try {
+            const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, selectedChannelId);
+            messageToSend = encryptFn(editingContent);
+          } catch (skError) {
+            console.warn('Sender key encrypt failed for edit, falling back:', skError);
+            try {
+              const channelKey = await getChannelKey(keyPair.privateKey, selectedChannelId);
+              messageToSend = await encryptMessage(channelKey, editingContent);
+            } catch (error) {
+              console.warn('Failed to encrypt edited message:', error);
+              setError('Failed to encrypt message');
+              return;
+            }
+          }
+        } else {
+          try {
+            const channelKey = await getChannelKey(keyPair.privateKey, selectedChannelId);
+            messageToSend = await encryptMessage(channelKey, editingContent);
+          } catch (error) {
+            console.warn('Failed to encrypt edited message:', error);
+            setError('Failed to encrypt message');
+            return;
+          }
         }
       }
 

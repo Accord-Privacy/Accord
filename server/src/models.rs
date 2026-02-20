@@ -576,6 +576,19 @@ pub enum WsMessageType {
         candidate: String,
     },
 
+    // ── Sender Key operations (E2EE channel encryption) ──
+    /// Store a Sender Key distribution for a channel member
+    StoreSenderKey {
+        channel_id: Uuid,
+        to_user_id: Uuid,
+        /// Base64-encoded DR-encrypted Sender Key distribution message
+        payload: String,
+    },
+    /// Request pending Sender Key distributions
+    GetPendingSenderKeys,
+    /// Acknowledge receipt of Sender Key distributions
+    AckSenderKeys { ids: Vec<Uuid> },
+
     /// Bot command response broadcast to channel members
     BotResponse {
         bot_id: String,
@@ -1285,6 +1298,40 @@ pub struct AddAutoModWordRequest {
 #[derive(Debug, Deserialize)]
 pub struct SetSlowModeRequest {
     pub seconds: u32,
+}
+
+// ── Sender Key distribution models (E2EE Sender Keys) ──
+
+/// A Sender Key distribution message (encrypted, opaque to relay)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SenderKeyDistribution {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub from_user_id: Uuid,
+    pub to_user_id: Uuid,
+    /// Base64-encoded Double-Ratchet-encrypted payload (opaque to server)
+    pub encrypted_payload: String,
+    pub created_at: u64,
+}
+
+/// Request to store a Sender Key distribution
+#[derive(Debug, Deserialize)]
+pub struct StoreSenderKeyRequest {
+    pub to_user_id: Uuid,
+    /// Base64-encoded DR-encrypted Sender Key distribution message
+    pub payload: String,
+}
+
+/// Request to acknowledge received Sender Key distributions
+#[derive(Debug, Deserialize)]
+pub struct AckSenderKeysRequest {
+    pub ids: Vec<Uuid>,
+}
+
+/// Response for pending Sender Key distributions
+#[derive(Debug, Serialize)]
+pub struct PendingSenderKeysResponse {
+    pub distributions: Vec<SenderKeyDistribution>,
 }
 
 /// Request to set a per-Node user profile

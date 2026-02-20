@@ -696,6 +696,26 @@ pub async fn kick_user_handler(
                 target_user_id, node_id, admin_user_id
             );
 
+            // Notify remaining members to rotate sender keys for all channels
+            if let Ok(channels) = state.db.get_node_channels(node_id).await {
+                for channel in &channels {
+                    // Clean up the kicked user's sender key distributions
+                    let _ = state
+                        .db
+                        .delete_sender_key_distributions_from_user(channel.id, target_user_id)
+                        .await;
+
+                    let rotation_event = serde_json::json!({
+                        "type": "sender_key_rotation_required",
+                        "channel_id": channel.id,
+                        "removed_user_id": target_user_id,
+                    });
+                    let _ = state
+                        .send_to_channel(channel.id, rotation_event.to_string())
+                        .await;
+                }
+            }
+
             // Log audit event
             let details = serde_json::json!({
                 "kicked_user_id": target_user_id
@@ -3078,6 +3098,166 @@ pub async fn get_prekey_messages_handler(
     Ok(Json(serde_json::json!({ "messages": response })))
 }
 
+// ── Sender Key distribution endpoints ──
+
+/// Store a Sender Key distribution message for a channel member
+/// POST /channels/{channelId}/sender-keys
+pub async fn store_sender_key_handler(
+    State(state): State<SharedState>,
+    Path(channel_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::StoreSenderKeyRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+
+    // Verify sender is a member of the channel's node
+    let channel = state
+        .get_channel(channel_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Channel not found".into(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    if !state
+        .is_node_member(user_id, channel.node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must be a member of the node".into(),
+                code: 403,
+            }),
+        ));
+    }
+
+    // Verify recipient is also a node member
+    if !state
+        .is_node_member(request.to_user_id, channel.node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Recipient is not a member of the node".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    let payload = base64::engine::general_purpose::STANDARD
+        .decode(&request.payload)
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid base64 payload".into(),
+                    code: 400,
+                }),
+            )
+        })?;
+
+    let id = state
+        .db
+        .store_sender_key_distribution(channel_id, user_id, request.to_user_id, &payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to store sender key: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Notify recipient in real-time via WebSocket
+    let notification = serde_json::json!({
+        "type": "sender_key_distribution",
+        "channel_id": channel_id,
+        "from_user_id": user_id,
+        "distribution_id": id,
+    });
+    let _ = state
+        .send_to_user(request.to_user_id, notification.to_string())
+        .await;
+
+    Ok(Json(serde_json::json!({ "id": id, "status": "stored" })))
+}
+
+/// Fetch pending Sender Key distributions for the current user
+/// GET /sender-keys/pending
+pub async fn get_pending_sender_keys_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<crate::models::PendingSenderKeysResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+
+    let distributions = state
+        .db
+        .get_pending_sender_key_distributions(user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to get pending sender keys: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(crate::models::PendingSenderKeysResponse {
+        distributions,
+    }))
+}
+
+/// Acknowledge receipt of Sender Key distributions
+/// POST /sender-keys/ack
+pub async fn ack_sender_keys_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::AckSenderKeysRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+
+    let acked = state
+        .db
+        .ack_sender_key_distributions(user_id, &request.ids)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to ack sender keys: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    Ok(Json(serde_json::json!({ "acknowledged": acked })))
+}
+
 // ── Moderation endpoints ──
 
 /// Set slow mode for a channel (PUT /channels/:id/slow-mode)
@@ -3729,12 +3909,54 @@ async fn handle_ws_message(
                 .check_build_hash_for_node(sender_user_id, node_id)
                 .await?;
             state.join_node(sender_user_id, node_id).await?;
+
+            // Notify existing channel members that a new member joined
+            // (so they can send their sender keys to the new member)
+            if let Ok(channels) = state.db.get_node_channels(node_id).await {
+                for channel in &channels {
+                    let join_event = serde_json::json!({
+                        "type": "sender_key_new_member",
+                        "channel_id": channel.id,
+                        "new_user_id": sender_user_id,
+                    });
+                    let _ = state
+                        .send_to_channel(channel.id, join_event.to_string())
+                        .await;
+                }
+            }
+
             let resp = serde_json::json!({ "type": "node_joined", "node_id": node_id });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
         WsMessageType::LeaveNode { node_id } => {
+            // Get node channels before leaving (for sender key rotation)
+            let channels = state
+                .db
+                .get_node_channels(node_id)
+                .await
+                .unwrap_or_default();
+
             state.leave_node(sender_user_id, node_id).await?;
+
+            // Notify remaining members to rotate sender keys
+            for channel in &channels {
+                // Clean up the leaving user's sender key distributions
+                let _ = state
+                    .db
+                    .delete_sender_key_distributions_from_user(channel.id, sender_user_id)
+                    .await;
+
+                let rotation_event = serde_json::json!({
+                    "type": "sender_key_rotation_required",
+                    "channel_id": channel.id,
+                    "removed_user_id": sender_user_id,
+                });
+                let _ = state
+                    .send_to_channel(channel.id, rotation_event.to_string())
+                    .await;
+            }
+
             let resp = serde_json::json!({ "type": "node_left", "node_id": node_id });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
@@ -4135,6 +4357,86 @@ async fn handle_ws_message(
                 })
                 .collect();
             let resp = serde_json::json!({ "type": "prekey_messages", "messages": msgs });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        // ── Sender Key operations (E2EE channel encryption) ──
+        WsMessageType::StoreSenderKey {
+            channel_id,
+            to_user_id,
+            payload,
+        } => {
+            // Verify sender is a member of the channel's node
+            if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
+                if !state
+                    .is_node_member(sender_user_id, channel.node_id)
+                    .await
+                    .unwrap_or(false)
+                {
+                    return Err("Must be a member of the node".to_string());
+                }
+                if !state
+                    .is_node_member(to_user_id, channel.node_id)
+                    .await
+                    .unwrap_or(false)
+                {
+                    return Err("Recipient is not a member of the node".to_string());
+                }
+            } else {
+                return Err("Channel not found".to_string());
+            }
+
+            let encrypted_payload = base64::engine::general_purpose::STANDARD
+                .decode(&payload)
+                .map_err(|_| "Invalid base64 payload".to_string())?;
+
+            let id = state
+                .db
+                .store_sender_key_distribution(
+                    channel_id,
+                    sender_user_id,
+                    to_user_id,
+                    &encrypted_payload,
+                )
+                .await
+                .map_err(|e| format!("Failed to store sender key: {}", e))?;
+
+            // Notify recipient in real-time
+            let notification = serde_json::json!({
+                "type": "sender_key_distribution",
+                "channel_id": channel_id,
+                "from_user_id": sender_user_id,
+                "distribution_id": id,
+                "payload": payload,
+            });
+            let _ = state
+                .send_to_user(to_user_id, notification.to_string())
+                .await;
+
+            let resp = serde_json::json!({ "type": "sender_key_stored", "id": id });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::GetPendingSenderKeys => {
+            let distributions = state
+                .db
+                .get_pending_sender_key_distributions(sender_user_id)
+                .await
+                .map_err(|e| format!("Failed to get pending sender keys: {}", e))?;
+            let resp = serde_json::json!({
+                "type": "pending_sender_keys",
+                "distributions": distributions,
+            });
+            state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        WsMessageType::AckSenderKeys { ids } => {
+            let acked = state
+                .db
+                .ack_sender_key_distributions(sender_user_id, &ids)
+                .await
+                .map_err(|e| format!("Failed to ack sender keys: {}", e))?;
+            let resp = serde_json::json!({ "type": "sender_keys_acked", "acknowledged": acked });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
