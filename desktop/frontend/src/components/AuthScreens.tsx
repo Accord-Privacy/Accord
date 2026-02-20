@@ -194,7 +194,7 @@ export const WelcomeScreen: React.FC = () => {
           {ctx.welcomeMode === 'choose' && (
             <>
               <div className="auth-brand">
-                <h1>⚡ <span className="brand-accent">Accord</span></h1>
+                <h1><img src="/logo.png" alt="Accord" style={{width: '48px', height: '48px', verticalAlign: 'middle', marginRight: '12px', borderRadius: '8px'}} /><span className="brand-accent">Accord</span></h1>
               </div>
               <p className="auth-tagline">Privacy-first community communications</p>
               <div className="auth-buttons-stack">
