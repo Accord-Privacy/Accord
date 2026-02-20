@@ -423,14 +423,19 @@ export async function loadKeyFromStorage(pkHash?: string): Promise<CryptoKeyPair
 // ---------------------------------------------------------------------------
 
 /**
- * Create a deterministic AES-256 key from channel ID + user secrets.
+ * Create a deterministic AES-256 key from channel ID alone.
+ * 
+ * PLACEHOLDER: This is NOT real E2EE — it's encryption-at-rest using a shared
+ * channel-derived key. All users in a channel derive the SAME key from the
+ * channel ID + a fixed salt. This ensures messages are readable across users
+ * and sessions. A proper Sender Keys / MLS implementation should replace this.
+ * 
  * Returns raw 32 bytes (noble path) or CryptoKey (subtle path).
  */
 async function createChannelKeyFromId(channelId: string): Promise<CryptoKey | Uint8Array> {
   const enc = new TextEncoder();
-  const userSecret = localStorage.getItem('accord_token') || '';
-  const privateKeyB64 = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY) || '';
-  const material = `${channelId}:${userSecret}:${privateKeyB64.slice(0, 32)}`;
+  const FIXED_SALT = 'accord-channel-key-v1';
+  const material = `${channelId}:${FIXED_SALT}`;
   const data = enc.encode(material);
 
   if (HAS_SUBTLE) {

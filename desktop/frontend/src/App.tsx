@@ -43,6 +43,32 @@ import { LinkPreview, extractFirstUrl } from "./LinkPreview";
 import { initTheme } from "./themes";
 import { UpdateBanner } from "./UpdateChecker";
 
+// Utility: robust clipboard copy that works in non-secure contexts
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Fallback for non-HTTPS contexts
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '-9999px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 // Helper: truncate a public key hash to a short fingerprint for display
 function fingerprint(publicKeyHash: string): string {
   if (!publicKeyHash || publicKeyHash.length < 16) return publicKeyHash || 'unknown';
@@ -765,15 +791,36 @@ function App() {
         }
       }
 
+      // Check if this message belongs to the currently selected channel
+      const currentChannelId = selectedDmChannel?.id || selectedChannelId;
+      const isCurrentChannel = data.channel_id === currentChannelId;
+
       // Check if user is scrolled to the bottom before adding new message
       const container = messagesContainerRef.current;
       const wasAtBottom = container ? 
         (container.scrollHeight - container.scrollTop - container.clientHeight < 50) : true;
 
-      setAppState(prev => ({
-        ...prev,
-        messages: [...prev.messages, newMessage]
-      }));
+      const currentUserId = localStorage.getItem('accord_user_id');
+      const isOwnMessage = data.from === currentUserId;
+
+      if (isCurrentChannel) {
+        setAppState(prev => {
+          if (isOwnMessage) {
+            // Replace the optimistic temp message with the real server message
+            const tempIdx = prev.messages.findIndex(
+              m => m.id.startsWith('temp_') && m.channel_id === data.channel_id && m.sender_id === currentUserId
+            );
+            if (tempIdx !== -1) {
+              const updated = [...prev.messages];
+              updated[tempIdx] = newMessage;
+              return { ...prev, messages: updated };
+            }
+            // If no temp message found, skip to avoid duplicate
+            return prev;
+          }
+          return { ...prev, messages: [...prev.messages, newMessage] };
+        });
+      }
 
       // Auto-scroll to bottom if user was at the bottom
       if (wasAtBottom && container) {
@@ -1754,11 +1801,17 @@ function App() {
             }
           }
 
+          let displayName = fingerprint(pkHash);
+          try {
+            const profile = await api.getUserProfile(existingUserId, existingToken);
+            if (profile?.display_name) displayName = profile.display_name;
+          } catch { /* fallback to fingerprint */ }
+
           setAppState(prev => ({
             ...prev,
             isAuthenticated: true,
             token: existingToken,
-            user: { id: existingUserId, public_key_hash: pkHash, public_key: '', created_at: 0, display_name: fingerprint(pkHash) }
+            user: { id: existingUserId, public_key_hash: pkHash, public_key: '', created_at: 0, display_name: displayName }
           }));
           setIsAuthenticated(true);
 
@@ -1850,15 +1903,21 @@ function App() {
         // May already be a member
       }
 
+      let displayName = fingerprint(pkHash);
+      try {
+        const profile = await api.getUserProfile(response.user_id, response.token);
+        if (profile?.display_name) displayName = profile.display_name;
+      } catch { /* new account, fingerprint is fine */ }
+
       setAppState(prev => ({
         ...prev,
         isAuthenticated: true,
         token: response.token,
-        user: { id: response.user_id, public_key_hash: pkHash, public_key: publicKeyToUse, created_at: 0, display_name: fingerprint(pkHash) }
+        user: { id: response.user_id, public_key_hash: pkHash, public_key: publicKeyToUse, created_at: 0, display_name: displayName }
       }));
       setIsAuthenticated(true);
 
-      notificationManager.setCurrentUsername(fingerprint(pkHash));
+      notificationManager.setCurrentUsername(displayName);
 
       // Initialize WebSocket
       const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
@@ -2002,16 +2061,22 @@ function App() {
         localStorage.setItem('accord_public_key_plain', pkToUse);
         localStorage.setItem('accord_public_key_hash', pkHash);
         
+        let displayName = fingerprint(pkHash);
+        try {
+          const profile = await api.getUserProfile(response.user_id, response.token);
+          if (profile?.display_name) displayName = profile.display_name;
+        } catch { /* fallback to fingerprint */ }
+
         setAppState(prev => ({
           ...prev,
           isAuthenticated: true,
           token: response.token,
-          user: { id: response.user_id, public_key_hash: pkHash, public_key: pkToUse, created_at: 0, display_name: fingerprint(pkHash) }
+          user: { id: response.user_id, public_key_hash: pkHash, public_key: pkToUse, created_at: 0, display_name: displayName }
         }));
         setIsAuthenticated(true);
 
-        // Set display name for notification system (use fingerprint)
-        notificationManager.setCurrentUsername(fingerprint(pkHash));
+        // Set display name for notification system
+        notificationManager.setCurrentUsername(displayName);
 
         // Initialize WebSocket connection
         const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
@@ -2262,14 +2327,15 @@ function App() {
         // Pass reply_to if we're replying to a message
         ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id);
 
-        // Add to local messages for immediate display
+        // Add to local messages for immediate display (temp_ prefix for dedup)
         const newMessage: Message = {
-          id: Math.random().toString(),
+          id: `temp_${Date.now()}_${Math.random()}`,
           author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
           content: message, // Show original plaintext locally
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestamp: Date.now(),
           channel_id: channelToUse,
+          sender_id: localStorage.getItem('accord_user_id') || undefined,
           isEncrypted: isEncrypted,
           reply_to: replyingTo?.id,
           replied_message: replyingTo ? {
@@ -2787,18 +2853,7 @@ function App() {
             <div className="key-backup-actions" style={{ marginTop: '16px' }}>
               <button
                 onClick={() => {
-                  try {
-                    const ta = document.createElement('textarea');
-                    ta.value = mnemonicPhrase;
-                    ta.style.position = 'fixed';
-                    ta.style.left = '-9999px';
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(ta);
-                  } catch {
-                    navigator.clipboard.writeText(mnemonicPhrase).catch(() => {});
-                  }
+                  copyToClipboard(mnemonicPhrase);
                   setCopyButtonText('Copied!');
                   setTimeout(() => setCopyButtonText('Copy to Clipboard'), 2000);
                 }}
@@ -2916,7 +2971,7 @@ function App() {
             <div className="key-backup-actions">
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText(publicKey).catch(() => {});
+                  copyToClipboard(publicKey);
                   alert('Public key copied to clipboard!');
                 }}
                 className="btn btn-green"
@@ -3795,7 +3850,14 @@ function App() {
               <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
             </div>
           )}
-          {appState.messages.filter(msg => !msg.sender_id || !blockedUsers.has(msg.sender_id)).map((msg, i, filteredMsgs) => {
+          {appState.messages.filter(msg => {
+            // Filter to current channel
+            const currentCh = selectedDmChannel?.id || selectedChannelId;
+            if (currentCh && msg.channel_id && msg.channel_id !== currentCh) return false;
+            // Filter blocked users
+            if (msg.sender_id && blockedUsers.has(msg.sender_id)) return false;
+            return true;
+          }).map((msg, i, filteredMsgs) => {
             const prevMsg = i > 0 ? filteredMsgs[i - 1] : null;
             const isGrouped = prevMsg
               && prevMsg.author === msg.author
@@ -4503,15 +4565,7 @@ function App() {
             <div className="modal-actions">
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText(generatedInvite).then(() => {
-                    alert('Invite code copied to clipboard!');
-                  }).catch(() => {
-                    const textArea = document.createElement('textarea');
-                    textArea.value = generatedInvite;
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textArea);
+                  copyToClipboard(generatedInvite).then(() => {
                     alert('Invite code copied to clipboard!');
                   });
                 }}
@@ -4739,7 +4793,7 @@ function App() {
                   <span
                     className="connection-info-value copyable"
                     title="Click to copy"
-                    onClick={() => { navigator.clipboard.writeText(serverBuildHash); }}
+                    onClick={() => { copyToClipboard(serverBuildHash); }}
                   >
                     <code>{serverBuildHash}</code>
                     <span className="copy-hint">📋</span>
@@ -5041,7 +5095,7 @@ function App() {
           )}
           <div className="context-menu-separator"></div>
           <div className="context-menu-item" onClick={() => {
-            navigator.clipboard.writeText(contextMenu.publicKeyHash).catch(() => {});
+            copyToClipboard(contextMenu.publicKeyHash);
             setContextMenu(null);
           }}>📋 Copy Public Key Hash</div>
           {contextMenu.userId !== localStorage.getItem('accord_user_id') && (
