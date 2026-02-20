@@ -2337,7 +2337,7 @@ pub async fn get_node_members_handler(
 }
 
 /// Helper to extract user_id from Authorization: Bearer header or query param fallback
-async fn extract_user_from_token(
+pub async fn extract_user_from_token(
     state: &SharedState,
     headers: &HeaderMap,
     params: &HashMap<String, String>,

@@ -8,6 +8,7 @@
 
 mod admin;
 mod backup;
+mod batch_handlers;
 mod bot_api;
 #[allow(dead_code)]
 mod db;
@@ -815,6 +816,19 @@ async fn main() -> Result<()> {
         .route(
             "/push/preferences",
             axum::routing::put(update_push_preferences_handler),
+        )
+        // Batch API endpoints (N+1 elimination)
+        .route(
+            "/api/nodes/:node_id/members/batch",
+            get(batch_handlers::batch_members_handler),
+        )
+        .route(
+            "/api/nodes/:node_id/channels/batch",
+            get(batch_handlers::batch_channels_handler),
+        )
+        .route(
+            "/api/nodes/:node_id/overview",
+            get(batch_handlers::node_overview_handler),
         )
         // Bot API v2 endpoints (airgapped command architecture)
         .route(

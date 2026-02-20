@@ -84,6 +84,19 @@ impl TestServer {
                 "/api/bots/respond",
                 post(accord_server::bot_api::bot_respond_handler),
             )
+            // Batch API endpoints
+            .route(
+                "/api/nodes/:node_id/members/batch",
+                get(accord_server::batch_handlers::batch_members_handler),
+            )
+            .route(
+                "/api/nodes/:node_id/channels/batch",
+                get(accord_server::batch_handlers::batch_channels_handler),
+            )
+            .route(
+                "/api/nodes/:node_id/overview",
+                get(accord_server::batch_handlers::node_overview_handler),
+            )
             // WebSocket endpoint
             .route("/ws", get(ws_handler))
             // Add shared state
@@ -2603,4 +2616,103 @@ async fn test_bot_api_v2_auth_checks() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn test_node_overview_batch_endpoint() {
+    let server = TestServer::new().await;
+
+    // Register and auth a user
+    let token = server.register_and_auth("overview_user").await;
+
+    // Create a node
+    let resp = server
+        .client
+        .post(&server.url("/nodes"))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "OverviewTestNode" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let node_id = body["id"].as_str().unwrap();
+
+    // Create a channel in the node
+    let resp = server
+        .client
+        .post(&server.url(&format!("/nodes/{}/channels", node_id)))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "general" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Test overview endpoint
+    let resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/overview", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let overview: Value = resp.json().await.unwrap();
+
+    // Verify structure
+    assert!(overview["node"].is_object(), "overview should have node");
+    assert!(
+        overview["channels"].is_array(),
+        "overview should have channels"
+    );
+    assert!(
+        overview["members"].is_array(),
+        "overview should have members"
+    );
+    assert!(overview["roles"].is_array(), "overview should have roles");
+
+    // Verify we have at least 1 member (the creator)
+    let members = overview["members"].as_array().unwrap();
+    assert!(!members.is_empty(), "should have at least one member");
+    assert!(members[0]["user_id"].is_string());
+    assert!(members[0]["display_name"].is_string());
+    assert!(members[0]["roles"].is_array());
+
+    // Verify channels include the one we created
+    let channels = overview["channels"].as_array().unwrap();
+    assert!(!channels.is_empty(), "should have at least one channel");
+
+    // Test unauthenticated access
+    let resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/overview", node_id)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // Test members/batch endpoint
+    let resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/members/batch", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let batch: Value = resp.json().await.unwrap();
+    assert!(batch["members"].is_array());
+
+    // Test channels/batch endpoint
+    let resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/channels/batch", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let batch: Value = resp.json().await.unwrap();
+    assert!(batch["channels"].is_array());
 }
