@@ -3,150 +3,152 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Accord — Privacy-First Communication</title>
+  <title>Accord — Privacy-First Community Communication</title>
+  <meta name="description" content="Discord-level features with Signal-level security. End-to-end encrypted messaging, voice channels, and community nodes. Open source and self-hostable.">
+  <link rel="icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
-  <meta name="description" content="Accord is a privacy-first, open-source communication platform with end-to-end encryption, voice channels, and zero-knowledge relays.">
 </head>
 <body>
 
-  <nav>
-    <div class="container nav-inner">
-      <a href="#" class="logo">◈ Accord</a>
-      <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#how-it-works">How It Works</a>
-        <a href="#security">Security</a>
-        <a href="#download">Download</a>
-        <a href="https://github.com/nicholasgasior/accord" class="btn btn-sm">GitHub</a>
+<nav>
+  <div class="container">
+    <a href="#" class="nav-brand"><img src="logo.png" alt="Accord"> Accord</a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#get-started">Get Started</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <h1><span>Privacy-First</span><br>Community Communication</h1>
+    <p>Discord-level features with Signal-level security. End-to-end encrypted messaging, voice channels, and communities — without the surveillance.</p>
+    <div class="hero-buttons">
+      <a href="#get-started" class="btn btn-primary">Download</a>
+      <a href="#get-started" class="btn btn-secondary">Self-Host →</a>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <h2 class="section-title">Built for Privacy</h2>
+    <p class="section-sub">Every feature designed from the ground up to protect your conversations.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <span class="feature-icon">🔐</span>
+        <h3>End-to-End Encryption</h3>
+        <p>Double Ratchet protocol for DMs. Encrypted channels for group conversations. Nobody but the participants can read your messages — not even us.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🎙️</span>
+        <h3>Voice Channels</h3>
+        <p>Relay-routed by default so your IP address is never exposed to other participants. Real-time voice without the metadata leaks.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🏠</span>
+        <h3>Community Nodes</h3>
+        <p>Like Discord servers, but privacy-first. Create and manage communities with channels, roles, and permissions — all under your control.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🤖</span>
+        <h3>Airgapped Bot API</h3>
+        <p>Bots interact through a sandboxed API and never see message content. Extend functionality without compromising privacy.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🖥️</span>
+        <h3>Self-Hostable</h3>
+        <p>Run your own relay on a $5 VPS or a spare desktop. Full sovereignty over your infrastructure. No vendor lock-in, ever.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📖</span>
+        <h3>Open Source</h3>
+        <p>Licensed under AGPL-3.0. Every line of code is auditable. Trust is verified, not assumed.</p>
       </div>
     </div>
-  </nav>
+  </div>
+</section>
 
-  <section class="hero">
-    <div class="container">
-      <h1>Privacy-First Communication</h1>
-      <p class="tagline">Accord is an open-source platform for secure messaging, voice channels, and community — without surveillance, data harvesting, or trust in a central server.</p>
-      <div class="cta-group">
-        <a href="#download" class="btn btn-primary">Download</a>
-        <a href="https://github.com/nicholasgasior/accord" class="btn btn-outline">View on GitHub</a>
+<section id="how-it-works">
+  <div class="container">
+    <h2 class="section-title">How It Works</h2>
+    <p class="section-sub">A simple architecture with zero trust assumptions.</p>
+    <div class="how-grid">
+      <div class="how-step">
+        <div class="how-num">1</div>
+        <h3>Relays Are Dumb Pipes</h3>
+        <p>Relays route encrypted blobs between clients. They can't read, log, or analyze your content. If a relay is compromised, your messages stay safe.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-num">2</div>
+        <h3>Nodes Are Communities</h3>
+        <p>Each community runs as a Node with its own channels, roles, and settings. Nodes connect through relays but own their own data.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-num">3</div>
+        <h3>Everything Is E2EE</h3>
+        <p>Messages are encrypted on your device and decrypted on the recipient's. Keys never leave your machine. It's that simple.</p>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <section id="features" class="features">
-    <div class="container">
-      <h2>Built for Privacy</h2>
-      <div class="grid">
-        <div class="card">
-          <div class="card-icon">🔐</div>
-          <h3>End-to-End Encryption</h3>
-          <p>Messages are encrypted on your device. Only you and your recipients can read them.</p>
+<section id="security">
+  <div class="container">
+    <h2 class="section-title">Security Model</h2>
+    <p class="section-sub">Understand exactly who can see what. No fine print.</p>
+    <div class="security-model">
+      <div class="trust-diagram">
+        <div class="trust-node safe">
+          <span class="icon">👤</span>
+          <h4>Your Client</h4>
+          <p>Holds your keys. Encrypts and decrypts all content locally.</p>
+          <div class="trust-label green">✓ Trusted</div>
         </div>
-        <div class="card">
-          <div class="card-icon">👁‍🗨</div>
-          <h3>Zero-Knowledge Relay</h3>
-          <p>Relays route encrypted blobs — they never see your content, metadata, or identity.</p>
+        <div class="trust-node neutral">
+          <span class="icon">📡</span>
+          <h4>Relay</h4>
+          <p>Routes encrypted blobs. Sees metadata only. Cannot read messages.</p>
+          <div class="trust-label yellow">◆ Untrusted by design</div>
         </div>
-        <div class="card">
-          <div class="card-icon">🎙</div>
-          <h3>Voice Channels</h3>
-          <p>Real-time encrypted voice communication with low latency, no third-party services.</p>
-        </div>
-        <div class="card">
-          <div class="card-icon">🏠</div>
-          <h3>Self-Hostable</h3>
-          <p>Run your own relay. Your infrastructure, your rules, your data sovereignty.</p>
-        </div>
-        <div class="card">
-          <div class="card-icon">📜</div>
-          <h3>Open Source (AGPL)</h3>
-          <p>Every line of code is auditable. No hidden telemetry, no secret backends.</p>
-        </div>
-        <div class="card">
-          <div class="card-icon">💻</div>
-          <h3>Cross-Platform</h3>
-          <p>Available on Windows, macOS, and Linux. Same experience everywhere.</p>
+        <div class="trust-node neutral">
+          <span class="icon">🤖</span>
+          <h4>Bots</h4>
+          <p>Airgapped from message content. Interact via structured API only.</p>
+          <div class="trust-label yellow">◆ Sandboxed</div>
         </div>
       </div>
-    </div>
-  </section>
-
-  <section id="how-it-works" class="how-it-works">
-    <div class="container">
-      <h2>How It Works</h2>
-      <div class="steps">
-        <div class="step">
-          <div class="step-num">1</div>
-          <h3>Host a Relay</h3>
-          <p>Spin up a relay server — or connect to one someone else runs. It only routes encrypted data.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">2</div>
-          <h3>Create a Node</h3>
-          <p>Your node is your identity. Keys are generated and stored locally on your device.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">3</div>
-          <h3>Invite Friends</h3>
-          <p>Share an invite. Start talking. No phone number, no email, no sign-up form.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="security" class="security">
-    <div class="container">
-      <h2>The Privacy Model</h2>
-      <div class="security-content">
-        <div class="security-point">
-          <h3>The relay can't read your messages</h3>
-          <p>All content is end-to-end encrypted before it leaves your device. Relays see only opaque, encrypted blobs — never plaintext.</p>
-        </div>
-        <div class="security-point">
-          <h3>No personal information required</h3>
-          <p>No phone number. No email. No name. Your identity is a cryptographic key pair generated on your device.</p>
-        </div>
-        <div class="security-point">
-          <h3>Keys never leave your device</h3>
-          <p>Private keys are generated and stored locally. There is no "forgot password" because there is no password — and no server that holds your keys.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="download" class="download">
-    <div class="container">
-      <h2>Download Accord</h2>
-      <p class="download-sub">Available for desktop. Mobile coming soon.</p>
-      <div class="download-grid">
-        <a href="https://github.com/nicholasgasior/accord/releases/latest" class="download-card">
-          <span class="dl-icon">🪟</span>
-          <span class="dl-platform">Windows</span>
-          <span class="dl-detail">.msi installer</span>
-        </a>
-        <a href="https://github.com/nicholasgasior/accord/releases/latest" class="download-card">
-          <span class="dl-icon">🍎</span>
-          <span class="dl-platform">macOS</span>
-          <span class="dl-detail">.dmg universal</span>
-        </a>
-        <a href="https://github.com/nicholasgasior/accord/releases/latest" class="download-card">
-          <span class="dl-icon">🐧</span>
-          <span class="dl-platform">Linux</span>
-          <span class="dl-detail">.AppImage / .deb</span>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <footer>
-    <div class="container footer-inner">
-      <p>Built for privacy, not profit.</p>
-      <p class="footer-links">
-        <a href="https://github.com/nicholasgasior/accord">GitHub</a> ·
-        Licensed under <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
+      <p style="text-align:center; color: var(--text-muted); margin-top: 32px; font-size: .95rem;">
+        <strong style="color: var(--text);">No analytics. No tracking. No telemetry.</strong><br>
+        We don't collect data because the architecture makes it impossible.
       </p>
     </div>
-  </footer>
+  </div>
+</section>
+
+<section id="get-started">
+  <div class="container">
+    <div class="cta-box">
+      <h2>Get Started</h2>
+      <p>Join the community or run your own infrastructure. It's your choice.</p>
+      <div class="cta-links">
+        <a href="https://github.com/nicebash/Accord" class="btn btn-primary">GitHub Repository</a>
+        <a href="https://github.com/nicebash/Accord#readme" class="btn btn-secondary">Documentation</a>
+        <a href="https://github.com/nicebash/Accord/blob/main/SELF_HOSTING.md" class="btn btn-secondary">Self-Hosting Guide</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>Licensed under <strong>AGPL-3.0</strong> · <a href="https://github.com/nicebash/Accord">Source on GitHub</a></p>
+    <p>Built by the Accord community</p>
+  </div>
+</footer>
 
 </body>
 </html>
