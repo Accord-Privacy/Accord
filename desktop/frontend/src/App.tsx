@@ -618,6 +618,7 @@ function App() {
       if (!localStorage.getItem('accord_server_url')) {
         const sameOrigin = await detectSameOriginRelay();
         if (sameOrigin) {
+          localStorage.setItem('accord_server_url', sameOrigin);
           api.setBaseUrl(sameOrigin);
           setServerUrl(sameOrigin);
           setServerAvailable(true);
@@ -2202,6 +2203,10 @@ function App() {
       
       storeToken(response.token);
       localStorage.setItem('accord_user_id', response.user_id);
+      // Persist server URL so needsRelayUrl guard doesn't re-show welcome screen
+      if (serverUrl && !localStorage.getItem('accord_server_url')) {
+        localStorage.setItem('accord_server_url', serverUrl);
+      }
       
       setAppState(prev => ({
         ...prev,
@@ -3114,7 +3119,7 @@ function App() {
   }
 
   // Guard: if user has identity but no relay URL, block access to main UI
-  const needsRelayUrl = !showSetupWizard && !localStorage.getItem('accord_server_url') && hasStoredKeyPair();
+  const needsRelayUrl = !showSetupWizard && !isAuthenticated && !localStorage.getItem('accord_server_url') && hasStoredKeyPair();
 
   // Welcome / Invite link screen (also shown when identity exists but no relay URL)
   if (showWelcomeScreen || needsRelayUrl) {
