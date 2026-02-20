@@ -3653,54 +3653,10 @@ async fn handle_ws_message(
         }
 
         WsMessageType::DirectMessage {
-            to_user,
-            encrypted_data,
+            to_user: _,
+            encrypted_data: _,
         } => {
-            // Check if the recipient has blocked the sender
-            if state
-                .db
-                .is_user_blocked(to_user, sender_user_id)
-                .await
-                .unwrap_or(false)
-            {
-                return Err("Cannot send DM to this user".to_string());
-            }
-
-            // For now, simplify DM handling by just relaying the message directly
-            // without complex database operations that might hang in tests
-            let message_id = uuid::Uuid::new_v4();
-
-            // Look up sender's plaintext display name
-            let dm_sender_display_name = state
-                .db
-                .get_user_profile(sender_user_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|p| {
-                    let name = p.display_name;
-                    if name.is_empty() {
-                        None
-                    } else {
-                        Some(name)
-                    }
-                });
-
-            // Create a simple relay message
-            let relay = serde_json::json!({
-                "type": "channel_message",
-                "from": sender_user_id,
-                "channel_id": message_id, // Use message_id as temporary channel_id
-                "encrypted_data": encrypted_data,
-                "message_id": message_id,
-                "timestamp": ws_message.timestamp,
-                "is_dm": true,
-                "sender_display_name": dm_sender_display_name
-            });
-
-            // Send to both users directly
-            let _ = state.send_to_user(sender_user_id, relay.to_string()).await;
-            let _ = state.send_to_user(to_user, relay.to_string()).await;
+            return Err("DirectMessage is deprecated. Use DM channels with ChannelMessage instead.".to_string());
         }
 
         WsMessageType::ChannelMessage {

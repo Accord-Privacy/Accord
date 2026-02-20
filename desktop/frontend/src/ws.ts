@@ -406,8 +406,8 @@ export class AccordWebSocket {
   }
 
   // Messaging
-  sendDirectMessage(toUser: string, encryptedData: string): void {
-    this.sendMessage({ DirectMessage: { to_user: toUser, encrypted_data: encryptedData } });
+  sendDirectMessage(_toUser: string, _encryptedData: string): void {
+    throw new Error('DirectMessage is deprecated. Use DM channels with sendChannelMessage instead.');
   }
 
   sendChannelMessage(channelId: string, encryptedData: string, replyTo?: string): void {

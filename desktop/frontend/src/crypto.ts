@@ -472,11 +472,14 @@ export function clearChannelKeyCache(): void {
 // AES-GCM Encrypt / Decrypt (messages)
 // ---------------------------------------------------------------------------
 export async function encryptMessage(key: CryptoKey | Uint8Array, plaintext: string): Promise<string> {
+  if (!(key instanceof Uint8Array)) {
+    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
+  }
   const data = new TextEncoder().encode(plaintext);
   const iv = randomBytes(12);
 
   // Always use noble for channel message encryption (cross-client compatibility)
-  const keyBytes = key instanceof Uint8Array ? key : new Uint8Array(0);
+  const keyBytes = key;
   const cipher = gcm(keyBytes, iv);
   const encrypted = cipher.encrypt(data);
   const combined = new Uint8Array(iv.length + encrypted.length);
@@ -486,12 +489,15 @@ export async function encryptMessage(key: CryptoKey | Uint8Array, plaintext: str
 }
 
 export async function decryptMessage(key: CryptoKey | Uint8Array, ciphertext: string): Promise<string> {
+  if (!(key instanceof Uint8Array)) {
+    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
+  }
   const combined = base64ToUint8(ciphertext);
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
 
   // Always use noble for channel message decryption (cross-client compatibility)
-  const keyBytes = key instanceof Uint8Array ? key : new Uint8Array(0);
+  const keyBytes = key;
   const cipher = gcm(keyBytes, iv);
   const decrypted = cipher.decrypt(encrypted);
   return new TextDecoder().decode(decrypted);
@@ -511,8 +517,10 @@ export async function encryptFile(key: CryptoKey | Uint8Array, fileBuffer: Array
     return combined.buffer;
   }
 
-  const keyBytes = key instanceof Uint8Array ? key : new Uint8Array(0);
-  const cipher = gcm(keyBytes, iv);
+  if (!(key instanceof Uint8Array)) {
+    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
+  }
+  const cipher = gcm(key, iv);
   const encrypted = cipher.encrypt(new Uint8Array(fileBuffer));
   const combined = new Uint8Array(iv.length + encrypted.length);
   combined.set(iv);
@@ -529,8 +537,10 @@ export async function decryptFile(key: CryptoKey | Uint8Array, encryptedBuffer: 
     return window.crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, encrypted);
   }
 
-  const keyBytes = key instanceof Uint8Array ? key : new Uint8Array(0);
-  const cipher = gcm(keyBytes, iv);
+  if (!(key instanceof Uint8Array)) {
+    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
+  }
+  const cipher = gcm(key, iv);
   const decrypted = cipher.decrypt(encrypted);
   return decrypted.buffer.slice(decrypted.byteOffset, decrypted.byteOffset + decrypted.byteLength) as ArrayBuffer;
 }

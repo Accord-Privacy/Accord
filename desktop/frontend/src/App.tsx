@@ -1827,6 +1827,7 @@ function App() {
           if (encryptionEnabled) {
             const existingKeyPair = await loadKeyFromStorage();
             if (existingKeyPair) {
+              clearChannelKeyCache();
               setKeyPair(existingKeyPair);
               const pk = await exportPublicKey(existingKeyPair.publicKey);
               pkHash = await sha256Hex(pk);
@@ -1903,6 +1904,7 @@ function App() {
         setActiveIdentity(pkHash);
         await saveKeyToStorage(newKeyPair, pkHash);
         await saveKeyWithPassword(newKeyPair, invitePassword, pkHash);
+        clearChannelKeyCache();
         setKeyPair(newKeyPair);
         setPublicKey(publicKeyToUse);
         // Generate mnemonic for backup
@@ -2006,6 +2008,7 @@ function App() {
         try {
           const newKeyPair = await generateKeyPair();
           await saveKeyToStorage(newKeyPair);
+          clearChannelKeyCache();
           setKeyPair(newKeyPair);
           const pk = await exportPublicKey(newKeyPair.publicKey);
           setPublicKey(pk);
@@ -2038,6 +2041,7 @@ function App() {
           }
           if (existingKeyPair) {
             pkToUse = await exportPublicKey(existingKeyPair.publicKey);
+            clearChannelKeyCache();
             setKeyPair(existingKeyPair);
             setPublicKey(pkToUse);
           } else if (hasExistingKey) {
@@ -2083,6 +2087,7 @@ function App() {
             existingKeyPair = await loadKeyFromStorage(pkHash);
           }
           if (existingKeyPair) {
+            clearChannelKeyCache();
             setKeyPair(existingKeyPair);
             // Re-save with password for future logins
             await saveKeyWithPassword(existingKeyPair, password, pkHash);
@@ -2142,6 +2147,7 @@ function App() {
             setActiveIdentity(earlyHash);
             await saveKeyToStorage(newKeyPair, earlyHash);
             await saveKeyWithPassword(newKeyPair, password, earlyHash);
+            clearChannelKeyCache();
             setKeyPair(newKeyPair);
             setPublicKey(publicKeyToUse);
             // Generate mnemonic for backup
@@ -2196,6 +2202,7 @@ function App() {
       setActiveIdentity(pkHash);
       await saveKeyToStorage(recoveredKeyPair, pkHash);
       await saveKeyWithPassword(recoveredKeyPair, recoverPassword, pkHash);
+      clearChannelKeyCache();
       setKeyPair(recoveredKeyPair);
       setPublicKey(pk);
       passwordRef.current = recoverPassword;
@@ -2696,6 +2703,7 @@ function App() {
           if (storedHash) setActiveIdentity(storedHash);
           existingKeyPair = await loadKeyFromStorage(storedHash || undefined);
           if (existingKeyPair) {
+            clearChannelKeyCache();
             setKeyPair(existingKeyPair);
           }
         }
@@ -3040,6 +3048,7 @@ function App() {
     const handleSetupComplete = async (result: SetupResult) => {
       try {
         // Store identity
+        clearChannelKeyCache();
         setKeyPair(result.keyPair);
         setPublicKey(result.publicKey);
         setPublicKeyHash(result.publicKeyHash);
