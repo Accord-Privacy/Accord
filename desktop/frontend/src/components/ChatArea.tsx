@@ -1,0 +1,503 @@
+import React, { Suspense } from "react";
+import { useAppContext } from "./AppContext";
+import { api } from "../api";
+import { notificationManager } from "../notifications";
+import { renderMessageMarkdown } from "../markdown";
+import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
+import { EmojiPickerButton } from "../EmojiPicker";
+import { LinkPreview, extractFirstUrl } from "../LinkPreview";
+import { LoadingSpinner } from "../LoadingSpinner";
+const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
+
+export const ChatArea: React.FC = () => {
+  const ctx = useAppContext();
+
+  const formatRelativeTime = (ts: number) => {
+    const diff = Date.now() - ts;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatDateSep = (d: Date) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diff = today.getTime() - msgDay.getTime();
+    if (diff === 0) return 'Today';
+    if (diff === 86400000) return 'Yesterday';
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  };
+
+  const filteredMessages = ctx.appState.messages.filter(msg => {
+    const currentCh = ctx.selectedDmChannel?.id || ctx.selectedChannelId;
+    if (currentCh && msg.channel_id && msg.channel_id !== currentCh) return false;
+    if (msg.sender_id && ctx.blockedUsers.has(msg.sender_id)) return false;
+    return true;
+  });
+
+  return (
+    <>
+      <div className="chat-area">
+        <FileDropZone
+          channelId={ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
+          token={ctx.appState.token || ''}
+          keyPair={ctx.keyPair}
+          encryptionEnabled={ctx.encryptionEnabled}
+          onFilesStaged={ctx.handleFilesStaged}
+        >
+          {/* Chat Header */}
+          <div className="chat-header">
+            <div className="chat-header-left">
+              {ctx.selectedDmChannel ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '8px' }}>
+                      {(ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+                    </div>
+                    <span className="chat-channel-name">{ctx.selectedDmChannel.other_user_profile.display_name}</span>
+                  </div>
+                  <span className="chat-topic">
+                    Direct message with {ctx.selectedDmChannel.other_user_profile.display_name}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="chat-channel-name">{ctx.activeChannel}</span>
+                  <span className="chat-topic">
+                    {(() => {
+                      const ch = ctx.channels.find(c => c.id === ctx.selectedChannelId);
+                      if (ch?.channel_type === 'voice') return `🔊 Voice channel — ${ch.name}`;
+                      if (ch?.topic) return ch.topic;
+                      return '';
+                    })()}
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="chat-header-right">
+              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Toggle pinned messages">📌</button>
+              {ctx.encryptionEnabled && ctx.keyPair && (
+                <span className="e2ee-badge enabled" title="End-to-end encryption enabled">🔐 E2EE</span>
+              )}
+              {ctx.encryptionEnabled && !ctx.keyPair && ctx.hasExistingKey && (
+                <span className="e2ee-badge pending" title="Key stored but locked — enter password to decrypt">🔑 Key Locked</span>
+              )}
+              {ctx.encryptionEnabled && !ctx.keyPair && !ctx.hasExistingKey && (
+                <span className="e2ee-badge warning" title="No encryption keys found">🔓 No Keys</span>
+              )}
+              {!ctx.encryptionEnabled && (
+                <span className="e2ee-badge disabled" title="Encryption not supported">🚫 No E2EE</span>
+              )}
+              <button
+                className="search-button"
+                onClick={() => ctx.setShowSearchOverlay(true)}
+                title="Search messages (Ctrl+K)"
+              >
+                🔍
+              </button>
+              <button
+                onClick={() => ctx.setShowMemberSidebar(prev => !prev)}
+                className={`chat-header-btn ${ctx.showMemberSidebar ? 'active' : ''}`}
+                title="Toggle member list"
+              >
+                👥
+              </button>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div 
+            className={`messages ${ctx.voiceChannelId ? 'with-voice' : ''} density-${ctx.messageDensity}`}
+            ref={ctx.messagesContainerRef}
+            onScroll={ctx.handleScroll}
+          >
+            {ctx.isLoadingOlderMessages && (
+              <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
+            )}
+            {!ctx.hasMoreMessages && ctx.appState.messages.length > 0 && (
+              <div className="messages-beginning">You've reached the beginning of this channel</div>
+            )}
+            {!ctx.isLoadingOlderMessages && ctx.appState.messages.length === 0 && ctx.selectedChannelId && (
+              <div className="empty-state">
+                <div className="empty-state-icon">💬</div>
+                <div className="empty-state-title">No messages yet</div>
+                <div className="empty-state-text">Be the first to send a message in this channel!</div>
+              </div>
+            )}
+            {!ctx.selectedChannelId && !ctx.selectedDmChannel && ctx.channels.length === 0 && ctx.nodes.length > 0 && (
+              <div className="empty-state">
+                <div className="empty-state-icon">#</div>
+                <div className="empty-state-title">No channels</div>
+                <div className="empty-state-text">Create a channel to start chatting.</div>
+              </div>
+            )}
+            {ctx.nodes.length === 0 && !ctx.selectedDmChannel && (
+              <div className="empty-state">
+                <div className="empty-state-icon">⚡</div>
+                <div className="empty-state-title">Welcome to Accord</div>
+                <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
+              </div>
+            )}
+
+            {filteredMessages.map((msg, i) => {
+              const prevMsg = i > 0 ? filteredMessages[i - 1] : null;
+              const isGrouped = prevMsg
+                && prevMsg.author === msg.author
+                && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
+                && !msg.reply_to;
+
+              const msgDate = new Date(msg.timestamp);
+              const prevDate = prevMsg ? new Date(prevMsg.timestamp) : null;
+              const showDateSep = !prevDate || msgDate.toDateString() !== prevDate.toDateString();
+
+              return (
+                <React.Fragment key={msg.id || i}>
+                  {showDateSep && (
+                    <div className="date-separator">
+                      <span className="date-separator-text">{formatDateSep(msgDate)}</span>
+                    </div>
+                  )}
+                  <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped' : ''}`} data-message-id={msg.id}>
+                    {/* Reply preview */}
+                    {msg.replied_message && (
+                      <div className="reply-preview" onClick={() => ctx.scrollToMessage(msg.reply_to!)}>
+                        <div className="reply-bar"></div>
+                        <div className="reply-content">
+                          <span className="reply-author">Replying to {ctx.fingerprint(msg.replied_message.sender_public_key_hash)}</span>
+                          <span className="reply-snippet">{msg.replied_message.content || msg.replied_message.encrypted_payload.substring(0, 50) + '...'}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {!isGrouped && <div className="message-avatar">
+                      {msg.sender_id ? (
+                        <img 
+                          src={`${api.getUserAvatarUrl(msg.sender_id)}`}
+                          alt={(msg.author || "?")[0]}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (msg.author || "?")[0]; }}
+                        />
+                      ) : (msg.author || "?")[0]}
+                    </div>}
+                    {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
+
+                    <div className="message-body">
+                      {!isGrouped && (
+                        <div className="message-header">
+                          <span className="message-author" style={{ cursor: 'pointer', color: (() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); return am ? ctx.getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
+                          onClick={(e) => {
+                            const authorMember = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author);
+                            if (authorMember) {
+                              ctx.setProfileCardTarget({ userId: authorMember.user_id, x: e.clientX, y: e.clientY, user: authorMember.user, profile: authorMember.profile, roles: ctx.memberRolesMap[authorMember.user_id], joinedAt: authorMember.joined_at, roleColor: ctx.getMemberRoleColor(authorMember.user_id) });
+                            }
+                          }}
+                          onContextMenu={(e) => {
+                            const authorMember = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author);
+                            if (authorMember) {
+                              ctx.handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
+                            }
+                          }}>{msg.author}</span>
+                          <span className="message-time">{formatRelativeTime(msg.timestamp)}</span>
+                          {msg.edited_at && (
+                            <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
+                          )}
+                          {msg.isEncrypted && (
+                            <span className="message-encrypted-badge" title={
+                              msg.e2eeType === 'double-ratchet'
+                                ? 'End-to-end encrypted (Double Ratchet)'
+                                : 'Transport encrypted (placeholder — not E2EE)'
+                            }>{msg.e2eeType === 'double-ratchet' ? '🔒' : '🔐'}</span>
+                          )}
+                          {msg.pinned_at && (
+                            <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}>📌</span>
+                          )}
+                          {ctx.appState.user && (
+                            <div className="message-actions">
+                              <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply to message">💬</button>
+                              {msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) && (
+                                <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit message">✏️</button>
+                              )}
+                              {(msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) || ctx.canDeleteMessage(msg)) && (
+                                <button onClick={() => ctx.setShowDeleteConfirm(msg.id)} className="message-action-btn" title="Delete message">🗑️</button>
+                              )}
+                              {ctx.canDeleteMessage(msg) && (
+                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.handlePinMessage(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin message" : "Pin message"}>📌</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Editing Interface */}
+                      {ctx.editingMessageId === msg.id ? (
+                        <div className="message-edit-container">
+                          <input
+                            type="text"
+                            value={ctx.editingContent}
+                            onChange={(e) => ctx.setEditingContent(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ctx.handleSaveEdit(); }
+                              else if (e.key === 'Escape') { ctx.handleCancelEdit(); }
+                            }}
+                            className="message-edit-input"
+                            placeholder="Edit your message..."
+                            autoFocus
+                          />
+                          <div className="message-edit-actions">
+                            <button onClick={ctx.handleSaveEdit} className="edit-save-btn">Save</button>
+                            <button onClick={ctx.handleCancelEdit} className="edit-cancel-btn">Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div 
+                          className="message-content"
+                          dangerouslySetInnerHTML={{ 
+                            __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) 
+                          }}
+                        />
+                      )}
+
+                      {/* Link Preview */}
+                      {msg.content && extractFirstUrl(msg.content) && (
+                        <LinkPreview content={msg.content} token={ctx.appState.token || ''} />
+                      )}
+
+                      {/* Thread reply count */}
+                      {msg.reply_count && msg.reply_count > 0 && (
+                        <div className="thread-indicator">
+                          <span className="thread-icon">💬</span>
+                          <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
+                        </div>
+                      )}
+
+                      {/* File Attachments */}
+                      {msg.files && msg.files.length > 0 && (
+                        <div className="message-attachments">
+                          {msg.files.map((file) => (
+                            <FileAttachment
+                              key={file.id}
+                              file={file}
+                              token={ctx.appState.token || ''}
+                              channelId={msg.channel_id || ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
+                              keyPair={ctx.keyPair}
+                              encryptionEnabled={ctx.encryptionEnabled}
+                            />
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Reactions */}
+                      <div 
+                        className="message-reactions-container"
+                        onMouseEnter={() => ctx.setHoveredMessageId(msg.id)}
+                        onMouseLeave={() => ctx.setHoveredMessageId(null)}
+                      >
+                        {msg.reactions && msg.reactions.length > 0 && (
+                          <div className="message-reactions">
+                            {msg.reactions.map((reaction) => {
+                              const userReacted = ctx.appState.user && reaction.users.includes(ctx.appState.user.id);
+                              return (
+                                <button
+                                  key={reaction.emoji}
+                                  className={`reaction ${userReacted ? 'reaction-user-reacted' : ''}`}
+                                  onClick={() => ctx.handleToggleReaction(msg.id, reaction.emoji)}
+                                  title={`${reaction.users.length} reactions`}
+                                >
+                                  <span className="reaction-emoji">{reaction.emoji}</span>
+                                  <span className="reaction-count">{reaction.count}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {ctx.hoveredMessageId === msg.id && ctx.appState.user && (
+                          <div className="add-reaction-container quick-react-bar">
+                            {['👍', '❤️', '😂', '🔥', '👀'].map((emoji) => (
+                              <button key={emoji} className="quick-react-btn" onClick={() => ctx.handleToggleReaction(msg.id, emoji)} title={`React with ${emoji}`}>{emoji}</button>
+                            ))}
+                            <button 
+                              className="add-reaction-btn"
+                              onClick={() => ctx.setShowEmojiPicker(ctx.showEmojiPicker === msg.id ? null : msg.id)}
+                              title="More reactions"
+                            >+</button>
+
+                            {ctx.showEmojiPicker === msg.id && (
+                              <div className="emoji-picker">
+                                {ctx.COMMON_EMOJIS.map((emoji) => (
+                                  <button key={emoji} className="emoji-option" onClick={() => ctx.handleAddReaction(msg.id, emoji)} title={`React with ${emoji}`}>{emoji}</button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Delete Confirmation */}
+                      {ctx.showDeleteConfirm === msg.id && (
+                        <div className="delete-confirm-overlay">
+                          <div className="delete-confirm-dialog">
+                            <p>Are you sure you want to delete this message?</p>
+                            <div className="delete-confirm-actions">
+                              <button onClick={() => ctx.handleDeleteMessage(msg.id)} className="delete-confirm-btn">Delete</button>
+                              <button onClick={() => ctx.setShowDeleteConfirm(null)} className="delete-cancel-btn">Cancel</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Read receipts */}
+                    {ctx.selectedChannelId && (() => {
+                      const receipts = ctx.readReceipts.get(ctx.selectedChannelId!) || [];
+                      const currentUserId = ctx.appState.user?.id;
+                      const readBy = receipts.filter(r => r.message_id === msg.id && r.user_id !== currentUserId);
+                      if (readBy.length === 0) return null;
+                      return (
+                        <div className="read-receipts" style={{ display: 'flex', gap: '2px', justifyContent: 'flex-end', padding: '2px 8px' }}>
+                          {readBy.slice(0, 5).map(r => {
+                            const member = ctx.members.find(m => m.user_id === r.user_id);
+                            const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
+                            return (
+                              <span key={r.user_id} className="read-receipt-avatar" title={`Read by ${name}`}
+                                style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: '#5865F2', color: '#fff', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+                                {name[0]?.toUpperCase()}
+                              </span>
+                            );
+                          })}
+                          {readBy.length > 5 && <span style={{ fontSize: '10px', color: '#8e9297' }}>+{readBy.length - 5}</span>}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+
+            {/* Scroll to bottom button */}
+            {ctx.showScrollToBottom && (
+              <button className="scroll-to-bottom-btn" onClick={ctx.scrollToBottom}>
+                ↓ {ctx.newMessageCount > 0 && <span className="scroll-to-bottom-count">{ctx.newMessageCount}</span>}
+              </button>
+            )}
+          </div>
+
+          {/* Typing indicator */}
+          {ctx.selectedChannelId && ctx.formatTypingUsers(ctx.selectedChannelId) && (
+            <div className="typing-indicator">
+              <div className="typing-dots-animated">
+                <span></span><span></span><span></span>
+              </div>
+              <span className="typing-text">{ctx.formatTypingUsers(ctx.selectedChannelId)}</span>
+            </div>
+          )}
+
+          {/* Staged files preview */}
+          <StagedFilesPreview
+            files={ctx.stagedFiles}
+            onRemove={ctx.handleRemoveStagedFile}
+            onClear={ctx.handleClearStagedFiles}
+          />
+
+          {/* Message Input */}
+          <div className="message-input-container">
+            {ctx.replyingTo && (
+              <div className="reply-input-preview">
+                <div className="reply-input-bar"></div>
+                <div className="reply-input-content">
+                  <span className="reply-input-text">
+                    Replying to <strong>{ctx.replyingTo.author}</strong>: {ctx.replyingTo.content.substring(0, 100)}{ctx.replyingTo.content.length > 100 ? '...' : ''}
+                  </span>
+                  <button className="reply-cancel-btn" onClick={ctx.handleCancelReply} title="Cancel reply">×</button>
+                </div>
+              </div>
+            )}
+            {ctx.serverAvailable && ctx.appState.activeChannel && (
+              <FileUploadButton
+                channelId={ctx.appState.activeChannel}
+                token={ctx.appState.token || ''}
+                keyPair={ctx.keyPair}
+                encryptionEnabled={ctx.encryptionEnabled}
+                onFilesStaged={ctx.handleFilesStaged}
+              />
+            )}
+            {ctx.messageError && (
+              <div style={{
+                position: 'absolute', top: '-36px', left: '50%', transform: 'translateX(-50%)',
+                background: '#f04747', color: '#fff', padding: '6px 14px', borderRadius: '4px',
+                fontSize: '13px', fontWeight: 500, zIndex: 11, maxWidth: '90%', textAlign: 'center',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {ctx.messageError}
+              </div>
+            )}
+            {ctx.slowModeCooldown > 0 && !ctx.messageError && (
+              <div style={{
+                position: 'absolute', top: '-28px', left: '50%', transform: 'translateX(-50%)',
+                background: '#faa61a', color: '#fff', padding: '4px 12px', borderRadius: '4px',
+                fontSize: '12px', fontWeight: 600, zIndex: 10, whiteSpace: 'nowrap',
+              }}>
+                ⏱️ Slow mode: wait {ctx.slowModeCooldown}s
+              </div>
+            )}
+            <textarea
+              ref={ctx.messageInputRef}
+              className="message-input"
+              placeholder={ctx.slowModeCooldown > 0 ? `Slow mode — wait ${ctx.slowModeCooldown}s` : `Message ${ctx.activeChannel}`}
+              value={ctx.message}
+              rows={1}
+              disabled={ctx.slowModeCooldown > 0}
+              onChange={(e) => {
+                ctx.setMessage(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+                if (ctx.selectedChannelId) {
+                  ctx.sendTypingIndicator(ctx.selectedChannelId);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  ctx.handleSendMessage();
+                }
+              }}
+            />
+            <EmojiPickerButton
+              isOpen={ctx.showInputEmojiPicker}
+              onToggle={() => ctx.setShowInputEmojiPicker(prev => !prev)}
+              onSelect={ctx.handleInsertEmoji}
+              onClose={() => ctx.setShowInputEmojiPicker(false)}
+            />
+            {ctx.serverAvailable && ctx.appState.activeChannel && (
+              <FileList
+                channelId={ctx.appState.activeChannel}
+                token={ctx.appState.token || ''}
+                keyPair={ctx.keyPair}
+                encryptionEnabled={ctx.encryptionEnabled}
+              />
+            )}
+          </div>
+        </FileDropZone>
+      </div>
+
+      {/* Voice Chat Component */}
+      {ctx.voiceChannelId && (
+        <Suspense fallback={<LoadingSpinner />}>
+          <VoiceChat
+            ws={ctx.ws}
+            currentUserId={localStorage.getItem('accord_user_id')}
+            channelId={ctx.voiceChannelId}
+            channelName={ctx.voiceChannelName}
+            onLeave={() => {
+              ctx.setVoiceChannelId(null);
+              ctx.setVoiceChannelName("");
+              ctx.setVoiceConnectedAt(null);
+            }}
+          />
+        </Suspense>
+      )}
+    </>
+  );
+};

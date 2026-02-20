@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage } from "./types";
@@ -22,26 +22,20 @@ import {
   setActiveIdentity,
 } from "./crypto";
 import { storeToken, getToken, clearToken } from "./tokenStorage";
-import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview, StagedFile } from "./FileManager";
-import { EmojiPickerButton } from "./EmojiPicker";
-const VoiceChat = React.lazy(() => import("./VoiceChat").then(m => ({ default: m.VoiceChat })));
-import { SearchOverlay } from "./SearchOverlay";
-const NodeSettings = React.lazy(() => import("./NodeSettings").then(m => ({ default: m.NodeSettings })));
+import { StagedFile } from "./FileManager";
 import { notificationManager, NotificationPreferences } from "./notifications";
-import { renderMessageMarkdown } from "./markdown";
-const NotificationSettings = React.lazy(() => import("./NotificationSettings").then(m => ({ default: m.NotificationSettings })));
-const Settings = React.lazy(() => import("./Settings").then(m => ({ default: m.Settings })));
-import { LoadingSpinner } from "./LoadingSpinner";
 import { SetupWizard, SetupResult } from "./SetupWizard";
 import { listIdentities } from "./identityStorage";
-import { CLIENT_BUILD_HASH, getCombinedTrust, getTrustIndicator } from "./buildHash";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle } from "./e2ee";
-import { initKeyboardShortcuts, SHORTCUTS } from "./keyboard";
-import { ProfileCard } from "./ProfileCard";
-import { LinkPreview, extractFirstUrl } from "./LinkPreview";
+import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { UpdateBanner } from "./UpdateChecker";
+import {
+  AppContext,
+  MnemonicModal, RecoverModal, KeyBackupScreen, WelcomeScreen, ServerConnectScreen, LoginScreen,
+  ServerList, ChannelSidebar, ChatArea, MemberSidebar, AppModals,
+} from "./components";
 
 // Utility: robust clipboard copy that works in non-secure contexts
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -74,64 +68,6 @@ function fingerprint(publicKeyHash: string): string {
   if (!publicKeyHash || publicKeyHash.length < 16) return publicKeyHash || 'unknown';
   return publicKeyHash.substring(0, 8) + '...' + publicKeyHash.substring(publicKeyHash.length - 8);
 }
-
-// Voice Connection Panel (sidebar bottom, above user panel)
-const VoiceConnectionPanel: React.FC<{
-  channelName: string;
-  connectedAt: number | null;
-  onDisconnect: () => void;
-}> = ({ channelName, connectedAt, onDisconnect }) => {
-  const [elapsed, setElapsed] = useState("00:00");
-  const [isMuted, setIsMuted] = useState(false);
-  const [isDeafened, setIsDeafened] = useState(false);
-
-  useEffect(() => {
-    if (!connectedAt) return;
-    const interval = setInterval(() => {
-      const secs = Math.floor((Date.now() - connectedAt) / 1000);
-      const m = String(Math.floor(secs / 60)).padStart(2, '0');
-      const s = String(secs % 60).padStart(2, '0');
-      setElapsed(`${m}:${s}`);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [connectedAt]);
-
-  return (
-    <div className="voice-connection-panel">
-      <div className="voice-connection-info">
-        <span className="voice-connection-dot">●</span>
-        <div className="voice-connection-details">
-          <span className="voice-connection-label">Voice Connected</span>
-          <span className="voice-connection-channel">{channelName}</span>
-        </div>
-        <span className="voice-connection-timer">{elapsed}</span>
-      </div>
-      <div className="voice-connection-controls">
-        <button
-          className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`}
-          onClick={() => setIsMuted(!isMuted)}
-          title={isMuted ? 'Unmute' : 'Mute'}
-        >
-          {isMuted ? '🔇' : '🎤'}
-        </button>
-        <button
-          className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`}
-          onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }}
-          title={isDeafened ? 'Undeafen' : 'Deafen'}
-        >
-          {isDeafened ? '🔇' : '🔊'}
-        </button>
-        <button
-          className="voice-ctrl-btn voice-disconnect-btn"
-          onClick={onDisconnect}
-          title="Disconnect"
-        >
-          📞
-        </button>
-      </div>
-    </div>
-  );
-};
 
 // Initialize theme immediately on module load (before first render)
 initTheme();
@@ -2897,182 +2833,265 @@ function App() {
     }
   }, [contextMenu]);
 
-  // Key backup modal
-  // Mnemonic backup modal (shown after registration)
+  // Use server data — no mock fallback
+  const servers = nodes.map(n => n.name);
+  const displayName = (u: User | undefined) => u ? (u.display_name || fingerprint(u.public_key_hash)) : 'Unknown';
+
+  // Helper to determine channel type as number
+  const getChannelTypeNum = (ch: Channel): number => {
+    if (typeof ch.channel_type === 'number') return ch.channel_type;
+    if (ch.channel_type === 'voice') return 2;
+    if (ch.channel_type === 'category') return 4;
+    return 0; // text
+  };
+
+  // Sort channels by position
+  const sortedChannels = [...channels].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  
+  // Separate categories and regular channels
+  const categories = sortedChannels.filter(ch => getChannelTypeNum(ch) === 4);
+  const nonCategoryChannels = sortedChannels.filter(ch => getChannelTypeNum(ch) !== 4);
+  const uncategorizedChannels = nonCategoryChannels.filter(ch => !ch.parent_id);
+  const categorizedChannels = (catId: string) => nonCategoryChannels.filter(ch => ch.parent_id === catId);
+
+  const toggleCategory = (catId: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(catId)) next.delete(catId);
+      else next.add(catId);
+      return next;
+    });
+  };
+
+  // Build context value for all child components
+  const contextValue: import('./components/AppContext').AppContextType = {
+    // Server connection
+    serverUrl, setServerUrl, serverAvailable, serverConnecting, serverVersion,
+    showServerScreen, setShowServerScreen,
+
+    // Welcome / Invite flow
+    showWelcomeScreen, setShowWelcomeScreen,
+    welcomeMode, setWelcomeMode,
+    inviteLinkInput, setInviteLinkInput,
+    inviteError, setInviteError,
+    inviteConnecting, inviteRelayVersion, inviteNeedsRegister,
+    invitePassword, setInvitePassword, inviteJoining,
+
+    // Auth
+    isAuthenticated, isLoginMode, setIsLoginMode,
+    password, setPassword, publicKey,
+    authError, setAuthError, publicKeyHash, hasExistingKey,
+
+    // Mnemonic / Recovery
+    showMnemonicModal, setShowMnemonicModal,
+    mnemonicPhrase, setMnemonicPhrase,
+    copyButtonText, setCopyButtonText,
+    mnemonicConfirmStep, setMnemonicConfirmStep,
+    showRecoverModal, setShowRecoverModal,
+    recoverMnemonic, setRecoverMnemonic,
+    recoverPassword, setRecoverPassword,
+    recoverError, setRecoverError, recoverLoading,
+    showKeyBackup, setShowKeyBackup,
+
+    // Encryption
+    keyPair, encryptionEnabled,
+
+    // App state
+    appState, setAppState, message, setMessage,
+    slowModeCooldown, slowModeSeconds, messageError,
+    activeChannel, activeServer, ws, connectionInfo,
+    lastConnectionError, setLastConnectionError,
+
+    // Reply
+    replyingTo, setReplyingTo,
+
+    // Data
+    nodes, channels, members, selectedNodeId, selectedChannelId,
+
+    // Message pagination
+    isLoadingOlderMessages, hasMoreMessages, messagesContainerRef,
+
+    // Message editing
+    editingMessageId, setEditingMessageId,
+    editingContent, setEditingContent,
+    showDeleteConfirm, setShowDeleteConfirm,
+
+    // Roles
+    userRoles, nodeRoles, memberRolesMap,
+    showCreateChannelForm, setShowCreateChannelForm,
+    newChannelName, setNewChannelName,
+    newChannelType, setNewChannelType,
+    showInviteModal, setShowInviteModal,
+    generatedInvite, setGeneratedInvite,
+    error, setError,
+
+    // Voice
+    voiceChannelId, setVoiceChannelId,
+    voiceChannelName, setVoiceChannelName,
+    voiceConnectedAt, setVoiceConnectedAt,
+
+    // Custom status
+    customStatus, showStatusPopover, setShowStatusPopover,
+    statusInput, setStatusInput,
+
+    // Pinned
+    showPinnedPanel, setShowPinnedPanel, pinnedMessages,
+
+    // Reactions
+    showEmojiPicker, setShowEmojiPicker,
+    hoveredMessageId, setHoveredMessageId,
+
+    // Notifications
+    notificationPreferences, showNotificationSettings, setShowNotificationSettings,
+    forceUpdate,
+
+    // Search
+    showSearchOverlay, setShowSearchOverlay,
+
+    // DMs
+    dmChannels, selectedDmChannel,
+    showDmChannelCreate, setShowDmChannelCreate,
+
+    // Node creation
+    showCreateNodeModal, setShowCreateNodeModal,
+    showJoinNodeModal, setShowJoinNodeModal,
+    joinInviteCode, setJoinInviteCode,
+    joiningNode, joinError, setJoinError,
+    newNodeName, setNewNodeName,
+    newNodeDescription, setNewNodeDescription,
+    creatingNode,
+
+    // Settings
+    showSettings, setShowSettings,
+    showNodeSettings, setShowNodeSettings,
+
+    // Trust
+    serverBuildHash, serverHelloVersion, knownHashes,
+    connectedSince, showConnectionInfo, setShowConnectionInfo,
+
+    // Categories
+    collapsedCategories, setCollapsedCategories,
+
+    // Template import
+    showTemplateImport, setShowTemplateImport,
+    templateInput, setTemplateInput,
+    templateImporting, setTemplateImporting,
+    templateResult, setTemplateResult,
+    templateError, setTemplateError,
+
+    // Delete channel
+    deleteChannelConfirm, setDeleteChannelConfirm,
+
+    // Display name
+    showDisplayNamePrompt, setShowDisplayNamePrompt,
+    displayNameInput, setDisplayNameInput,
+    displayNameSaving,
+
+    // Setup wizard
+    showSetupWizard,
+
+    // Keyboard shortcuts
+    showShortcutsHelp, setShowShortcutsHelp,
+
+    // Member sidebar
+    showMemberSidebar, setShowMemberSidebar,
+
+    // Emoji picker / files
+    showInputEmojiPicker, setShowInputEmojiPicker,
+    stagedFiles, messageInputRef,
+
+    // Scroll
+    showScrollToBottom, newMessageCount,
+
+    // Presence
+    presenceMap,
+
+    // Context menu
+    contextMenu, setContextMenu,
+
+    // Profile card
+    profileCardTarget, setProfileCardTarget,
+
+    // Blocking
+    blockedUsers,
+    showBlockConfirm, setShowBlockConfirm,
+
+    // Typing
+    typingUsers,
+
+    // Read receipts
+    readReceipts,
+
+    // Message density
+    messageDensity,
+
+    // Role popup
+    showRolePopup, setShowRolePopup,
+
+    // ---- Handlers ----
+    handleAuth, handleLogout, handleSendMessage,
+    handleSaveEdit, handleCancelEdit, handleDeleteMessage,
+    handleReply, handleCancelReply,
+    handleAddReaction, handleRemoveReaction, handleToggleReaction,
+    handlePinMessage, handleUnpinMessage,
+    handleStartEdit, handleNodeSelect, handleChannelSelect,
+    handleCreateChannel, handleGenerateInvite,
+    handleKickMember, handleDeleteChannelConfirmed,
+    handleJoinNode, handleCreateNode,
+    handleDmChannelSelect, openDmWithUser,
+    handleSaveDisplayName, handleSaveCustomStatus,
+    handleServerConnect, handleInviteLinkSubmit, handleInviteRegister,
+    handleRecover,
+    handleNotificationPreferencesChange,
+    handleNavigateToMessage,
+    handleBlockUser, handleUnblockUser,
+    handleScroll, scrollToBottom, scrollToMessage,
+    handleFilesStaged, handleRemoveStagedFile, handleClearStagedFiles,
+    handleInsertEmoji, handleContextMenu, togglePinnedPanel,
+    toggleMemberRole, sendTypingIndicator, formatTypingUsers,
+    loadChannels, loadRoles, loadNodes, loadDmChannels,
+
+    // Permission helpers
+    hasPermission, getRoleBadge, canDeleteMessage, getPresenceStatus,
+    getMemberRoleColor, getMemberHighestHoistedRole, sortedMembers,
+
+    // Utility
+    fingerprint, displayName, copyToClipboard,
+
+    // Channel helpers
+    getChannelTypeNum, sortedChannels, categories,
+    uncategorizedChannels, categorizedChannels, toggleCategory,
+    servers,
+
+    // Constants
+    COMMON_EMOJIS,
+  };
+
+  // ---- Early returns for auth/setup screens ----
   if (showMnemonicModal) {
     return (
-      <div className="app">
-        <div className="auth-page">
-          <div className="auth-card key-backup-card">
-            <h2 className="auth-title">🔑 Save Your Recovery Phrase</h2>
-            <p className="auth-subtitle">
-              This 24-word phrase is the <strong>only way</strong> to recover your identity if you lose access to this browser.
-              <strong className="warning" style={{ color: 'var(--yellow)' }}> Write it down and store it safely. It will NOT be shown again.</strong>
-            </p>
-            <div className="form-group">
-              <label className="form-label">Recovery Phrase (24 words)</label>
-              <div style={{
-                background: 'var(--bg-tertiary)',
-                border: '2px solid var(--yellow)',
-                borderRadius: '8px',
-                padding: '16px',
-                fontFamily: 'monospace',
-                fontSize: '15px',
-                lineHeight: '2',
-                wordSpacing: '8px',
-                userSelect: 'all',
-                cursor: 'text',
-              }}>
-                {mnemonicPhrase}
-              </div>
-            </div>
-            <div className="key-backup-actions" style={{ marginTop: '16px' }}>
-              <button
-                onClick={() => {
-                  copyToClipboard(mnemonicPhrase);
-                  setCopyButtonText('Copied!');
-                  setTimeout(() => setCopyButtonText('Copy to Clipboard'), 2000);
-                }}
-                className="btn btn-green"
-              >
-                {copyButtonText}
-              </button>
-              <button
-                onClick={() => {
-                  if (mnemonicConfirmStep < 2) {
-                    setMnemonicConfirmStep(mnemonicConfirmStep + 1);
-                    return;
-                  }
-                  setShowMnemonicModal(false);
-                  setMnemonicPhrase("");
-                  setMnemonicConfirmStep(0);
-                  // After registration, go to login
-                  if (!isAuthenticated) {
-                    setIsLoginMode(true);
-                    setPassword("");
-                    setAuthError("");
-                  }
-                }}
-                className="btn btn-primary"
-                style={mnemonicConfirmStep === 1 ? { background: '#e67e22' } : mnemonicConfirmStep === 2 ? { background: '#e74c3c' } : {}}
-              >
-                {mnemonicConfirmStep === 0
-                  ? (isAuthenticated ? 'I\'ve saved my phrase' : 'I\'ve saved my phrase — Continue to Login')
-                  : mnemonicConfirmStep === 1
-                  ? 'Are you absolutely sure?'
-                  : 'This is your ONLY way to recover your account!'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <AppContext.Provider value={contextValue}>
+        <MnemonicModal />
+      </AppContext.Provider>
     );
   }
 
-  // Recovery modal (enter mnemonic to recover identity)
   if (showRecoverModal) {
     return (
-      <div className="app">
-        <div className="auth-page">
-          <div className="auth-card">
-            <button onClick={() => { setShowRecoverModal(false); setRecoverError(""); setRecoverMnemonic(""); setRecoverPassword(""); }} className="auth-back-btn">← Back</button>
-            <h2 className="auth-title">🔄 Recover Identity</h2>
-            <p className="auth-subtitle">Enter your 24-word recovery phrase and password to restore your identity</p>
-            
-            <div className="form-group">
-              <label className="form-label">Recovery Phrase (24 words)</label>
-              <textarea
-                placeholder="word1 word2 word3 ... word24"
-                value={recoverMnemonic}
-                onChange={(e) => setRecoverMnemonic(e.target.value)}
-                rows={3}
-                className="form-textarea"
-                style={{ fontFamily: 'monospace' }}
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <input
-                type="password"
-                placeholder="Your account password"
-                value={recoverPassword}
-                onChange={(e) => setRecoverPassword(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleRecover(); }}
-                className="form-input"
-              />
-            </div>
-
-            {recoverError && <div className="auth-error">{recoverError}</div>}
-
-            <button
-              onClick={handleRecover}
-              disabled={recoverLoading || !recoverMnemonic.trim() || !recoverPassword}
-              className="btn btn-primary"
-            >
-              {recoverLoading ? 'Recovering...' : 'Recover Identity'}
-            </button>
-          </div>
-        </div>
-      </div>
+      <AppContext.Provider value={contextValue}>
+        <RecoverModal />
+      </AppContext.Provider>
     );
   }
 
   if (showKeyBackup) {
     return (
-      <div className="app">
-        <div className="auth-page">
-          <div className="auth-card key-backup-card">
-            <h2 className="auth-title">🔑 Backup Your Key</h2>
-            <p className="auth-subtitle">
-              Your identity is your keypair. If you lose it, you lose access to your account forever.
-              <strong className="warning" style={{ color: 'var(--yellow)' }}> There is no recovery.</strong>
-            </p>
-            <div className="form-group">
-              <label className="form-label">Your Public Key Fingerprint</label>
-              <div className="key-value">{publicKeyHash || 'computing...'}</div>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Public Key (share this)</label>
-              <textarea
-                readOnly
-                value={publicKey}
-                rows={3}
-                className="form-textarea"
-              />
-            </div>
-            <div className="auth-success" style={{ marginBottom: '16px' }}>
-              ✅ Your keypair is saved in this browser's storage. To use Accord on another device, you'll need to export and import your key.
-            </div>
-            <div className="key-backup-actions">
-              <button
-                onClick={() => {
-                  copyToClipboard(publicKey);
-                  alert('Public key copied to clipboard!');
-                }}
-                className="btn btn-green"
-              >
-                Copy Public Key
-              </button>
-              <button
-                onClick={() => {
-                  setShowKeyBackup(false);
-                  setIsLoginMode(true);
-                  setPassword("");
-                  setAuthError("");
-                }}
-                className="btn btn-primary"
-              >
-                Continue to Login
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <AppContext.Provider value={contextValue}>
+        <KeyBackupScreen />
+      </AppContext.Provider>
     );
   }
 
-  // First-run setup wizard
   if (showSetupWizard) {
     const handleSetupComplete = async (result: SetupResult) => {
       try {
@@ -3161,2097 +3180,42 @@ function App() {
   // Guard: if user has identity but no relay URL, block access to main UI
   const needsRelayUrl = !showSetupWizard && !isAuthenticated && !localStorage.getItem('accord_server_url') && hasStoredKeyPair();
 
-  // Welcome / Invite link screen (also shown when identity exists but no relay URL)
   if (showWelcomeScreen || needsRelayUrl) {
     return (
-      <div className="app">
-        <div className="auth-page">
-          <div className="auth-card auth-card-narrow">
-            
-            {welcomeMode === 'choose' && (
-              <>
-                <div className="auth-brand">
-                  <h1>⚡ <span className="brand-accent">Accord</span></h1>
-                </div>
-                <p className="auth-tagline">Privacy-first community communications</p>
-                <div className="auth-buttons-stack">
-                  {serverAvailable ? (
-                    <>
-                      <button onClick={() => { setShowWelcomeScreen(false); setIsLoginMode(true); }} className="btn btn-primary">
-                        Log in
-                      </button>
-                      <button onClick={() => { setShowWelcomeScreen(false); setIsLoginMode(false); }} className="btn btn-outline">
-                        Create new identity
-                      </button>
-                      <button onClick={() => setWelcomeMode('invite')} className="btn btn-outline">
-                        I have an invite link
-                      </button>
-                      <button onClick={() => { setShowWelcomeScreen(false); setShowRecoverModal(true); setRecoverError(""); }} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
-                        🔄 Recover identity with recovery phrase
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button onClick={() => setWelcomeMode('invite')} className="btn btn-primary">
-                        I have an invite link
-                      </button>
-                      <button onClick={() => setWelcomeMode('admin')} className="btn btn-outline">
-                        Set up a new relay (admin)
-                      </button>
-                      <button onClick={() => setWelcomeMode('recover')} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
-                        🔄 Recover identity (connect to relay first)
-                      </button>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
-
-            {welcomeMode === 'invite' && !inviteNeedsRegister && (
-              <>
-                <button onClick={() => { setWelcomeMode('choose'); setInviteError(''); setInviteLinkInput(''); setParsedInvite(null); setInviteRelayVersion(''); }} className="auth-back-btn">← Back</button>
-                <h2 className="auth-title">Join via Invite</h2>
-                <p className="auth-subtitle">Paste the invite link you received</p>
-                
-                <div className="form-group">
-                  <input
-                    type="text"
-                    placeholder="accord://host:port/invite/CODE or https://..."
-                    value={inviteLinkInput}
-                    onChange={(e) => setInviteLinkInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleInviteLinkSubmit(); }}
-                    className="form-input"
-                  />
-                </div>
-
-                {inviteError && <div className="auth-error">{inviteError}</div>}
-                {inviteRelayVersion && <div className="auth-success">✅ Connected to relay v{inviteRelayVersion}</div>}
-
-                <button
-                  onClick={handleInviteLinkSubmit}
-                  disabled={inviteConnecting || !inviteLinkInput.trim()}
-                  className="btn btn-primary"
-                >
-                  {inviteConnecting ? 'Connecting to relay...' : 'Join'}
-                </button>
-              </>
-            )}
-
-            {welcomeMode === 'invite' && inviteNeedsRegister && (
-              <>
-                <h2 className="auth-title">Create Your Identity</h2>
-                <p className="auth-subtitle">Connected to relay — now set a password to create your identity</p>
-                <div className="auth-info-box">
-                  <span className="accent">🔐 A keypair will be auto-generated. No username needed.</span>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Password (min 8 characters)</label>
-                  <input
-                    type="password"
-                    placeholder="Choose a password"
-                    value={invitePassword}
-                    onChange={(e) => setInvitePassword(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleInviteRegister(); }}
-                    className="form-input"
-                  />
-                </div>
-
-                {inviteError && <div className="auth-error">{inviteError}</div>}
-
-                <button
-                  onClick={handleInviteRegister}
-                  disabled={inviteJoining || invitePassword.length < 8}
-                  className="btn btn-green"
-                >
-                  {inviteJoining ? 'Creating identity & joining...' : 'Create Identity & Join'}
-                </button>
-              </>
-            )}
-
-            {(welcomeMode === 'admin' || welcomeMode === 'recover') && (
-              <>
-                <button onClick={() => { setWelcomeMode('choose'); setAuthError(''); setServerVersion(''); }} className="auth-back-btn">← Back</button>
-                <h2 className="auth-title">{welcomeMode === 'recover' ? 'Connect to Relay' : 'Connect to Relay'}</h2>
-                <p className="auth-subtitle">{welcomeMode === 'recover' ? 'Enter your relay URL to recover your identity' : 'Enter the relay server URL (admin/power-user)'}</p>
-                
-                <div className="form-group">
-                  <label className="form-label">Server URL</label>
-                  <input
-                    type="text"
-                    placeholder="http://localhost:8080"
-                    value={serverUrl}
-                    onChange={(e) => setServerUrl(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleServerConnect(); }}
-                    className="form-input"
-                  />
-                </div>
-
-                {authError && <div className="auth-error">{authError}</div>}
-                {serverVersion && <div className="auth-success">✅ Connected — server v{serverVersion}</div>}
-
-                {!serverVersion ? (
-                  <button
-                    onClick={handleServerConnect}
-                    disabled={serverConnecting}
-                    className="btn btn-primary"
-                  >
-                    {serverConnecting ? 'Connecting...' : 'Connect'}
-                  </button>
-                ) : welcomeMode === 'recover' ? (
-                  <button
-                    onClick={() => { setShowWelcomeScreen(false); setShowRecoverModal(true); setRecoverError(''); }}
-                    className="btn btn-green"
-                  >
-                    Continue to Recovery
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleServerConnect}
-                    disabled={serverConnecting}
-                    className="btn btn-primary"
-                  >
-                    {serverConnecting ? 'Connecting...' : 'Connect'}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      <AppContext.Provider value={contextValue}>
+        <WelcomeScreen />
+      </AppContext.Provider>
     );
   }
 
-  // Legacy server connection screen (from Settings → Advanced)
   if (showServerScreen) {
     return (
-      <div className="app">
-        <div className="auth-page">
-          <div className="auth-card auth-card-narrow">
-            <h2 className="auth-title">Connect to Relay</h2>
-            <p className="auth-subtitle">Manual relay connection</p>
-            
-            <div className="form-group">
-              <label className="form-label">Server URL</label>
-              <input
-                type="text"
-                placeholder="http://localhost:8080"
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleServerConnect(); }}
-                className="form-input"
-              />
-            </div>
-
-            {authError && <div className="auth-error">{authError}</div>}
-            {serverVersion && <div className="auth-success">✅ Connected — server v{serverVersion}</div>}
-
-            <button
-              onClick={handleServerConnect}
-              disabled={serverConnecting}
-              className="btn btn-primary"
-            >
-              {serverConnecting ? 'Connecting...' : 'Connect'}
-            </button>
-          </div>
-        </div>
-      </div>
+      <AppContext.Provider value={contextValue}>
+        <ServerConnectScreen />
+      </AppContext.Provider>
     );
   }
 
-  // Render authentication screen
   if (!isAuthenticated) {
     return (
-      <div className="app">
-        <div className="auth-page">
-          <div className="auth-card">
-            <h2 className="auth-title">
-              {isLoginMode ? (hasExistingKey ? 'Welcome Back' : 'Login to Accord') : 'Create Identity'}
-            </h2>
-            <p className="auth-subtitle">
-              {isLoginMode 
-                ? (hasExistingKey ? 'Enter your password to sign back in' : 'Authenticate with your keypair and password')
-                : 'A new keypair will be generated automatically'}
-            </p>
-            
-            <div className="auth-server-bar">
-              <span>🔗 {serverUrl} {serverAvailable && <span className="connected">● connected</span>}</span>
-              <button onClick={() => { setShowWelcomeScreen(true); setWelcomeMode('choose'); setAuthError(''); }} className="btn-ghost" style={{ fontSize: '12px' }}>Change</button>
-            </div>
-
-            {isLoginMode && (
-              <div className="form-group">
-                <label className="form-label">Key Status</label>
-                <div className="auth-info-box">
-                  {keyPair || publicKey || hasExistingKey ? (
-                    <span className="accent">🔑 Keypair found — enter your password to sign back in</span>
-                  ) : localStorage.getItem('accord_public_key_plain') ? (
-                    <span className="accent">🔑 Identity remembered — enter your password to log in</span>
-                  ) : (
-                    <span style={{ color: 'var(--yellow)' }}>⚠️ No identity found on this device — create a new one or recover with your phrase</span>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div className="form-group">
-              <label className="form-label">Password</label>
-              <input
-                type="password"
-                placeholder={isLoginMode ? "Enter your password" : "Choose a password (min 8 chars)"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAuth(); }}
-                className="form-input"
-              />
-              {!isLoginMode && password && password.length < 8 && (
-                <div className="form-hint" style={{ color: 'var(--red)' }}>
-                  Password must be at least 8 characters
-                </div>
-              )}
-            </div>
-
-            {!isLoginMode && encryptionEnabled && (
-              <div className="auth-info-box" style={{ marginBottom: '20px' }}>
-                <div className="accent">🔐 A new ECDH P-256 keypair will be generated for your identity</div>
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>No username needed — you are identified by your public key hash</div>
-              </div>
-            )}
-
-            {authError && <div className="auth-error">{authError}</div>}
-
-            <button onClick={handleAuth} className="btn btn-primary" style={{ marginBottom: '16px' }}>
-              {isLoginMode ? 'Login' : 'Create Identity & Register'}
-            </button>
-
-            <div className="auth-toggle" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
-              <button
-                onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(""); setPassword(""); }}
-                className="btn-ghost"
-              >
-                {isLoginMode ? 'Need to create an identity?' : 'Already have a keypair? Login'}
-              </button>
-              
-              <div style={{ borderTop: '1px solid var(--border)', width: '100%', paddingTop: '12px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
-                <span style={{ fontSize: '12px', opacity: 0.6 }}>Lost access to your keypair?</span>
-                <button
-                  onClick={() => { setShowRecoverModal(true); setRecoverError(""); }}
-                  className="btn btn-outline"
-                  style={{ width: '100%' }}
-                >
-                  🔄 Recover with recovery phrase
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <AppContext.Provider value={contextValue}>
+        <LoginScreen />
+      </AppContext.Provider>
     );
   }
 
-  // Use server data — no mock fallback
-  const servers = nodes.map(n => n.name);
-  const displayName = (u: User | undefined) => u ? (u.display_name || fingerprint(u.public_key_hash)) : 'Unknown';
-
-  // Helper to determine channel type as number
-  const getChannelTypeNum = (ch: Channel): number => {
-    if (typeof ch.channel_type === 'number') return ch.channel_type;
-    if (ch.channel_type === 'voice') return 2;
-    if (ch.channel_type === 'category') return 4;
-    return 0; // text
-  };
-
-  // Sort channels by position
-  const sortedChannels = [...channels].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-  
-  // Separate categories and regular channels
-  const categories = sortedChannels.filter(ch => getChannelTypeNum(ch) === 4);
-  const nonCategoryChannels = sortedChannels.filter(ch => getChannelTypeNum(ch) !== 4);
-  const uncategorizedChannels = nonCategoryChannels.filter(ch => !ch.parent_id);
-  const categorizedChannels = (catId: string) => nonCategoryChannels.filter(ch => ch.parent_id === catId);
-
-  const toggleCategory = (catId: string) => {
-    setCollapsedCategories(prev => {
-      const next = new Set(prev);
-      if (next.has(catId)) next.delete(catId);
-      else next.add(catId);
-      return next;
-    });
-  };
-
+  // ---- Main authenticated app ----
   return (
-    <div className="app">
-      {/* Update notification banner */}
-      <UpdateBanner />
-      {/* Server list */}
-      <div className="server-list" key={forceUpdate}>
-        {servers.map((s, i) => {
-          const nodeId = nodes.length > 0 ? nodes[i]?.id : null;
-          const nodeUnreads = nodeId ? notificationManager.getNodeUnreads(nodeId) : { totalUnreads: 0, totalMentions: 0 };
-          
-          return (
-            <div
-              key={nodeId || s}
-              className={`server-icon ${i === activeServer ? "active" : ""}`}
-              onClick={() => {
-                if (nodeId) {
-                  handleNodeSelect(nodeId, i);
-                } else {
-                  setActiveServer(i);
-                }
-              }}
-              title={s}
-            >
-              {nodes[i]?.icon_hash ? (
-                <img 
-                  src={`${api.getNodeIconUrl(nodes[i].id)}?v=${nodes[i].icon_hash}`}
-                  alt={s[0]}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = s[0]; }}
-                />
-              ) : s[0]}
-              {nodeUnreads.totalMentions > 0 && (
-                <div className="server-notification mention">
-                  {nodeUnreads.totalMentions > 9 ? '9+' : nodeUnreads.totalMentions}
-                </div>
-              )}
-              {nodeUnreads.totalMentions === 0 && nodeUnreads.totalUnreads > 0 && (
-                <div className="server-notification dot" />
-              )}
-            </div>
-          );
-        })}
-        <div 
-          className="server-icon add-server" 
-          title="Join or Create Node"
-          onClick={() => setShowCreateNodeModal(true)}
-          style={{ cursor: 'pointer' }}
-        >
-          +
-        </div>
+    <AppContext.Provider value={contextValue}>
+      <div className="app">
+        <UpdateBanner />
+        <ServerList />
+        <ChannelSidebar />
+        <ChatArea />
+        <MemberSidebar />
+        <AppModals />
       </div>
-
-      {/* Channel sidebar */}
-      <div className="channel-sidebar">
-        <div className="sidebar-header">
-          <div className="sidebar-header-row">
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              {servers[activeServer]}
-              {serverAvailable && (
-                <span className="connection-status">
-                  <span className={`connection-dot ${connectionInfo.status}`}>●</span>
-                  <span className="connection-label">
-                    {connectionInfo.status === 'connected' && 'Connected'}
-                    {connectionInfo.status === 'reconnecting' && `Reconnecting... ${connectionInfo.reconnectAttempt}/${connectionInfo.maxReconnectAttempts}`}
-                    {connectionInfo.status === 'disconnected' && !appState.isConnected && 'Disconnected'}
-                  </span>
-                  {connectionInfo.status === 'disconnected' && !appState.isConnected && ws && (
-                    <button className="connection-retry-btn" onClick={() => { setLastConnectionError(""); ws.retry(); }}>Retry</button>
-                  )}
-                  {lastConnectionError && connectionInfo.status !== 'connected' && (
-                    <span className="connection-error-detail" title={lastConnectionError} style={{ fontSize: 11, color: 'var(--error, #f04747)', display: 'block', marginTop: 2 }}>
-                      {lastConnectionError.length > 60 ? lastConnectionError.substring(0, 57) + '...' : lastConnectionError}
-                    </span>
-                  )}
-                </span>
-              )}
-              {!serverAvailable && <span className="demo-badge">DEMO</span>}
-            </div>
-            
-            <div className="sidebar-admin-buttons">
-              {selectedNodeId && hasPermission(selectedNodeId, 'ManageInvites') && (
-                <button onClick={handleGenerateInvite} className="sidebar-admin-btn" title="Generate Invite">Invite</button>
-              )}
-              {selectedNodeId && (
-                <button onClick={() => setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings">⚙️</button>
-              )}
-            </div>
-          </div>
-          
-          {selectedNodeId && userRoles[selectedNodeId] && (
-            <div className="sidebar-role">{getRoleBadge(userRoles[selectedNodeId])} {userRoles[selectedNodeId]}</div>
-          )}
-          {selectedNodeId && nodes.find(n => n.id === selectedNodeId)?.description && (
-            <div className="sidebar-description" title={nodes.find(n => n.id === selectedNodeId)?.description}>
-              {nodes.find(n => n.id === selectedNodeId)?.description}
-            </div>
-          )}
-        </div>
-        
-        <div className="channel-list">
-          {/* Render a single channel item */}
-          {(() => {
-            const canDeleteChannel = selectedNodeId && hasPermission(selectedNodeId, 'DeleteChannel');
-            
-            const renderChannel = (channel: Channel) => {
-              const isVoiceChannel = getChannelTypeNum(channel) === 2;
-              const isActive = channel.id === selectedChannelId;
-              const isConnectedToVoice = isVoiceChannel && voiceChannelId === channel.id;
-              const clientUnreads = selectedNodeId ? 
-                notificationManager.getChannelUnreads(selectedNodeId, channel.id) : 
-                { count: 0, mentions: 0 };
-              // Use server unread_count as fallback if client hasn't tracked any
-              const channelUnreads = clientUnreads.count > 0 ? clientUnreads : 
-                { count: channel.unread_count || 0, mentions: clientUnreads.mentions };
-              const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
-              
-              return (
-                <div
-                  key={channel.id}
-                  className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
-                  title={channel.topic || undefined}
-                >
-                  <div
-                    onClick={() => {
-                      if (isVoiceChannel) {
-                        if (!isConnectedToVoice) {
-                          setVoiceChannelId(channel.id);
-                          setVoiceChannelName(channel.name);
-                          setVoiceConnectedAt(Date.now());
-                        }
-                      } else {
-                        handleChannelSelect(channel.id, `# ${channel.name}`);
-                      }
-                    }}
-                    style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-                  >
-                    <span style={{ color: isVoiceChannel ? '#8e9297' : undefined }}>
-                      {isVoiceChannel ? '🔊' : '#'} {channel.name}
-                    </span>
-                    {isVoiceChannel && !isConnectedToVoice && (
-                      <span style={{ fontSize: '10px', color: '#8e9297', marginLeft: '4px' }}>Voice Channel</span>
-                    )}
-                    {isConnectedToVoice && (
-                      <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
-                    )}
-                  </div>
-                  <div className="channel-badges">
-                    {channelUnreads.mentions > 0 && (
-                      <div className="mention-badge">{channelUnreads.mentions > 9 ? '9+' : channelUnreads.mentions}</div>
-                    )}
-                    {channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
-                      <div className="unread-badge">{channelUnreads.count > 99 ? '99+' : channelUnreads.count}</div>
-                    )}
-                    {canDeleteChannel && (
-                      <button onClick={(e) => { e.stopPropagation(); setDeleteChannelConfirm({ id: channel.id, name: channel.name }); }} className="channel-delete-btn" title="Delete channel">×</button>
-                    )}
-                  </div>
-                  {/* Voice channel connected users */}
-                  {isConnectedToVoice && voiceChannelId === channel.id && (
-                    <div className="voice-channel-users">
-                      <div className="voice-channel-user">
-                        <div className="voice-user-avatar">
-                          {(appState.user?.display_name || "U")[0]}
-                        </div>
-                        <span className="voice-user-name">{appState.user?.display_name || "You"}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            };
-            
-            return (
-              <>
-                {/* Uncategorized channels */}
-                {uncategorizedChannels.map(ch => renderChannel(ch))}
-                
-                {/* Categories with their children */}
-                {categories.map(cat => {
-                  const children = categorizedChannels(cat.id);
-                  const isCollapsed = collapsedCategories.has(cat.id);
-                  return (
-                    <div key={cat.id} className="channel-category">
-                      <div
-                        className="category-header"
-                        onClick={() => toggleCategory(cat.id)}
-                      >
-                        <span className="category-arrow">{isCollapsed ? '▶' : '▼'}</span>
-                        <span className="category-name">{cat.name}</span>
-                      </div>
-                      {!isCollapsed && children.map(ch => renderChannel(ch))}
-                    </div>
-                  );
-                })}
-              </>
-            );
-          })()}
-          
-          {/* Import Discord Template Button */}
-          {selectedNodeId && hasPermission(selectedNodeId, 'ManageNode') && (
-            <div style={{ padding: '4px 8px' }}>
-              <button onClick={() => setShowTemplateImport(true)} className="btn btn-outline btn-sm" style={{ width: '100%', fontSize: '11px' }}>
-                📥 Import Discord Template
-              </button>
-            </div>
-          )}
-          
-          {/* Create Channel Button for Admins */}
-          {selectedNodeId && hasPermission(selectedNodeId, 'CreateChannel') && (
-            <div style={{ marginTop: '4px', padding: '0 8px' }}>
-              {!showCreateChannelForm ? (
-                <button onClick={() => setShowCreateChannelForm(true)} className="btn btn-green btn-sm" style={{ width: '100%' }}>
-                  + Create Channel
-                </button>
-              ) : (
-                <div className="create-channel-form">
-                  <input type="text" placeholder="Channel name" value={newChannelName} onChange={(e) => setNewChannelName(e.target.value)} />
-                  <select value={newChannelType} onChange={(e) => setNewChannelType(e.target.value)}>
-                    <option value="text">Text Channel</option>
-                    <option value="voice">Voice Channel</option>
-                  </select>
-                  <div className="create-channel-actions">
-                    <button onClick={handleCreateChannel} className="btn btn-green btn-sm">Create</button>
-                    <button onClick={() => { setShowCreateChannelForm(false); setNewChannelName(""); setNewChannelType("text"); }} className="btn btn-outline btn-sm">Cancel</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Direct Messages Section */}
-        <div className="dm-section">
-          <div className="dm-header">
-            Direct Messages
-            <button onClick={() => setShowDmChannelCreate(!showDmChannelCreate)} className="dm-header-add-btn" title="Create DM">+</button>
-          </div>
-          
-          <div className="dm-list">
-            {dmChannels.map((dmChannel) => {
-              const isActive = selectedDmChannel?.id === dmChannel.id;
-              const dmUnreads = notificationManager.getChannelUnreads(`dm-${dmChannel.id}`, dmChannel.id);
-              
-              return (
-                <div
-                  key={dmChannel.id}
-                  className={`dm-item ${isActive ? 'active' : ''}`}
-                  onClick={() => handleDmChannelSelect(dmChannel)}
-                >
-                  <div className="dm-avatar">
-                    {(dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
-                    <span className={`presence-dot presence-${getPresenceStatus(dmChannel.other_user?.id || '')}`} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="dm-name">{dmChannel.other_user_profile.display_name}</div>
-                    {dmChannel.last_message && (
-                      <div className="dm-last-message">{dmChannel.last_message.content.substring(0, 30)}</div>
-                    )}
-                  </div>
-                  
-                  {/* Unread indicators */}
-                  <div className="dm-badges">
-                    {dmUnreads.mentions > 0 && (
-                      <div className="mention-badge">
-                        {dmUnreads.mentions > 9 ? '9+' : dmUnreads.mentions}
-                      </div>
-                    )}
-                    {dmUnreads.mentions === 0 && dmUnreads.count > 0 && (
-                      <div className="notification-dot" />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            
-            {dmChannels.length === 0 && (
-              <div className="dm-empty">No direct messages yet</div>
-            )}
-          </div>
-        </div>
-        
-        {/* Voice Connection Panel */}
-        {voiceChannelId && (
-          <VoiceConnectionPanel
-            channelName={voiceChannelName}
-            connectedAt={voiceConnectedAt}
-            onDisconnect={() => {
-              setVoiceChannelId(null);
-              setVoiceChannelName("");
-              setVoiceConnectedAt(null);
-            }}
-          />
-        )}
-
-        <div className="user-panel">
-          <div className="user-avatar">
-            {appState.user?.id ? (
-              <img 
-                src={`${api.getUserAvatarUrl(appState.user.id)}`}
-                alt={(appState.user?.display_name || "U")[0]}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (appState.user?.display_name || fingerprint(appState.user?.public_key_hash || ''))?.[0] || "U"; }}
-              />
-            ) : ((appState.user?.display_name || fingerprint(appState.user?.public_key_hash || ''))?.[0] || "U")}
-          </div>
-          <div className="user-info">
-            <div className="username">{appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You"}</div>
-            <div className="user-status" onClick={() => { setStatusInput(customStatus); setShowStatusPopover(true); }} style={{ cursor: 'pointer' }} title="Click to set custom status">
-              {customStatus || (appState.isConnected ? "Online" : "Offline")}
-            </div>
-          </div>
-          <button
-            onClick={() => setShowConnectionInfo(true)}
-            className="user-panel-settings connection-indicator"
-            title={appState.isConnected
-              ? `Connected${serverHelloVersion ? ` — v${serverHelloVersion}` : ''}${serverBuildHash ? ` (${serverBuildHash.slice(0, 8)})` : ''}\nTrust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash, knownHashes)).label}`
-              : 'Disconnected'}
-          >
-            {appState.isConnected ? getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, serverBuildHash, knownHashes)).emoji : '🔴'}
-          </button>
-          <button
-            onClick={() => setShowNotificationSettings(true)}
-            className="user-panel-settings"
-            title="Notification Settings"
-          >
-            🔔
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="user-panel-settings"
-            title="Settings (Ctrl+,)"
-          >
-            ⚙️
-          </button>
-          <button onClick={handleLogout} className="user-panel-logout">Logout</button>
-        </div>
-
-        {/* Custom Status Popover */}
-        {showStatusPopover && (
-          <div className="status-popover">
-            <div className="status-popover-header">
-              <span>Set Custom Status</span>
-              <button onClick={() => setShowStatusPopover(false)} className="status-popover-close">×</button>
-            </div>
-            <input
-              type="text"
-              className="status-popover-input"
-              placeholder="What's on your mind?"
-              value={statusInput}
-              onChange={(e) => setStatusInput(e.target.value.slice(0, 128))}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveCustomStatus(); if (e.key === 'Escape') setShowStatusPopover(false); }}
-              maxLength={128}
-              autoFocus
-            />
-            <div className="status-popover-footer">
-              <span className="status-popover-count">{statusInput.length}/128</span>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {customStatus && (
-                  <button className="status-popover-clear" onClick={() => { setStatusInput(""); setCustomStatus(""); api.updateProfile({ custom_status: "" }, appState.token || '').catch(() => {}); setShowStatusPopover(false); }}>Clear</button>
-                )}
-                <button className="status-popover-save" onClick={handleSaveCustomStatus}>Save</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Main chat area */}
-      <div className="chat-area">
-      <FileDropZone
-        channelId={selectedDmChannel?.id || selectedChannelId || ''}
-        token={appState.token || ''}
-        keyPair={keyPair}
-        encryptionEnabled={encryptionEnabled}
-        onFilesStaged={handleFilesStaged}
-      >
-        <div className="chat-header">
-          <div className="chat-header-left">
-            {selectedDmChannel ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '8px' }}>
-                    {(selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
-                  </div>
-                  <span className="chat-channel-name">{selectedDmChannel.other_user_profile.display_name}</span>
-                </div>
-                <span className="chat-topic">
-                  Direct message with {selectedDmChannel.other_user_profile.display_name}
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="chat-channel-name">{activeChannel}</span>
-                <span className="chat-topic">
-                  {(() => {
-                    const ch = channels.find(c => c.id === selectedChannelId);
-                    if (ch?.channel_type === 'voice') return `🔊 Voice channel — ${ch.name}`;
-                    if (ch?.topic) return ch.topic;
-                    return '';
-                  })()}
-                </span>
-              </>
-            )}
-          </div>
-          <div className="chat-header-right">
-            <button onClick={togglePinnedPanel} className={`chat-header-btn ${showPinnedPanel ? 'active' : ''}`} title="Toggle pinned messages">📌</button>
-            {encryptionEnabled && keyPair && (
-              <span className="e2ee-badge enabled" title="End-to-end encryption enabled">🔐 E2EE</span>
-            )}
-            {encryptionEnabled && !keyPair && hasExistingKey && (
-              <span className="e2ee-badge pending" title="Key stored but locked — enter password to decrypt">🔑 Key Locked</span>
-            )}
-            {encryptionEnabled && !keyPair && !hasExistingKey && (
-              <span className="e2ee-badge warning" title="No encryption keys found">🔓 No Keys</span>
-            )}
-            {!encryptionEnabled && (
-              <span className="e2ee-badge disabled" title="Encryption not supported">🚫 No E2EE</span>
-            )}
-            <button
-              className="search-button"
-              onClick={() => setShowSearchOverlay(true)}
-              title="Search messages (Ctrl+K)"
-            >
-              🔍
-            </button>
-            <button
-              onClick={() => setShowMemberSidebar(prev => !prev)}
-              className={`chat-header-btn ${showMemberSidebar ? 'active' : ''}`}
-              title="Toggle member list"
-            >
-              👥
-            </button>
-          </div>
-        </div>
-        <div 
-          className={`messages ${voiceChannelId ? 'with-voice' : ''} density-${messageDensity}`}
-          ref={messagesContainerRef}
-          onScroll={handleScroll}
-        >
-          {isLoadingOlderMessages && (
-            <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
-          )}
-          {!hasMoreMessages && appState.messages.length > 0 && (
-            <div className="messages-beginning">You've reached the beginning of this channel</div>
-          )}
-          {!isLoadingOlderMessages && appState.messages.length === 0 && selectedChannelId && (
-            <div className="empty-state">
-              <div className="empty-state-icon">💬</div>
-              <div className="empty-state-title">No messages yet</div>
-              <div className="empty-state-text">Be the first to send a message in this channel!</div>
-            </div>
-          )}
-          {!selectedChannelId && !selectedDmChannel && channels.length === 0 && nodes.length > 0 && (
-            <div className="empty-state">
-              <div className="empty-state-icon">#</div>
-              <div className="empty-state-title">No channels</div>
-              <div className="empty-state-text">Create a channel to start chatting.</div>
-            </div>
-          )}
-          {nodes.length === 0 && !selectedDmChannel && (
-            <div className="empty-state">
-              <div className="empty-state-icon">⚡</div>
-              <div className="empty-state-title">Welcome to Accord</div>
-              <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
-            </div>
-          )}
-          {appState.messages.filter(msg => {
-            // Filter to current channel
-            const currentCh = selectedDmChannel?.id || selectedChannelId;
-            if (currentCh && msg.channel_id && msg.channel_id !== currentCh) return false;
-            // Filter blocked users
-            if (msg.sender_id && blockedUsers.has(msg.sender_id)) return false;
-            return true;
-          }).map((msg, i, filteredMsgs) => {
-            const prevMsg = i > 0 ? filteredMsgs[i - 1] : null;
-            const isGrouped = prevMsg
-              && prevMsg.author === msg.author
-              && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
-              && !msg.reply_to;
-
-            // Date separator
-            const msgDate = new Date(msg.timestamp);
-            const prevDate = prevMsg ? new Date(prevMsg.timestamp) : null;
-            const showDateSep = !prevDate
-              || msgDate.toDateString() !== prevDate.toDateString();
-
-            const formatDateSep = (d: Date) => {
-              const now = new Date();
-              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-              const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-              const diff = today.getTime() - msgDay.getTime();
-              if (diff === 0) return 'Today';
-              if (diff === 86400000) return 'Yesterday';
-              return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-            };
-
-            // Relative timestamp
-            const formatRelativeTime = (ts: number) => {
-              const diff = Date.now() - ts;
-              if (diff < 60000) return 'just now';
-              if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-              if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-              return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            };
-
-            return (
-              <React.Fragment key={msg.id || i}>
-                {showDateSep && (
-                  <div className="date-separator">
-                    <span className="date-separator-text">{formatDateSep(msgDate)}</span>
-                  </div>
-                )}
-                <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped' : ''}`} data-message-id={msg.id}>
-              {/* Reply preview if this message is a reply */}
-              {msg.replied_message && (
-                <div className="reply-preview" onClick={() => scrollToMessage(msg.reply_to!)}>
-                  <div className="reply-bar"></div>
-                  <div className="reply-content">
-                    <span className="reply-author">Replying to {fingerprint(msg.replied_message.sender_public_key_hash)}</span>
-                    <span className="reply-snippet">{msg.replied_message.content || msg.replied_message.encrypted_payload.substring(0, 50) + '...'}</span>
-                  </div>
-                </div>
-              )}
-              {!isGrouped && <div className="message-avatar">
-                {msg.sender_id ? (
-                  <img 
-                    src={`${api.getUserAvatarUrl(msg.sender_id)}`}
-                    alt={(msg.author || "?")[0]}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (msg.author || "?")[0]; }}
-                  />
-                ) : (msg.author || "?")[0]}
-              </div>}
-              {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
-              <div className="message-body">
-                {!isGrouped && (
-                <div className="message-header">
-                  <span className="message-author" style={{ cursor: 'pointer', color: (() => { const am = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author); return am ? getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
-                  onClick={(e) => {
-                    const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
-                    if (authorMember) {
-                      setProfileCardTarget({ userId: authorMember.user_id, x: e.clientX, y: e.clientY, user: authorMember.user, profile: authorMember.profile, roles: memberRolesMap[authorMember.user_id], joinedAt: authorMember.joined_at, roleColor: getMemberRoleColor(authorMember.user_id) });
-                    }
-                  }}
-                  onContextMenu={(e) => {
-                    const authorMember = members.find(m => displayName(m.user) === msg.author || fingerprint(m.public_key_hash) === msg.author);
-                    if (authorMember) {
-                      handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
-                    }
-                  }}>{msg.author}</span>
-                  <span className="message-time">{formatRelativeTime(msg.timestamp)}</span>
-                  {msg.edited_at && (
-                    <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
-                  )}
-                  {msg.isEncrypted && (
-                    <span className="message-encrypted-badge" title={
-                      msg.e2eeType === 'double-ratchet'
-                        ? 'End-to-end encrypted (Double Ratchet)'
-                        : 'Transport encrypted (placeholder — not E2EE)'
-                    }>{msg.e2eeType === 'double-ratchet' ? '🔒' : '🔐'}</span>
-                  )}
-                  {msg.pinned_at && (
-                    <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}>📌</span>
-                  )}
-                  {/* Message Actions - Show on hover for all users */}
-                  {appState.user && (
-                    <div className="message-actions">
-                      <button
-                        onClick={() => handleReply(msg)}
-                        className="message-action-btn"
-                        title="Reply to message"
-                      >
-                        💬
-                      </button>
-                      {msg.author === (appState.user.display_name || fingerprint(appState.user.public_key_hash)) && (
-                        <button
-                          onClick={() => handleStartEdit(msg.id, msg.content)}
-                          className="message-action-btn"
-                          title="Edit message"
-                        >
-                          ✏️
-                        </button>
-                      )}
-                      {(msg.author === (appState.user.display_name || fingerprint(appState.user.public_key_hash)) || canDeleteMessage(msg)) && (
-                        <button
-                          onClick={() => setShowDeleteConfirm(msg.id)}
-                          className="message-action-btn"
-                          title="Delete message"
-                        >
-                          🗑️
-                        </button>
-                      )}
-                      {canDeleteMessage(msg) && (
-                        <button
-                          onClick={() => msg.pinned_at ? handleUnpinMessage(msg.id) : handlePinMessage(msg.id)}
-                          className="message-action-btn"
-                          title={msg.pinned_at ? "Unpin message" : "Pin message"}
-                        >
-                          📌
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                )}
-                {/* Editing Interface */}
-                {editingMessageId === msg.id ? (
-                  <div className="message-edit-container">
-                    <input
-                      type="text"
-                      value={editingContent}
-                      onChange={(e) => setEditingContent(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSaveEdit();
-                        } else if (e.key === 'Escape') {
-                          handleCancelEdit();
-                        }
-                      }}
-                      className="message-edit-input"
-                      placeholder="Edit your message..."
-                      autoFocus
-                    />
-                    <div className="message-edit-actions">
-                      <button onClick={handleSaveEdit} className="edit-save-btn">
-                        Save
-                      </button>
-                      <button onClick={handleCancelEdit} className="edit-cancel-btn">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div 
-                    className="message-content"
-                    dangerouslySetInnerHTML={{ 
-                      __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) 
-                    }}
-                  />
-                )}
-
-                {/* Link Preview */}
-                {msg.content && extractFirstUrl(msg.content) && (
-                  <LinkPreview content={msg.content} token={appState.token || ''} />
-                )}
-
-                {/* Thread reply count */}
-                {msg.reply_count && msg.reply_count > 0 && (
-                  <div className="thread-indicator" onClick={() => {/* Could open thread panel in the future */}}>
-                    <span className="thread-icon">💬</span>
-                    <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
-                  </div>
-                )}
-
-                {/* File Attachments */}
-                {msg.files && msg.files.length > 0 && (
-                  <div className="message-attachments">
-                    {msg.files.map((file) => (
-                      <FileAttachment
-                        key={file.id}
-                        file={file}
-                        token={appState.token || ''}
-                        channelId={msg.channel_id || selectedDmChannel?.id || selectedChannelId || ''}
-                        keyPair={keyPair}
-                        encryptionEnabled={encryptionEnabled}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* Message Reactions */}
-                <div 
-                  className="message-reactions-container"
-                  onMouseEnter={() => setHoveredMessageId(msg.id)}
-                  onMouseLeave={() => setHoveredMessageId(null)}
-                >
-                  {msg.reactions && msg.reactions.length > 0 && (
-                    <div className="message-reactions">
-                      {msg.reactions.map((reaction) => {
-                        const userReacted = appState.user && reaction.users.includes(appState.user.id);
-                        return (
-                          <button
-                            key={reaction.emoji}
-                            className={`reaction ${userReacted ? 'reaction-user-reacted' : ''}`}
-                            onClick={() => handleToggleReaction(msg.id, reaction.emoji)}
-                            title={`${reaction.users.length} reactions`}
-                          >
-                            <span className="reaction-emoji">{reaction.emoji}</span>
-                            <span className="reaction-count">{reaction.count}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {hoveredMessageId === msg.id && appState.user && (
-                    <div className="add-reaction-container quick-react-bar">
-                      {['👍', '❤️', '😂', '🔥', '👀'].map((emoji) => (
-                        <button
-                          key={emoji}
-                          className="quick-react-btn"
-                          onClick={() => handleToggleReaction(msg.id, emoji)}
-                          title={`React with ${emoji}`}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                      <button 
-                        className="add-reaction-btn"
-                        onClick={() => setShowEmojiPicker(showEmojiPicker === msg.id ? null : msg.id)}
-                        title="More reactions"
-                      >
-                        +
-                      </button>
-
-                      {showEmojiPicker === msg.id && (
-                        <div className="emoji-picker">
-                          {COMMON_EMOJIS.map((emoji) => (
-                            <button
-                              key={emoji}
-                              className="emoji-option"
-                              onClick={() => handleAddReaction(msg.id, emoji)}
-                              title={`React with ${emoji}`}
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Delete Confirmation Dialog */}
-                {showDeleteConfirm === msg.id && (
-                  <div className="delete-confirm-overlay">
-                    <div className="delete-confirm-dialog">
-                      <p>Are you sure you want to delete this message?</p>
-                      <div className="delete-confirm-actions">
-                        <button 
-                          onClick={() => handleDeleteMessage(msg.id)}
-                          className="delete-confirm-btn"
-                        >
-                          Delete
-                        </button>
-                        <button 
-                          onClick={() => setShowDeleteConfirm(null)}
-                          className="delete-cancel-btn"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Read receipt indicators */}
-              {selectedChannelId && (() => {
-                const receipts = readReceipts.get(selectedChannelId) || [];
-                const currentUserId = appState.user?.id;
-                const readBy = receipts.filter(
-                  r => r.message_id === msg.id && r.user_id !== currentUserId
-                );
-                if (readBy.length === 0) return null;
-                return (
-                  <div className="read-receipts" style={{ display: 'flex', gap: '2px', justifyContent: 'flex-end', padding: '2px 8px' }}>
-                    {readBy.slice(0, 5).map(r => {
-                      const member = members.find(m => m.user_id === r.user_id);
-                      const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
-                      return (
-                        <span
-                          key={r.user_id}
-                          className="read-receipt-avatar"
-                          title={`Read by ${name}`}
-                          style={{
-                            width: '16px', height: '16px', borderRadius: '50%',
-                            backgroundColor: '#5865F2', color: '#fff', fontSize: '8px',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            lineHeight: 1,
-                          }}
-                        >
-                          {name[0]?.toUpperCase()}
-                        </span>
-                      );
-                    })}
-                    {readBy.length > 5 && (
-                      <span style={{ fontSize: '10px', color: '#8e9297' }}>+{readBy.length - 5}</span>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-              </React.Fragment>
-            );
-          })}
-
-          {/* Scroll to bottom button */}
-          {showScrollToBottom && (
-            <button className="scroll-to-bottom-btn" onClick={scrollToBottom}>
-              ↓ {newMessageCount > 0 && <span className="scroll-to-bottom-count">{newMessageCount}</span>}
-            </button>
-          )}
-          
-        </div>
-        {/* Typing indicator */}
-        {selectedChannelId && formatTypingUsers(selectedChannelId) && (
-          <div className="typing-indicator">
-            <div className="typing-dots-animated">
-              <span></span><span></span><span></span>
-            </div>
-            <span className="typing-text">{formatTypingUsers(selectedChannelId)}</span>
-          </div>
-        )}
-        {/* Staged files preview */}
-        <StagedFilesPreview
-          files={stagedFiles}
-          onRemove={handleRemoveStagedFile}
-          onClear={handleClearStagedFiles}
-        />
-        <div className="message-input-container">
-          {/* Reply preview bar */}
-          {replyingTo && (
-            <div className="reply-input-preview">
-              <div className="reply-input-bar"></div>
-              <div className="reply-input-content">
-                <span className="reply-input-text">
-                  Replying to <strong>{replyingTo.author}</strong>: {replyingTo.content.substring(0, 100)}{replyingTo.content.length > 100 ? '...' : ''}
-                </span>
-                <button className="reply-cancel-btn" onClick={handleCancelReply} title="Cancel reply">×</button>
-              </div>
-            </div>
-          )}
-          {/* File attachment button */}
-          {serverAvailable && appState.activeChannel && (
-            <FileUploadButton
-              channelId={appState.activeChannel}
-              token={appState.token || ''}
-              keyPair={keyPair}
-              encryptionEnabled={encryptionEnabled}
-              onFilesStaged={handleFilesStaged}
-            />
-          )}
-          {messageError && (
-            <div style={{
-              position: 'absolute',
-              top: '-36px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: '#f04747',
-              color: '#fff',
-              padding: '6px 14px',
-              borderRadius: '4px',
-              fontSize: '13px',
-              fontWeight: 500,
-              zIndex: 11,
-              maxWidth: '90%',
-              textAlign: 'center',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}>
-              {messageError}
-            </div>
-          )}
-          {slowModeCooldown > 0 && !messageError && (
-            <div style={{
-              position: 'absolute',
-              top: '-28px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: '#faa61a',
-              color: '#fff',
-              padding: '4px 12px',
-              borderRadius: '4px',
-              fontSize: '12px',
-              fontWeight: 600,
-              zIndex: 10,
-              whiteSpace: 'nowrap',
-            }}>
-              ⏱️ Slow mode: wait {slowModeCooldown}s
-            </div>
-          )}
-          <textarea
-            ref={messageInputRef}
-            className="message-input"
-            placeholder={slowModeCooldown > 0 ? `Slow mode — wait ${slowModeCooldown}s` : `Message ${activeChannel}`}
-            value={message}
-            rows={1}
-            disabled={slowModeCooldown > 0}
-            onChange={(e) => {
-              setMessage(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
-              if (selectedChannelId) {
-                sendTypingIndicator(selectedChannelId);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSendMessage();
-              }
-            }}
-          />
-          <EmojiPickerButton
-            isOpen={showInputEmojiPicker}
-            onToggle={() => setShowInputEmojiPicker(prev => !prev)}
-            onSelect={handleInsertEmoji}
-            onClose={() => setShowInputEmojiPicker(false)}
-          />
-          {/* File list button */}
-          {serverAvailable && appState.activeChannel && (
-            <FileList
-              channelId={appState.activeChannel}
-              token={appState.token || ''}
-              keyPair={keyPair}
-              encryptionEnabled={encryptionEnabled}
-            />
-          )}
-        </div>
-      </FileDropZone>
-      </div>
-
-      {/* Voice Chat Component */}
-      {voiceChannelId && (
-        <Suspense fallback={<LoadingSpinner />}>
-        <VoiceChat
-          ws={ws}
-          currentUserId={localStorage.getItem('accord_user_id')}
-          channelId={voiceChannelId}
-          channelName={voiceChannelName}
-          onLeave={() => {
-            setVoiceChannelId(null);
-            setVoiceChannelName("");
-            setVoiceConnectedAt(null);
-          }}
-        />
-        </Suspense>
-      )}
-
-      {/* Member sidebar */}
-      {showMemberSidebar && <div className="member-sidebar">
-        <div className="member-header">Members — {members.filter(m => m.user).length}</div>
-        {(() => {
-          const currentUserId = localStorage.getItem('accord_user_id');
-          const canKick = selectedNodeId && hasPermission(selectedNodeId, 'KickMembers');
-          
-          const renderMember = (member: NodeMember & { user: User }) => {
-            const isCurrentUser = member.user_id === currentUserId;
-            const presence = getPresenceStatus(member.user_id);
-            return (
-              <div key={member.user?.id || member.user_id} className={`member ${presence === 'offline' ? 'member-offline' : ''}`}
-                onClick={(e) => { setProfileCardTarget({ userId: member.user_id, x: e.clientX, y: e.clientY, user: member.user, profile: member.profile, roles: memberRolesMap[member.user_id], joinedAt: member.joined_at, roleColor: getMemberRoleColor(member.user_id) }); }}
-                onContextMenu={(e) => handleContextMenu(e, member.user_id, member.public_key_hash, displayName(member.user), member.profile?.bio, member.user)}
-              >
-                <div className="member-avatar-wrapper">
-                  <div className="member-avatar">
-                    <img 
-                      src={`${api.getUserAvatarUrl(member.user_id)}`}
-                      alt={displayName(member.user)[0]}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = displayName(member.user)[0]; }}
-                    />
-                  </div>
-                  <span className={`presence-dot presence-${presence}`} title={presence}></span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span className="member-name" style={{ color: getMemberRoleColor(member.user_id) || undefined }}>{displayName(member.user)}</span>
-                    <span className="member-role-badge" title={member.role}>{getRoleBadge(member.role)}</span>
-                  </div>
-                  {member.profile?.custom_status && (
-                    <span className="member-custom-status">{member.profile.custom_status}</span>
-                  )}
-                </div>
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  {!isCurrentUser && (
-                    <button onClick={(e) => { e.stopPropagation(); openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>
-                  )}
-                  {canKick && !isCurrentUser && (
-                    <button onClick={(e) => { e.stopPropagation(); setShowRolePopup({ userId: member.user_id, x: e.clientX, y: e.clientY }); }} className="member-action-btn" title="Manage roles">Roles</button>
-                  )}
-                  {canKick && !isCurrentUser && (
-                    <button onClick={(e) => { e.stopPropagation(); handleKickMember(member.user_id, displayName(member.user)); }} className="member-action-btn danger" title="Kick member">Kick</button>
-                  )}
-                </div>
-              </div>
-            );
-          };
-
-          // Group by hoisted roles
-          const hoistedRoles = nodeRoles.filter(r => r.hoist).sort((a, b) => b.position - a.position);
-          const membersWithUser = sortedMembers.filter(m => m.user);
-          
-          if (hoistedRoles.length === 0) {
-            // No roles — show Online/Offline sections
-            const online = membersWithUser.filter(m => getPresenceStatus(m.user_id) !== 'offline');
-            const offline = membersWithUser.filter(m => getPresenceStatus(m.user_id) === 'offline');
-            return (
-              <>
-                {online.length > 0 && (
-                  <>
-                    <div className="role-section-header">Online — {online.length}</div>
-                    {online.map(m => renderMember(m))}
-                  </>
-                )}
-                {offline.length > 0 && (
-                  <>
-                    <div className="role-section-header" style={{ color: '#72767d' }}>Offline — {offline.length}</div>
-                    {offline.map(m => renderMember(m))}
-                  </>
-                )}
-              </>
-            );
-          }
-          
-          // With hoisted roles: group members by highest hoisted role
-          const assigned = new Set<string>();
-          const sections: { name: string; color?: string | null; members: Array<NodeMember & { user: User }> }[] = [];
-          
-          for (const role of hoistedRoles) {
-            const roleMembers = membersWithUser.filter(m => {
-              if (assigned.has(m.user_id)) return false;
-              const highest = getMemberHighestHoistedRole(m.user_id);
-              return highest?.id === role.id;
-            });
-            roleMembers.forEach(m => assigned.add(m.user_id));
-            sections.push({ name: role.name, color: role.color, members: roleMembers });
-          }
-          
-          // Put all members not assigned to hoisted roles in Online/Offline
-          const unassigned = membersWithUser.filter(m => !assigned.has(m.user_id));
-          const online = unassigned.filter(m => getPresenceStatus(m.user_id) !== 'offline');
-          const offline = unassigned.filter(m => getPresenceStatus(m.user_id) === 'offline');
-          
-          return (
-            <>
-              {sections.filter(s => s.members.length > 0).map(s => (
-                <React.Fragment key={s.name}>
-                  <div className="role-section-header" style={{ color: s.color || undefined }}>{s.name} — {s.members.length}</div>
-                  {s.members.map(m => renderMember(m))}
-                </React.Fragment>
-              ))}
-              {online.length > 0 && (
-                <>
-                  <div className="role-section-header">Online — {online.length}</div>
-                  {online.map(m => renderMember(m))}
-                </>
-              )}
-              {offline.length > 0 && (
-                <>
-                  <div className="role-section-header" style={{ color: '#72767d' }}>Offline — {offline.length}</div>
-                  {offline.map(m => renderMember(m))}
-                </>
-              )}
-              {membersWithUser.length === 0 && members.length === 0 && (
-                <div className="members-empty">
-                  {nodes.length === 0 ? 'Join or create a node to see members' : 'No members loaded'}
-                </div>
-              )}
-            </>
-          );
-        })()}
-      </div>}
-
-      {/* Role Assignment Popup */}
-      {showRolePopup && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1050 }} onClick={() => setShowRolePopup(null)}>
-          <div style={{
-            position: 'absolute',
-            top: Math.min(showRolePopup.y, window.innerHeight - 300),
-            left: Math.min(showRolePopup.x, window.innerWidth - 220),
-            background: '#2f3136',
-            border: '1px solid #40444b',
-            borderRadius: '6px',
-            padding: '8px',
-            minWidth: '200px',
-            maxHeight: '280px',
-            overflowY: 'auto',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: '12px', color: '#b9bbbe', fontWeight: 600, padding: '4px 8px', marginBottom: '4px' }}>ASSIGN ROLES</div>
-            {nodeRoles.length === 0 ? (
-              <div style={{ padding: '8px', color: '#72767d', fontSize: '13px' }}>No roles available</div>
-            ) : nodeRoles.sort((a, b) => b.position - a.position).map(role => {
-              const userHasRole = (memberRolesMap[showRolePopup.userId] || []).some(r => r.id === role.id);
-              return (
-                <label key={role.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', color: '#dcddde' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#40444b')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                  <input type="checkbox" checked={userHasRole} onChange={() => toggleMemberRole(showRolePopup.userId, role.id, userHasRole)} />
-                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: role.color || '#99aab5', flexShrink: 0 }} />
-                  {role.name}
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Error Message */}
-      {error && (
-        <div className="error-toast">
-          <span style={{ flex: 1 }}>{error}</span>
-          <button onClick={() => setError("")} className="error-toast-close">×</button>
-        </div>
-      )}
-
-      {/* Join/Create Node Modal — Join is primary, Create is secondary */}
-      {showCreateNodeModal && !showJoinNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Join a Node</h3>
-            <p>Enter an invite link to join an existing community.</p>
-            <div className="form-group">
-              <label className="form-label">Invite Code or Link</label>
-              <input type="text" placeholder="accord://host/invite/CODE or just the code" value={joinInviteCode} onChange={(e) => setJoinInviteCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && joinInviteCode.trim()) handleJoinNode(); }} className="form-input" />
-            </div>
-            {joinError && <div className="auth-error">{joinError}</div>}
-            <div className="modal-actions">
-              <button onClick={handleJoinNode} disabled={joiningNode || !joinInviteCode.trim()} className="btn btn-primary">{joiningNode ? 'Joining...' : 'Join Node'}</button>
-              <button onClick={() => { setShowCreateNodeModal(false); setJoinInviteCode(""); setJoinError(""); }} className="btn btn-outline">Cancel</button>
-            </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
-              <p style={{ fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>Or create your own community</p>
-              <button onClick={() => setShowJoinNodeModal(true)} className="btn-ghost"><strong>Create a New Node</strong></button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Create Node Modal (secondary) */}
-      {showJoinNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Create a Node</h3>
-            <p>Start a new community and invite others. A #general channel will be created automatically.</p>
-            <div className="form-group">
-              <label className="form-label">Node Name</label>
-              <input type="text" placeholder="My Community" value={newNodeName} onChange={(e) => {
-                const val = e.target.value;
-                setNewNodeName(val);
-                // Detect if user pasted an invite link into the create form
-                if (val.includes('invite/') || val.includes('accord://') || val.match(/^[A-Za-z0-9]{6,}$/)) {
-                  const parsed = parseInviteLink(val);
-                  if (parsed) {
-                    // Switch to join flow with the detected invite
-                    setNewNodeName("");
-                    setJoinInviteCode(val);
-                    setShowJoinNodeModal(false); // Go back to join modal
-                  }
-                }
-              }} onKeyDown={(e) => { if (e.key === 'Enter') handleCreateNode(); }} className="form-input" />
-              {newNodeName && parseInviteLink(newNodeName) && (
-                <p style={{ color: 'var(--accent)', fontSize: '12px', marginTop: '4px' }}>
-                  💡 This looks like an invite link — <button className="btn-ghost" style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { setJoinInviteCode(newNodeName); setNewNodeName(""); setShowJoinNodeModal(false); }}>switch to Join?</button>
-                </p>
-              )}
-            </div>
-            <div className="form-group">
-              <label className="form-label">Description (optional)</label>
-              <input type="text" placeholder="What's this node about?" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="form-input" />
-            </div>
-            <div className="modal-actions">
-              <button onClick={handleCreateNode} disabled={creatingNode || !newNodeName.trim()} className="btn btn-green">{creatingNode ? 'Creating...' : 'Create Node'}</button>
-              <button onClick={() => { setShowJoinNodeModal(false); setNewNodeName(""); setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
-            </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
-              <button onClick={() => setShowJoinNodeModal(false)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Invite Modal */}
-      {showInviteModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Invite Link Generated</h3>
-            <p>Share this link to invite others to your node. The relay address is encoded for privacy.</p>
-            <div className="modal-code-block" style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.85em' }}>{generatedInvite}</div>
-            <div className="modal-actions">
-              <button
-                onClick={() => {
-                  copyToClipboard(generatedInvite).then(() => {
-                    alert('Invite code copied to clipboard!');
-                  });
-                }}
-                className="btn btn-primary" style={{ width: 'auto' }}
-              >
-                Copy
-              </button>
-              <button onClick={() => { setShowInviteModal(false); setGeneratedInvite(""); }} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Channel Confirmation Modal */}
-      {deleteChannelConfirm && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Delete Channel</h3>
-            <p>Are you sure you want to delete <strong>#{deleteChannelConfirm.name}</strong>? This action cannot be undone. All messages will be permanently lost.</p>
-            <div className="modal-actions">
-              <button onClick={() => handleDeleteChannelConfirmed(deleteChannelConfirm.id)} className="btn btn-red">Delete Channel</button>
-              <button onClick={() => setDeleteChannelConfirm(null)} className="btn btn-outline">Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Discord Template Import Modal */}
-      {showTemplateImport && selectedNodeId && (
-        <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '480px' }}>
-            <h3>📥 Import Discord Template</h3>
-            {!templateResult ? (
-              <>
-                <p style={{ color: '#b9bbbe', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
-                <div className="form-group">
-                  <input
-                    type="text"
-                    placeholder="discord.new/CODE or template code"
-                    value={templateInput}
-                    onChange={(e) => setTemplateInput(e.target.value)}
-                    className="form-input"
-                    disabled={templateImporting}
-                  />
-                </div>
-                {templateError && <div style={{ color: '#f04747', fontSize: '13px', marginBottom: '8px' }}>{templateError}</div>}
-                <div className="modal-actions">
-                  <button
-                    className="btn btn-green"
-                    disabled={templateImporting || !templateInput.trim()}
-                    onClick={async () => {
-                      setTemplateError('');
-                      setTemplateImporting(true);
-                      try {
-                        // Parse template code from URL
-                        let code = templateInput.trim();
-                        const m1 = code.match(/discord\.new\/([A-Za-z0-9]+)/);
-                        const m2 = code.match(/discord\.com\/template\/([A-Za-z0-9]+)/);
-                        if (m1) code = m1[1];
-                        else if (m2) code = m2[1];
-                        
-                        const result = await api.importDiscordTemplate(selectedNodeId, code, appState.token || '');
-                        setTemplateResult(result);
-                      } catch (err: any) {
-                        setTemplateError(err.message || 'Import failed');
-                      } finally {
-                        setTemplateImporting(false);
-                      }
-                    }}
-                  >
-                    {templateImporting ? '⏳ Importing...' : 'Import'}
-                  </button>
-                  <button className="btn btn-outline" onClick={() => { setShowTemplateImport(false); setTemplateInput(''); setTemplateError(''); setTemplateResult(null); }}>Cancel</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ color: '#43b581', marginBottom: '12px', fontSize: '14px' }}>✅ Import complete!</div>
-                <div style={{ color: '#dcddde', fontSize: '13px', lineHeight: '1.6' }}>
-                  {templateResult.roles_created !== undefined && <div>Roles created: <strong>{templateResult.roles_created}</strong></div>}
-                  {templateResult.channels_created !== undefined && <div>Channels created: <strong>{templateResult.channels_created}</strong></div>}
-                  {templateResult.categories_created !== undefined && <div>Categories created: <strong>{templateResult.categories_created}</strong></div>}
-                </div>
-                <div className="modal-actions" style={{ marginTop: '16px' }}>
-                  <button className="btn btn-green" onClick={() => {
-                    setShowTemplateImport(false);
-                    setTemplateInput('');
-                    setTemplateResult(null);
-                    setTemplateError('');
-                    if (selectedNodeId) {
-                      loadChannels(selectedNodeId);
-                      loadRoles(selectedNodeId);
-                    }
-                  }}>Done</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Node Settings Modal */}
-      {showNodeSettings && selectedNodeId && (() => {
-        const currentNode = nodes.find(n => n.id === selectedNodeId);
-        if (!currentNode) return null;
-        return (
-          <Suspense fallback={<LoadingSpinner />}>
-          <NodeSettings
-            isOpen={showNodeSettings}
-            onClose={() => setShowNodeSettings(false)}
-            node={currentNode}
-            token={appState.token || ''}
-            userRole={userRoles[selectedNodeId] || 'member'}
-            onNodeUpdated={(updatedNode) => {
-              setNodes(prev => prev.map(n => n.id === updatedNode.id ? updatedNode : n));
-            }}
-            onLeaveNode={() => {
-              setSelectedNodeId(null);
-              setChannels([]);
-              setMembers([]);
-              loadNodes();
-            }}
-          />
-          </Suspense>
-        );
-      })()}
-
-      {/* Search Overlay */}
-      <SearchOverlay
-        isVisible={showSearchOverlay}
-        onClose={() => setShowSearchOverlay(false)}
-        nodeId={selectedNodeId}
-        channels={channels}
-        token={appState.token || null}
-        onNavigateToMessage={handleNavigateToMessage}
-        keyPair={keyPair}
-        encryptionEnabled={encryptionEnabled}
-      />
-
-      {/* Notification Settings Modal */}
-      <Suspense fallback={<LoadingSpinner />}>
-      <NotificationSettings
-        isOpen={showNotificationSettings}
-        onClose={() => setShowNotificationSettings(false)}
-        preferences={notificationPreferences}
-        onPreferencesChange={handleNotificationPreferencesChange}
-      />
-      </Suspense>
-
-      {/* Settings Modal */}
-      <Suspense fallback={<LoadingSpinner />}>
-      <Settings
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-        onShowShortcuts={() => setShowShortcutsHelp(true)}
-        currentUser={appState.user}
-        knownHashes={knownHashes}
-        serverInfo={{
-          version: serverHelloVersion,
-          buildHash: serverBuildHash,
-          connectedSince,
-          relayAddress: api.getBaseUrl(),
-          isConnected: appState.isConnected,
-        }}
-        onUserUpdate={(updates) => {
-          // Update user state if needed
-          if (appState.user) {
-            setAppState(prev => ({
-              ...prev,
-              user: {
-                ...prev.user!,
-                ...updates
-              }
-            }));
-          }
-        }}
-        blockedUsers={blockedUsers}
-        onUnblockUser={handleUnblockUser}
-        onRelayChange={async (newUrl) => {
-          // Disconnect existing WS and reconnect to new relay
-          if (ws) {
-            ws.disconnect();
-          }
-          setServerUrl(newUrl);
-          api.setBaseUrl(newUrl);
-          const token = appState.token || await getToken();
-          if (token) {
-            const wsBaseUrl = newUrl.replace(/^http/, 'ws');
-            const socket = new AccordWebSocket(token, wsBaseUrl);
-            setupWebSocketHandlers(socket);
-            setWs(socket);
-            socket.connect();
-          }
-        }}
-      />
-      </Suspense>
-
-      {/* Connection Info Modal */}
-      {showConnectionInfo && (
-        <div className="settings-overlay" onClick={() => setShowConnectionInfo(false)}>
-          <div
-            className="connection-info-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="connection-info-header">
-              <h3>Connection Info</h3>
-              <button className="settings-close" onClick={() => setShowConnectionInfo(false)}>×</button>
-            </div>
-            <div className="connection-info-body">
-              <div className="connection-info-row">
-                <span className="connection-info-label">Status</span>
-                <span className="connection-info-value">
-                  {appState.isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-                </span>
-              </div>
-              {serverHelloVersion && (
-                <div className="connection-info-row">
-                  <span className="connection-info-label">Server Version</span>
-                  <span className="connection-info-value">{serverHelloVersion}</span>
-                </div>
-              )}
-              {serverBuildHash && (
-                <div className="connection-info-row">
-                  <span className="connection-info-label">Build Hash</span>
-                  <span
-                    className="connection-info-value copyable"
-                    title="Click to copy"
-                    onClick={() => { copyToClipboard(serverBuildHash); }}
-                  >
-                    <code>{serverBuildHash}</code>
-                    <span className="copy-hint">📋</span>
-                  </span>
-                </div>
-              )}
-              {connectedSince && (
-                <div className="connection-info-row">
-                  <span className="connection-info-label">Connected Since</span>
-                  <span className="connection-info-value">
-                    {new Date(connectedSince).toLocaleString()}
-                  </span>
-                </div>
-              )}
-              <div className="connection-info-row">
-                <span className="connection-info-label">Relay Address</span>
-                <span className="connection-info-value">
-                  <code>{api.getBaseUrl()}</code>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Pinned Messages Panel */}
-      {showPinnedPanel && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            right: 0,
-            width: '400px',
-            height: '100vh',
-            background: 'var(--background)',
-            borderLeft: '1px solid var(--border)',
-            zIndex: 1000,
-            display: 'flex',
-            flexDirection: 'column',
-            color: 'var(--text)',
-          }}
-        >
-          {/* Panel Header */}
-          <div
-            style={{
-              padding: '16px',
-              borderBottom: '1px solid var(--border)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>
-              📌 Pinned Messages
-            </h3>
-            <button
-              onClick={() => setShowPinnedPanel(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: '18px',
-                cursor: 'pointer',
-                color: 'var(--text)',
-                padding: '4px',
-                borderRadius: '4px',
-              }}
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Pinned Messages List */}
-          <div
-            style={{
-              flex: 1,
-              overflowY: 'auto',
-              padding: '16px',
-            }}
-          >
-            {pinnedMessages.length === 0 ? (
-              <div
-                style={{
-                  textAlign: 'center',
-                  color: 'var(--text-muted)',
-                  marginTop: '50px',
-                }}
-              >
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📌</div>
-                <p>No pinned messages in this channel yet.</p>
-                <p style={{ fontSize: '14px' }}>
-                  Pin messages to keep important information easily accessible.
-                </p>
-              </div>
-            ) : (
-              <div>
-                {pinnedMessages.map((msg, i) => (
-                  <div
-                    key={msg.id || i}
-                    style={{
-                      marginBottom: '16px',
-                      padding: '12px',
-                      background: 'var(--background-modifier-accent)',
-                      borderRadius: '8px',
-                      border: '1px solid var(--border)',
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        marginBottom: '8px',
-                        fontSize: '14px',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '50%',
-                          background: 'var(--primary)',
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          marginRight: '8px',
-                        }}
-                      >
-                        {(msg.author || "?")[0]}
-                      </div>
-                      <span style={{ fontWeight: 600, marginRight: '8px' }}>
-                        {msg.author}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                        {new Date(msg.timestamp).toLocaleDateString()} at {msg.time}
-                      </span>
-                    </div>
-                    <div
-                      className="message-content"
-                      style={{
-                        marginLeft: '32px',
-                        lineHeight: '1.4',
-                      }}
-                      dangerouslySetInnerHTML={{
-                        __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername),
-                      }}
-                    />
-                    {msg.content && extractFirstUrl(msg.content) && (
-                      <div style={{ marginLeft: '32px' }}>
-                        <LinkPreview content={msg.content} token={appState.token || ''} />
-                      </div>
-                    )}
-                    <div
-                      style={{
-                        marginLeft: '32px',
-                        marginTop: '8px',
-                        fontSize: '12px',
-                        color: 'var(--text-muted)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                    >
-                      📌 Pinned {new Date(msg.pinned_at!).toLocaleDateString()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* DM Channel Creation Modal */}
-      {showDmChannelCreate && (
-        <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '380px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0 }}>Start a Direct Message</h3>
-              <button onClick={() => setShowDmChannelCreate(false)} className="error-toast-close" style={{ color: 'var(--text-muted)' }}>×</button>
-            </div>
-            <p>Select a user to start a direct message:</p>
-            <div style={{ maxHeight: '300px', overflow: 'auto' }}>
-              {members
-                .filter(member => member.user_id !== localStorage.getItem('accord_user_id'))
-                .map((member) => (
-                  <div
-                    key={member.user_id}
-                    className="member"
-                    onClick={() => { openDmWithUser(member.user); setShowDmChannelCreate(false); }}
-                  >
-                    <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '12px' }}>
-                      {displayName(member.user)[0].toUpperCase()}
-                    </div>
-                    <div>
-                      <div style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500' }}>{displayName(member.user)}</div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{getRoleBadge(member.role)} {member.role}</div>
-                    </div>
-                  </div>
-                ))}
-              {members.filter(member => member.user_id !== localStorage.getItem('accord_user_id')).length === 0 && (
-                <div className="members-empty">No other members available</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Display Name Prompt Modal */}
-      {showDisplayNamePrompt && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Set Your Display Name</h3>
-            <p>Choose a name that others will see instead of your fingerprint.</p>
-            <div className="form-group">
-              <label className="form-label">Display Name</label>
-              <input
-                type="text"
-                placeholder="Enter a display name..."
-                value={displayNameInput}
-                onChange={(e) => setDisplayNameInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDisplayName(); }}
-                className="form-input"
-                autoFocus
-                maxLength={32}
-              />
-            </div>
-            <div className="modal-actions">
-              <button
-                onClick={handleSaveDisplayName}
-                disabled={displayNameSaving || !displayNameInput.trim()}
-                className="btn btn-green"
-                style={{ width: 'auto' }}
-              >
-                {displayNameSaving ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                onClick={() => setShowDisplayNamePrompt(false)}
-                className="btn btn-outline"
-                style={{ width: 'auto' }}
-              >
-                Skip
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Profile Card Popup */}
-      {profileCardTarget && (
-        <ProfileCard
-          userId={profileCardTarget.userId}
-          anchorX={profileCardTarget.x}
-          anchorY={profileCardTarget.y}
-          currentUserId={localStorage.getItem('accord_user_id') || ''}
-          token={appState.token || ''}
-          nodeId={selectedNodeId || undefined}
-          profile={profileCardTarget.profile}
-          user={profileCardTarget.user}
-          roles={profileCardTarget.roles}
-          joinedAt={profileCardTarget.joinedAt}
-          roleColor={profileCardTarget.roleColor}
-          onClose={() => setProfileCardTarget(null)}
-          onSendDm={(user) => { openDmWithUser(user); setProfileCardTarget(null); }}
-          onBlock={(uid, name) => { setShowBlockConfirm({ userId: uid, displayName: name }); setProfileCardTarget(null); }}
-          onEditProfile={() => { setProfileCardTarget(null); setShowSettings(true); }}
-        />
-      )}
-
-      {/* Context Menu */}
-      {contextMenu && (
-        <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <div className="context-menu-item context-menu-profile-header">
-            <div style={{ fontWeight: 600, fontSize: '14px' }}>{contextMenu.displayName}</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{fingerprint(contextMenu.publicKeyHash)}</div>
-            {contextMenu.bio && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{contextMenu.bio}</div>}
-          </div>
-          <div className="context-menu-separator"></div>
-          <div className="context-menu-item" onClick={() => {
-            const member = members.find(m => m.user_id === contextMenu.userId);
-            setProfileCardTarget({
-              userId: contextMenu.userId,
-              x: contextMenu.x,
-              y: contextMenu.y,
-              user: contextMenu.user,
-              profile: member?.profile,
-              roles: memberRolesMap[contextMenu.userId],
-              joinedAt: member?.joined_at,
-              roleColor: getMemberRoleColor(contextMenu.userId),
-            });
-            setContextMenu(null);
-          }}>👤 View Profile</div>
-          {contextMenu.user && contextMenu.userId !== localStorage.getItem('accord_user_id') && (
-            <div className="context-menu-item" onClick={() => {
-              if (contextMenu.user) openDmWithUser(contextMenu.user);
-              setContextMenu(null);
-            }}>💬 Send DM</div>
-          )}
-          <div className="context-menu-separator"></div>
-          <div className="context-menu-item" onClick={() => {
-            copyToClipboard(contextMenu.publicKeyHash);
-            setContextMenu(null);
-          }}>📋 Copy Public Key Hash</div>
-          {contextMenu.userId !== localStorage.getItem('accord_user_id') && (
-            <>
-              <div className="context-menu-separator"></div>
-              {blockedUsers.has(contextMenu.userId) ? (
-                <div className="context-menu-item" onClick={() => {
-                  handleUnblockUser(contextMenu.userId);
-                  setContextMenu(null);
-                }}>✅ Unblock User</div>
-              ) : (
-                <div className="context-menu-item context-menu-item-danger" onClick={() => {
-                  setShowBlockConfirm({ userId: contextMenu.userId, displayName: contextMenu.displayName });
-                  setContextMenu(null);
-                }}>🚫 Block User</div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Block Confirmation Dialog */}
-      {showBlockConfirm && (
-        <div className="modal-overlay" onClick={() => setShowBlockConfirm(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-            <h3>🚫 Block User</h3>
-            <p style={{ color: 'var(--text-secondary)', margin: '12px 0' }}>
-              Are you sure you want to block <strong>{showBlockConfirm.displayName}</strong>?
-            </p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '8px 0' }}>
-              They won't be able to send you direct messages. Their messages in channels will be hidden for you.
-            </p>
-            <div className="modal-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowBlockConfirm(null)} className="btn btn-outline" style={{ width: 'auto' }}>Cancel</button>
-              <button onClick={() => handleBlockUser(showBlockConfirm.userId)} className="btn" style={{ width: 'auto', background: 'var(--red, #ed4245)', color: '#fff' }}>Block</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Keyboard Shortcuts Help Modal */}
-      {showShortcutsHelp && (
-        <div className="modal-overlay" onClick={() => setShowShortcutsHelp(false)}>
-          <div className="modal-card shortcuts-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>⌨️ Keyboard Shortcuts</h3>
-            <div className="shortcuts-list">
-              {SHORTCUTS.map((s, i) => (
-                <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>
-              ))}
-            </div>
-            <div className="modal-actions" style={{ marginTop: '16px' }}>
-              <button onClick={() => setShowShortcutsHelp(false)} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </AppContext.Provider>
   );
 }
 
