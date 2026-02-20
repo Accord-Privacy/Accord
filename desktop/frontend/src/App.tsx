@@ -717,6 +717,7 @@ function App() {
       // Handle incoming channel messages
       let content = data.encrypted_data;
       let isEncrypted = false;
+      let e2eeType: 'double-ratchet' | 'symmetric' | 'none' = 'none';
 
       // Check if this is a DM message
       const isIncomingDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
@@ -726,6 +727,7 @@ function App() {
         try {
           content = e2eeManagerRef.current.decrypt(data.from, data.encrypted_data);
           isEncrypted = true;
+          e2eeType = 'double-ratchet';
         } catch (error) {
           console.warn('E2EE decrypt failed, trying symmetric fallback:', error);
           // Fallback to symmetric
@@ -734,6 +736,7 @@ function App() {
               const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
               content = await decryptMessage(channelKey, data.encrypted_data);
               isEncrypted = true;
+              e2eeType = 'symmetric';
             } catch (e2) {
               console.warn('Symmetric decrypt also failed:', e2);
             }
@@ -745,6 +748,7 @@ function App() {
           const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
           content = await decryptMessage(channelKey, data.encrypted_data);
           isEncrypted = true;
+          e2eeType = 'symmetric';
         } catch (error) {
           console.warn('Failed to decrypt message, showing encrypted data:', error);
         }
@@ -764,6 +768,7 @@ function App() {
         timestamp: data.timestamp * 1000,
         channel_id: data.channel_id,
         isEncrypted: isEncrypted,
+        e2eeType: e2eeType,
         reply_to: data.reply_to,
         replied_message: data.replied_message ? {
           id: data.replied_message.id,
@@ -1295,6 +1300,7 @@ function App() {
       ...msg,
       content,
       isEncrypted,
+      e2eeType: isEncrypted ? 'symmetric' as const : 'none' as const,
       author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '') || 'Unknown',
       time: new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timestamp: ts,
@@ -2354,6 +2360,7 @@ function App() {
       try {
         let messageToSend = message;
         let isEncrypted = false;
+        let e2eeType: 'double-ratchet' | 'symmetric' | 'none' = 'none';
 
         // Encrypt: use E2EE (Double Ratchet) for DMs, symmetric for channels
         const isDmSend = !!selectedDmChannel;
@@ -2364,6 +2371,7 @@ function App() {
             await ensureE2EESession(recipientId, appState.token);
             messageToSend = e2eeManagerRef.current.encrypt(recipientId, message);
             isEncrypted = true;
+            e2eeType = 'double-ratchet';
           } catch (error) {
             console.warn('E2EE encrypt failed, falling back to symmetric:', error);
             // Fallback to symmetric encryption
@@ -2372,6 +2380,7 @@ function App() {
                 const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
                 messageToSend = await encryptMessage(channelKey, message);
                 isEncrypted = true;
+                e2eeType = 'symmetric';
               } catch (e2) {
                 console.warn('Symmetric encrypt also failed, sending plaintext:', e2);
               }
@@ -2383,6 +2392,7 @@ function App() {
             const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
             messageToSend = await encryptMessage(channelKey, message);
             isEncrypted = true;
+            e2eeType = 'symmetric';
           } catch (error) {
             console.warn('Failed to encrypt message, sending plaintext:', error);
           }
@@ -2401,6 +2411,7 @@ function App() {
           channel_id: channelToUse,
           sender_id: localStorage.getItem('accord_user_id') || undefined,
           isEncrypted: isEncrypted,
+          e2eeType: e2eeType,
           reply_to: replyingTo?.id,
           replied_message: replyingTo ? {
             id: replyingTo.id,
@@ -4023,7 +4034,11 @@ function App() {
                     <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                   )}
                   {msg.isEncrypted && (
-                    <span className="message-encrypted-badge" title="End-to-end encrypted">🔒</span>
+                    <span className="message-encrypted-badge" title={
+                      msg.e2eeType === 'double-ratchet'
+                        ? 'End-to-end encrypted (Double Ratchet)'
+                        : 'Transport encrypted (placeholder — not E2EE)'
+                    }>{msg.e2eeType === 'double-ratchet' ? '🔒' : '🔐'}</span>
                   )}
                   {msg.pinned_at && (
                     <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}>📌</span>

@@ -224,6 +224,7 @@ export interface Message {
   pinned_at?: number;
   pinned_by?: string;
   isEncrypted?: boolean;
+  e2eeType?: 'double-ratchet' | 'symmetric' | 'none';
   reactions?: MessageReaction[];
   reply_to?: string;
   replied_message?: RepliedMessage;

@@ -1,5 +1,15 @@
 //! HTTP and WebSocket handlers for the Accord relay server
 
+/// Sanitize a display name for safe relay (strip HTML-sensitive chars, limit length)
+fn sanitize_display_name(name: &str) -> String {
+    let stripped: String = name
+        .chars()
+        .filter(|c| *c != '<' && *c != '>' && *c != '&')
+        .take(50)
+        .collect();
+    stripped.trim().to_string()
+}
+
 use crate::models::{
     AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse,
     CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
@@ -155,6 +165,17 @@ pub async fn register_handler(
     }
 
     let display_name = request.display_name.clone();
+    if let Some(ref name) = display_name {
+        crate::validation::validate_display_name(name.trim()).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 400,
+                }),
+            )
+        })?;
+    }
     match state
         .register_user(request.public_key, request.password)
         .await
@@ -304,6 +325,16 @@ pub async fn create_node_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
+    crate::validation::validate_node_name(&request.name).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e,
+                code: 400,
+            }),
+        )
+    })?;
+
     match state
         .create_node(request.name, user_id, request.description)
         .await
@@ -376,6 +407,16 @@ pub async fn create_channel_handler(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("general");
+
+    crate::validation::validate_channel_name(name).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e,
+                code: 400,
+            }),
+        )
+    })?;
 
     match state.db.create_channel(name, node_id, user_id).await {
         Ok(channel) => Ok(Json(serde_json::json!({
@@ -2186,17 +2227,30 @@ pub async fn update_user_profile_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
-    // Validate bio length if provided
-    if let Some(ref bio) = request.bio {
-        if bio.len() > 500 {
-            return Err((
+    // Validate display name if provided
+    if let Some(ref name) = request.display_name {
+        crate::validation::validate_display_name(name.trim()).map_err(|e| {
+            (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
-                    error: "Bio cannot exceed 500 characters".into(),
+                    error: e,
                     code: 400,
                 }),
-            ));
-        }
+            )
+        })?;
+    }
+
+    // Validate bio length if provided
+    if let Some(ref bio) = request.bio {
+        crate::validation::validate_bio(bio).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 400,
+                }),
+            )
+        })?;
     }
 
     // Validate status if provided
@@ -3708,7 +3762,10 @@ async fn handle_ws_message(
             to_user: _,
             encrypted_data: _,
         } => {
-            return Err("DirectMessage is deprecated. Use DM channels with ChannelMessage instead.".to_string());
+            return Err(
+                "DirectMessage is deprecated. Use DM channels with ChannelMessage instead."
+                    .to_string(),
+            );
         }
 
         WsMessageType::ChannelMessage {
@@ -3865,7 +3922,7 @@ async fn handle_ws_message(
                     if name.is_empty() {
                         None
                     } else {
-                        Some(name)
+                        Some(sanitize_display_name(&name))
                     }
                 });
 
@@ -7228,8 +7285,14 @@ pub async fn create_role_handler(
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<CreateRoleRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id =
-        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_ROLES,
+    )
+    .await?;
 
     let position = state.db.next_role_position(node_id).await.map_err(|e| {
         (
@@ -7275,8 +7338,14 @@ pub async fn update_role_handler(
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<UpdateRoleRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id =
-        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_ROLES,
+    )
+    .await?;
 
     // Can't rename @everyone
     let role = state.db.get_role(role_id).await.map_err(|e| {
@@ -7349,8 +7418,14 @@ pub async fn delete_role_handler(
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id =
-        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_ROLES,
+    )
+    .await?;
 
     // Prevent deleting @everyone (position 0)
     let role = state.db.get_role(role_id).await.map_err(|e| {
@@ -7402,8 +7477,14 @@ pub async fn reorder_roles_handler(
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<ReorderRolesRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id =
-        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_ROLES,
+    )
+    .await?;
 
     let entries: Vec<(Uuid, i32)> = request.roles.iter().map(|e| (e.id, e.position)).collect();
     state.db.reorder_roles(&entries).await.map_err(|e| {
@@ -7452,8 +7533,14 @@ pub async fn assign_member_role_handler(
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id =
-        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_ROLES,
+    )
+    .await?;
 
     // Verify the role belongs to this node
     let role = state.db.get_role(role_id).await.map_err(|e| {
@@ -7524,8 +7611,14 @@ pub async fn remove_member_role_handler(
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id =
-        require_node_permission(&state, &headers, &params, node_id, permission_bits::MANAGE_ROLES).await?;
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_ROLES,
+    )
+    .await?;
 
     state
         .db
