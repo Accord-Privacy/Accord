@@ -17,9 +17,6 @@
 
 ---
 
-<!-- TODO: Add screenshot of the desktop app here -->
-<!-- ![Accord Screenshot](docs/assets/screenshot.png) -->
-
 ## What is Accord?
 
 Accord fills the gap between **Discord** (great features, no privacy) and **Signal** (great privacy, no community features). It's an open-source, end-to-end encrypted platform where the relay server **never** has access to your messages, voice, or files.
@@ -29,49 +26,67 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 ## ✨ Features
 
 ### 🔐 End-to-End Encryption
-- **Double Ratchet + X3DH** key agreement (Signal protocol foundations)
-- **AES-256-GCM** for all messages and files
+- **Double Ratchet + X3DH** for DMs (Signal protocol foundations)
+- **AES-256-GCM** channel encryption for all group messages and files
 - **Forward secrecy** — keys rotate per message
 - **SRTP voice encryption** with periodic key rotation
-
-### 🏘️ Nodes (Community Spaces)
-- Discord-style UI: **categories, channels, roles with colors**
-- **50+ permission bits** with category → channel cascade
-- **Discord template import** — paste a discord.new link to scaffold your Node
-- Node icons, user avatars, custom status
-
-### 🔑 Zero-Knowledge Relay
-- **Keypair-only registration** — no email, no phone, no PII
-- **Per-Node encrypted profiles** — different display name/avatar per Node
-- Relay stores only encrypted blobs and routing metadata
-
-### 📱 Native Mobile Apps
-- **iOS** (SwiftUI) and **Android** (Jetpack Compose) — fully native
-- Real **WebSocket + REST** networking
-- E2EE via **native FFI/JNI** to the Rust core (AES-256-GCM channels, Double Ratchet DMs)
-- **WebRTC voice** with relay-routed default
-- **Push notifications** — FCM, UnifiedPush, and APNs with encrypted payloads
-- **3 privacy levels** for notifications (full, sender-only, minimal)
+- **Encrypted file sharing** — relay stores only opaque blobs
+- **Client-side encrypted search** — messages are decrypted locally before indexing
 
 ### 🎙️ Voice Channels
-- **P2P mesh** for small groups (≤4), **relay fallback** for larger ones
+- **WebRTC** with relay-routed default for NAT traversal
+- **P2P mesh** for small groups (≤4), relay fallback for larger ones
 - SRTP encryption on all voice traffic
 - Mute/deafen controls, speaking indicators, Opus codec
+- Jitter buffer for smooth audio
 
-### 🪪 Identity Portability
+### 🏘️ Nodes (Community Spaces)
+- Discord-style UI: categories, channels, roles with colors
+- **50+ permission bits** with category → channel cascade
+- **Invite links** with configurable max uses and expiration
+- **Discord template import** — paste a discord.new link to scaffold your Node
+- **Channel drag-and-drop reordering** (and role reordering)
+- Node icons, user avatars
+
+### 💬 Messaging
+- **Message reactions** (add/remove with real-time broadcast)
+- **Message pinning** and unpinning
+- **Threads / replies** — reply to specific messages with thread view
+- **Rich link previews** — Open Graph metadata fetched server-side
+- **Custom emoji** — upload, list, and manage per-Node emoji
+- **User blocking** — blocks enforced server-side on DMs
+
+### 🤖 Bot API v2
+- **Airgapped command model** — bots respond to commands without persistent connections
+- **E2EE bot tokens** (HKDF-derived v2 tokens)
+- **Slash commands** with scoped permissions
+- **Rich embeds** and interactive embedded elements
+- **Webhook support** for external integrations
+- **Bot SDK** (`bot-sdk/`) with examples
+
+### 🪪 Identity & Profiles
+- **Keypair-only registration** — no email, no phone, no PII
 - **BIP39 mnemonic** — your identity is a 12-word seed phrase
+- **Per-Node encrypted profiles** — different display name/avatar per Node
+- **Custom status** per user
 - **Export/import** for full account backup
 - **QR code sync** between devices
 
-### 🤖 Bot API
-- Scoped access with fine-grained permissions
-- Webhook support for integrations
+### 🛡️ Server Security
+- **TLS with auto-generated certs** — self-signed TLS by default, bring your own cert supported
+- **CORS configuration** — configurable allowed origins
+- **Batch API endpoints** — efficient member and channel queries
+- **Admin dashboard** — token-gated stats, user management, and server overview
+- **Rate limiting** and input validation
+- **Auto-mod** with configurable word filters
 
 ### 📦 More
-- **File sharing** with E2E encrypted uploads
 - **Themes** and customizable UI
 - **Build hash verification** — clients display trust indicators
 - **Reproducible builds** — verify you're running unmodified code
+- **Audit logging** for administrative actions
+- **Push notifications** — FCM, UnifiedPush, and APNs with encrypted payloads
+- **Landing page** at [accord.chat](https://accord.chat) ([`website/`](website/))
 
 ---
 
@@ -102,11 +117,29 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 | [`core/`](core/) | Cryptography, protocol, channels, voice, bots, invites |
 | [`server/`](server/) | WebSocket relay server (zero-knowledge routing) |
 | [`desktop/`](desktop/) | Tauri desktop app (Rust + React/TypeScript) |
+| [`bot-sdk/`](bot-sdk/) | Bot SDK with examples (echo bot, moderation bot) |
 | [`accord-cli/`](accord-cli/) | Command-line client |
 | [`mobile/ios/`](mobile/ios/) | iOS app (SwiftUI + Rust FFI) |
 | [`mobile/android/`](mobile/android/) | Android app (Jetpack Compose + Rust JNI) |
 | [`core-minimal/`](core-minimal/) | Lightweight core for resource-constrained targets |
 | [`standalone-demo/`](standalone-demo/) | Self-contained demo |
+
+---
+
+## Security Model
+
+Accord's security is built on a zero-knowledge architecture:
+
+1. **Registration requires only a keypair** — no PII ever touches the relay
+2. **All messages and files are E2E encrypted** before leaving the client
+3. **DMs use the Double Ratchet** (X3DH key agreement, per-message forward secrecy)
+4. **Channel messages use AES-256-GCM** with shared channel keys
+5. **Voice uses SRTP** with periodic key rotation
+6. **The relay stores only encrypted blobs** — it cannot read messages, files, or voice
+7. **Per-Node profiles** ensure the relay can't correlate your identity across communities
+8. **Push notification payloads are encrypted** with 3 privacy levels (full, sender-only, minimal)
+
+For full details, see **[SECURITY.md](SECURITY.md)** and **[docs/metadata-privacy.md](docs/metadata-privacy.md)**.
 
 ---
 
@@ -143,12 +176,7 @@ cargo build --release -p accord-desktop
 cargo test
 ```
 
-### Mobile
-
-- **iOS** — Xcode 15+, open `mobile/ios/Accord.xcodeproj`. Requires Rust cross-compilation targets (`aarch64-apple-ios`).
-- **Android** — Android Studio + NDK. Open `mobile/android/`. Requires Rust targets (`aarch64-linux-android`, `armv7-linux-androideabi`).
-
-See **[QUICKSTART.md](QUICKSTART.md)** for a more detailed walkthrough.
+The server starts with auto-generated TLS by default. Use `--no-tls` for development or `--tls-cert`/`--tls-key` to provide your own certificates.
 
 ---
 
@@ -156,13 +184,26 @@ See **[QUICKSTART.md](QUICKSTART.md)** for a more detailed walkthrough.
 
 Accord is designed to be self-hosted. A **$5/month VPS** or a spare machine on your LAN is all you need.
 
-1. Build `accord-server` (see above) or use Docker
+1. Build `accord-server` (see above) or use Docker (`docker-compose.yml` included)
 2. Open port **8080** (WebSocket)
 3. Point clients at your relay's address
 
 The relay is lightweight — it never decrypts anything, so resource usage stays low.
 
 📖 **[Full self-hosting guide →](docs/SELF-HOSTING.md)**
+
+---
+
+## Mobile Apps
+
+Native mobile apps for **iOS** and **Android** are under active development:
+
+- **iOS** — SwiftUI app with Rust FFI for E2EE (`mobile/ios/`)
+- **Android** — Jetpack Compose app with Rust JNI for E2EE (`mobile/android/`)
+
+Both apps have full networking (WebSocket + REST), E2EE (channel encryption + Double Ratchet DMs), WebRTC voice, and push notification support implemented. They are functional but not yet production-released.
+
+See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
 ---
 
