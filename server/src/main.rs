@@ -725,31 +725,24 @@ async fn main() -> Result<()> {
             "/push/preferences",
             axum::routing::put(update_push_preferences_handler),
         )
-        // Bot API endpoints
-        .route("/bots", post(bot_api::register_bot_handler))
-        .route("/bots/:id", get(bot_api::get_bot_handler))
+        // Bot API v2 endpoints (airgapped command architecture)
         .route(
-            "/bots/:id",
-            axum::routing::patch(bot_api::update_bot_handler),
-        )
-        .route("/bots/:id", delete(bot_api::delete_bot_handler))
-        .route(
-            "/bots/:id/regenerate-token",
-            post(bot_api::regenerate_bot_token_handler),
-        )
-        .route("/bots/invite", post(bot_api::invite_bot_to_channel_handler))
-        .route(
-            "/bots/:bot_id/channels/:channel_id",
-            delete(bot_api::remove_bot_from_channel_handler),
+            "/api/nodes/:node_id/bots",
+            get(bot_api::list_bots_handler).post(bot_api::install_bot_handler),
         )
         .route(
-            "/bot/channels/:channel_id/messages",
-            post(bot_api::bot_send_message_handler),
+            "/api/nodes/:node_id/bots/:bot_id",
+            delete(bot_api::uninstall_bot_handler),
         )
         .route(
-            "/channels/:id/bots",
-            get(bot_api::list_channel_bots_handler),
+            "/api/nodes/:node_id/bots/:bot_id/commands",
+            get(bot_api::get_bot_commands_handler),
         )
+        .route(
+            "/api/nodes/:node_id/bots/:bot_id/invoke",
+            post(bot_api::invoke_command_handler),
+        )
+        .route("/api/bots/respond", post(bot_api::bot_respond_handler))
         // Friend system endpoints
         .route("/friends/request", post(send_friend_request_handler))
         .route("/friends/accept", post(accept_friend_request_handler))

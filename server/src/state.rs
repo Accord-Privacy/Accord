@@ -1516,71 +1516,190 @@ impl AppState {
         now() - self.start_time
     }
 
-    // ── Bot operations ──
-    // NOTE: These are in-memory stubs. Production would use the database.
-    // For now, bot state lives only in memory for the initial API framework.
+    // ── Bot API v2 operations ──
 
-    pub async fn register_bot(&self, _bot: crate::bot_api::Bot) -> Result<(), String> {
-        // TODO: Persist to database
+    #[allow(clippy::too_many_arguments)]
+    pub async fn install_bot(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        name: &str,
+        icon: Option<&str>,
+        description: Option<&str>,
+        webhook_url: &str,
+        bot_token_hash: &str,
+        ed25519_pubkey: Option<&str>,
+        x25519_pubkey: Option<&str>,
+        allowed_channels_json: &str,
+        installed_at: u64,
+        _commands_json: &str,
+        commands: &[crate::bot_api::BotCommand],
+    ) -> Result<(), String> {
+        self.db
+            .install_bot(
+                bot_id,
+                node_id,
+                name,
+                icon,
+                description,
+                webhook_url,
+                bot_token_hash,
+                ed25519_pubkey,
+                x25519_pubkey,
+                allowed_channels_json,
+                installed_at,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Store each command
+        for cmd in commands {
+            let params_json = serde_json::to_string(&cmd.params).unwrap_or_default();
+            self.db
+                .store_bot_command(bot_id, node_id, &cmd.name, &cmd.description, &params_json)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
-    pub async fn get_bot(&self, _bot_id: Uuid) -> Result<crate::bot_api::Bot, String> {
-        Err("Bot not found (bot persistence not yet implemented)".into())
-    }
-
-    pub async fn update_bot(
-        &self,
-        _bot_id: Uuid,
-        _request: crate::bot_api::UpdateBotRequest,
-    ) -> Result<(), String> {
-        Err("Bot not found".into())
-    }
-
-    pub async fn delete_bot(&self, _bot_id: Uuid) -> Result<(), String> {
-        Err("Bot not found".into())
-    }
-
-    pub async fn update_bot_token_hash(
-        &self,
-        _bot_id: Uuid,
-        _new_hash: String,
-    ) -> Result<(), String> {
-        Err("Bot not found".into())
-    }
-
-    pub async fn validate_bot_token(&self, _token_hash: &str) -> Option<crate::bot_api::Bot> {
-        None
-    }
-
-    pub async fn add_bot_to_channel(
-        &self,
-        _bot_id: Uuid,
-        _channel_id: Uuid,
-        _node_id: Uuid,
-        _added_by: Uuid,
-    ) -> Result<(), String> {
+    pub async fn uninstall_bot(&self, bot_id: &str, node_id: Uuid) -> Result<(), String> {
+        let deleted = self
+            .db
+            .uninstall_bot(bot_id, node_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !deleted {
+            return Err("Bot not found".into());
+        }
         Ok(())
     }
 
-    pub async fn remove_bot_from_channel(
+    pub async fn list_installed_bots(
         &self,
-        _bot_id: Uuid,
-        _channel_id: Uuid,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::bot_api::InstalledBotInfo>, String> {
+        self.db
+            .list_installed_bots(node_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn get_bot_commands(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::bot_api::BotCommand>, String> {
+        let commands = self
+            .db
+            .get_bot_commands(bot_id, node_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if commands.is_empty() {
+            // Check if bot exists at all
+            self.db
+                .get_bot_webhook_info(bot_id, node_id)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(commands)
+    }
+
+    pub async fn get_bot_webhook_info(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<(String, String), String> {
+        self.db
+            .get_bot_webhook_info(bot_id, node_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn validate_bot_token_v2(&self, token_hash: &str) -> Option<(String, Uuid)> {
+        self.db
+            .validate_bot_token_v2(token_hash)
+            .await
+            .ok()
+            .flatten()
+    }
+
+    pub async fn create_bot_invocation(
+        &self,
+        invocation_id: &str,
+        bot_id: &str,
+        node_id: Uuid,
+        channel_id: &str,
+        invoker_user_id: Uuid,
+        command_name: &str,
     ) -> Result<(), String> {
-        Ok(())
+        self.db
+            .create_bot_invocation(
+                invocation_id,
+                bot_id,
+                node_id,
+                channel_id,
+                invoker_user_id,
+                command_name,
+            )
+            .await
+            .map_err(|e| e.to_string())
     }
 
-    pub async fn is_bot_in_channel(
+    pub async fn get_invocation_info(
         &self,
-        _bot_id: Uuid,
-        _channel_id: Uuid,
-    ) -> Result<bool, String> {
-        Ok(false)
+        invocation_id: &str,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<(String, String), String> {
+        self.db
+            .get_invocation_info(invocation_id, bot_id, node_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
-    pub async fn check_bot_rate_limit(&self, _bot_id: Uuid, _action: &str) -> Result<(), String> {
-        Ok(())
+    pub async fn update_invocation_status(
+        &self,
+        invocation_id: &str,
+        status: &str,
+    ) -> Result<(), String> {
+        self.db
+            .update_invocation_status(invocation_id, status)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn increment_bot_invocation_count(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<(), String> {
+        self.db
+            .increment_bot_invocation_count(bot_id, node_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn get_user_display_name(&self, user_id: Uuid) -> Result<String, String> {
+        // Try to get from user profile
+        let profile = self
+            .db
+            .get_user_profile(user_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(profile) = profile {
+            return Ok(profile.display_name);
+        }
+        // Fallback to public key hash prefix
+        let user = self
+            .db
+            .get_user_by_id(user_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        match user {
+            Some(u) => Ok(u.public_key_hash[..8].to_string()),
+            None => Ok("Unknown".into()),
+        }
     }
 
     pub async fn broadcast_to_channel(
@@ -1589,13 +1708,6 @@ impl AppState {
         message: String,
     ) -> Result<(), String> {
         self.send_to_channel(channel_id, message).await
-    }
-
-    pub async fn get_channel_bots(
-        &self,
-        _channel_id: Uuid,
-    ) -> Result<Vec<crate::bot_api::BotInfo>, String> {
-        Ok(vec![])
     }
 }
 

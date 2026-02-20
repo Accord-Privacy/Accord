@@ -4745,6 +4745,15 @@ async fn handle_ws_message(
                 .send_to_user(target_user_id, relay.to_string())
                 .await?;
         } // WsMessageType::UpdateChannel is handled above
+
+        WsMessageType::BotResponse { .. } => {
+            // BotResponse is server-originated (broadcast only), not sent by clients.
+            // Ignore if received from a client WebSocket.
+            info!(
+                "Ignoring client-sent BotResponse from user: {}",
+                sender_user_id
+            );
+        }
     }
 
     Ok(())

@@ -576,6 +576,13 @@ pub enum WsMessageType {
         candidate: String,
     },
 
+    /// Bot command response broadcast to channel members
+    BotResponse {
+        bot_id: String,
+        invocation_id: String,
+        content: serde_json::Value,
+    },
+
     /// Heartbeat
     Ping,
     /// Response to ping

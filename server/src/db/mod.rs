@@ -1015,6 +1015,81 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // ── Bot API v2 tables ──
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS installed_bots (
+                bot_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                icon TEXT,
+                description TEXT,
+                webhook_url TEXT NOT NULL,
+                bot_token_hash TEXT NOT NULL,
+                ed25519_pubkey TEXT,
+                x25519_pubkey TEXT,
+                node_x25519_privkey TEXT,
+                shared_secret TEXT,
+                allowed_channels_json TEXT NOT NULL DEFAULT '[]',
+                installed_at INTEGER NOT NULL,
+                key_rotated_at INTEGER,
+                invocation_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (bot_id, node_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create installed_bots table")?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS bot_commands (
+                bot_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                command_name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                params_json TEXT NOT NULL DEFAULT '[]',
+                PRIMARY KEY (bot_id, node_id, command_name)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create bot_commands table")?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS bot_invocations (
+                invocation_id TEXT PRIMARY KEY NOT NULL,
+                bot_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                invoker_user_id TEXT NOT NULL,
+                command_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create bot_invocations table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_installed_bots_node ON installed_bots (node_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_bot_commands_bot ON bot_commands (bot_id, node_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_bot_invocations_bot ON bot_invocations (bot_id, node_id)")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -5144,6 +5219,250 @@ impl Database {
             .execute(&self.pool)
             .await
             .context("Failed to set relay active status")?;
+        Ok(())
+    }
+
+    // ── Bot API v2 operations ──
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn install_bot(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        name: &str,
+        icon: Option<&str>,
+        description: Option<&str>,
+        webhook_url: &str,
+        bot_token_hash: &str,
+        ed25519_pubkey: Option<&str>,
+        x25519_pubkey: Option<&str>,
+        allowed_channels_json: &str,
+        installed_at: u64,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT OR REPLACE INTO installed_bots
+               (bot_id, node_id, name, icon, description, webhook_url, bot_token_hash,
+                ed25519_pubkey, x25519_pubkey, allowed_channels_json, installed_at, invocation_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"#,
+        )
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .bind(name)
+        .bind(icon)
+        .bind(description)
+        .bind(webhook_url)
+        .bind(bot_token_hash)
+        .bind(ed25519_pubkey)
+        .bind(x25519_pubkey)
+        .bind(allowed_channels_json)
+        .bind(installed_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to install bot")?;
+        Ok(())
+    }
+
+    pub async fn store_bot_command(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        command_name: &str,
+        description: &str,
+        params_json: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"INSERT OR REPLACE INTO bot_commands
+               (bot_id, node_id, command_name, description, params_json)
+               VALUES (?, ?, ?, ?, ?)"#,
+        )
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .bind(command_name)
+        .bind(description)
+        .bind(params_json)
+        .execute(&self.pool)
+        .await
+        .context("Failed to store bot command")?;
+        Ok(())
+    }
+
+    pub async fn uninstall_bot(&self, bot_id: &str, node_id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM installed_bots WHERE bot_id = ? AND node_id = ?")
+            .bind(bot_id)
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to uninstall bot")?;
+
+        // Also delete commands
+        sqlx::query("DELETE FROM bot_commands WHERE bot_id = ? AND node_id = ?")
+            .bind(bot_id)
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn list_installed_bots(
+        &self,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::bot_api::InstalledBotInfo>> {
+        let rows = sqlx::query(
+            "SELECT bot_id, name, icon, description, installed_at, invocation_count FROM installed_bots WHERE node_id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list installed bots")?;
+
+        let mut bots = Vec::new();
+        for row in rows {
+            let bot_id: String = row.get("bot_id");
+            let commands = self.get_bot_commands(&bot_id, node_id).await?;
+            bots.push(crate::bot_api::InstalledBotInfo {
+                bot_id,
+                name: row.get("name"),
+                icon: row.get("icon"),
+                description: row.get("description"),
+                commands,
+                installed_at: row.get::<i64, _>("installed_at") as u64,
+                invocation_count: row.get::<i64, _>("invocation_count") as u64,
+            });
+        }
+        Ok(bots)
+    }
+
+    pub async fn get_bot_commands(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<Vec<crate::bot_api::BotCommand>> {
+        let rows = sqlx::query(
+            "SELECT command_name, description, params_json FROM bot_commands WHERE bot_id = ? AND node_id = ?",
+        )
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to get bot commands")?;
+
+        let mut commands = Vec::new();
+        for row in rows {
+            let params_json: String = row.get("params_json");
+            let params: Vec<crate::bot_api::BotCommandParam> =
+                serde_json::from_str(&params_json).unwrap_or_default();
+            commands.push(crate::bot_api::BotCommand {
+                name: row.get("command_name"),
+                description: row.get("description"),
+                params,
+            });
+        }
+        Ok(commands)
+    }
+
+    pub async fn get_bot_webhook_info(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<(String, String)> {
+        let row = sqlx::query(
+            "SELECT webhook_url, bot_token_hash FROM installed_bots WHERE bot_id = ? AND node_id = ?",
+        )
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get bot webhook info")?
+        .ok_or_else(|| anyhow::anyhow!("Bot not found"))?;
+
+        Ok((row.get("webhook_url"), row.get("bot_token_hash")))
+    }
+
+    pub async fn validate_bot_token_v2(&self, token_hash: &str) -> Result<Option<(String, Uuid)>> {
+        let row =
+            sqlx::query("SELECT bot_id, node_id FROM installed_bots WHERE bot_token_hash = ?")
+                .bind(token_hash)
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to validate bot token")?;
+
+        row.map(|r| -> Result<(String, Uuid)> {
+            Ok((
+                r.get("bot_id"),
+                Uuid::parse_str(&r.get::<String, _>("node_id"))?,
+            ))
+        })
+        .transpose()
+    }
+
+    pub async fn create_bot_invocation(
+        &self,
+        invocation_id: &str,
+        bot_id: &str,
+        node_id: Uuid,
+        channel_id: &str,
+        invoker_user_id: Uuid,
+        command_name: &str,
+    ) -> Result<()> {
+        let created_at = now();
+        sqlx::query(
+            r#"INSERT INTO bot_invocations
+               (invocation_id, bot_id, node_id, channel_id, invoker_user_id, command_name, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)"#,
+        )
+        .bind(invocation_id)
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .bind(channel_id)
+        .bind(invoker_user_id.to_string())
+        .bind(command_name)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to create bot invocation")?;
+        Ok(())
+    }
+
+    pub async fn get_invocation_info(
+        &self,
+        invocation_id: &str,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<(String, String)> {
+        let row = sqlx::query(
+            "SELECT channel_id, command_name FROM bot_invocations WHERE invocation_id = ? AND bot_id = ? AND node_id = ?",
+        )
+        .bind(invocation_id)
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get invocation info")?
+        .ok_or_else(|| anyhow::anyhow!("Invocation not found"))?;
+
+        Ok((row.get("channel_id"), row.get("command_name")))
+    }
+
+    pub async fn update_invocation_status(&self, invocation_id: &str, status: &str) -> Result<()> {
+        sqlx::query("UPDATE bot_invocations SET status = ? WHERE invocation_id = ?")
+            .bind(status)
+            .bind(invocation_id)
+            .execute(&self.pool)
+            .await
+            .context("Failed to update invocation status")?;
+        Ok(())
+    }
+
+    pub async fn increment_bot_invocation_count(&self, bot_id: &str, node_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE installed_bots SET invocation_count = invocation_count + 1 WHERE bot_id = ? AND node_id = ?",
+        )
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to increment invocation count")?;
         Ok(())
     }
 }

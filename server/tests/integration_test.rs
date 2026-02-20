@@ -62,6 +62,28 @@ impl TestServer {
             )
             .route("/nodes/:id/join", post(join_node_handler))
             .route("/nodes/:id/bans", post(ban_user_handler))
+            // Bot API v2 endpoints
+            .route(
+                "/api/nodes/:node_id/bots",
+                get(accord_server::bot_api::list_bots_handler)
+                    .post(accord_server::bot_api::install_bot_handler),
+            )
+            .route(
+                "/api/nodes/:node_id/bots/:bot_id",
+                axum::routing::delete(accord_server::bot_api::uninstall_bot_handler),
+            )
+            .route(
+                "/api/nodes/:node_id/bots/:bot_id/commands",
+                get(accord_server::bot_api::get_bot_commands_handler),
+            )
+            .route(
+                "/api/nodes/:node_id/bots/:bot_id/invoke",
+                post(accord_server::bot_api::invoke_command_handler),
+            )
+            .route(
+                "/api/bots/respond",
+                post(accord_server::bot_api::bot_respond_handler),
+            )
             // WebSocket endpoint
             .route("/ws", get(ws_handler))
             // Add shared state
@@ -2380,4 +2402,205 @@ async fn test_message_edit_delete_via_ws() {
     let msg = FullTestServer::wait_for_ws_type(&mut stream2, "message_delete", 3000).await;
     assert!(msg.is_some(), "User2 should receive message_delete");
     assert_eq!(msg.unwrap()["message_id"], message_id);
+}
+
+// ── Bot API v2 Integration Tests ──
+
+#[tokio::test]
+async fn test_bot_api_v2_install_list_invoke() {
+    let server = TestServer::new().await;
+
+    // Register and auth as admin
+    let token = server.register_and_auth("bot_admin").await;
+
+    // Create a node (creator becomes admin)
+    let resp = server
+        .client
+        .post(&server.url("/nodes"))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "BotTestNode" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let node_id = body["id"].as_str().unwrap();
+
+    // Create a channel
+    let resp = server
+        .client
+        .post(&server.url(&format!("/nodes/{}/channels", node_id)))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "general" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    let channel_id = body["id"].as_str().unwrap().to_string();
+
+    // Install a bot
+    let install_resp = server
+        .client
+        .post(&server.url(&format!("/api/nodes/{}/bots", node_id)))
+        .bearer_auth(&token)
+        .json(&json!({
+            "manifest": {
+                "bot_id": "weather-bot",
+                "name": "Weather",
+                "icon": "🌤️",
+                "description": "Weather forecasts",
+                "commands": [{
+                    "name": "forecast",
+                    "description": "Get weather forecast",
+                    "params": [
+                        {"name": "location", "type": "string", "required": true, "description": "City"}
+                    ]
+                }]
+            },
+            "webhook_url": "https://example.com/webhook"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(install_resp.status(), 200);
+    let install_body: Value = install_resp.json().await.unwrap();
+    assert_eq!(install_body["bot_id"], "weather-bot");
+    let bot_token = install_body["bot_token"].as_str().unwrap().to_string();
+    assert!(bot_token.starts_with("accord_botv2_"));
+
+    // List bots
+    let list_resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/bots", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bots: Vec<Value> = list_resp.json().await.unwrap();
+    assert_eq!(bots.len(), 1);
+    assert_eq!(bots[0]["bot_id"], "weather-bot");
+    assert_eq!(bots[0]["name"], "Weather");
+    assert_eq!(bots[0]["commands"][0]["name"], "forecast");
+
+    // Get bot commands
+    let cmds_resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/bots/weather-bot/commands", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cmds_resp.status(), 200);
+    let cmds: Vec<Value> = cmds_resp.json().await.unwrap();
+    assert_eq!(cmds.len(), 1);
+    assert_eq!(cmds[0]["name"], "forecast");
+
+    // Invoke command (webhook will fail since it's a fake URL, but invocation should succeed)
+    let invoke_resp = server
+        .client
+        .post(&server.url(&format!("/api/nodes/{}/bots/weather-bot/invoke", node_id)))
+        .bearer_auth(&token)
+        .json(&json!({
+            "command": "forecast",
+            "params": {"location": "Grand Rapids"},
+            "channel_id": channel_id
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invoke_resp.status(), 200);
+    let invoke_body: Value = invoke_resp.json().await.unwrap();
+    assert_eq!(invoke_body["status"], "sent");
+    let invocation_id = invoke_body["invocation_id"].as_str().unwrap().to_string();
+
+    // Bot responds
+    let respond_resp = server
+        .client
+        .post(&server.url("/api/bots/respond"))
+        .bearer_auth(&bot_token)
+        .json(&json!({
+            "invocation_id": invocation_id,
+            "content": {
+                "type": "text",
+                "text": "Weather in Grand Rapids: 28°F, partly cloudy"
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(respond_resp.status(), 200);
+    let respond_body: Value = respond_resp.json().await.unwrap();
+    assert_eq!(respond_body["status"], "delivered");
+
+    // Uninstall bot
+    let uninstall_resp = server
+        .client
+        .delete(&server.url(&format!("/api/nodes/{}/bots/weather-bot", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(uninstall_resp.status(), 200);
+
+    // List bots should be empty now
+    let list_resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/bots", node_id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let bots: Vec<Value> = list_resp.json().await.unwrap();
+    assert_eq!(bots.len(), 0);
+}
+
+#[tokio::test]
+async fn test_bot_api_v2_auth_checks() {
+    let server = TestServer::new().await;
+
+    // Register admin and member
+    let admin_token = server.register_and_auth("bot_admin2").await;
+    let member_token = server.register_and_auth("bot_member").await;
+
+    // Create node as admin
+    let resp = server
+        .client
+        .post(&server.url("/nodes"))
+        .bearer_auth(&admin_token)
+        .json(&json!({ "name": "AuthTestNode" }))
+        .send()
+        .await
+        .unwrap();
+    let body: Value = resp.json().await.unwrap();
+    let node_id = body["id"].as_str().unwrap();
+
+    // Member tries to install bot — should fail (not a member yet)
+    let resp = server
+        .client
+        .post(&server.url(&format!("/api/nodes/{}/bots", node_id)))
+        .bearer_auth(&member_token)
+        .json(&json!({
+            "manifest": {
+                "bot_id": "test-bot",
+                "name": "Test",
+                "commands": []
+            },
+            "webhook_url": "https://example.com"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Unauthenticated request should fail
+    let resp = server
+        .client
+        .get(&server.url(&format!("/api/nodes/{}/bots", node_id)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
 }

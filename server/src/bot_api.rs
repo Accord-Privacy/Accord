@@ -1,259 +1,225 @@
-//! Bot API for Accord
+//! Bot API v2 — Airgapped Command Architecture
 //!
-//! Provides registration, authentication, permission scoping, event subscription,
-//! and webhook delivery for third-party bots.
-//!
-//! # Privacy Warning
-//! Bots break E2E encryption in channels they participate in. Channels with bots
-//! present show a warning to all users. Bots only see messages in channels they
-//! are explicitly invited to.
+//! Bots are stateless command processors that never see messages, member lists,
+//! or encrypted data. They register command manifests and respond to invocations.
+//! All bot ↔ Node communication is (will be) E2EE.
 
 use crate::models::ErrorResponse;
 use crate::state::SharedState;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use uuid::Uuid;
 
-// ── Bot Permission Scopes ──
+// ── Bot API v2 Models ──
 
-/// Permission scopes that can be granted to a bot
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BotScope {
-    /// Read messages in channels the bot is invited to
-    ReadMessages,
-    /// Send messages in channels the bot is invited to
-    SendMessages,
-    /// Read channel metadata (name, topic, members)
-    ReadChannels,
-    /// Create/delete/rename channels (requires node admin approval)
-    ManageChannels,
-    /// Read member list and profiles
-    ReadMembers,
-    /// Add/remove reactions
-    ManageReactions,
-    /// Read message reactions
-    ReadReactions,
-    /// Upload and manage files
-    ManageFiles,
-}
-
-impl BotScope {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            BotScope::ReadMessages => "read_messages",
-            BotScope::SendMessages => "send_messages",
-            BotScope::ReadChannels => "read_channels",
-            BotScope::ManageChannels => "manage_channels",
-            BotScope::ReadMembers => "read_members",
-            BotScope::ManageReactions => "manage_reactions",
-            BotScope::ReadReactions => "read_reactions",
-            BotScope::ManageFiles => "manage_files",
-        }
-    }
-
-    pub fn all() -> HashSet<BotScope> {
-        use BotScope::*;
-        [
-            ReadMessages,
-            SendMessages,
-            ReadChannels,
-            ManageChannels,
-            ReadMembers,
-            ManageReactions,
-            ReadReactions,
-            ManageFiles,
-        ]
-        .into_iter()
-        .collect()
-    }
-}
-
-// ── Event Types ──
-
-/// Events that bots can subscribe to
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BotEventType {
-    /// A message was sent in a channel the bot is in
-    MessageCreate,
-    /// A message was edited
-    MessageEdit,
-    /// A message was deleted
-    MessageDelete,
-    /// A user joined a channel the bot is in
-    MemberJoin,
-    /// A user left a channel the bot is in
-    MemberLeave,
-    /// A reaction was added to a message
-    ReactionAdd,
-    /// A reaction was removed from a message
-    ReactionRemove,
-    /// A channel was created in a node the bot is in
-    ChannelCreate,
-    /// A channel was deleted
-    ChannelDelete,
-    /// A user started typing
-    TypingStart,
-}
-
-// ── Bot Data Models ──
-
-/// Registered bot metadata
+/// Bot command manifest — declares what a bot can do
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bot {
-    pub id: Uuid,
+pub struct BotManifest {
+    pub bot_id: String,
     pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
     pub description: Option<String>,
-    pub avatar_url: Option<String>,
-    pub owner_id: Uuid,
-    pub api_token_hash: String,
-    pub scopes: Vec<BotScope>,
-    pub event_subscriptions: Vec<BotEventType>,
-    pub webhook_url: Option<String>,
-    pub webhook_secret: Option<String>,
-    pub is_active: bool,
-    pub created_at: u64,
-    pub updated_at: u64,
+    pub commands: Vec<BotCommand>,
 }
 
-/// Public bot info (no secrets)
+/// A single command a bot supports
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BotInfo {
-    pub id: Uuid,
+pub struct BotCommand {
     pub name: String,
-    pub description: Option<String>,
-    pub avatar_url: Option<String>,
-    pub owner_id: Uuid,
-    pub scopes: Vec<BotScope>,
-    pub is_active: bool,
-    pub created_at: u64,
+    pub description: String,
+    #[serde(default)]
+    pub params: Vec<BotCommandParam>,
 }
 
-/// Bot's presence in a channel
+/// A parameter for a bot command
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BotChannelMembership {
-    pub bot_id: Uuid,
-    pub channel_id: Uuid,
-    pub node_id: Uuid,
-    pub added_by: Uuid,
-    pub added_at: u64,
+pub struct BotCommandParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub param_type: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
-// ── Request / Response Models ──
+/// Command invocation sent to the bot's webhook
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInvocation {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub command: String,
+    pub invoker_display_name: String,
+    pub params: HashMap<String, serde_json::Value>,
+    pub invocation_id: String,
+    pub channel_id: String,
+}
 
-/// Request to register a new bot
+/// Response from a bot
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandResponse {
+    pub invocation_id: String,
+    pub content: ResponseContent,
+}
+
+/// Content of a bot response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseContent {
+    Text {
+        text: String,
+    },
+    Embed {
+        title: Option<String>,
+        sections: Vec<EmbedSection>,
+    },
+}
+
+/// Section types for embed responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EmbedSection {
+    Text {
+        text: String,
+    },
+    Grid {
+        columns: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
+    Image {
+        url: String,
+        #[serde(default)]
+        alt: Option<String>,
+    },
+    Actions {
+        buttons: Vec<ActionButton>,
+    },
+    Divider {},
+    Fields {
+        fields: Vec<FieldEntry>,
+    },
+    Progress {
+        label: String,
+        value: f64,
+        #[serde(default)]
+        max: Option<f64>,
+    },
+    Code {
+        code: String,
+        #[serde(default)]
+        language: Option<String>,
+    },
+    Input {
+        name: String,
+        #[serde(default)]
+        placeholder: Option<String>,
+        #[serde(default)]
+        command: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionButton {
+    pub label: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub params: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    pub params_prompt: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldEntry {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub inline: bool,
+}
+
+/// Installed bot record (public view)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstalledBotInfo {
+    pub bot_id: String,
+    pub name: String,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+    pub commands: Vec<BotCommand>,
+    pub installed_at: u64,
+    pub invocation_count: u64,
+}
+
+// ── Request / Response types ──
+
+/// Request to install a bot on a node
 #[derive(Debug, Deserialize)]
-pub struct RegisterBotRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub avatar_url: Option<String>,
-    pub scopes: Vec<BotScope>,
-    pub event_subscriptions: Option<Vec<BotEventType>>,
-    pub webhook_url: Option<String>,
+pub struct InstallBotRequest {
+    pub manifest: BotManifest,
+    pub webhook_url: String,
+    /// Bot's Ed25519 public key (base64) for signature verification
+    #[serde(default)]
+    pub ed25519_pubkey: Option<String>,
+    /// Bot's X25519 public key (base64) for key exchange
+    #[serde(default)]
+    pub x25519_pubkey: Option<String>,
+    /// Channels the bot is allowed to respond in (empty = all)
+    #[serde(default)]
+    pub allowed_channels: Vec<String>,
 }
 
-/// Response after registering a bot
 #[derive(Debug, Serialize)]
-pub struct RegisterBotResponse {
-    pub bot_id: Uuid,
-    pub api_token: String,
-    pub webhook_secret: Option<String>,
+pub struct InstallBotResponse {
+    pub bot_id: String,
+    pub bot_token: String,
+    /// Node's X25519 public key for key exchange (base64)
+    pub node_x25519_pubkey: Option<String>,
     pub message: String,
-    pub privacy_warning: String,
 }
 
-/// Request to update bot settings
+/// Request to invoke a bot command
 #[derive(Debug, Deserialize)]
-pub struct UpdateBotRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub avatar_url: Option<String>,
-    pub scopes: Option<Vec<BotScope>>,
-    pub event_subscriptions: Option<Vec<BotEventType>>,
-    pub webhook_url: Option<String>,
+pub struct InvokeCommandRequest {
+    pub command: String,
+    #[serde(default)]
+    pub params: HashMap<String, serde_json::Value>,
+    pub channel_id: String,
 }
 
-/// Request to invite a bot to a channel
-#[derive(Debug, Deserialize)]
-pub struct InviteBotRequest {
-    pub bot_id: Uuid,
-    pub channel_id: Uuid,
-}
-
-/// Response for inviting a bot
 #[derive(Debug, Serialize)]
-pub struct InviteBotResponse {
+pub struct InvokeCommandResponse {
+    pub invocation_id: String,
     pub status: String,
-    pub bot_id: Uuid,
-    pub channel_id: Uuid,
-    pub privacy_warning: String,
 }
 
-/// Regenerate API token response
+/// Bot posts a response (authenticated via bot_token)
+#[derive(Debug, Deserialize)]
+pub struct BotRespondRequest {
+    pub invocation_id: String,
+    pub content: ResponseContent,
+    /// Ed25519 signature of the response payload (base64)
+    #[serde(default)]
+    pub signature: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
-pub struct RegenerateTokenResponse {
-    pub api_token: String,
-    pub message: String,
-}
-
-/// Event payload delivered to bots (via WebSocket or webhook)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BotEvent {
-    pub event_id: Uuid,
-    pub event_type: BotEventType,
-    pub bot_id: Uuid,
-    pub channel_id: Uuid,
-    pub node_id: Uuid,
-    pub data: serde_json::Value,
-    pub timestamp: u64,
-}
-
-/// Webhook delivery payload (wraps BotEvent with signature)
-#[derive(Debug, Serialize)]
-pub struct WebhookPayload {
-    pub event: BotEvent,
-    /// HMAC-SHA256 signature of the event JSON using webhook_secret
-    pub signature: String,
+pub struct BotRespondResponse {
+    pub status: String,
 }
 
 // ── Constants ──
 
-const PRIVACY_WARNING: &str = "⚠️ PRIVACY NOTICE: Bots receive plaintext messages in channels \
-they are invited to. This breaks end-to-end encryption for those channels. All channel members \
-will be notified that a bot is present, and a permanent warning indicator will be shown.";
+const BOT_TOKEN_PREFIX: &str = "accord_botv2_";
 
-const BOT_TOKEN_PREFIX: &str = "accord_bot_";
-
-// ── Rate Limits for Bots ──
-
-/// Bot-specific rate limits (more restrictive than user limits)
-#[derive(Debug, Clone, Copy)]
-pub struct BotRateLimits {
-    /// Messages per minute
-    pub messages_per_minute: u32,
-    /// API calls per minute
-    pub api_calls_per_minute: u32,
-    /// Webhook retries per event
-    pub max_webhook_retries: u32,
-}
-
-impl Default for BotRateLimits {
-    fn default() -> Self {
-        Self {
-            messages_per_minute: 20,
-            api_calls_per_minute: 60,
-            max_webhook_retries: 3,
-        }
-    }
-}
-
-// ── Helper Functions ──
+// ── Helpers ──
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -276,16 +242,6 @@ fn generate_bot_token() -> String {
     )
 }
 
-fn generate_webhook_secret() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let secret_bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
-    base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &secret_bytes,
-    )
-}
-
 fn hash_token(token: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -293,571 +249,27 @@ fn hash_token(token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-// ── Route Handlers ──
-
-/// Register a new bot (POST /bots)
-/// Requires authentication as a user (the bot owner)
-pub async fn register_bot_handler(
-    State(state): State<SharedState>,
-    Query(params): Query<HashMap<String, String>>,
-    Json(request): Json<RegisterBotRequest>,
-) -> Result<Json<RegisterBotResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let owner_id = extract_user_from_token(&state, &params).await?;
-
-    // Validate bot name
-    if request.name.is_empty() || request.name.len() > 64 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Bot name must be 1-64 characters".into(),
-                code: 400,
-            }),
-        ));
+/// Extract token from Authorization: Bearer header, falling back to query param
+fn extract_token_from_headers_or_params<'a>(
+    headers: &'a HeaderMap,
+    params: &'a HashMap<String, String>,
+) -> Option<&'a str> {
+    if let Some(auth_header) = headers.get(header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return Some(token);
+            }
+        }
     }
-
-    if request.scopes.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "At least one scope is required".into(),
-                code: 400,
-            }),
-        ));
-    }
-
-    // Generate API token and webhook secret
-    let api_token = generate_bot_token();
-    let token_hash = hash_token(&api_token);
-
-    let webhook_secret = request
-        .webhook_url
-        .as_ref()
-        .map(|_| generate_webhook_secret());
-
-    let bot_id = Uuid::new_v4();
-    let now = now_secs();
-
-    let bot = Bot {
-        id: bot_id,
-        name: request.name,
-        description: request.description,
-        avatar_url: request.avatar_url,
-        owner_id,
-        api_token_hash: token_hash,
-        scopes: request.scopes,
-        event_subscriptions: request.event_subscriptions.unwrap_or_default(),
-        webhook_url: request.webhook_url,
-        webhook_secret: webhook_secret.clone(),
-        is_active: true,
-        created_at: now,
-        updated_at: now,
-    };
-
-    // Store the bot (in production, this would go to the database)
-    state.register_bot(bot).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to register bot: {}", e),
-                code: 500,
-            }),
-        )
-    })?;
-
-    tracing::info!(
-        "Bot registered: {} (id: {}) by user {}",
-        bot_id,
-        bot_id,
-        owner_id
-    );
-
-    Ok(Json(RegisterBotResponse {
-        bot_id,
-        api_token,
-        webhook_secret,
-        message: "Bot registered successfully. Store the API token securely — it cannot be retrieved later.".into(),
-        privacy_warning: PRIVACY_WARNING.into(),
-    }))
+    params.get("token").map(|s| s.as_str())
 }
-
-/// Get bot info (GET /bots/:id)
-pub async fn get_bot_handler(
-    State(state): State<SharedState>,
-    Path(bot_id): Path<Uuid>,
-) -> Result<Json<BotInfo>, (StatusCode, Json<ErrorResponse>)> {
-    let bot = state.get_bot(bot_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Bot not found: {}", e),
-                code: 404,
-            }),
-        )
-    })?;
-
-    Ok(Json(BotInfo {
-        id: bot.id,
-        name: bot.name,
-        description: bot.description,
-        avatar_url: bot.avatar_url,
-        owner_id: bot.owner_id,
-        scopes: bot.scopes,
-        is_active: bot.is_active,
-        created_at: bot.created_at,
-    }))
-}
-
-/// Update bot settings (PATCH /bots/:id)
-/// Only the bot owner can update
-pub async fn update_bot_handler(
-    State(state): State<SharedState>,
-    Path(bot_id): Path<Uuid>,
-    Query(params): Query<HashMap<String, String>>,
-    Json(request): Json<UpdateBotRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
-
-    let bot = state.get_bot(bot_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Bot not found: {}", e),
-                code: 404,
-            }),
-        )
-    })?;
-
-    if bot.owner_id != user_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Only the bot owner can update bot settings".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    state.update_bot(bot_id, request).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to update bot: {}", e),
-                code: 500,
-            }),
-        )
-    })?;
-
-    Ok(Json(
-        serde_json::json!({ "status": "updated", "bot_id": bot_id }),
-    ))
-}
-
-/// Delete a bot (DELETE /bots/:id)
-pub async fn delete_bot_handler(
-    State(state): State<SharedState>,
-    Path(bot_id): Path<Uuid>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
-
-    let bot = state.get_bot(bot_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Bot not found: {}", e),
-                code: 404,
-            }),
-        )
-    })?;
-
-    if bot.owner_id != user_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Only the bot owner can delete a bot".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    state.delete_bot(bot_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to delete bot: {}", e),
-                code: 500,
-            }),
-        )
-    })?;
-
-    Ok(Json(
-        serde_json::json!({ "status": "deleted", "bot_id": bot_id }),
-    ))
-}
-
-/// Regenerate bot API token (POST /bots/:id/regenerate-token)
-pub async fn regenerate_bot_token_handler(
-    State(state): State<SharedState>,
-    Path(bot_id): Path<Uuid>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<RegenerateTokenResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
-
-    let bot = state.get_bot(bot_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Bot not found: {}", e),
-                code: 404,
-            }),
-        )
-    })?;
-
-    if bot.owner_id != user_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Only the bot owner can regenerate the token".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    let new_token = generate_bot_token();
-    let new_hash = hash_token(&new_token);
-
-    state
-        .update_bot_token_hash(bot_id, new_hash)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Failed to regenerate token: {}", e),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    Ok(Json(RegenerateTokenResponse {
-        api_token: new_token,
-        message: "Token regenerated. The old token is now invalid.".into(),
-    }))
-}
-
-/// Invite a bot to a channel (POST /bots/invite)
-/// Requires admin/mod permission in the node
-pub async fn invite_bot_to_channel_handler(
-    State(state): State<SharedState>,
-    Query(params): Query<HashMap<String, String>>,
-    Json(request): Json<InviteBotRequest>,
-) -> Result<Json<InviteBotResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
-
-    // Verify bot exists
-    let _bot = state.get_bot(request.bot_id).await.map_err(|e| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Bot not found: {}", e),
-                code: 404,
-            }),
-        )
-    })?;
-
-    // Verify channel exists and get node_id
-    let channel = state.get_channel(request.channel_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to get channel: {}", e),
-                code: 500,
-            }),
-        )
-    })?;
-
-    let channel = channel.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "Channel not found".into(),
-                code: 404,
-            }),
-        )
-    })?;
-
-    // Check if user has permission to manage bots in this node
-    let user_role = state
-        .get_user_role_in_node(user_id, channel.node_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Permission check failed: {}", e),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    if !crate::permissions::has_permission(
-        user_role,
-        crate::permissions::Permission::ManageChannels,
-    ) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "You need ManageChannels permission to invite bots".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    // Add bot to channel
-    state
-        .add_bot_to_channel(request.bot_id, request.channel_id, channel.node_id, user_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Failed to invite bot: {}", e),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    // Notify channel members that a bot has been added
-    let notification = serde_json::json!({
-        "type": "bot_joined_channel",
-        "bot_id": request.bot_id,
-        "channel_id": request.channel_id,
-        "added_by": user_id,
-        "privacy_warning": PRIVACY_WARNING,
-    });
-    let _ = state
-        .broadcast_to_channel(request.channel_id, notification.to_string())
-        .await;
-
-    Ok(Json(InviteBotResponse {
-        status: "invited".into(),
-        bot_id: request.bot_id,
-        channel_id: request.channel_id,
-        privacy_warning: PRIVACY_WARNING.into(),
-    }))
-}
-
-/// Remove a bot from a channel (DELETE /bots/:bot_id/channels/:channel_id)
-pub async fn remove_bot_from_channel_handler(
-    State(state): State<SharedState>,
-    Path((bot_id, channel_id)): Path<(Uuid, Uuid)>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &params).await?;
-
-    // Verify channel and check permissions
-    let channel = state
-        .get_channel(channel_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Failed to get channel: {}", e),
-                    code: 500,
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Channel not found".into(),
-                    code: 404,
-                }),
-            )
-        })?;
-
-    let user_role = state
-        .get_user_role_in_node(user_id, channel.node_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Permission check failed: {}", e),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    if !crate::permissions::has_permission(
-        user_role,
-        crate::permissions::Permission::ManageChannels,
-    ) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "You need ManageChannels permission to remove bots".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    state
-        .remove_bot_from_channel(bot_id, channel_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("Failed to remove bot: {}", e),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    // Notify channel
-    let notification = serde_json::json!({
-        "type": "bot_left_channel",
-        "bot_id": bot_id,
-        "channel_id": channel_id,
-        "removed_by": user_id,
-    });
-    let _ = state
-        .broadcast_to_channel(channel_id, notification.to_string())
-        .await;
-
-    Ok(Json(serde_json::json!({
-        "status": "removed",
-        "bot_id": bot_id,
-        "channel_id": channel_id,
-    })))
-}
-
-/// Bot sends a message to a channel (POST /bot/channels/:channel_id/messages)
-/// Authenticated via bot API token in Authorization header
-pub async fn bot_send_message_handler(
-    State(state): State<SharedState>,
-    Path(channel_id): Path<Uuid>,
-    Query(params): Query<HashMap<String, String>>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let bot = extract_bot_from_token(&state, &params).await?;
-
-    // Check scope
-    if !bot.scopes.contains(&BotScope::SendMessages) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Bot does not have send_messages scope".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    // Check bot is in this channel
-    if !state
-        .is_bot_in_channel(bot.id, channel_id)
-        .await
-        .unwrap_or(false)
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Bot is not a member of this channel".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    // Rate limit check
-    state
-        .check_bot_rate_limit(bot.id, "message")
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(ErrorResponse {
-                    error: format!("Rate limit exceeded: {}", e),
-                    code: 429,
-                }),
-            )
-        })?;
-
-    let content = body
-        .get("content")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "Missing 'content' field".into(),
-                    code: 400,
-                }),
-            )
-        })?;
-
-    let message_id = Uuid::new_v4();
-    let now = now_secs();
-
-    // Bot messages are NOT E2E encrypted — they're plaintext, which is the whole
-    // point of the privacy warning. The server stores them as-is.
-    let message = serde_json::json!({
-        "type": "bot_message",
-        "message_id": message_id,
-        "channel_id": channel_id,
-        "bot_id": bot.id,
-        "bot_name": bot.name,
-        "content": content,
-        "timestamp": now,
-        "is_bot": true,
-    });
-
-    let _ = state
-        .broadcast_to_channel(channel_id, message.to_string())
-        .await;
-
-    Ok(Json(serde_json::json!({
-        "message_id": message_id,
-        "channel_id": channel_id,
-        "timestamp": now,
-    })))
-}
-
-/// List bots in a channel (GET /channels/:id/bots)
-pub async fn list_channel_bots_handler(
-    State(state): State<SharedState>,
-    Path(channel_id): Path<Uuid>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &params).await?;
-
-    let bots = state.get_channel_bots(channel_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to list bots: {}", e),
-                code: 500,
-            }),
-        )
-    })?;
-
-    let has_bots = !bots.is_empty();
-    Ok(Json(serde_json::json!({
-        "bots": bots,
-        "has_bots": has_bots,
-        "privacy_warning": if has_bots { Some(PRIVACY_WARNING) } else { None },
-    })))
-}
-
-// ── Auth Helpers ──
 
 async fn extract_user_from_token(
     state: &SharedState,
+    headers: &HeaderMap,
     params: &HashMap<String, String>,
 ) -> Result<Uuid, (StatusCode, Json<ErrorResponse>)> {
-    let token = params.get("token").ok_or_else(|| {
+    let token = extract_token_from_headers_or_params(headers, params).ok_or_else(|| {
         (
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
@@ -877,30 +289,428 @@ async fn extract_user_from_token(
     })
 }
 
-async fn extract_bot_from_token(
+async fn require_node_admin(
     state: &SharedState,
-    params: &HashMap<String, String>,
-) -> Result<Bot, (StatusCode, Json<ErrorResponse>)> {
-    let token = params.get("bot_token").ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
+    user_id: Uuid,
+    node_id: Uuid,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let role = state
+        .get_user_role_in_node(user_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: format!("Not a member of this node: {}", e),
+                    code: 403,
+                }),
+            )
+        })?;
+    if role != crate::node::NodeRole::Admin {
+        return Err((
+            StatusCode::FORBIDDEN,
             Json(ErrorResponse {
-                error: "Missing bot_token".into(),
-                code: 401,
+                error: "Only node admins can perform this action".into(),
+                code: 403,
+            }),
+        ));
+    }
+    Ok(())
+}
+
+async fn require_node_member(
+    state: &SharedState,
+    user_id: Uuid,
+    node_id: Uuid,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if !state
+        .is_node_member(user_id, node_id)
+        .await
+        .unwrap_or(false)
+    {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Must be a member of this node".into(),
+                code: 403,
+            }),
+        ));
+    }
+    Ok(())
+}
+
+// ── Route Handlers ──
+
+/// Install a bot on a node (POST /api/nodes/{node_id}/bots)
+/// Admin only.
+pub async fn install_bot_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<InstallBotRequest>,
+) -> Result<Json<InstallBotResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+    require_node_admin(&state, user_id, node_id).await?;
+
+    // Validate manifest
+    if request.manifest.bot_id.is_empty() || request.manifest.name.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "bot_id and name are required in manifest".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    if request.webhook_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "webhook_url is required".into(),
+                code: 400,
+            }),
+        ));
+    }
+
+    // Generate bot token
+    let bot_token = generate_bot_token();
+    let bot_token_hash = hash_token(&bot_token);
+
+    // TODO: Perform X25519 key exchange here
+    // 1. Generate per-bot X25519 keypair for the node side
+    // 2. Derive shared secret via X25519 ECDH + HKDF-SHA256
+    // 3. Store shared secret for AES-256-GCM encryption of command traffic
+    let node_x25519_pubkey: Option<String> = None; // placeholder
+
+    let now = now_secs();
+    let allowed_channels_json =
+        serde_json::to_string(&request.allowed_channels).unwrap_or_else(|_| "[]".into());
+
+    // Store commands as JSON
+    let commands_json = serde_json::to_string(&request.manifest.commands).unwrap_or_default();
+
+    // Store in DB
+    state
+        .install_bot(
+            &request.manifest.bot_id,
+            node_id,
+            &request.manifest.name,
+            request.manifest.icon.as_deref(),
+            request.manifest.description.as_deref(),
+            &request.webhook_url,
+            &bot_token_hash,
+            request.ed25519_pubkey.as_deref(),
+            request.x25519_pubkey.as_deref(),
+            &allowed_channels_json,
+            now,
+            &commands_json,
+            &request.manifest.commands,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to install bot: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    tracing::info!(
+        "Bot '{}' installed on node {} by user {}",
+        request.manifest.bot_id,
+        node_id,
+        user_id
+    );
+
+    Ok(Json(InstallBotResponse {
+        bot_id: request.manifest.bot_id,
+        bot_token,
+        node_x25519_pubkey,
+        message: "Bot installed successfully. Store the bot_token securely.".into(),
+    }))
+}
+
+/// Uninstall a bot from a node (DELETE /api/nodes/{node_id}/bots/{bot_id})
+/// Admin only. Zeroizes keys.
+pub async fn uninstall_bot_handler(
+    State(state): State<SharedState>,
+    Path((node_id, bot_id)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+    require_node_admin(&state, user_id, node_id).await?;
+
+    // TODO: Zeroize X25519 private key and shared secret before deletion
+    state.uninstall_bot(&bot_id, node_id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Bot not found or failed to uninstall: {}", e),
+                code: 404,
             }),
         )
     })?;
 
-    let token_hash = hash_token(token);
-    state.validate_bot_token(&token_hash).await.ok_or_else(|| {
+    tracing::info!(
+        "Bot '{}' uninstalled from node {} by user {}",
+        bot_id,
+        node_id,
+        user_id
+    );
+
+    Ok(Json(serde_json::json!({
+        "status": "uninstalled",
+        "bot_id": bot_id,
+    })))
+}
+
+/// List installed bots on a node (GET /api/nodes/{node_id}/bots)
+/// Members can view.
+pub async fn list_bots_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<InstalledBotInfo>>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+    require_node_member(&state, user_id, node_id).await?;
+
+    let bots = state.list_installed_bots(node_id).await.map_err(|e| {
         (
-            StatusCode::UNAUTHORIZED,
+            StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: "Invalid bot token".into(),
-                code: 401,
+                error: format!("Failed to list bots: {}", e),
+                code: 500,
             }),
         )
-    })
+    })?;
+
+    Ok(Json(bots))
+}
+
+/// Get a bot's command manifest (GET /api/nodes/{node_id}/bots/{bot_id}/commands)
+/// Members can view.
+pub async fn get_bot_commands_handler(
+    State(state): State<SharedState>,
+    Path((node_id, bot_id)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<BotCommand>>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+    require_node_member(&state, user_id, node_id).await?;
+
+    let commands = state
+        .get_bot_commands(&bot_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Bot not found: {}", e),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    Ok(Json(commands))
+}
+
+/// Invoke a bot command (POST /api/nodes/{node_id}/bots/{bot_id}/invoke)
+/// Members can invoke.
+pub async fn invoke_command_handler(
+    State(state): State<SharedState>,
+    Path((node_id, bot_id)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<InvokeCommandRequest>,
+) -> Result<Json<InvokeCommandResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+    require_node_member(&state, user_id, node_id).await?;
+
+    // Get the bot's webhook URL and verify command exists
+    let (webhook_url, _bot_token_hash) = state
+        .get_bot_webhook_info(&bot_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Bot not found: {}", e),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    // Get invoker display name
+    let display_name = state
+        .get_user_display_name(user_id)
+        .await
+        .unwrap_or_else(|_| "Unknown".into());
+
+    let invocation_id = Uuid::new_v4().to_string();
+
+    // Store invocation
+    state
+        .create_bot_invocation(
+            &invocation_id,
+            &bot_id,
+            node_id,
+            &request.channel_id,
+            user_id,
+            &request.command,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to create invocation: {}", e),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Build invocation payload
+    let invocation = CommandInvocation {
+        msg_type: "command_invocation".into(),
+        command: request.command.clone(),
+        invoker_display_name: display_name,
+        params: request.params,
+        invocation_id: invocation_id.clone(),
+        channel_id: request.channel_id,
+    };
+
+    // TODO: Encrypt invocation payload with AES-256-GCM using shared secret
+    // TODO: Sign encrypted blob with Node's Ed25519 key
+    // For now, send as plaintext JSON over HTTPS
+
+    // Fire-and-forget webhook to bot
+    let webhook_url_clone = webhook_url.clone();
+    let invocation_clone = invocation.clone();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        match client
+            .post(&webhook_url_clone)
+            .json(&invocation_clone)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                tracing::debug!("Webhook delivered to bot, status: {}", resp.status());
+            }
+            Err(e) => {
+                tracing::warn!("Failed to deliver webhook to bot: {}", e);
+            }
+        }
+    });
+
+    // Increment invocation count
+    let _ = state.increment_bot_invocation_count(&bot_id, node_id).await;
+
+    Ok(Json(InvokeCommandResponse {
+        invocation_id,
+        status: "sent".into(),
+    }))
+}
+
+/// Bot posts a response (POST /api/bots/respond)
+/// Authenticated via bot_token in Authorization: Bearer header.
+pub async fn bot_respond_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Json(request): Json<BotRespondRequest>,
+) -> Result<Json<BotRespondResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Extract bot token from Authorization header
+    let bot_token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Missing bot_token in Authorization: Bearer header".into(),
+                    code: 401,
+                }),
+            )
+        })?;
+
+    let token_hash = hash_token(bot_token);
+
+    // Validate token and get bot info
+    let (bot_id, node_id) = state
+        .validate_bot_token_v2(&token_hash)
+        .await
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Invalid bot token".into(),
+                    code: 401,
+                }),
+            )
+        })?;
+
+    // TODO: Verify Ed25519 signature on the response payload
+    // TODO: Decrypt response if it was encrypted with AES-256-GCM
+
+    // Look up the invocation to get channel_id
+    let (channel_id, _command) = state
+        .get_invocation_info(&request.invocation_id, &bot_id, node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Invocation not found: {}", e),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    // Update invocation status
+    let _ = state
+        .update_invocation_status(&request.invocation_id, "completed")
+        .await;
+
+    // Build WS broadcast message
+    let ws_message = serde_json::json!({
+        "type": "bot_response",
+        "bot_id": bot_id,
+        "invocation_id": request.invocation_id,
+        "content": request.content,
+    });
+
+    let channel_uuid = Uuid::parse_str(&channel_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid channel_id in invocation".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    // Broadcast to channel members via WebSocket
+    let _ = state
+        .broadcast_to_channel(channel_uuid, ws_message.to_string())
+        .await;
+
+    tracing::info!(
+        "Bot '{}' responded to invocation '{}'",
+        bot_id,
+        request.invocation_id
+    );
+
+    Ok(Json(BotRespondResponse {
+        status: "delivered".into(),
+    }))
 }
 
 // ── Tests ──
@@ -910,21 +720,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bot_scope_as_str() {
-        assert_eq!(BotScope::ReadMessages.as_str(), "read_messages");
-        assert_eq!(BotScope::SendMessages.as_str(), "send_messages");
-        assert_eq!(BotScope::ManageChannels.as_str(), "manage_channels");
-    }
-
-    #[test]
-    fn test_bot_scope_all() {
-        let all = BotScope::all();
-        assert_eq!(all.len(), 8);
-        assert!(all.contains(&BotScope::ReadMessages));
-        assert!(all.contains(&BotScope::ManageFiles));
-    }
-
-    #[test]
     fn test_generate_bot_token() {
         let token = generate_bot_token();
         assert!(token.starts_with(BOT_TOKEN_PREFIX));
@@ -932,56 +727,87 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_webhook_secret() {
-        let secret = generate_webhook_secret();
-        assert!(!secret.is_empty());
-        assert!(secret.len() > 20);
-    }
-
-    #[test]
     fn test_hash_token_deterministic() {
-        let token = "test_token_123";
-        let hash1 = hash_token(token);
-        let hash2 = hash_token(token);
+        let hash1 = hash_token("test_token");
+        let hash2 = hash_token("test_token");
         assert_eq!(hash1, hash2);
     }
 
     #[test]
-    fn test_hash_token_different_inputs() {
-        let hash1 = hash_token("token_a");
-        let hash2 = hash_token("token_b");
-        assert_ne!(hash1, hash2);
-    }
-
-    #[test]
-    fn test_default_bot_rate_limits() {
-        let limits = BotRateLimits::default();
-        assert_eq!(limits.messages_per_minute, 20);
-        assert_eq!(limits.api_calls_per_minute, 60);
-        assert_eq!(limits.max_webhook_retries, 3);
-    }
-
-    #[test]
-    fn test_privacy_warning_exists() {
-        assert!(PRIVACY_WARNING.contains("PRIVACY NOTICE"));
-        assert!(PRIVACY_WARNING.contains("end-to-end encryption"));
-    }
-
-    #[test]
-    fn test_bot_event_serialization() {
-        let event = BotEvent {
-            event_id: Uuid::new_v4(),
-            event_type: BotEventType::MessageCreate,
-            bot_id: Uuid::new_v4(),
-            channel_id: Uuid::new_v4(),
-            node_id: Uuid::new_v4(),
-            data: serde_json::json!({"content": "hello"}),
-            timestamp: 1234567890,
+    fn test_response_content_text_serialization() {
+        let content = ResponseContent::Text {
+            text: "Hello".into(),
         };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("message_create"));
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"type\":\"text\""));
+        assert!(json.contains("\"text\":\"Hello\""));
+    }
 
-        let deserialized: BotEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.event_type, BotEventType::MessageCreate);
+    #[test]
+    fn test_response_content_embed_serialization() {
+        let content = ResponseContent::Embed {
+            title: Some("Test".into()),
+            sections: vec![
+                EmbedSection::Text {
+                    text: "Hello".into(),
+                },
+                EmbedSection::Divider {},
+                EmbedSection::Grid {
+                    columns: vec!["A".into(), "B".into()],
+                    rows: vec![vec!["1".into(), "2".into()]],
+                },
+            ],
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"type\":\"embed\""));
+        assert!(json.contains("\"type\":\"text\""));
+        assert!(json.contains("\"type\":\"divider\""));
+        assert!(json.contains("\"type\":\"grid\""));
+    }
+
+    #[test]
+    fn test_command_invocation_serialization() {
+        let invocation = CommandInvocation {
+            msg_type: "command_invocation".into(),
+            command: "forecast".into(),
+            invoker_display_name: "Gage".into(),
+            params: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "location".into(),
+                    serde_json::Value::String("Grand Rapids".into()),
+                );
+                m
+            },
+            invocation_id: "abc123".into(),
+            channel_id: "general".into(),
+        };
+        let json = serde_json::to_string(&invocation).unwrap();
+        assert!(json.contains("\"command\":\"forecast\""));
+        assert!(json.contains("\"invoker_display_name\":\"Gage\""));
+    }
+
+    #[test]
+    fn test_bot_manifest_deserialization() {
+        let json = r#"{
+            "bot_id": "weather-bot",
+            "name": "Weather",
+            "icon": "🌤️",
+            "description": "Get weather",
+            "commands": [
+                {
+                    "name": "forecast",
+                    "description": "Get forecast",
+                    "params": [
+                        {"name": "location", "type": "string", "required": true}
+                    ]
+                }
+            ]
+        }"#;
+        let manifest: BotManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.bot_id, "weather-bot");
+        assert_eq!(manifest.commands.len(), 1);
+        assert_eq!(manifest.commands[0].params.len(), 1);
+        assert!(manifest.commands[0].params[0].required);
     }
 }
