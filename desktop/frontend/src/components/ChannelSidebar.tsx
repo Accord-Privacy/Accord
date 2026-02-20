@@ -64,8 +64,165 @@ const VoiceConnectionPanel: React.FC<{
   );
 };
 
+// Drag-and-drop types
+type DragItemType = 'channel' | 'category';
+interface DragItem {
+  type: DragItemType;
+  id: string;
+  categoryId: string | null;
+}
+
 export const ChannelSidebar: React.FC = () => {
   const ctx = useAppContext();
+  const [dragItem, setDragItem] = React.useState<DragItem | null>(null);
+  const [dropTarget, setDropTarget] = React.useState<{ id: string; position: 'before' | 'after' | 'inside'; type: DragItemType } | null>(null);
+
+  const canManageChannels = ctx.selectedNodeId ? ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') : false;
+
+  const handleDragStart = (e: React.DragEvent, item: DragItem) => {
+    if (!canManageChannels) { e.preventDefault(); return; }
+    setDragItem(item);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', JSON.stringify(item));
+    (e.currentTarget as HTMLElement).style.opacity = '0.4';
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    (e.currentTarget as HTMLElement).style.opacity = '1';
+    setDragItem(null);
+    setDropTarget(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetId: string, targetType: DragItemType) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const position = y < rect.height / 2 ? 'before' : 'after';
+    setDropTarget({ id: targetId, position, type: targetType });
+  };
+
+  const handleCategoryDragOver = (e: React.DragEvent, categoryId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragItem?.type === 'channel') {
+      setDropTarget({ id: categoryId, position: 'inside', type: 'category' });
+    } else {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      setDropTarget({ id: categoryId, position: y < rect.height / 2 ? 'before' : 'after', type: 'category' });
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!dragItem || !dropTarget || !ctx.selectedNodeId) return;
+
+    // Build the new order
+    const allChannels = [...ctx.uncategorizedChannels, ...ctx.categories.flatMap(cat => [cat, ...ctx.categorizedChannels(cat.id)])];
+    
+    if (dragItem.type === 'channel' && dropTarget.type === 'category' && dropTarget.position === 'inside') {
+      // Channel dropped onto a category — move it into that category at the end
+      const targetCatChildren = ctx.categorizedChannels(dropTarget.id);
+      const newPosition = targetCatChildren.length;
+      try {
+        await api.reorderChannels(ctx.selectedNodeId, [{
+          id: dragItem.id,
+          position: newPosition,
+          category_id: dropTarget.id,
+        }]);
+        // Refresh channels
+        ctx.loadChannels(ctx.selectedNodeId);
+      } catch (err) {
+        console.error('Failed to reorder channels:', err);
+      }
+    } else if (dragItem.type === 'channel') {
+      // Channel reorder within or across categories
+      const targetChannel = allChannels.find(ch => ch.id === dropTarget.id);
+      if (!targetChannel) return;
+      const targetCategoryId = targetChannel.parent_id || null;
+      
+      // Get siblings in target category
+      const siblings = targetCategoryId
+        ? ctx.categorizedChannels(targetCategoryId).filter(ch => ch.id !== dragItem.id)
+        : ctx.uncategorizedChannels.filter(ch => ch.id !== dragItem.id);
+      
+      const targetIdx = siblings.findIndex(ch => ch.id === dropTarget.id);
+      const insertIdx = dropTarget.position === 'after' ? targetIdx + 1 : targetIdx;
+      
+      // Insert dragged channel
+      const dragChannel = allChannels.find(ch => ch.id === dragItem.id);
+      if (!dragChannel) return;
+      siblings.splice(insertIdx, 0, dragChannel);
+      
+      const reorderEntries = siblings.map((ch, i) => ({
+        id: ch.id,
+        position: i,
+        category_id: targetCategoryId,
+      }));
+      
+      // If channel moved between categories, also include it
+      if (dragItem.categoryId !== targetCategoryId) {
+        // Re-index old category siblings
+        const oldSiblings = dragItem.categoryId
+          ? ctx.categorizedChannels(dragItem.categoryId).filter(ch => ch.id !== dragItem.id)
+          : ctx.uncategorizedChannels.filter(ch => ch.id !== dragItem.id);
+        oldSiblings.forEach((ch, i) => {
+          reorderEntries.push({ id: ch.id, position: i, category_id: dragItem.categoryId });
+        });
+      }
+      
+      try {
+        await api.reorderChannels(ctx.selectedNodeId, reorderEntries);
+        ctx.loadChannels(ctx.selectedNodeId);
+      } catch (err) {
+        console.error('Failed to reorder channels:', err);
+      }
+    } else if (dragItem.type === 'category') {
+      // Category reorder
+      const cats = ctx.categories.filter(c => c.id !== dragItem.id);
+      const targetIdx = cats.findIndex(c => c.id === dropTarget.id);
+      const insertIdx = dropTarget.position === 'after' ? targetIdx + 1 : targetIdx;
+      const dragCat = ctx.categories.find(c => c.id === dragItem.id);
+      if (!dragCat) return;
+      cats.splice(insertIdx, 0, dragCat);
+      
+      const reorderEntries = cats.map((c, i) => ({
+        id: c.id,
+        position: i,
+        category_id: null as string | null,
+      }));
+      
+      try {
+        await api.reorderChannels(ctx.selectedNodeId, reorderEntries);
+        ctx.loadChannels(ctx.selectedNodeId);
+      } catch (err) {
+        console.error('Failed to reorder categories:', err);
+      }
+    }
+    
+    setDragItem(null);
+    setDropTarget(null);
+  };
+
+  const getDropIndicatorStyle = (itemId: string, _itemType: DragItemType): React.CSSProperties | null => {
+    if (!dropTarget || dropTarget.id !== itemId) return null;
+    if (dropTarget.position === 'inside') {
+      return { outline: '2px solid var(--accent, #5865f2)', borderRadius: '4px' };
+    }
+    const indicatorStyle: React.CSSProperties = {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      height: '2px',
+      background: 'var(--accent, #5865f2)',
+      zIndex: 10,
+    };
+    if (dropTarget.position === 'before') {
+      return { ...indicatorStyle, top: 0 };
+    }
+    return { ...indicatorStyle, bottom: 0 };
+  };
 
   const renderChannel = (channel: Channel) => {
     const isVoiceChannel = ctx.getChannelTypeNum(channel) === 2;
@@ -79,12 +236,21 @@ export const ChannelSidebar: React.FC = () => {
       { count: (channel as any).unread_count || 0, mentions: clientUnreads.mentions };
     const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
     
+    const dropIndicator = getDropIndicatorStyle(channel.id, 'channel');
+    
     return (
       <div
         key={channel.id}
         className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
         title={channel.topic || undefined}
+        draggable={canManageChannels}
+        onDragStart={(e) => handleDragStart(e, { type: 'channel', id: channel.id, categoryId: channel.parent_id || null })}
+        onDragEnd={handleDragEnd}
+        onDragOver={(e) => handleDragOver(e, channel.id, 'channel')}
+        onDrop={handleDrop}
+        style={{ position: 'relative', cursor: canManageChannels ? 'grab' : undefined }}
       >
+        {dropIndicator && <div style={dropIndicator} />}
         <div
           onClick={() => {
             if (isVoiceChannel) {
@@ -190,10 +356,17 @@ export const ChannelSidebar: React.FC = () => {
           const children = ctx.categorizedChannels(cat.id);
           const isCollapsed = ctx.collapsedCategories.has(cat.id);
           return (
-            <div key={cat.id} className="channel-category">
+            <div key={cat.id} className="channel-category" style={{ position: 'relative' }}>
+              {getDropIndicatorStyle(cat.id, 'category') && <div style={getDropIndicatorStyle(cat.id, 'category')!} />}
               <div
                 className="category-header"
                 onClick={() => ctx.toggleCategory(cat.id)}
+                draggable={canManageChannels}
+                onDragStart={(e) => handleDragStart(e, { type: 'category', id: cat.id, categoryId: null })}
+                onDragEnd={handleDragEnd}
+                onDragOver={(e) => handleCategoryDragOver(e, cat.id)}
+                onDrop={handleDrop}
+                style={{ cursor: canManageChannels ? 'grab' : undefined }}
               >
                 <span className="category-arrow">{isCollapsed ? '▶' : '▼'}</span>
                 <span className="category-name">{cat.name}</span>

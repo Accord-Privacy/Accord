@@ -881,6 +881,14 @@ export class AccordApi {
     return this.request<BatchChannelsResponse>(`/api/nodes/${nodeId}/channels/batch`);
   }
 
+  // Batch reorder channels (position + category changes)
+  async reorderChannels(nodeId: string, channels: { id: string; position: number; category_id: string | null }[]): Promise<void> {
+    await this.request<void>(`/nodes/${nodeId}/channels/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({ channels }),
+    });
+  }
+
   // Test server connectivity
   async testConnection(): Promise<boolean> {
     try {

@@ -4657,6 +4657,34 @@ impl Database {
         Ok(())
     }
 
+    /// Batch-reorder channels (position + optional category change)
+    pub async fn reorder_channels(&self, entries: &[(Uuid, i32, Option<Uuid>)]) -> Result<()> {
+        for (channel_id, position, category_id) in entries {
+            match category_id {
+                Some(cat_id) => {
+                    sqlx::query("UPDATE channels SET position = ?, category_id = ? WHERE id = ?")
+                        .bind(*position as i64)
+                        .bind(cat_id.to_string())
+                        .bind(channel_id.to_string())
+                        .execute(&self.pool)
+                        .await
+                        .context("Failed to reorder channel")?;
+                }
+                None => {
+                    sqlx::query(
+                        "UPDATE channels SET position = ?, category_id = NULL WHERE id = ?",
+                    )
+                    .bind(*position as i64)
+                    .bind(channel_id.to_string())
+                    .execute(&self.pool)
+                    .await
+                    .context("Failed to reorder channel")?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Get the next available role position for a Node
     pub async fn next_role_position(&self, node_id: Uuid) -> Result<i32> {
         let row = sqlx::query(

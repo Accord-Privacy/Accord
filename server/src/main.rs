@@ -60,14 +60,14 @@ use handlers::{
     mark_channel_read_handler, pin_message_handler, publish_key_bundle_handler, register_handler,
     register_push_token_handler, reject_friend_request_handler, remove_auto_mod_word_handler,
     remove_build_allowlist_handler, remove_friend_handler, remove_member_role_handler,
-    remove_reaction_handler, reorder_roles_handler, revoke_invite_handler, search_messages_handler,
-    send_friend_request_handler, set_build_allowlist_handler, set_channel_overwrite_handler,
-    set_node_user_profile_handler, set_slow_mode_handler, store_prekey_message_handler,
-    unban_user_handler, unblock_user_handler, unpin_message_handler,
-    update_channel_category_handler, update_channel_handler, update_node_handler,
-    update_push_preferences_handler, update_role_handler, update_user_profile_handler,
-    upload_custom_emoji_handler, upload_file_handler, upload_node_icon_handler,
-    upload_user_avatar_handler, use_invite_handler, ws_handler,
+    remove_reaction_handler, reorder_channels_handler, reorder_roles_handler,
+    revoke_invite_handler, search_messages_handler, send_friend_request_handler,
+    set_build_allowlist_handler, set_channel_overwrite_handler, set_node_user_profile_handler,
+    set_slow_mode_handler, store_prekey_message_handler, unban_user_handler, unblock_user_handler,
+    unpin_message_handler, update_channel_category_handler, update_channel_handler,
+    update_node_handler, update_push_preferences_handler, update_role_handler,
+    update_user_profile_handler, upload_custom_emoji_handler, upload_file_handler,
+    upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler, ws_handler,
 };
 use serde::Deserialize;
 use state::{AppState, SharedState};
@@ -727,6 +727,10 @@ async fn main() -> Result<()> {
             delete(remove_auto_mod_word_handler),
         )
         // Channel endpoints
+        .route(
+            "/nodes/:id/channels/reorder",
+            axum::routing::put(reorder_channels_handler),
+        )
         .route(
             "/channels/:id",
             axum::routing::patch(update_channel_handler),

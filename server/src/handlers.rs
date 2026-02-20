@@ -1897,6 +1897,41 @@ pub async fn update_channel_handler(
     }
 }
 
+/// PUT /nodes/:id/channels/reorder — batch reorder channels
+pub async fn reorder_channels_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(request): Json<crate::models::ReorderChannelsRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let _user_id = require_node_permission(
+        &state,
+        &headers,
+        &params,
+        node_id,
+        permission_bits::MANAGE_CHANNELS,
+    )
+    .await?;
+
+    let entries: Vec<(Uuid, i32, Option<Uuid>)> = request
+        .channels
+        .iter()
+        .map(|e| (e.id, e.position, e.category_id))
+        .collect();
+    state.db.reorder_channels(&entries).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+                code: 500,
+            }),
+        )
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── Channel endpoints ──
 
 /// Delete a channel (DELETE /channels/:id)

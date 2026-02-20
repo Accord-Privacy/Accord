@@ -677,6 +677,20 @@ pub struct UpdateChannelRequest {
     pub position: Option<u32>,
 }
 
+/// Batch reorder channels request
+#[derive(Debug, Deserialize)]
+pub struct ReorderChannelsRequest {
+    pub channels: Vec<ReorderChannelEntry>,
+}
+
+/// Single entry for channel reorder
+#[derive(Debug, Deserialize)]
+pub struct ReorderChannelEntry {
+    pub id: Uuid,
+    pub position: i32,
+    pub category_id: Option<Uuid>,
+}
+
 /// Node invite information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInvite {
