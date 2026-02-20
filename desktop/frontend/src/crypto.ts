@@ -190,8 +190,11 @@ async function decryptWithPassphrase(encryptedB64: string, passphrase: string): 
 }
 
 function getKeyPassphrase(): string {
+  // Use public key hash as passphrase base — it's stable across sessions
+  // (unlike tokens which change on every login)
+  const pkHash = localStorage.getItem('accord_public_key_hash') || '';
   const token = localStorage.getItem('accord_token') || '';
-  return `accord-key-wrap:${token}`;
+  return `accord-key-wrap:${pkHash || token}`;
 }
 
 // ---------------------------------------------------------------------------

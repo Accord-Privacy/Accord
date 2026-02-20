@@ -3070,7 +3070,8 @@ function App() {
           try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
         }
 
-        // Save key with token-based wrapping too
+        // Save key with both password-based and token-based wrapping
+        await saveKeyWithPassword(result.keyPair, result.password, result.publicKeyHash);
         await saveKeyToStorage(result.keyPair, result.publicKeyHash);
 
         setAppState(prev => ({
