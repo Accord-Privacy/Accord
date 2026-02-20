@@ -22,9 +22,10 @@ use uuid::Uuid;
 // Import the server modules
 use accord_server::{
     handlers::{
-        auth_handler, ban_user_handler, create_node_handler, fetch_key_bundle_handler,
-        get_prekey_messages_handler, health_handler, join_node_handler, publish_key_bundle_handler,
-        register_handler, store_prekey_message_handler, ws_handler,
+        auth_handler, ban_user_handler, create_channel_handler, create_node_handler,
+        fetch_key_bundle_handler, get_prekey_messages_handler, health_handler, join_node_handler,
+        list_node_channels_handler, publish_key_bundle_handler, register_handler,
+        store_prekey_message_handler, ws_handler,
     },
     state::{AppState, SharedState},
 };
@@ -55,6 +56,10 @@ impl TestServer {
             .route("/keys/prekey-messages", get(get_prekey_messages_handler))
             // Node endpoints
             .route("/nodes", post(create_node_handler))
+            .route(
+                "/nodes/:id/channels",
+                get(list_node_channels_handler).post(create_channel_handler),
+            )
             .route("/nodes/:id/join", post(join_node_handler))
             .route("/nodes/:id/bans", post(ban_user_handler))
             // WebSocket endpoint
@@ -421,10 +426,67 @@ async fn test_message_routing_between_two_clients() {
 
     // Register and authenticate two users
     let user1_id = server.register_user("user1", "public_key_1").await;
-    let user2_id = server.register_user("user2", "public_key_2").await;
+    let _user2_id = server.register_user("user2", "public_key_2").await;
 
     let token1 = server.auth_user_by_pk("public_key_1", "").await;
     let token2 = server.auth_user_by_pk("public_key_2", "").await;
+
+    // Create a shared Node + channel. Node creation auto-creates owner membership.
+    let node_raw = server
+        .client
+        .post(&format!("{}/nodes?token={}", server.base_url, token1))
+        .json(&json!({ "name": "TestNode" }))
+        .send()
+        .await
+        .unwrap();
+    let node_status = node_raw.status();
+    let node_text = node_raw.text().await.unwrap_or_default();
+    assert!(
+        node_status.is_success(),
+        "create_node: {} {}",
+        node_status,
+        node_text
+    );
+    let node_resp: Value = serde_json::from_str(&node_text).unwrap();
+    let node_id = Uuid::parse_str(node_resp["id"].as_str().unwrap()).unwrap();
+
+    let ch_raw = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/channels?token={}",
+            server.base_url, node_id, token1
+        ))
+        .json(&json!({ "name": "general" }))
+        .send()
+        .await
+        .unwrap();
+    let ch_status = ch_raw.status();
+    let ch_text = ch_raw.text().await.unwrap_or_default();
+    assert!(
+        ch_status.is_success(),
+        "create_channel: {} {}",
+        ch_status,
+        ch_text
+    );
+    let ch_resp: Value = serde_json::from_str(&ch_text).unwrap();
+    let channel_id = Uuid::parse_str(ch_resp["id"].as_str().unwrap()).unwrap();
+
+    // User2 joins the node
+    let join_status = server
+        .client
+        .post(&format!(
+            "{}/nodes/{}/join?token={}",
+            server.base_url, node_id, token2
+        ))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert!(
+        join_status.is_success(),
+        "join_node failed: {}",
+        join_status
+    );
 
     // Connect both users via WebSocket
     let ws_url1 = format!("{}?token={}", server.ws_url("/ws"), token1);
@@ -436,18 +498,38 @@ async fn test_message_routing_between_two_clients() {
     let (mut sink1, mut _stream1) = ws_stream1.split();
     let (mut _sink2, mut stream2) = ws_stream2.split();
 
-    // Allow connections to settle
+    // Allow connections to settle and join channels
     tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Both users join the channel
+    let join_msg = |ch: Uuid| {
+        json!({
+            "message_type": { "JoinChannel": { "channel_id": ch } },
+            "message_id": Uuid::new_v4(),
+            "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+        })
+    };
+    sink1
+        .send(WsMessage::Text(join_msg(channel_id).to_string()))
+        .await
+        .unwrap();
+    _sink2
+        .send(WsMessage::Text(join_msg(channel_id).to_string()))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
     // Drain any initial messages from stream2
     while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(100), stream2.next()).await {
     }
 
-    // User1 sends a direct message to User2
-    let direct_message = json!({
+    // User1 sends a channel message
+    let channel_message = json!({
         "message_type": {
-            "DirectMessage": {
-                "to_user": user2_id,
-                "encrypted_data": "ZW5jcnlwdGVkX3Rlc3RfbWVzc2FnZV8xMjM="
+            "ChannelMessage": {
+                "channel_id": channel_id,
+                "encrypted_data": "ZW5jcnlwdGVkX3Rlc3RfbWVzc2FnZV8xMjM=",
+                "reply_to": null
             }
         },
         "message_id": Uuid::new_v4(),
@@ -455,7 +537,7 @@ async fn test_message_routing_between_two_clients() {
     });
 
     sink1
-        .send(WsMessage::Text(direct_message.to_string()))
+        .send(WsMessage::Text(channel_message.to_string()))
         .await
         .unwrap();
 
@@ -471,9 +553,8 @@ async fn test_message_routing_between_two_clients() {
             response_data["encrypted_data"],
             "ZW5jcnlwdGVkX3Rlc3RfbWVzc2FnZV8xMjM="
         );
-        assert_eq!(response_data["is_dm"], true);
     } else {
-        panic!("Expected direct message");
+        panic!("Expected channel message");
     }
 }
 
