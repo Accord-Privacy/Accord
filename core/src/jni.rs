@@ -627,3 +627,180 @@ pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativePreKeyBundle
         }
     }
 }
+
+// ─── Sender Keys ─────────────────────────────────────────────────────────────
+
+use crate::sender_keys::{self, SenderKeyStore};
+
+/// Create a new SenderKeyStore, returning an opaque pointer as jlong.
+#[no_mangle]
+pub extern "system" fn Java_com_accord_core_AccordCore_nativeSenderKeyStoreCreate(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    Box::into_raw(Box::new(SenderKeyStore::new())) as jlong
+}
+
+/// Free a SenderKeyStore.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_accord_core_AccordCore_nativeSenderKeyStoreFree(
+    _env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) {
+    if ptr != 0 {
+        drop(Box::from_raw(ptr as *mut SenderKeyStore));
+    }
+}
+
+/// Encrypt a channel message. Returns JSON envelope as byte[].
+#[no_mangle]
+pub extern "system" fn Java_com_accord_core_AccordCore_nativeSenderKeyEncrypt(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_ptr: jlong,
+    channel_id: JString,
+    plaintext: JString,
+) -> jbyteArray {
+    let store = unsafe { &mut *(store_ptr as *mut SenderKeyStore) };
+    let channel_id = match jstring_to_string(&mut env, &channel_id) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let plaintext = match jstring_to_string(&mut env, &plaintext) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    match sender_keys::encrypt_channel_message(store, &channel_id, &plaintext) {
+        Ok(json) => vec_to_jbytearray(&mut env, json.as_bytes()),
+        Err(e) => {
+            throw_accord_exception(&mut env, &format!("Encrypt failed: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// Decrypt a channel message. Returns plaintext as byte[].
+#[no_mangle]
+pub extern "system" fn Java_com_accord_core_AccordCore_nativeSenderKeyDecrypt(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_ptr: jlong,
+    channel_id: JString,
+    sender_id: JString,
+    envelope_json: JString,
+) -> jbyteArray {
+    let store = unsafe { &mut *(store_ptr as *mut SenderKeyStore) };
+    let channel_id = match jstring_to_string(&mut env, &channel_id) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let sender_id = match jstring_to_string(&mut env, &sender_id) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let envelope_json = match jstring_to_string(&mut env, &envelope_json) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    match sender_keys::decrypt_channel_message(store, &channel_id, &sender_id, &envelope_json) {
+        Ok(plaintext) => vec_to_jbytearray(&mut env, plaintext.as_bytes()),
+        Err(e) => {
+            throw_accord_exception(&mut env, &format!("Decrypt failed: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// Create a distribution message for a channel. Returns JSON as byte[].
+#[no_mangle]
+pub extern "system" fn Java_com_accord_core_AccordCore_nativeSenderKeyCreateDistribution(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_ptr: jlong,
+    channel_id: JString,
+) -> jbyteArray {
+    let store = unsafe { &mut *(store_ptr as *mut SenderKeyStore) };
+    let channel_id = match jstring_to_string(&mut env, &channel_id) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JObject::null().into_raw();
+        }
+    };
+    let sk = store.get_or_create_my_key(&channel_id).clone();
+    let dist = sender_keys::build_distribution_message(&channel_id, &sk, None);
+    match serde_json::to_string(&dist) {
+        Ok(json) => vec_to_jbytearray(&mut env, json.as_bytes()),
+        Err(e) => {
+            throw_accord_exception(&mut env, &format!("Serialization failed: {e}"));
+            JObject::null().into_raw()
+        }
+    }
+}
+
+/// Process a received distribution message, storing the peer's key.
+#[no_mangle]
+pub extern "system" fn Java_com_accord_core_AccordCore_nativeSenderKeyProcessDistribution(
+    mut env: JNIEnv,
+    _class: JClass,
+    store_ptr: jlong,
+    channel_id: JString,
+    sender_id: JString,
+    distribution_json: JString,
+) -> jboolean {
+    let store = unsafe { &mut *(store_ptr as *mut SenderKeyStore) };
+    let channel_id = match jstring_to_string(&mut env, &channel_id) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JNI_FALSE;
+        }
+    };
+    let sender_id = match jstring_to_string(&mut env, &sender_id) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JNI_FALSE;
+        }
+    };
+    let dist_json = match jstring_to_string(&mut env, &distribution_json) {
+        Ok(s) => s,
+        Err(e) => {
+            throw_accord_exception(&mut env, &e);
+            return JNI_FALSE;
+        }
+    };
+    let dist: sender_keys::SenderKeyDistributionMessage = match serde_json::from_str(&dist_json) {
+        Ok(d) => d,
+        Err(e) => {
+            throw_accord_exception(&mut env, &format!("Parse failed: {e}"));
+            return JNI_FALSE;
+        }
+    };
+    match sender_keys::parse_distribution_message(&dist) {
+        Ok((_, state)) => {
+            store.set_peer_key(&channel_id, &sender_id, state);
+            JNI_TRUE
+        }
+        Err(e) => {
+            throw_accord_exception(&mut env, &format!("Distribution failed: {e}"));
+            JNI_FALSE
+        }
+    }
+}

@@ -711,3 +711,152 @@ mod tests {
         }
     }
 }
+
+// ─── Sender Keys FFI ─────────────────────────────────────────────────────────
+
+use crate::sender_keys::{self, SenderKeyStore};
+
+/// Create a new SenderKeyStore. Caller must free with `accord_sender_key_store_free`.
+#[no_mangle]
+pub extern "C" fn accord_sender_key_store_create() -> *mut SenderKeyStore {
+    Box::into_raw(Box::new(SenderKeyStore::new()))
+}
+
+/// Free a SenderKeyStore.
+///
+/// # Safety
+/// `store` must be a valid pointer returned by `accord_sender_key_store_create`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn accord_sender_key_store_free(store: *mut SenderKeyStore) {
+    if !store.is_null() {
+        drop(Box::from_raw(store));
+    }
+}
+
+/// Encrypt a channel message. Returns an AccordBuffer containing the JSON envelope.
+///
+/// # Safety
+/// All pointers must be valid. `store` must be a live SenderKeyStore.
+#[no_mangle]
+pub unsafe extern "C" fn accord_sender_key_encrypt(
+    store: *mut SenderKeyStore,
+    channel_id: *const c_char,
+    plaintext: *const u8,
+    plaintext_len: usize,
+) -> *mut AccordBuffer {
+    if store.is_null() || channel_id.is_null() || plaintext.is_null() {
+        return AccordBuffer::null();
+    }
+    let store = &mut *store;
+    let channel_id = match CStr::from_ptr(channel_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return AccordBuffer::null(),
+    };
+    let plaintext_str = match std::str::from_utf8(slice::from_raw_parts(plaintext, plaintext_len)) {
+        Ok(s) => s,
+        Err(_) => return AccordBuffer::null(),
+    };
+    match sender_keys::encrypt_channel_message(store, channel_id, plaintext_str) {
+        Ok(json) => AccordBuffer::from_vec(json.into_bytes()),
+        Err(_) => AccordBuffer::null(),
+    }
+}
+
+/// Decrypt a channel message. Returns an AccordBuffer containing the plaintext.
+///
+/// # Safety
+/// All pointers must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn accord_sender_key_decrypt(
+    store: *mut SenderKeyStore,
+    channel_id: *const c_char,
+    sender_id: *const c_char,
+    envelope_json: *const c_char,
+) -> *mut AccordBuffer {
+    if store.is_null() || channel_id.is_null() || sender_id.is_null() || envelope_json.is_null() {
+        return AccordBuffer::null();
+    }
+    let store = &mut *store;
+    let channel_id = match CStr::from_ptr(channel_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return AccordBuffer::null(),
+    };
+    let sender_id = match CStr::from_ptr(sender_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return AccordBuffer::null(),
+    };
+    let envelope_json = match CStr::from_ptr(envelope_json).to_str() {
+        Ok(s) => s,
+        Err(_) => return AccordBuffer::null(),
+    };
+    match sender_keys::decrypt_channel_message(store, channel_id, sender_id, envelope_json) {
+        Ok(plaintext) => AccordBuffer::from_vec(plaintext.into_bytes()),
+        Err(_) => AccordBuffer::null(),
+    }
+}
+
+/// Create a distribution message JSON for a channel. Returns AccordBuffer with JSON.
+///
+/// # Safety
+/// All pointers must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn accord_sender_key_create_distribution(
+    store: *mut SenderKeyStore,
+    channel_id: *const c_char,
+) -> *mut AccordBuffer {
+    if store.is_null() || channel_id.is_null() {
+        return AccordBuffer::null();
+    }
+    let store = &mut *store;
+    let channel_id = match CStr::from_ptr(channel_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return AccordBuffer::null(),
+    };
+    let sk = store.get_or_create_my_key(channel_id).clone();
+    let dist = sender_keys::build_distribution_message(channel_id, &sk, None);
+    match serde_json::to_string(&dist) {
+        Ok(json) => AccordBuffer::from_vec(json.into_bytes()),
+        Err(_) => AccordBuffer::null(),
+    }
+}
+
+/// Process a received distribution message JSON, storing the peer's key.
+///
+/// # Safety
+/// All pointers must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn accord_sender_key_process_distribution(
+    store: *mut SenderKeyStore,
+    channel_id: *const c_char,
+    sender_id: *const c_char,
+    distribution_json: *const c_char,
+) -> AccordResult {
+    if store.is_null() || channel_id.is_null() || sender_id.is_null() || distribution_json.is_null()
+    {
+        return ACCORD_ERR_NULL_PTR;
+    }
+    let store = &mut *store;
+    let channel_id = match CStr::from_ptr(channel_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return ACCORD_ERR_INVALID_UTF8,
+    };
+    let sender_id = match CStr::from_ptr(sender_id).to_str() {
+        Ok(s) => s,
+        Err(_) => return ACCORD_ERR_INVALID_UTF8,
+    };
+    let dist_json = match CStr::from_ptr(distribution_json).to_str() {
+        Ok(s) => s,
+        Err(_) => return ACCORD_ERR_INVALID_UTF8,
+    };
+    let dist: sender_keys::SenderKeyDistributionMessage = match serde_json::from_str(dist_json) {
+        Ok(d) => d,
+        Err(_) => return ACCORD_ERR_SERIALIZATION,
+    };
+    match sender_keys::parse_distribution_message(&dist) {
+        Ok((_, state)) => {
+            store.set_peer_key(channel_id, sender_id, state);
+            ACCORD_OK
+        }
+        Err(_) => ACCORD_ERR_CRYPTO,
+    }
+}
