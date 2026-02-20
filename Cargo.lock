@@ -116,6 +116,7 @@ name = "accord-server"
 version = "0.1.0"
 dependencies = [
  "accord-core",
+ "aes-gcm",
  "anyhow",
  "argon2",
  "async-trait",
@@ -132,6 +133,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
+ "hkdf",
  "hostname",
  "libc",
  "libsqlite3-sys",
@@ -156,6 +158,8 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

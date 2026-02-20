@@ -5533,6 +5533,77 @@ impl Database {
         Ok(())
     }
 
+    /// Store crypto keys for a bot installation (X25519 + shared secret)
+    pub async fn store_bot_crypto(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        node_x25519_privkey: &str,
+        shared_secret: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE installed_bots SET node_x25519_privkey = ?, shared_secret = ?, key_rotated_at = ? WHERE bot_id = ? AND node_id = ?",
+        )
+        .bind(node_x25519_privkey)
+        .bind(shared_secret)
+        .bind(now() as i64)
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to store bot crypto")?;
+        Ok(())
+    }
+
+    /// Get crypto info for a bot (shared_secret, ed25519_pubkey, invocation_count, key_rotated_at, node_x25519_privkey, x25519_pubkey)
+    pub async fn get_bot_crypto_info(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<Option<crate::bot_api::BotCryptoInfo>> {
+        let row = sqlx::query(
+            "SELECT shared_secret, ed25519_pubkey, x25519_pubkey, node_x25519_privkey, invocation_count, key_rotated_at FROM installed_bots WHERE bot_id = ? AND node_id = ?",
+        )
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get bot crypto info")?;
+
+        Ok(row.map(|r| crate::bot_api::BotCryptoInfo {
+            shared_secret: r.get("shared_secret"),
+            ed25519_pubkey: r.get("ed25519_pubkey"),
+            x25519_pubkey: r.get("x25519_pubkey"),
+            node_x25519_privkey: r.get("node_x25519_privkey"),
+            invocation_count: r.get::<i64, _>("invocation_count") as u64,
+            key_rotated_at: r.get::<Option<i64>, _>("key_rotated_at").map(|v| v as u64),
+        }))
+    }
+
+    /// Update bot crypto keys after rotation
+    pub async fn rotate_bot_crypto(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        node_x25519_privkey: &str,
+        x25519_pubkey: &str,
+        shared_secret: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE installed_bots SET node_x25519_privkey = ?, x25519_pubkey = ?, shared_secret = ?, key_rotated_at = ?, invocation_count = 0 WHERE bot_id = ? AND node_id = ?",
+        )
+        .bind(node_x25519_privkey)
+        .bind(x25519_pubkey)
+        .bind(shared_secret)
+        .bind(now() as i64)
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to rotate bot crypto")?;
+        Ok(())
+    }
+
     // ── Custom emoji operations ──
 
     /// Create a custom emoji for a node

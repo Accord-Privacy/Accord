@@ -1680,6 +1680,50 @@ impl AppState {
             .map_err(|e| e.to_string())
     }
 
+    pub async fn store_bot_crypto(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        node_x25519_privkey: &str,
+        shared_secret: &str,
+    ) -> Result<(), String> {
+        self.db
+            .store_bot_crypto(bot_id, node_id, node_x25519_privkey, shared_secret)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn get_bot_crypto_info(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<Option<crate::bot_api::BotCryptoInfo>, String> {
+        self.db
+            .get_bot_crypto_info(bot_id, node_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn rotate_bot_crypto(
+        &self,
+        bot_id: &str,
+        node_id: Uuid,
+        node_x25519_privkey: &str,
+        x25519_pubkey: &str,
+        shared_secret: &str,
+    ) -> Result<(), String> {
+        self.db
+            .rotate_bot_crypto(
+                bot_id,
+                node_id,
+                node_x25519_privkey,
+                x25519_pubkey,
+                shared_secret,
+            )
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     pub async fn get_user_display_name(&self, user_id: Uuid) -> Result<String, String> {
         // Try to get from user profile
         let profile = self

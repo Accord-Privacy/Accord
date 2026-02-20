@@ -61,8 +61,14 @@ chrono = "0.4"
 libc = "0.2"
 tempfile = "3.8"
 
-# Ed25519 signatures for relay mesh
+# Ed25519 signatures for relay mesh + bot API v2
 ed25519-dalek = { workspace = true, features = ["rand_core", "serde"] }
+
+# Bot API v2 E2EE
+x25519-dalek = { workspace = true }
+aes-gcm = { workspace = true }
+hkdf = { workspace = true }
+zeroize = { workspace = true }
 
 
 # Hex encoding
