@@ -4160,16 +4160,21 @@ async fn handle_ws_message(
                 .map_err(|e| format!("Failed to get user: {}", e))?
                 .ok_or_else(|| "User not found".to_string())?;
 
-            // Check if user is a member of the channel
+            // Check if user can access the channel (via node membership + permissions)
+            let can_access = state
+                .user_can_access_channel(sender_user_id, channel_id)
+                .await
+                .unwrap_or(false);
+            if !can_access {
+                return Err("Not a member of this channel".into());
+            }
+
+            // Get channel members for broadcasting
             let channel_members = state
                 .db
                 .get_channel_members(channel_id)
                 .await
-                .map_err(|e| format!("Failed to get channel members: {}", e))?;
-
-            if !channel_members.contains(&sender_user_id) {
-                return Err("Not a member of this channel".into());
-            }
+                .unwrap_or_default();
 
             // Broadcast typing event to other channel members (exclude sender)
             let typing_event = serde_json::json!({
