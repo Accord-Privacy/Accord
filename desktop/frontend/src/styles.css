@@ -2237,6 +2237,40 @@ input, textarea, select, button {
 }
 .search-filter-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+.search-mode-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 2px;
+}
+.search-mode-tab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+.search-mode-tab:hover { color: var(--text-primary); background: var(--bg-secondary); }
+.search-mode-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+.search-local-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 0 0;
+  font-style: italic;
+}
+.search-result-icon {
+  margin-right: 4px;
+  font-size: 12px;
+}
+
 .search-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 8px; }
 .search-chip {
   display: inline-flex; align-items: center; gap: 4px;

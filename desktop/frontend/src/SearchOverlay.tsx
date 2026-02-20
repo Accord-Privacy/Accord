@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { decryptMessage, getChannelKey } from "./crypto";
-import { Channel } from "./types";
+import { Channel, Message } from "./types";
 
 interface SearchResult {
   message_id: string;
@@ -14,6 +14,19 @@ interface SearchResult {
   decrypted_content?: string;
 }
 
+interface LocalSearchResult {
+  message_id: string;
+  channel_id: string;
+  channel_name: string;
+  sender_id: string;
+  sender_public_key_hash: string;
+  created_at: number;
+  decrypted_content: string;
+  display_name?: string;
+}
+
+type SearchMode = "server" | "local";
+
 interface SearchOverlayProps {
   isVisible: boolean;
   onClose: () => void;
@@ -23,6 +36,10 @@ interface SearchOverlayProps {
   onNavigateToMessage: (channelId: string, messageId: string) => void;
   keyPair?: CryptoKeyPair | null;
   encryptionEnabled?: boolean;
+  /** Currently loaded/displayed messages (already decrypted) for local search */
+  currentMessages?: Message[];
+  /** Current channel ID for local search context */
+  currentChannelId?: string;
 }
 
 /** Highlight search terms in text by wrapping matches in <mark> */
@@ -38,6 +55,17 @@ function highlightTerms(text: string, query: string): React.ReactNode {
   );
 }
 
+/** Cache of decrypted message content for faster re-search, keyed by message ID */
+const decryptedContentCache = new Map<string, string>();
+let cachedChannelId: string | undefined;
+
+function clearCacheIfChannelChanged(channelId?: string) {
+  if (channelId !== cachedChannelId) {
+    decryptedContentCache.clear();
+    cachedChannelId = channelId;
+  }
+}
+
 export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   isVisible,
   onClose,
@@ -47,6 +75,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   onNavigateToMessage,
   keyPair,
   encryptionEnabled,
+  currentMessages,
+  currentChannelId,
 }) => {
   const [query, setQuery] = useState("");
   const [selectedChannelId, setSelectedChannelId] = useState("");
@@ -54,14 +84,33 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const [beforeDate, setBeforeDate] = useState("");
   const [afterDate, setAfterDate] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [localResults, setLocalResults] = useState<LocalSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [searchMode, setSearchMode] = useState<SearchMode>("local");
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTimeoutRef = useRef<number | undefined>(undefined);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Clear cache when channel changes
+  useEffect(() => {
+    clearCacheIfChannelChanged(currentChannelId);
+  }, [currentChannelId]);
+
+  // Build search index from current messages
+  useEffect(() => {
+    if (currentMessages && currentChannelId) {
+      clearCacheIfChannelChanged(currentChannelId);
+      for (const msg of currentMessages) {
+        if (msg.content && msg.id && !decryptedContentCache.has(msg.id)) {
+          decryptedContentCache.set(msg.id, msg.content);
+        }
+      }
+    }
+  }, [currentMessages, currentChannelId]);
 
   useEffect(() => {
     if (isVisible && searchInputRef.current) {
@@ -71,12 +120,55 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     if (!isVisible) {
       setQuery("");
       setResults([]);
+      setLocalResults([]);
       setError("");
       setSelectedIndex(-1);
     }
   }, [isVisible]);
 
-  const performSearch = useCallback(async (
+  // Local search through cached/loaded messages
+  const performLocalSearch = useCallback((searchQuery: string) => {
+    if (!searchQuery.trim() || !currentMessages) {
+      setLocalResults([]);
+      return;
+    }
+
+    const searchLower = searchQuery.trim().toLowerCase();
+    const terms = searchLower.split(/\s+/).filter(Boolean);
+    const channelName = channels.find(c => c.id === currentChannelId)?.name || "";
+
+    const matched: LocalSearchResult[] = [];
+    for (const msg of currentMessages) {
+      const content = decryptedContentCache.get(msg.id) || msg.content || "";
+      if (!content) continue;
+
+      const contentLower = content.toLowerCase();
+      const authorLower = (msg.display_name || msg.author || "").toLowerCase();
+
+      // All terms must match in content or author
+      const allMatch = terms.every(term =>
+        contentLower.includes(term) || authorLower.includes(term)
+      );
+
+      if (allMatch) {
+        matched.push({
+          message_id: msg.id,
+          channel_id: msg.channel_id || currentChannelId || "",
+          channel_name: channelName,
+          sender_id: msg.sender_id || msg.author || "",
+          sender_public_key_hash: msg.sender_public_key_hash || msg.author || "",
+          created_at: msg.timestamp || 0,
+          decrypted_content: content,
+          display_name: msg.display_name,
+        });
+      }
+    }
+
+    setLocalResults(matched);
+    setSelectedIndex(-1);
+  }, [currentMessages, currentChannelId, channels]);
+
+  const performServerSearch = useCallback(async (
     searchQuery: string,
     channelId?: string,
     author?: string,
@@ -124,11 +216,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
       // If we have decrypted content, also filter client-side by content match
       const searchLower = searchQuery.trim().toLowerCase();
       const filtered = decryptedResults.filter(r => {
-        // Always include if we couldn't decrypt (metadata match from server)
         if (!r.decrypted_content) return true;
-        // Include if content matches the search query
         if (r.decrypted_content.toLowerCase().includes(searchLower)) return true;
-        // Include if channel name or sender hash matches (server-side match)
         if (r.channel_name.toLowerCase().includes(searchLower)) return true;
         if (r.sender_public_key_hash.toLowerCase().includes(searchLower)) return true;
         return false;
@@ -153,33 +242,62 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   ) => {
     if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = window.setTimeout(() => {
-      performSearch(q, ch, au, be, af);
+      if (searchMode === "local") {
+        performLocalSearch(q);
+      } else {
+        performServerSearch(q, ch, au, be, af);
+      }
     }, 300);
-  }, [query, selectedChannelId, authorFilter, beforeDate, afterDate, performSearch]);
+  }, [query, selectedChannelId, authorFilter, beforeDate, afterDate, performServerSearch, performLocalSearch, searchMode]);
 
   const handleSearchInput = useCallback((value: string) => {
     setQuery(value);
     triggerSearch(value);
   }, [triggerSearch]);
 
-  const handleResultClick = (result: SearchResult) => {
-    onNavigateToMessage(result.channel_id, result.message_id);
+  const handleModeSwitch = useCallback((mode: SearchMode) => {
+    setSearchMode(mode);
+    setResults([]);
+    setLocalResults([]);
+    setSelectedIndex(-1);
+    // Re-trigger search with new mode after state update
+    if (query.trim()) {
+      if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = window.setTimeout(() => {
+        if (mode === "local") {
+          performLocalSearch(query);
+        } else {
+          performServerSearch(query, selectedChannelId, authorFilter, beforeDate, afterDate);
+        }
+      }, 100);
+    }
+  }, [query, selectedChannelId, authorFilter, beforeDate, afterDate, performLocalSearch, performServerSearch]);
+
+  const handleResultClick = (channelId: string, messageId: string) => {
+    onNavigateToMessage(channelId, messageId);
     onClose();
   };
+
+  // Active result list for keyboard nav
+  const activeResults = searchMode === "local" ? localResults : results;
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex(i => Math.min(i + 1, results.length - 1));
+      setSelectedIndex(i => Math.min(i + 1, activeResults.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelectedIndex(i => Math.max(i - 1, -1));
-    } else if (e.key === "Enter" && selectedIndex >= 0 && results[selectedIndex]) {
+    } else if (e.key === "Enter" && selectedIndex >= 0 && activeResults[selectedIndex]) {
       e.preventDefault();
-      handleResultClick(results[selectedIndex]);
+      const r = activeResults[selectedIndex];
+      handleResultClick(
+        "channel_id" in r ? r.channel_id : "",
+        "message_id" in r ? r.message_id : "",
+      );
     }
-  }, [results, selectedIndex]);
+  }, [activeResults, selectedIndex]);
 
   // Scroll selected result into view
   useEffect(() => {
@@ -216,15 +334,33 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
       <div className="search-overlay-backdrop" onClick={onClose} />
       <div className="search-overlay-content">
         <div className="search-overlay-header">
-          <h3>🔍 Search Messages</h3>
+          <h3>{searchMode === "local" ? "🔒" : "🔍"} Search Messages</h3>
           <div className="search-header-actions">
-            <button
-              className={`search-filter-toggle ${showFilters ? "active" : ""}`}
-              onClick={() => setShowFilters(!showFilters)}
-              title="Toggle filters"
-            >
-              ⚙️ Filters
-            </button>
+            <div className="search-mode-tabs">
+              <button
+                className={`search-mode-tab ${searchMode === "local" ? "active" : ""}`}
+                onClick={() => handleModeSwitch("local")}
+                title="Search decrypted messages locally"
+              >
+                🔒 Local
+              </button>
+              <button
+                className={`search-mode-tab ${searchMode === "server" ? "active" : ""}`}
+                onClick={() => handleModeSwitch("server")}
+                title="Search via server (metadata only)"
+              >
+                🔍 Server
+              </button>
+            </div>
+            {searchMode === "server" && (
+              <button
+                className={`search-filter-toggle ${showFilters ? "active" : ""}`}
+                onClick={() => setShowFilters(!showFilters)}
+                title="Toggle filters"
+              >
+                ⚙️ Filters
+              </button>
+            )}
             <button className="search-overlay-close" onClick={onClose}>×</button>
           </div>
         </div>
@@ -235,17 +371,24 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="Search messages... (content is searched after decryption)"
+                placeholder={searchMode === "local"
+                  ? "Search loaded messages (decrypted locally)..."
+                  : "Search messages... (content is searched after decryption)"}
                 value={query}
                 onChange={(e) => handleSearchInput(e.target.value)}
                 className="search-input"
               />
               {isLoading && <div className="search-loading">🔍</div>}
             </div>
+            {searchMode === "local" && (
+              <div className="search-local-hint">
+                Searching {currentMessages?.length || 0} loaded messages in current channel — decrypted locally, never sent to server
+              </div>
+            )}
           </div>
 
-          {/* Active filter chips */}
-          {activeFilters.length > 0 && (
+          {/* Active filter chips (server mode only) */}
+          {searchMode === "server" && activeFilters.length > 0 && (
             <div className="search-filter-chips">
               {activeFilters.map(f => (
                 <span key={f.type} className="search-chip">
@@ -256,8 +399,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
             </div>
           )}
 
-          {/* Expandable filter panel */}
-          {showFilters && (
+          {/* Expandable filter panel (server mode only) */}
+          {searchMode === "server" && showFilters && (
             <div className="search-filters-panel">
               <div className="search-filter-row">
                 <label>Channel:</label>
@@ -306,38 +449,78 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
           {error && <div className="search-error">⚠️ {error}</div>}
 
           <div className="search-results" ref={resultsRef}>
-            {results.length === 0 && query.trim() && !isLoading && !error && (
-              <div className="search-no-results">No messages found for &ldquo;{query}&rdquo;</div>
-            )}
-
-            {results.map((result, idx) => (
-              <div
-                key={result.message_id}
-                className={`search-result ${idx === selectedIndex ? "search-result-selected" : ""}`}
-                onClick={() => handleResultClick(result)}
-              >
-                <div className="search-result-header">
-                  <span className="search-result-sender">
-                    {result.sender_public_key_hash?.slice(0, 16) || "Unknown"}
-                  </span>
-                  <span className="search-result-channel">#{result.channel_name}</span>
-                  <span className="search-result-time">
-                    {new Date(result.created_at).toLocaleString()}
-                  </span>
-                </div>
-                <div className="search-result-snippet">
-                  {result.decrypted_content
-                    ? highlightTerms(
+            {/* Local search results */}
+            {searchMode === "local" && (
+              <>
+                {localResults.length === 0 && query.trim() && !isLoading && (
+                  <div className="search-no-results">No messages found for &ldquo;{query}&rdquo; in loaded messages</div>
+                )}
+                {localResults.map((result, idx) => (
+                  <div
+                    key={result.message_id}
+                    className={`search-result ${idx === selectedIndex ? "search-result-selected" : ""}`}
+                    onClick={() => handleResultClick(result.channel_id, result.message_id)}
+                  >
+                    <div className="search-result-header">
+                      <span className="search-result-icon" title="Searched locally (decrypted)">🔒</span>
+                      <span className="search-result-sender">
+                        {result.display_name || result.sender_public_key_hash?.slice(0, 16) || "Unknown"}
+                      </span>
+                      <span className="search-result-channel">#{result.channel_name}</span>
+                      <span className="search-result-time">
+                        {result.created_at ? new Date(result.created_at).toLocaleString() : ""}
+                      </span>
+                    </div>
+                    <div className="search-result-snippet">
+                      {highlightTerms(
                         result.decrypted_content.length > 200
                           ? result.decrypted_content.slice(0, 200) + "…"
                           : result.decrypted_content,
                         query
-                      )
-                    : <em className="search-encrypted-hint">🔐 Encrypted — click to view</em>
-                  }
-                </div>
-              </div>
-            ))}
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* Server search results */}
+            {searchMode === "server" && (
+              <>
+                {results.length === 0 && query.trim() && !isLoading && !error && (
+                  <div className="search-no-results">No messages found for &ldquo;{query}&rdquo;</div>
+                )}
+                {results.map((result, idx) => (
+                  <div
+                    key={result.message_id}
+                    className={`search-result ${idx === selectedIndex ? "search-result-selected" : ""}`}
+                    onClick={() => handleResultClick(result.channel_id, result.message_id)}
+                  >
+                    <div className="search-result-header">
+                      <span className="search-result-icon" title="Server search">🔍</span>
+                      <span className="search-result-sender">
+                        {result.sender_public_key_hash?.slice(0, 16) || "Unknown"}
+                      </span>
+                      <span className="search-result-channel">#{result.channel_name}</span>
+                      <span className="search-result-time">
+                        {new Date(result.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="search-result-snippet">
+                      {result.decrypted_content
+                        ? highlightTerms(
+                            result.decrypted_content.length > 200
+                              ? result.decrypted_content.slice(0, 200) + "…"
+                              : result.decrypted_content,
+                            query
+                          )
+                        : <em className="search-encrypted-hint">🔐 Encrypted — click to view</em>
+                      }
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
 
@@ -345,8 +528,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
           <span className="search-footer-hint">
             ↑↓ Navigate · Enter to jump · Esc to close
           </span>
-          {results.length > 0 && (
-            <span className="search-result-count">{results.length} result{results.length !== 1 ? "s" : ""}</span>
+          {activeResults.length > 0 && (
+            <span className="search-result-count">{activeResults.length} result{activeResults.length !== 1 ? "s" : ""}</span>
           )}
         </div>
       </div>

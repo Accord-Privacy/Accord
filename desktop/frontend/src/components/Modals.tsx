@@ -237,6 +237,8 @@ export const AppModals: React.FC = () => {
         onNavigateToMessage={ctx.handleNavigateToMessage}
         keyPair={ctx.keyPair}
         encryptionEnabled={ctx.encryptionEnabled}
+        currentMessages={ctx.appState.messages}
+        currentChannelId={ctx.selectedChannelId || undefined}
       />
 
       {/* Notification Settings */}
