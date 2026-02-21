@@ -2184,8 +2184,19 @@ impl Database {
         node_id: Uuid,
         created_by: Uuid,
     ) -> Result<Channel> {
+        self.create_channel_typed(name, node_id, created_by, 0)
+            .await
+    }
+
+    pub async fn create_channel_typed(
+        &self,
+        name: &str,
+        node_id: Uuid,
+        created_by: Uuid,
+        channel_type: i32,
+    ) -> Result<Channel> {
         let channel_id = Uuid::new_v4();
-        self.create_channel_with_id(channel_id, name, node_id, created_by)
+        self.create_channel_with_id_and_type(channel_id, name, node_id, created_by, channel_type)
             .await
     }
 
@@ -2239,6 +2250,18 @@ impl Database {
         node_id: Uuid,
         created_by: Uuid,
     ) -> Result<Channel> {
+        self.create_channel_with_id_and_type(channel_id, name, node_id, created_by, 0)
+            .await
+    }
+
+    pub async fn create_channel_with_id_and_type(
+        &self,
+        channel_id: Uuid,
+        name: &str,
+        node_id: Uuid,
+        created_by: Uuid,
+        channel_type: i32,
+    ) -> Result<Channel> {
         let created_at = now();
 
         // Get the next position for this node (counting existing channels)
@@ -2248,13 +2271,14 @@ impl Database {
             .await?;
         let position = position_row.get::<i64, _>("next_position");
 
-        sqlx::query("INSERT INTO channels (id, name, node_id, created_by, created_at, position) VALUES (?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO channels (id, name, node_id, created_by, created_at, position, channel_type) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .bind(channel_id.to_string())
             .bind(name)
             .bind(node_id.to_string())
             .bind(created_by.to_string())
             .bind(created_at as i64)
             .bind(position)
+            .bind(channel_type as i64)
             .execute(&self.pool)
             .await
             .context("Failed to insert channel")?;
@@ -2270,12 +2294,13 @@ impl Database {
             node_id,
             members,
             created_at,
+            channel_type,
         })
     }
 
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>> {
         let row = sqlx::query(
-            "SELECT id, name, node_id, created_by, created_at FROM channels WHERE id = ?",
+            "SELECT id, name, node_id, created_by, created_at, channel_type FROM channels WHERE id = ?",
         )
         .bind(channel_id.to_string())
         .fetch_optional(&self.pool)
@@ -2290,6 +2315,7 @@ impl Database {
                 node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             }))
         } else {
             Ok(None)
@@ -2298,7 +2324,7 @@ impl Database {
 
     pub async fn get_node_channels(&self, node_id: Uuid) -> Result<Vec<Channel>> {
         let rows = sqlx::query(
-            "SELECT id, name, node_id, created_by, created_at FROM channels WHERE node_id = ? ORDER BY position ASC",
+            "SELECT id, name, node_id, created_by, created_at, channel_type FROM channels WHERE node_id = ? ORDER BY position ASC",
         )
         .bind(node_id.to_string())
         .fetch_all(&self.pool)
@@ -2315,6 +2341,7 @@ impl Database {
                 node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             });
         }
         Ok(channels)
@@ -2554,7 +2581,7 @@ impl Database {
     ) -> Result<Vec<crate::models::ChannelWithCategory>> {
         let rows = sqlx::query(
             r#"
-            SELECT c.id, c.name, c.node_id, c.created_by, c.created_at, c.category_id, c.position,
+            SELECT c.id, c.name, c.node_id, c.created_by, c.created_at, c.category_id, c.position, c.channel_type,
                    cat.name as category_name
             FROM channels c
             LEFT JOIN channel_categories cat ON c.category_id = cat.id
@@ -2586,6 +2613,7 @@ impl Database {
                 category_id,
                 category_name,
                 position: row.get::<i64, _>("position") as u32,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             });
         }
         Ok(channels)
@@ -2846,7 +2874,7 @@ impl Database {
 
     pub async fn get_user_channels(&self, user_id: Uuid) -> Result<Vec<Channel>> {
         let rows = sqlx::query(
-            "SELECT c.id, c.name, c.node_id, c.created_by, c.created_at FROM channels c JOIN channel_members cm ON c.id = cm.channel_id WHERE cm.user_id = ?",
+            "SELECT c.id, c.name, c.node_id, c.created_by, c.created_at, c.channel_type FROM channels c JOIN channel_members cm ON c.id = cm.channel_id WHERE cm.user_id = ?",
         )
         .bind(user_id.to_string())
         .fetch_all(&self.pool)
@@ -2863,6 +2891,7 @@ impl Database {
                 node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             });
         }
         Ok(channels)

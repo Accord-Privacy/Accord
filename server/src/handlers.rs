@@ -408,6 +408,12 @@ pub async fn create_channel_handler(
         .and_then(|v| v.as_str())
         .unwrap_or("general");
 
+    let channel_type = match request.get("channel_type").and_then(|v| v.as_str()) {
+        Some("voice") => 2,
+        Some("category") => 4,
+        _ => 0, // text
+    };
+
     crate::validation::validate_channel_name(name).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -418,12 +424,21 @@ pub async fn create_channel_handler(
         )
     })?;
 
-    match state.db.create_channel(name, node_id, user_id).await {
+    match state
+        .db
+        .create_channel_typed(name, node_id, user_id, channel_type)
+        .await
+    {
         Ok(channel) => Ok(Json(serde_json::json!({
             "id": channel.id,
             "name": channel.name,
             "node_id": channel.node_id,
             "created_at": channel.created_at,
+            "channel_type": match channel.channel_type {
+                2 => "voice",
+                4 => "category",
+                _ => "text",
+            },
         }))),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -459,6 +474,11 @@ pub async fn list_node_channels_handler(
                     "node_id": ch.node_id,
                     "created_at": ch.created_at,
                     "unread_count": unread_count,
+                    "channel_type": match ch.channel_type {
+                        2 => "voice",
+                        4 => "category",
+                        _ => "text",
+                    },
                 }));
             }
             Ok(Json(result))

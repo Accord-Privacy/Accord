@@ -394,6 +394,7 @@ pub struct Channel {
     pub node_id: Uuid,
     pub members: Vec<Uuid>,
     pub created_at: u64,
+    pub channel_type: i32,
 }
 
 /// Channel category information
@@ -417,6 +418,7 @@ pub struct ChannelWithCategory {
     pub category_id: Option<Uuid>,
     pub category_name: Option<String>,
     pub position: u32,
+    pub channel_type: i32,
 }
 
 /// WebSocket message types

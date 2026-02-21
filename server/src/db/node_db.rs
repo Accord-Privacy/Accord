@@ -401,15 +401,18 @@ impl NodeDatabase {
             node_id: self.node_id,
             members,
             created_at,
+            channel_type: 0,
         })
     }
 
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>> {
-        let row = sqlx::query("SELECT id, name, created_by, created_at FROM channels WHERE id = ?")
-            .bind(channel_id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to query channel")?;
+        let row = sqlx::query(
+            "SELECT id, name, created_by, created_at, channel_type FROM channels WHERE id = ?",
+        )
+        .bind(channel_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query channel")?;
 
         if let Some(row) = row {
             let members = self.get_channel_members(channel_id).await?;
@@ -419,6 +422,7 @@ impl NodeDatabase {
                 node_id: self.node_id,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             }))
         } else {
             Ok(None)
@@ -427,7 +431,7 @@ impl NodeDatabase {
 
     pub async fn get_node_channels(&self) -> Result<Vec<Channel>> {
         let rows = sqlx::query(
-            "SELECT id, name, created_by, created_at FROM channels ORDER BY position ASC",
+            "SELECT id, name, created_by, created_at, channel_type FROM channels ORDER BY position ASC",
         )
         .fetch_all(&self.pool)
         .await
@@ -443,6 +447,7 @@ impl NodeDatabase {
                 node_id: self.node_id,
                 members,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             });
         }
         Ok(channels)
@@ -669,7 +674,7 @@ impl NodeDatabase {
     pub async fn get_channels_with_categories(&self) -> Result<Vec<models::ChannelWithCategory>> {
         let rows = sqlx::query(
             r#"
-            SELECT c.id, c.name, c.created_by, c.created_at, c.category_id, c.position,
+            SELECT c.id, c.name, c.created_by, c.created_at, c.category_id, c.position, c.channel_type,
                    cat.name as category_name
             FROM channels c
             LEFT JOIN channel_categories cat ON c.category_id = cat.id
@@ -698,6 +703,7 @@ impl NodeDatabase {
                 category_id,
                 category_name,
                 position: row.get::<i64, _>("position") as u32,
+                channel_type: row.get::<i64, _>("channel_type") as i32,
             });
         }
         Ok(channels)
