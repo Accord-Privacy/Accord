@@ -18,6 +18,7 @@ interface NodeSettingsProps {
   userRole: 'admin' | 'moderator' | 'member';
   onNodeUpdated?: (node: Node) => void;
   onLeaveNode?: () => void;
+  onShowTemplateImport?: () => void;
 }
 
 export function NodeSettings({ 
@@ -27,7 +28,8 @@ export function NodeSettings({
   token, 
   userRole, 
   onNodeUpdated,
-  onLeaveNode 
+  onLeaveNode,
+  onShowTemplateImport,
 }: NodeSettingsProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit' | 'moderation' | 'emojis'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -988,6 +990,22 @@ export function NodeSettings({
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+              {/* Import Discord Template */}
+              {isAdmin && (
+                <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #40444b' }}>
+                  <h4 style={{ color: '#b9bbbe', marginBottom: '8px' }}>Import Discord Template</h4>
+                  <p style={{ color: '#72767d', fontSize: '13px', marginBottom: '12px' }}>
+                    Import channels, roles, and categories from a Discord server template.
+                  </p>
+                  <button 
+                    onClick={() => { if (onClose) onClose(); if (onShowTemplateImport) setTimeout(onShowTemplateImport, 100); }}
+                    className="btn btn-outline btn-sm"
+                    style={{ fontSize: '13px' }}
+                  >
+                    📥 Import Template
+                  </button>
                 </div>
               )}
             </div>

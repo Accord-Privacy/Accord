@@ -222,6 +222,7 @@ export const AppModals: React.FC = () => {
               onLeaveNode={() => {
                 ctx.loadNodes();
               }}
+              onShowTemplateImport={() => ctx.setShowTemplateImport(true)}
             />
           </Suspense>
         );

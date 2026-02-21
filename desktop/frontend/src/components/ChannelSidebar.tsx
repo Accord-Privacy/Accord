@@ -376,15 +376,6 @@ export const ChannelSidebar: React.FC = () => {
           );
         })}
         
-        {/* Import Discord Template Button */}
-        {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') && (
-          <div style={{ padding: '4px 8px' }}>
-            <button onClick={() => ctx.setShowTemplateImport(true)} className="btn btn-outline btn-sm" style={{ width: '100%', fontSize: '11px' }}>
-              📥 Import Discord Template
-            </button>
-          </div>
-        )}
-        
         {/* Create Channel Button for Admins */}
         {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'CreateChannel') && (
           <div style={{ marginTop: '4px', padding: '0 8px' }}>

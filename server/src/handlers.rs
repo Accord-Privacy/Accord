@@ -4581,12 +4581,23 @@ async fn handle_ws_message(
                 .await
                 .unwrap_or_default();
 
+            // Look up display name from profile
+            let sender_display_name = state
+                .db
+                .get_user_profile(sender_user_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|p| p.display_name)
+                .unwrap_or_else(|| format!("{}…{}", &user.public_key_hash[..8], &user.public_key_hash[user.public_key_hash.len()-6..]));
+
             // Broadcast typing event to other channel members (exclude sender)
             let typing_event = serde_json::json!({
                 "type": "typing_start",
                 "channel_id": channel_id,
                 "user_id": sender_user_id,
                 "public_key_hash": user.public_key_hash,
+                "sender_display_name": sender_display_name,
                 "timestamp": now_secs()
             });
 

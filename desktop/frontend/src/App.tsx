@@ -982,7 +982,7 @@ function App() {
       
       const typingUser: TypingUser = {
         user_id: data.user_id,
-        displayName: data.public_key_hash ? fingerprint(data.public_key_hash) : data.user_id.substring(0, 8),
+        displayName: (data as any).sender_display_name || (data.public_key_hash ? fingerprint(data.public_key_hash) : data.user_id.substring(0, 8)),
         startedAt: Date.now(),
       };
 
@@ -2274,10 +2274,10 @@ function App() {
           // Set active identity from stored hash for key lookup
           const storedHash = localStorage.getItem('accord_public_key_hash');
           if (storedHash) setActiveIdentity(storedHash);
-          // Try password-based decryption first
-          let existingKeyPair = await loadKeyWithPassword(password);
+          // Try password-based decryption first (use stored hash for namespaced lookup)
+          let existingKeyPair = await loadKeyWithPassword(password, storedHash || undefined);
           if (!existingKeyPair) {
-            existingKeyPair = await loadKeyFromStorage();
+            existingKeyPair = await loadKeyFromStorage(storedHash || undefined);
           }
           if (existingKeyPair) {
             pkToUse = await exportPublicKey(existingKeyPair.publicKey);
