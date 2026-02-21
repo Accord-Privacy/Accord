@@ -69,6 +69,15 @@ export type {
   SenderKeyDistributionMessage,
 } from './senderKeys';
 
+export {
+  saveIdentityKeys,
+  loadIdentityKeys,
+  saveSenderKeyStore,
+  loadSenderKeyStore,
+} from './persistence';
+
+export type { StoredIdentityKeys } from './persistence';
+
 import type { IdentityKeyPair, SignedPreKeyPair, OneTimePreKeyPair, PreKeyBundle } from './keys';
 import { generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from './keys';
 import { x3dhInitiate, x3dhRespond } from './x3dh';

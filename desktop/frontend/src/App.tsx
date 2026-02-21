@@ -33,7 +33,7 @@ import { notificationManager, NotificationPreferences } from "./notifications";
 import { SetupWizard, SetupResult } from "./SetupWizard";
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
-import { E2EEManager, type PreKeyBundle, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage } from "./e2ee";
+import { E2EEManager, type PreKeyBundle, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -491,18 +491,54 @@ function App() {
     if (e2eeManagerRef.current?.isInitialized) return;
     try {
       const manager = new E2EEManager();
-      const bundle = manager.initialize();
+      const userId = localStorage.getItem('accord_user_id') || '';
+      const password = passwordRef.current;
+      const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+
+      // Try to load persisted identity keys
+      const storedKeys = password && userId ? loadIdentityKeys(userId, password) : null;
+      if (storedKeys) {
+        // Existing user — restore persisted keys (no need to republish bundle)
+        manager.initializeWithKeys(
+          storedKeys.identityKeyPair,
+          storedKeys.signedPreKey,
+          storedKeys.oneTimePreKeys,
+        );
+        console.log('E2EE initialized from persisted identity keys');
+      } else {
+        // Fresh registration — generate keys explicitly so we can persist them
+        const identityKeyPair = generateIdentityKeyPair();
+        const signedPreKey = generateSignedPreKey();
+        const oneTimePreKeys = generateOneTimePreKeys(10);
+
+        manager.initializeWithKeys(identityKeyPair, signedPreKey, oneTimePreKeys);
+
+        // Persist for future logins
+        if (password && userId) {
+          saveIdentityKeys(userId, { identityKeyPair, signedPreKey, oneTimePreKeys }, password);
+        }
+
+        // Publish prekey bundle to server
+        const bundle = buildPreKeyBundle(identityKeyPair, signedPreKey, oneTimePreKeys[0]);
+        await api.publishKeyBundle(
+          toBase64(bundle.identityKey),
+          toBase64(bundle.signedPrekey),
+          bundle.oneTimePrekey ? [toBase64(bundle.oneTimePrekey)] : [],
+          token,
+        );
+        console.log('E2EE initialized with fresh keys and prekey bundle published');
+      }
+
       e2eeManagerRef.current = manager;
 
-      // Publish prekey bundle to server (base64-encoded keys)
-      const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
-      await api.publishKeyBundle(
-        toBase64(bundle.identityKey),
-        toBase64(bundle.signedPrekey),
-        bundle.oneTimePrekey ? [toBase64(bundle.oneTimePrekey)] : [],
-        token,
-      );
-      console.log('E2EE initialized and prekey bundle published');
+      // Load persisted sender key store
+      if (password && userId) {
+        const loadedStore = loadSenderKeyStore(userId, password);
+        if (loadedStore) {
+          senderKeyStoreRef.current = loadedStore;
+          console.log('Sender key store loaded from persistence');
+        }
+      }
     } catch (error) {
       console.error('Failed to initialize E2EE:', error);
     }
@@ -2487,6 +2523,13 @@ function App() {
 
   // Handle logout
   const handleLogout = () => {
+    // Persist sender key store before clearing state
+    const userId = localStorage.getItem('accord_user_id') || '';
+    const password = passwordRef.current;
+    if (password && userId) {
+      saveSenderKeyStore(userId, senderKeyStoreRef.current, password);
+    }
+
     if (ws) {
       ws.disconnect();
       setWs(null);
