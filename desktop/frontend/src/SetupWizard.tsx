@@ -7,8 +7,11 @@ import {
   mnemonicToKeyPair,
   saveKeyWithPassword,
   setActiveIdentity,
+  loadKeyWithPassword,
+  hasStoredKeyPair,
+  getStoredPublicKey,
 } from "./crypto";
-import { parseInviteLink, normalizeServerUrl, probeServerUrl } from "./api";
+import { parseInviteLink, probeServerUrl } from "./api";
 
 export interface SetupResult {
   keyPair: CryptoKeyPair;
@@ -26,50 +29,96 @@ interface SetupWizardProps {
   onComplete: (result: SetupResult) => void;
 }
 
-type Step = 1 | 2 | 3;
-type IdentityMode = "create" | "recover";
+type WizardMode = "choose" | "login" | "create" | "recover" | "join";
+type CreateStep = "invite" | "identity" | "mnemonic";
 
 export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
-  const [step, setStep] = useState<Step>(1);
+  const [mode, setMode] = useState<WizardMode>("choose");
 
-  // Step 2 state
-  const [identityMode, setIdentityMode] = useState<IdentityMode | null>(null);
+  // Shared state
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [mnemonic, setMnemonic] = useState("");
+  const [inviteLinkInput, setInviteLinkInput] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [meshEnabled, setMeshEnabled] = useState(false);
+  const [showMeshTooltip, setShowMeshTooltip] = useState(false);
+
+  // Create account state
+  const [createStep, setCreateStep] = useState<CreateStep>("invite");
   const [generatedMnemonic, setGeneratedMnemonic] = useState("");
   const [mnemonicCopied, setMnemonicCopied] = useState(false);
   const [keyPair, setKeyPair] = useState<CryptoKeyPair | null>(null);
   const [publicKey, setPublicKey] = useState("");
   const [publicKeyHash, setPublicKeyHash] = useState("");
-  const [identityReady, setIdentityReady] = useState(false);
-  const [identityError, setIdentityError] = useState("");
-  const [generating, setGenerating] = useState(false);
+  const [parsedRelayUrl, setParsedRelayUrl] = useState("");
+  const [parsedInviteCode, setParsedInviteCode] = useState<string | undefined>();
 
-  // Display name state
-  const [displayName, setDisplayName] = useState("");
+  // Recover state
+  const [mnemonic, setMnemonic] = useState("");
 
-  // Step 3 state
-  const [relayAddress, setRelayAddress] = useState("");
-  const [inviteLinkInput, setInviteLinkInput] = useState("");
-  const [useInviteLink, setUseInviteLink] = useState(false);
-  const [meshEnabled, setMeshEnabled] = useState(false);
-  const [showMeshTooltip, setShowMeshTooltip] = useState(false);
-  const [connectError, setConnectError] = useState("");
-  const [connecting, setConnecting] = useState(false);
+  // Login state
+  const [loginNeedsInvite, setLoginNeedsInvite] = useState(false);
 
-  // Step 2: Create new identity
+  const storedServerUrl = localStorage.getItem("accord_server_url");
+
+  const resetState = () => {
+    setPassword("");
+    setConfirmPassword("");
+    setInviteLinkInput("");
+    setDisplayName("");
+    setError("");
+    setLoading(false);
+    setCreateStep("invite");
+    setGeneratedMnemonic("");
+    setMnemonicCopied(false);
+    setKeyPair(null);
+    setPublicKey("");
+    setPublicKeyHash("");
+    setParsedRelayUrl("");
+    setParsedInviteCode(undefined);
+    setMnemonic("");
+    setLoginNeedsInvite(false);
+  };
+
+  const goBack = () => {
+    resetState();
+    setMode("choose");
+  };
+
+  // Parse invite link and extract relay URL
+  const validateInviteLink = (): { relayUrl: string; inviteCode?: string } | null => {
+    const parsed = parseInviteLink(inviteLinkInput.trim());
+    if (!parsed) {
+      setError("Invalid invite link. Expected: accord://host/CODE, https://host/invite/CODE, or similar.");
+      return null;
+    }
+    return { relayUrl: parsed.relayUrl, inviteCode: parsed.inviteCode };
+  };
+
+  // === CREATE ACCOUNT: Step 1 - Validate invite link ===
+  const handleCreateInviteSubmit = useCallback(() => {
+    setError("");
+    const result = validateInviteLink();
+    if (!result) return;
+    setParsedRelayUrl(result.relayUrl);
+    setParsedInviteCode(result.inviteCode);
+    setCreateStep("identity");
+  }, [inviteLinkInput]);
+
+  // === CREATE ACCOUNT: Step 2 - Generate identity ===
   const handleCreateIdentity = useCallback(async () => {
     if (password.length < 8) {
-      setIdentityError("Password must be at least 8 characters");
+      setError("Password must be at least 8 characters");
       return;
     }
     if (password !== confirmPassword) {
-      setIdentityError("Passwords do not match");
+      setError("Passwords do not match");
       return;
     }
-    setGenerating(true);
-    setIdentityError("");
+    setLoading(true);
+    setError("");
     try {
       const kp = await generateKeyPair();
       const pk = await exportPublicKey(kp.publicKey);
@@ -83,26 +132,53 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       setPublicKey(pk);
       setPublicKeyHash(pkHash);
       setGeneratedMnemonic(phrase);
-      setIdentityReady(true);
+      setCreateStep("mnemonic");
     } catch (e: any) {
-      setIdentityError(e.message || "Failed to generate identity");
+      setError(e.message || "Failed to generate identity");
     } finally {
-      setGenerating(false);
+      setLoading(false);
     }
   }, [password, confirmPassword]);
 
-  // Step 2: Recover identity from mnemonic
-  const handleRecoverIdentity = useCallback(async () => {
-    if (password.length < 8) {
-      setIdentityError("Password must be at least 8 characters");
-      return;
+  // === CREATE ACCOUNT: Step 3 - Connect after mnemonic backup ===
+  const handleCreateConnect = useCallback(async () => {
+    if (!keyPair || !publicKey || !publicKeyHash) return;
+    setLoading(true);
+    setError("");
+    try {
+      const verifiedUrl = await probeServerUrl(parsedRelayUrl);
+      onComplete({
+        keyPair,
+        publicKey,
+        publicKeyHash,
+        password,
+        mnemonic: generatedMnemonic,
+        relayUrl: verifiedUrl,
+        inviteCode: parsedInviteCode,
+        meshEnabled,
+        displayName: displayName.trim() || undefined,
+      });
+    } catch (e: any) {
+      setError(e.message || "Failed to connect to relay server");
+      setLoading(false);
     }
+  }, [keyPair, publicKey, publicKeyHash, password, generatedMnemonic, parsedRelayUrl, parsedInviteCode, meshEnabled, displayName, onComplete]);
+
+  // === RECOVER ACCOUNT ===
+  const handleRecover = useCallback(async () => {
     if (!mnemonic.trim()) {
-      setIdentityError("Please enter your recovery phrase");
+      setError("Please enter your recovery phrase");
       return;
     }
-    setGenerating(true);
-    setIdentityError("");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    const inviteResult = validateInviteLink();
+    if (!inviteResult) return;
+
+    setLoading(true);
+    setError("");
     try {
       const kp = mnemonicToKeyPair(mnemonic.trim());
       const pk = await exportPublicKey(kp.publicKey);
@@ -111,62 +187,114 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       setActiveIdentity(pkHash);
       await saveKeyWithPassword(kp, password, pkHash);
 
-      setKeyPair(kp);
-      setPublicKey(pk);
-      setPublicKeyHash(pkHash);
-      setIdentityReady(true);
+      const verifiedUrl = await probeServerUrl(inviteResult.relayUrl);
+      onComplete({
+        keyPair: kp,
+        publicKey: pk,
+        publicKeyHash: pkHash,
+        password,
+        mnemonic: mnemonic.trim(),
+        relayUrl: verifiedUrl,
+        inviteCode: inviteResult.inviteCode,
+        meshEnabled,
+        displayName: displayName.trim() || undefined,
+      });
     } catch (e: any) {
-      setIdentityError(e.message || "Invalid recovery phrase");
-    } finally {
-      setGenerating(false);
+      setError(e.message || "Recovery failed");
+      setLoading(false);
     }
-  }, [password, mnemonic]);
+  }, [mnemonic, password, inviteLinkInput, meshEnabled, displayName, onComplete]);
 
-  // Step 3: Connect
-  const handleConnect = useCallback(async () => {
-    if (!keyPair || !publicKey || !publicKeyHash) return;
-
-    let relayUrl = "";
-    let inviteCode: string | undefined;
-
-    if (useInviteLink && inviteLinkInput.trim()) {
-      const parsed = parseInviteLink(inviteLinkInput.trim());
-      if (!parsed) {
-        setConnectError("Invalid invite link format. Expected: accord://host/CODE, https://host/invite/CODE, or similar.");
-        return;
-      }
-      relayUrl = parsed.relayUrl;
-      inviteCode = parsed.inviteCode;
-    } else if (relayAddress.trim()) {
-      relayUrl = normalizeServerUrl(relayAddress.trim());
-    } else {
-      setConnectError("Please enter a relay address or invite link");
+  // === LOGIN ===
+  const handleLogin = useCallback(async () => {
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
       return;
     }
 
-    setConnecting(true);
-    setConnectError("");
+    let relayUrl = storedServerUrl || "";
+    let inviteCode: string | undefined;
 
+    if (!storedServerUrl || loginNeedsInvite) {
+      const inviteResult = validateInviteLink();
+      if (!inviteResult) return;
+      relayUrl = inviteResult.relayUrl;
+      inviteCode = inviteResult.inviteCode;
+    }
+
+    setLoading(true);
+    setError("");
     try {
-      // Probe the server — tries both HTTP and HTTPS, returns the working URL
-      const verifiedUrl = await probeServerUrl(relayUrl);
+      // Try to load existing keypair with password
+      const storedPkHash = localStorage.getItem("accord_active_identity");
+      if (!storedPkHash) {
+        setError("No stored identity found. Try 'Create Account' or 'Recover Account' instead.");
+        setLoading(false);
+        return;
+      }
 
+      const kp = await loadKeyWithPassword(password, storedPkHash);
+      const pk = await exportPublicKey(kp.publicKey);
+      const pkHash = await sha256Hex(pk);
+
+      const verifiedUrl = await probeServerUrl(relayUrl);
       onComplete({
-        keyPair,
-        publicKey,
-        publicKeyHash,
+        keyPair: kp,
+        publicKey: pk,
+        publicKeyHash: pkHash,
         password,
-        mnemonic: generatedMnemonic || mnemonic,
+        mnemonic: "",
         relayUrl: verifiedUrl,
         inviteCode,
         meshEnabled,
         displayName: displayName.trim() || undefined,
       });
     } catch (e: any) {
-      setConnectError(e.message || "Failed to connect to relay server");
-      setConnecting(false);
+      setError(e.message || "Login failed — wrong password?");
+      setLoading(false);
     }
-  }, [keyPair, publicKey, publicKeyHash, password, generatedMnemonic, mnemonic, relayAddress, inviteLinkInput, useInviteLink, meshEnabled, onComplete]);
+  }, [password, storedServerUrl, loginNeedsInvite, inviteLinkInput, meshEnabled, displayName, onComplete]);
+
+  // === JOIN NODE ===
+  const handleJoinNode = useCallback(async () => {
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    const inviteResult = validateInviteLink();
+    if (!inviteResult) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const storedPkHash = localStorage.getItem("accord_active_identity");
+      if (!storedPkHash) {
+        setError("No stored identity found. Try 'Create Account' first.");
+        setLoading(false);
+        return;
+      }
+
+      const kp = await loadKeyWithPassword(password, storedPkHash);
+      const pk = await exportPublicKey(kp.publicKey);
+      const pkHash = await sha256Hex(pk);
+
+      const verifiedUrl = await probeServerUrl(inviteResult.relayUrl);
+      onComplete({
+        keyPair: kp,
+        publicKey: pk,
+        publicKeyHash: pkHash,
+        password,
+        mnemonic: "",
+        relayUrl: verifiedUrl,
+        inviteCode: inviteResult.inviteCode,
+        meshEnabled,
+        displayName: displayName.trim() || undefined,
+      });
+    } catch (e: any) {
+      setError(e.message || "Failed to join — wrong password?");
+      setLoading(false);
+    }
+  }, [password, inviteLinkInput, meshEnabled, displayName, onComplete]);
 
   const handleCopyMnemonic = () => {
     navigator.clipboard.writeText(generatedMnemonic);
@@ -174,150 +302,222 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     setTimeout(() => setMnemonicCopied(false), 2000);
   };
 
+  // Mesh checkbox (shared across modes)
+  const renderMeshOption = () => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, position: "relative" }}>
+      <input
+        type="checkbox"
+        id="mesh-optin"
+        checked={meshEnabled}
+        onChange={(e) => setMeshEnabled(e.target.checked)}
+        style={{ accentColor: "var(--accent)" }}
+      />
+      <label htmlFor="mesh-optin" style={{ fontSize: 13, color: "var(--text-secondary)", cursor: "pointer" }}>
+        Enable relay mesh for cross-relay DMs
+      </label>
+      <span
+        style={{ cursor: "help", fontSize: 14, opacity: 0.6 }}
+        onMouseEnter={() => setShowMeshTooltip(true)}
+        onMouseLeave={() => setShowMeshTooltip(false)}
+      >
+        ℹ️
+      </span>
+      {showMeshTooltip && (
+        <div className="setup-tooltip">
+          Relay mesh allows you to send direct messages to users on other relays.
+          Your relay will connect to other participating relays to route messages.
+          This is optional and can be changed later.
+        </div>
+      )}
+    </div>
+  );
+
+  const renderDisplayNameField = () => (
+    <div className="form-group" style={{ marginTop: 16 }}>
+      <label className="form-label">Display Name <span style={{ color: "var(--accent)" }}>*</span></label>
+      <input
+        type="text"
+        placeholder="How others will see you (required)"
+        required
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+        className="form-input"
+        maxLength={32}
+      />
+    </div>
+  );
+
+  const renderInviteLinkField = (onSubmit?: () => void) => (
+    <div className="form-group" style={{ marginTop: 16 }}>
+      <label className="form-label">Invite Link</label>
+      <input
+        type="text"
+        placeholder="accord://host:port/invite/CODE or https://..."
+        value={inviteLinkInput}
+        onChange={(e) => setInviteLinkInput(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && onSubmit) onSubmit(); }}
+        className="form-input"
+      />
+    </div>
+  );
+
   return (
     <div className="app">
       <div className="auth-page">
         <div className="auth-card" style={{ maxWidth: 480 }}>
-          {/* Progress indicator */}
-          <div className="setup-progress">
-            {[1, 2, 3].map((s) => (
-              <div key={s} className={`setup-progress-step ${step >= s ? "active" : ""} ${step === s ? "current" : ""}`}>
-                <div className="setup-progress-dot">{step > s ? "✓" : s}</div>
-                <span className="setup-progress-label">
-                  {s === 1 ? "Welcome" : s === 2 ? "Identity" : "Connect"}
-                </span>
-              </div>
-            ))}
-            <div className="setup-progress-line">
-              <div className="setup-progress-line-fill" style={{ width: `${((step - 1) / 2) * 100}%` }} />
-            </div>
-          </div>
 
-          {/* Step 1: Welcome */}
-          {step === 1 && (
+          {/* === CHOOSE MODE === */}
+          {mode === "choose" && (
             <>
               <div className="auth-brand" style={{ marginTop: 16 }}>
                 <h1>⚡ <span className="brand-accent">Accord</span></h1>
               </div>
               <p className="auth-tagline">Privacy-first communications</p>
               <div style={{ margin: "24px 0", color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
-                Accord gives you encrypted messaging, voice, and communities — 
+                Accord gives you encrypted messaging, voice, and communities —
                 without trusting a central server with your data. Your keys, your messages.
               </div>
-              <div className="auth-info-box">
-                <span className="accent">🔐 End-to-end encrypted by default</span>
+              <div className="auth-buttons-stack" style={{ marginTop: 16 }}>
+                {(storedServerUrl || hasStoredKeyPair()) && (
+                  <button className="btn btn-primary" onClick={() => setMode("login")}>
+                    🔓 Log In
+                  </button>
+                )}
+                <button className="btn btn-outline" onClick={() => setMode("create")}>
+                  🔑 Create Account
+                </button>
+                <button className="btn btn-outline" onClick={() => setMode("recover")}>
+                  🔄 Recover Account
+                </button>
+                {hasStoredKeyPair() && (
+                  <button className="btn btn-outline" onClick={() => setMode("join")}>
+                    🌐 Join a Node
+                  </button>
+                )}
               </div>
-              <div className="auth-info-box" style={{ marginTop: 8 }}>
-                <span className="accent">🌐 Self-hosted relay servers — you choose who to trust</span>
+            </>
+          )}
+
+          {/* === LOGIN === */}
+          {mode === "login" && (
+            <>
+              <button onClick={goBack} className="auth-back-btn">← Back</button>
+              <h2 className="auth-title">Log In</h2>
+              <p className="auth-subtitle">
+                {storedServerUrl && !loginNeedsInvite
+                  ? "Enter your password to unlock your identity"
+                  : "Paste an invite link and enter your password"}
+              </p>
+
+              {(!storedServerUrl || loginNeedsInvite) && (
+                <>
+                  {renderInviteLinkField(handleLogin)}
+                </>
+              )}
+
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label">Password</label>
+                <input
+                  type="password"
+                  placeholder="Your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
+                  className="form-input"
+                />
               </div>
-              <div className="auth-info-box" style={{ marginTop: 8 }}>
-                <span className="accent">🆔 Keypair-based identity — no email or phone required</span>
-              </div>
-              <button className="btn btn-primary" style={{ marginTop: 24 }} onClick={() => setStep(2)}>
-                Get Started
+
+              {storedServerUrl && !loginNeedsInvite && (
+                <button
+                  className="btn-ghost"
+                  style={{ fontSize: 13, marginBottom: 12 }}
+                  onClick={() => setLoginNeedsInvite(true)}
+                >
+                  Connect to a different relay
+                </button>
+              )}
+
+              {error && <div className="auth-error">{error}</div>}
+
+              <button
+                className="btn btn-primary"
+                disabled={loading || password.length < 8}
+                onClick={handleLogin}
+              >
+                {loading ? "Logging in..." : "Log In"}
               </button>
             </>
           )}
 
-          {/* Step 2: Identity */}
-          {step === 2 && !identityReady && (
+          {/* === CREATE ACCOUNT: Invite Link === */}
+          {mode === "create" && createStep === "invite" && (
             <>
-              <button onClick={() => { setStep(1); setIdentityMode(null); setIdentityError(""); }} className="auth-back-btn">← Back</button>
-              <h2 className="auth-title">Your Identity</h2>
-              <p className="auth-subtitle">
-                {!identityMode
-                  ? "Choose how to set up your identity"
-                  : identityMode === "create"
-                  ? "Generate a new keypair"
-                  : "Restore from recovery phrase"}
-              </p>
+              <button onClick={goBack} className="auth-back-btn">← Back</button>
+              <h2 className="auth-title">Create Account</h2>
+              <p className="auth-subtitle">Paste the invite link you received to connect to a relay</p>
 
-              {!identityMode && (
-                <div className="auth-buttons-stack" style={{ marginTop: 16 }}>
-                  <button className="btn btn-primary" onClick={() => setIdentityMode("create")}>
-                    🔑 Create New Identity
-                  </button>
-                  <button className="btn btn-outline" onClick={() => setIdentityMode("recover")}>
-                    🔄 Recover Identity
-                  </button>
-                </div>
-              )}
+              {renderInviteLinkField(handleCreateInviteSubmit)}
 
-              {identityMode === "create" && (
-                <>
-                  <button onClick={() => { setIdentityMode(null); setIdentityError(""); setPassword(""); setConfirmPassword(""); }} className="auth-back-btn" style={{ marginTop: 8 }}>← Change method</button>
-                  <div className="form-group" style={{ marginTop: 12 }}>
-                    <label className="form-label">Password (min 8 characters)</label>
-                    <input
-                      type="password"
-                      placeholder="Choose a password to protect your key"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="form-input"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Confirm Password</label>
-                    <input
-                      type="password"
-                      placeholder="Confirm your password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleCreateIdentity(); }}
-                      className="form-input"
-                    />
-                  </div>
-                  {identityError && <div className="auth-error">{identityError}</div>}
-                  <button
-                    className="btn btn-green"
-                    disabled={generating || password.length < 8}
-                    onClick={handleCreateIdentity}
-                  >
-                    {generating ? "Generating keypair..." : "Generate Identity"}
-                  </button>
-                </>
-              )}
+              {error && <div className="auth-error">{error}</div>}
 
-              {identityMode === "recover" && (
-                <>
-                  <button onClick={() => { setIdentityMode(null); setIdentityError(""); setPassword(""); setMnemonic(""); }} className="auth-back-btn" style={{ marginTop: 8 }}>← Change method</button>
-                  <div className="form-group" style={{ marginTop: 12 }}>
-                    <label className="form-label">Recovery Phrase (24 words)</label>
-                    <textarea
-                      placeholder="Enter your 24-word recovery phrase..."
-                      value={mnemonic}
-                      onChange={(e) => setMnemonic(e.target.value)}
-                      className="form-input"
-                      rows={3}
-                      style={{ resize: "vertical", minHeight: 72 }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">New Password (min 8 characters)</label>
-                    <input
-                      type="password"
-                      placeholder="Choose a password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleRecoverIdentity(); }}
-                      className="form-input"
-                    />
-                  </div>
-                  {identityError && <div className="auth-error">{identityError}</div>}
-                  <button
-                    className="btn btn-green"
-                    disabled={generating || password.length < 8 || !mnemonic.trim()}
-                    onClick={handleRecoverIdentity}
-                  >
-                    {generating ? "Recovering..." : "Recover Identity"}
-                  </button>
-                </>
-              )}
+              <button
+                className="btn btn-primary"
+                style={{ marginTop: 16 }}
+                disabled={!inviteLinkInput.trim()}
+                onClick={handleCreateInviteSubmit}
+              >
+                Continue →
+              </button>
             </>
           )}
 
-          {/* Step 2b: Mnemonic backup (after create) */}
-          {step === 2 && identityReady && generatedMnemonic && (
+          {/* === CREATE ACCOUNT: Password & Identity === */}
+          {mode === "create" && createStep === "identity" && (
+            <>
+              <button onClick={() => { setCreateStep("invite"); setError(""); setPassword(""); setConfirmPassword(""); }} className="auth-back-btn">← Back</button>
+              <h2 className="auth-title">Create Your Identity</h2>
+              <p className="auth-subtitle">Choose a password to protect your keypair</p>
+
+              {renderDisplayNameField()}
+
+              <div className="form-group" style={{ marginTop: 12 }}>
+                <label className="form-label">Password (min 8 characters)</label>
+                <input
+                  type="password"
+                  placeholder="Choose a password to protect your key"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Confirm Password</label>
+                <input
+                  type="password"
+                  placeholder="Confirm your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleCreateIdentity(); }}
+                  className="form-input"
+                />
+              </div>
+
+              {renderMeshOption()}
+
+              {error && <div className="auth-error">{error}</div>}
+
+              <button
+                className="btn btn-green"
+                disabled={loading || password.length < 8}
+                onClick={handleCreateIdentity}
+              >
+                {loading ? "Generating keypair..." : "Generate Identity"}
+              </button>
+            </>
+          )}
+
+          {/* === CREATE ACCOUNT: Mnemonic Backup === */}
+          {mode === "create" && createStep === "mnemonic" && (
             <>
               <h2 className="auth-title">🔑 Backup Your Recovery Phrase</h2>
               <p className="auth-subtitle">
@@ -336,153 +536,104 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
               <div className="auth-info-box" style={{ marginTop: 12 }}>
                 <span className="warning">⚠️ Never share this phrase. Anyone with it can access your identity.</span>
               </div>
+
+              {error && <div className="auth-error" style={{ marginTop: 12 }}>{error}</div>}
+
               <button
                 className="btn btn-primary"
                 style={{ marginTop: 16 }}
-                onClick={() => setStep(3)}
+                disabled={loading}
+                onClick={handleCreateConnect}
               >
-                I've saved my recovery phrase →
+                {loading ? "Connecting to relay..." : "I've saved my recovery phrase — Connect →"}
               </button>
             </>
           )}
 
-          {/* Step 2: Recovered identity (no mnemonic to show) */}
-          {step === 2 && identityReady && !generatedMnemonic && (
+          {/* === RECOVER ACCOUNT === */}
+          {mode === "recover" && (
             <>
-              <h2 className="auth-title">✅ Identity Recovered</h2>
-              <p className="auth-subtitle">Your keypair has been restored successfully.</p>
-              <div className="auth-info-box" style={{ marginTop: 16 }}>
-                <span className="accent">Fingerprint: {publicKeyHash.substring(0, 8)}...{publicKeyHash.substring(publicKeyHash.length - 8)}</span>
-              </div>
-              <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setStep(3)}>
-                Continue →
-              </button>
-            </>
-          )}
-
-          {/* Step 3: Connect */}
-          {step === 3 && (
-            <>
-              <button onClick={() => setStep(2)} className="auth-back-btn">← Back</button>
-              <h2 className="auth-title">Connect to a Relay</h2>
-              <p className="auth-subtitle">Choose a display name and enter a relay address</p>
+              <button onClick={goBack} className="auth-back-btn">← Back</button>
+              <h2 className="auth-title">Recover Account</h2>
+              <p className="auth-subtitle">Restore your identity with your recovery phrase and an invite link</p>
 
               <div className="form-group" style={{ marginTop: 16 }}>
-                <label className="form-label">Display Name <span style={{color: 'var(--accent)'}}>*</span></label>
-                <input
-                  type="text"
-                  placeholder="How others will see you (required)"
-                  required
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
+                <label className="form-label">Recovery Phrase (24 words)</label>
+                <textarea
+                  placeholder="Enter your 24-word recovery phrase..."
+                  value={mnemonic}
+                  onChange={(e) => setMnemonic(e.target.value)}
                   className="form-input"
-                  maxLength={32}
+                  rows={3}
+                  style={{ resize: "vertical", minHeight: 72 }}
                 />
               </div>
 
-              {!useInviteLink ? (
-                <>
-                  <div className="form-group" style={{ marginTop: 16 }}>
-                    <label className="form-label">Relay Address</label>
-                    <input
-                      type="text"
-                      placeholder="relay.example.com:8443"
-                      value={relayAddress}
-                      onChange={(e) => setRelayAddress(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleConnect(); }}
-                      className="form-input"
-                    />
-                  </div>
-                  <button
-                    className="btn-ghost"
-                    style={{ fontSize: 13, marginBottom: 12 }}
-                    onClick={() => setUseInviteLink(true)}
-                  >
-                    Or paste an invite link instead
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div className="form-group" style={{ marginTop: 16 }}>
-                    <label className="form-label">Invite Link</label>
-                    <input
-                      type="text"
-                      placeholder="accord://host:port/invite/CODE or https://..."
-                      value={inviteLinkInput}
-                      onChange={(e) => setInviteLinkInput(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleConnect(); }}
-                      className="form-input"
-                    />
-                  </div>
-                  <button
-                    className="btn-ghost"
-                    style={{ fontSize: 13, marginBottom: 12 }}
-                    onClick={() => setUseInviteLink(false)}
-                  >
-                    Or enter relay address manually
-                  </button>
-                </>
-              )}
+              {renderInviteLinkField(handleRecover)}
+              {renderDisplayNameField()}
 
-              {/* Mesh opt-in */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, position: "relative" }}>
+              <div className="form-group" style={{ marginTop: 12 }}>
+                <label className="form-label">New Password (min 8 characters)</label>
                 <input
-                  type="checkbox"
-                  id="mesh-optin"
-                  checked={meshEnabled}
-                  onChange={(e) => setMeshEnabled(e.target.checked)}
-                  style={{ accentColor: "var(--accent)" }}
+                  type="password"
+                  placeholder="Choose a password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleRecover(); }}
+                  className="form-input"
                 />
-                <label htmlFor="mesh-optin" style={{ fontSize: 13, color: "var(--text-secondary)", cursor: "pointer" }}>
-                  Enable relay mesh for cross-relay DMs
-                </label>
-                <span
-                  style={{ cursor: "help", fontSize: 14, opacity: 0.6 }}
-                  onMouseEnter={() => setShowMeshTooltip(true)}
-                  onMouseLeave={() => setShowMeshTooltip(false)}
-                >
-                  ℹ️
-                </span>
-                {showMeshTooltip && (
-                  <div className="setup-tooltip">
-                    Relay mesh allows you to send direct messages to users on other relays. 
-                    Your relay will connect to other participating relays to route messages. 
-                    This is optional and can be changed later.
-                  </div>
-                )}
               </div>
 
-              {connectError && (
-                <div className="auth-error" style={{ textAlign: "left", lineHeight: 1.5 }}>
-                  <div style={{ marginBottom: 8 }}>⚠️ {connectError}</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button
-                      className="btn btn-outline"
-                      style={{ fontSize: 12, padding: "4px 12px" }}
-                      onClick={() => { setConnectError(""); handleConnect(); }}
-                    >
-                      🔄 Retry
-                    </button>
-                    <button
-                      className="btn btn-outline"
-                      style={{ fontSize: 12, padding: "4px 12px" }}
-                      onClick={() => { setConnectError(""); }}
-                    >
-                      ✏️ Edit Address
-                    </button>
-                  </div>
-                </div>
-              )}
+              {renderMeshOption()}
+
+              {error && <div className="auth-error">{error}</div>}
+
+              <button
+                className="btn btn-green"
+                disabled={loading || password.length < 8 || !mnemonic.trim() || !inviteLinkInput.trim()}
+                onClick={handleRecover}
+              >
+                {loading ? "Recovering..." : "Recover & Connect"}
+              </button>
+            </>
+          )}
+
+          {/* === JOIN NODE === */}
+          {mode === "join" && (
+            <>
+              <button onClick={goBack} className="auth-back-btn">← Back</button>
+              <h2 className="auth-title">Join a Node</h2>
+              <p className="auth-subtitle">Use an invite link to join a new node with your existing identity</p>
+
+              {renderInviteLinkField(handleJoinNode)}
+              {renderDisplayNameField()}
+
+              <div className="form-group" style={{ marginTop: 12 }}>
+                <label className="form-label">Password</label>
+                <input
+                  type="password"
+                  placeholder="Your identity password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleJoinNode(); }}
+                  className="form-input"
+                />
+              </div>
+
+              {renderMeshOption()}
+
+              {error && <div className="auth-error">{error}</div>}
 
               <button
                 className="btn btn-primary"
-                disabled={connecting || !displayName.trim() || (!relayAddress.trim() && !inviteLinkInput.trim())}
-                onClick={handleConnect}
+                disabled={loading || password.length < 8 || !inviteLinkInput.trim()}
+                onClick={handleJoinNode}
               >
-                {connecting ? "Checking server..." : "Connect"}
+                {loading ? "Joining..." : "Join Node"}
               </button>
             </>
           )}
+
         </div>
       </div>
     </div>
