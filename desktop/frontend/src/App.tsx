@@ -1941,6 +1941,9 @@ function App() {
     setJoiningNode(true);
     setJoinError("");
     try {
+      // Ensure API client has the token
+      api.setToken(appState.token);
+      
       // Parse invite link or use as raw code
       const input = joinInviteCode.trim();
       const parsed = parseInviteLink(input);
