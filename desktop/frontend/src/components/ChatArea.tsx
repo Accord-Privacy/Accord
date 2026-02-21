@@ -6,7 +6,7 @@ import { renderMessageMarkdown } from "../markdown";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
 import { EmojiPickerButton } from "../EmojiPicker";
 import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
-import { LinkPreview, extractFirstUrl } from "../LinkPreview";
+// import { LinkPreview, extractFirstUrl } from "../LinkPreview"; // disabled for now
 import { LoadingSpinner } from "../LoadingSpinner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
 import type { InstalledBot, BotCommand } from "../types";
@@ -299,10 +299,7 @@ export const ChatArea: React.FC = () => {
                         <div className="bot-sent-disclosure">📋 Sent to bot</div>
                       )}
 
-                      {/* Link Preview */}
-                      {msg.content && extractFirstUrl(msg.content) && (
-                        <LinkPreview content={msg.content} token={ctx.appState.token || ''} />
-                      )}
+                      {/* Link Preview — disabled for now */}
 
                       {/* Thread reply count */}
                       {msg.reply_count && msg.reply_count > 0 && (
