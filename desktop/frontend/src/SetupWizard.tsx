@@ -9,7 +9,6 @@ import {
   setActiveIdentity,
   loadKeyWithPassword,
   hasStoredKeyPair,
-  getStoredPublicKey,
 } from "./crypto";
 import { parseInviteLink, probeServerUrl } from "./api";
 
@@ -234,6 +233,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       }
 
       const kp = await loadKeyWithPassword(password, storedPkHash);
+      if (!kp) { setError("Failed to unlock identity — wrong password?"); setLoading(false); return; }
       const pk = await exportPublicKey(kp.publicKey);
       const pkHash = await sha256Hex(pk);
 
@@ -275,6 +275,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       }
 
       const kp = await loadKeyWithPassword(password, storedPkHash);
+      if (!kp) { setError("Failed to unlock identity — wrong password?"); setLoading(false); return; }
       const pk = await exportPublicKey(kp.publicKey);
       const pkHash = await sha256Hex(pk);
 

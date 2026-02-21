@@ -3,11 +3,11 @@ import { useAppContext } from "./AppContext";
 import { api } from "../api";
 import { notificationManager } from "../notifications";
 import { Channel } from "../types";
-import { getCombinedTrust, getTrustIndicator, CLIENT_BUILD_HASH } from "../buildHash";
+// buildHash imports moved to MemberSidebar for trust indicator
 import { BotPanel } from "./BotPanel";
 
-// Voice Connection Panel (sidebar bottom, above user panel)
-const VoiceConnectionPanel: React.FC<{
+// Voice Connection Panel (kept for potential reuse; controls now merged into UserPanel)
+export const VoiceConnectionPanel: React.FC<{
   channelName: string;
   connectedAt: number | null;
   onDisconnect: () => void;
