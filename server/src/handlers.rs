@@ -4589,7 +4589,13 @@ async fn handle_ws_message(
                 .ok()
                 .flatten()
                 .map(|p| p.display_name)
-                .unwrap_or_else(|| format!("{}…{}", &user.public_key_hash[..8], &user.public_key_hash[user.public_key_hash.len()-6..]));
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}…{}",
+                        &user.public_key_hash[..8],
+                        &user.public_key_hash[user.public_key_hash.len() - 6..]
+                    )
+                });
 
             // Broadcast typing event to other channel members (exclude sender)
             let typing_event = serde_json::json!({
