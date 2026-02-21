@@ -6021,6 +6021,7 @@ pub async fn get_message_reactions_handler(
 /// Get thread replies for a message (GET /messages/:id/thread)
 pub async fn get_message_thread_handler(
     Path(message_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<SharedState>,
 ) -> Result<Json<crate::models::MessageHistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -6034,25 +6035,7 @@ pub async fn get_message_thread_handler(
         )
     })?;
 
-    let token = params.get("token").ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Token required".into(),
-                code: 401,
-            }),
-        )
-    })?;
-
-    let user_id = state.validate_token(token).await.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Invalid token".into(),
-                code: 401,
-            }),
-        )
-    })?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get the original message details to check permissions
     let message_details = state
@@ -7093,28 +7076,10 @@ pub async fn remove_friend_handler(
 pub async fn create_dm_channel_handler(
     State(state): State<SharedState>,
     Path(target_user_id): Path<String>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::DmChannel>, (StatusCode, Json<ErrorResponse>)> {
-    // Get user ID from token
-    let token = params.get("token").ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Missing token parameter".into(),
-                code: 401,
-            }),
-        )
-    })?;
-
-    let user_id = state.validate_token(token).await.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Invalid or expired token".into(),
-                code: 401,
-            }),
-        )
-    })?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Parse target user ID
     let target_user_id = Uuid::parse_str(&target_user_id).map_err(|_| {
@@ -7263,28 +7228,10 @@ pub async fn create_dm_channel_handler(
 /// GET /dm
 pub async fn get_dm_channels_handler(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<crate::models::DmChannelsResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Get user ID from token
-    let token = params.get("token").ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Missing token parameter".into(),
-                code: 401,
-            }),
-        )
-    })?;
-
-    let user_id = state.validate_token(token).await.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Invalid or expired token".into(),
-                code: 401,
-            }),
-        )
-    })?;
+    let user_id = extract_user_from_token(&state, &headers, &params).await?;
 
     // Get user's DM channels
     let dm_channels = state.db.get_user_dm_channels(user_id).await.map_err(|e| {
