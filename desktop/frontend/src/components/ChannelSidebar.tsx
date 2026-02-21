@@ -411,19 +411,6 @@ export const ChannelSidebar: React.FC = () => {
       {/* Direct Messages Section */}
       <DMSection />
 
-      {/* Voice Connection Panel */}
-      {ctx.voiceChannelId && (
-        <VoiceConnectionPanel
-          channelName={ctx.voiceChannelName}
-          connectedAt={ctx.voiceConnectedAt}
-          onDisconnect={() => {
-            ctx.setVoiceChannelId(null);
-            ctx.setVoiceChannelName("");
-            ctx.setVoiceConnectedAt(null);
-          }}
-        />
-      )}
-
       <UserPanel />
 
       {/* Custom Status Popover */}
@@ -514,6 +501,22 @@ const DMSection: React.FC = () => {
 
 const UserPanel: React.FC = () => {
   const ctx = useAppContext();
+  const [isMuted, setIsMuted] = React.useState(false);
+  const [isDeafened, setIsDeafened] = React.useState(false);
+  const [elapsed, setElapsed] = React.useState("00:00");
+
+  const inVoice = !!ctx.voiceChannelId;
+
+  React.useEffect(() => {
+    if (!ctx.voiceConnectedAt) return;
+    const interval = setInterval(() => {
+      const secs = Math.floor((Date.now() - ctx.voiceConnectedAt!) / 1000);
+      const m = String(Math.floor(secs / 60)).padStart(2, '0');
+      const s = String(secs % 60).padStart(2, '0');
+      setElapsed(`${m}:${s}`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [ctx.voiceConnectedAt]);
 
   return (
     <div className="user-panel">
@@ -532,31 +535,49 @@ const UserPanel: React.FC = () => {
         <div className="user-status" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }} style={{ cursor: 'pointer' }} title="Click to set custom status">
           {ctx.customStatus || (ctx.appState.isConnected ? "Online" : "Offline")}
         </div>
+        {inVoice && (
+          <div className="user-panel-voice-info">
+            <span className="voice-connection-dot">●</span>
+            Voice Connected — #{ctx.voiceChannelName} {elapsed}
+          </div>
+        )}
+        <div className="user-panel-controls">
+          <button
+            className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`}
+            onClick={() => setIsMuted(!isMuted)}
+            title={isMuted ? 'Unmute' : 'Mute'}
+          >
+            {isMuted ? '🔇' : '🎤'}
+          </button>
+          <button
+            className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`}
+            onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }}
+            title={isDeafened ? 'Undeafen' : 'Deafen'}
+          >
+            {isDeafened ? '🔇' : '🔊'}
+          </button>
+          <button
+            onClick={() => ctx.setShowSettings(true)}
+            className="voice-ctrl-btn"
+            title="Settings (Ctrl+,)"
+          >
+            ⚙️
+          </button>
+          {inVoice && (
+            <button
+              className="voice-ctrl-btn voice-disconnect-btn"
+              onClick={() => {
+                ctx.setVoiceChannelId(null);
+                ctx.setVoiceChannelName("");
+                ctx.setVoiceConnectedAt(null);
+              }}
+              title="Disconnect"
+            >
+              📞
+            </button>
+          )}
+        </div>
       </div>
-      <button
-        onClick={() => ctx.setShowConnectionInfo(true)}
-        className="user-panel-settings connection-indicator"
-        title={ctx.appState.isConnected
-          ? `Connected${ctx.serverHelloVersion ? ` — v${ctx.serverHelloVersion}` : ''}${ctx.serverBuildHash ? ` (${ctx.serverBuildHash.slice(0, 8)})` : ''}\nTrust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, ctx.serverBuildHash, ctx.knownHashes)).label}`
-          : 'Disconnected'}
-      >
-        {ctx.appState.isConnected ? getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, ctx.serverBuildHash, ctx.knownHashes)).emoji : '🔴'}
-      </button>
-      <button
-        onClick={() => ctx.setShowNotificationSettings(true)}
-        className="user-panel-settings"
-        title="Notification Settings"
-      >
-        🔔
-      </button>
-      <button
-        onClick={() => ctx.setShowSettings(true)}
-        className="user-panel-settings"
-        title="Settings (Ctrl+,)"
-      >
-        ⚙️
-      </button>
-      <button onClick={ctx.handleLogout} className="user-panel-logout">Logout</button>
     </div>
   );
 };

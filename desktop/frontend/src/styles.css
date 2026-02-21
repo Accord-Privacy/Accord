@@ -953,11 +953,10 @@ input, textarea, select, button {
 
 /* User panel */
 .user-panel {
-  height: 52px;
   background: var(--bg-darkest);
   display: flex;
-  align-items: center;
-  padding: 0 8px;
+  align-items: flex-start;
+  padding: 8px;
   gap: 8px;
 }
 
@@ -986,9 +985,7 @@ input, textarea, select, button {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
 }
 
 .user-status {
@@ -1023,6 +1020,43 @@ input, textarea, select, button {
 
 .user-panel-logout:hover {
   color: var(--text-primary);
+}
+
+.user-panel-voice-info {
+  font-size: 11px;
+  color: var(--green, #43b581);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.user-panel-controls {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* Trust indicator dots for member list */
+.trust-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.trust-dot.trust-verified {
+  background-color: #43b581;
+}
+
+.trust-dot.trust-unknown {
+  background-color: #faa61a;
+}
+
+.trust-dot.trust-unverified,
+.trust-dot.trust-revoked {
+  background-color: #f04747;
 }
 
 /* =================== Chat Area =================== */

@@ -2,6 +2,7 @@ import React from "react";
 import { useAppContext } from "./AppContext";
 import { api } from "../api";
 import { NodeMember, User } from "../types";
+import { getCombinedTrust, getTrustIndicator, CLIENT_BUILD_HASH } from "../buildHash";
 
 export const MemberSidebar: React.FC = () => {
   const ctx = useAppContext();
@@ -32,6 +33,12 @@ export const MemberSidebar: React.FC = () => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {isCurrentUser && (
+              <span
+                className={`trust-dot trust-${getCombinedTrust(CLIENT_BUILD_HASH, ctx.serverBuildHash, ctx.knownHashes)}`}
+                title={`Trust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, ctx.serverBuildHash, ctx.knownHashes)).label}`}
+              />
+            )}
             <span className="member-name" style={{ color: ctx.getMemberRoleColor(member.user_id) || undefined }}>{ctx.displayName(member.user)}</span>
             <span className="member-role-badge" title={member.role}>{ctx.getRoleBadge(member.role)}</span>
           </div>
