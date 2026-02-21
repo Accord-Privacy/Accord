@@ -21,7 +21,13 @@ import {
   getStoredPublicKey,
   setActiveIdentity,
 } from "./crypto";
-import { storeToken, getToken, clearToken } from "./tokenStorage";
+import { storeToken as _storeToken, getToken, clearToken } from "./tokenStorage";
+
+/** Store token in persistent storage AND update the API client */
+async function storeToken(token: string, lifetimeMs?: number): Promise<void> {
+  api.setToken(token);
+  return _storeToken(token, lifetimeMs);
+}
 import { StagedFile } from "./FileManager";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import { SetupWizard, SetupResult } from "./SetupWizard";
@@ -2961,6 +2967,7 @@ function App() {
       const userId = localStorage.getItem('accord_user_id');
       
       if (token && userId && serverAvailable) {
+        api.setToken(token);
         setShowWelcomeScreen(false);
         // Load existing keys if available
         let existingKeyPair: CryptoKeyPair | null = null;
