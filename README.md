@@ -7,7 +7,7 @@
 *Discord's features with Signal's security*
 
 [![CI](https://github.com/Accord-Privacy/Accord/actions/workflows/ci.yml/badge.svg)](https://github.com/Accord-Privacy/Accord/actions/workflows/ci.yml)
-[![Windows Build](https://github.com/Accord-Privacy/Accord/actions/workflows/windows.yml/badge.svg)](https://github.com/Accord-Privacy/Accord/actions/workflows/windows.yml)
+[![Windows Build](https://github.com/Accord-Privacy/Accord/actions/workflows/windows-build.yml/badge.svg)](https://github.com/Accord-Privacy/Accord/actions/workflows/windows-build.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust 1.86+](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](https://www.rust-lang.org/)
 
