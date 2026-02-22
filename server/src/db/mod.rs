@@ -1935,6 +1935,16 @@ impl Database {
     }
 
     /// Count total nodes
+    pub async fn transfer_node_ownership(&self, node_id: Uuid, new_owner_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE nodes SET owner_id = ? WHERE id = ?")
+            .bind(new_owner_id.to_string())
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to transfer node ownership")?;
+        Ok(())
+    }
+
     pub async fn count_nodes(&self) -> Result<u64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM nodes")
             .fetch_one(&self.pool)

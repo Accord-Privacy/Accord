@@ -35,6 +35,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use base64::Engine;
 use clap::Parser;
 use handlers::{
     accept_friend_request_handler, ack_sender_keys_handler, add_auto_mod_word_handler,
@@ -81,7 +82,7 @@ use tower_http::{
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use webhooks::{
     create_webhook_handler, delete_webhook_handler, list_webhooks_handler, test_webhook_handler,
     update_webhook_handler,
@@ -555,6 +556,54 @@ async fn main() -> Result<()> {
     app_state.build_hash_enforcement = build_hash_enforcement;
     if build_hash_enforcement != state::BuildHashEnforcementMode::Off {
         info!("Relay build hash enforcement: {}", build_hash_enforcement);
+    }
+
+    // Bootstrap: create Management Node on first boot (empty DB)
+    {
+        let node_count = app_state.db.count_nodes().await.unwrap_or(0);
+        if node_count == 0 {
+            info!("First boot detected — creating Management Node...");
+            // Use a fixed system UUID as placeholder owner (will be transferred to first admin)
+            let system_user_id =
+                uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
+
+            // Insert a system placeholder user so FK constraints are satisfied
+            let _ = sqlx::query("INSERT OR IGNORE INTO users (id, public_key, public_key_hash, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
+                .bind(system_user_id.to_string())
+                .bind("SYSTEM")
+                .bind("SYSTEM")
+                .bind("SYSTEM")
+                .bind(0i64)
+                .execute(app_state.db.pool())
+                .await;
+
+            match app_state
+                .db
+                .create_node("Management", system_user_id, Some("Server management node"))
+                .await
+            {
+                Ok(node) => {
+                    // Generate a bootstrap invite code
+                    let invite_code = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(uuid::Uuid::new_v4().as_bytes());
+                    match app_state
+                        .db
+                        .create_node_invite(node.id, system_user_id, &invite_code, Some(1), None)
+                        .await
+                    {
+                        Ok(_) => {
+                            info!("╔══════════════════════════════════════════════════════╗");
+                            info!("║  MANAGEMENT NODE CREATED                             ║");
+                            info!("║  Invite code: {:<39} ║", invite_code);
+                            info!("║  First user to join becomes server admin.             ║");
+                            info!("╚══════════════════════════════════════════════════════╝");
+                        }
+                        Err(e) => error!("Failed to create bootstrap invite: {}", e),
+                    }
+                }
+                Err(e) => error!("Failed to create Management Node: {}", e),
+            }
+        }
     }
 
     let state: SharedState = Arc::new(app_state);

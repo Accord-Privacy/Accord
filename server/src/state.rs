@@ -646,11 +646,32 @@ impl AppState {
             .map_err(|e| e.to_string())?
             .ok_or("Node not found")?;
 
-        // Join user to node
+        // Check if this is a bootstrap node (system-owned) — first joiner becomes admin
+        let system_user_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
+        let is_bootstrap = node.owner_id == system_user_id;
+
+        // Join user to node (as admin if bootstrap, otherwise member)
+        let role = if is_bootstrap {
+            NodeRole::Admin
+        } else {
+            NodeRole::Member
+        };
         self.db
-            .add_node_member(invite.node_id, user_id, NodeRole::Member)
+            .add_node_member(invite.node_id, user_id, role)
             .await
             .map_err(|e| e.to_string())?;
+
+        // Transfer ownership from system to first real user
+        if is_bootstrap {
+            let _ = self
+                .db
+                .transfer_node_ownership(invite.node_id, user_id)
+                .await;
+            tracing::info!(
+                "Bootstrap: transferred Management Node ownership to user {}",
+                user_id
+            );
+        }
 
         // Increment invite usage
         self.db
