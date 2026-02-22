@@ -671,23 +671,34 @@ export async function saveKeyWithPassword(keyPair: CryptoKeyPair, password: stri
   const passphrase = `accord-key-wrap:${password}`;
   const encryptedPrivateKey = await encryptWithPassphrase(privateKeyData, passphrase);
 
-  const keys = STORAGE_KEYS_FOR(pkHash);
-  localStorage.setItem(keys.PRIVATE_KEY, encryptedPrivateKey);
-  localStorage.setItem(keys.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
-  // Also save to legacy slot for backwards compat
-  localStorage.setItem(STORAGE_KEYS.PRIVATE_KEY, encryptedPrivateKey);
-  localStorage.setItem(STORAGE_KEYS.PUBLIC_KEY, arrayBufferToBase64(publicKeyData));
+  // Use separate _pwd_ slots so saveKeyToStorage (session-based) doesn't overwrite
+  const suffix = pkHash ? `_${pkHash.slice(0, 16)}` : '';
+  localStorage.setItem(`accord_private_key_pwd${suffix}`, encryptedPrivateKey);
+  localStorage.setItem(`accord_public_key_pwd${suffix}`, arrayBufferToBase64(publicKeyData));
+  // Legacy slot
+  localStorage.setItem('accord_private_key_pwd', encryptedPrivateKey);
+  localStorage.setItem('accord_public_key_pwd', arrayBufferToBase64(publicKeyData));
 }
 
 /**
  * Load keypair decrypted with user's password.
  */
 export async function loadKeyWithPassword(password: string, pkHash?: string): Promise<CryptoKeyPair | null> {
-  // Try namespaced keys first, then legacy
-  const namespacedKeys = STORAGE_KEYS_FOR(pkHash);
-  let privateKeyEncrypted = localStorage.getItem(namespacedKeys.PRIVATE_KEY);
-  let publicKeyB64 = localStorage.getItem(namespacedKeys.PUBLIC_KEY);
-  // Fallback to legacy
+  // Try password-specific slots first (won't be overwritten by session-based encryption)
+  const suffix = pkHash ? `_${pkHash.slice(0, 16)}` : '';
+  let privateKeyEncrypted = localStorage.getItem(`accord_private_key_pwd${suffix}`);
+  let publicKeyB64 = localStorage.getItem(`accord_public_key_pwd${suffix}`);
+  // Fallback to legacy pwd slot
+  if (!privateKeyEncrypted || !publicKeyB64) {
+    privateKeyEncrypted = localStorage.getItem('accord_private_key_pwd');
+    publicKeyB64 = localStorage.getItem('accord_public_key_pwd');
+  }
+  // Fallback to shared slot (backward compat with keys saved before this fix)
+  if (!privateKeyEncrypted || !publicKeyB64) {
+    const namespacedKeys = STORAGE_KEYS_FOR(pkHash);
+    privateKeyEncrypted = localStorage.getItem(namespacedKeys.PRIVATE_KEY);
+    publicKeyB64 = localStorage.getItem(namespacedKeys.PUBLIC_KEY);
+  }
   if (!privateKeyEncrypted || !publicKeyB64) {
     privateKeyEncrypted = localStorage.getItem(STORAGE_KEYS.PRIVATE_KEY);
     publicKeyB64 = localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
