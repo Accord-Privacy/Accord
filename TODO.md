@@ -1,11 +1,11 @@
 # TODO.md — Accord
 
 ## NEXT — Live Testing Bugs (2026-02-22)
-- [ ] **Mute/deafen sync** — ChannelSidebar and VoiceChat have independent useState, not synced. Lift to shared context.
+- [x] ~~Mute/deafen sync~~ — lifted to AppContext, all 3 components share state
 - [ ] **Encryption zeros after logout/login** — zeros appearing in encrypted content after logout/re-login cycle
 - [x] ~~Message indentation bug~~ — fixed: avatar spacer now position:absolute
 - [x] ~~User panel display name~~ — fixed: session restore now fetches profile
-- [ ] **Password verification on re-login** — copy-pasting exact same password fails with "wrong password" after logout
+- [x] ~~Password verification on re-login~~ — fixed: saveKeyWithPassword and saveKeyToStorage were overwriting each other's localStorage entries. Password-encrypted keys now use dedicated storage slots.
 - [ ] **Channel layout issues** — unspecified layout problems reported during VoIP testing
 
 ## Security — Critical
