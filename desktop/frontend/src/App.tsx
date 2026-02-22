@@ -128,6 +128,7 @@ function App() {
   const [inviteRelayVersion, setInviteRelayVersion] = useState("");
   const [inviteNeedsRegister, setInviteNeedsRegister] = useState(false);
   const [invitePassword, setInvitePassword] = useState("");
+  const [inviteDisplayName, setInviteDisplayName] = useState("");
   const [inviteJoining, setInviteJoining] = useState(false);
 
   // Authentication state
@@ -2312,8 +2313,9 @@ function App() {
         return;
       }
 
-      // Register
-      await api.register(publicKeyToUse, invitePassword);
+      // Register (with optional display name)
+      const trimmedDisplayName = inviteDisplayName.trim() || undefined;
+      await api.register(publicKeyToUse, invitePassword, trimmedDisplayName);
       passwordRef.current = invitePassword;
       setPublicKeyHash(pkHash); setActiveIdentity(pkHash);
 
@@ -2321,6 +2323,11 @@ function App() {
       const response = await api.login(publicKeyToUse, invitePassword);
       storeToken(response.token);
       localStorage.setItem('accord_user_id', response.user_id);
+
+      // Set display name via profile update (in case register doesn't persist it)
+      if (trimmedDisplayName) {
+        try { await api.updateProfile({ display_name: trimmedDisplayName }, response.token); } catch {}
+      }
 
       // Store per-relay credentials
       storeRelayToken(parsedInvite.relayHost, response.token);
@@ -2340,11 +2347,11 @@ function App() {
         relayManagerRef.current.addNodeToRelay(parsedInvite.relayUrl, joinedNodeId);
       }
 
-      let displayName = fingerprint(pkHash);
+      let displayName = trimmedDisplayName || fingerprint(pkHash);
       try {
         const profile = await api.getUserProfile(response.user_id, response.token);
         if (profile?.display_name) displayName = profile.display_name;
-      } catch { /* new account, fingerprint is fine */ }
+      } catch { /* new account, use entered name or fingerprint */ }
 
       setAppState(prev => ({
         ...prev,
@@ -3341,7 +3348,9 @@ function App() {
     inviteLinkInput, setInviteLinkInput,
     inviteError, setInviteError,
     inviteConnecting, inviteRelayVersion, inviteNeedsRegister,
-    invitePassword, setInvitePassword, inviteJoining,
+    invitePassword, setInvitePassword,
+    inviteDisplayName, setInviteDisplayName,
+    inviteJoining,
 
     // Auth
     isAuthenticated, isLoginMode, setIsLoginMode,

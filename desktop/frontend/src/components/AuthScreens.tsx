@@ -269,6 +269,17 @@ export const WelcomeScreen: React.FC = () => {
               </div>
 
               <div className="form-group">
+                <label className="form-label">Display Name (optional)</label>
+                <input
+                  type="text"
+                  placeholder="How others will see you"
+                  value={ctx.inviteDisplayName ?? ''}
+                  onChange={(e) => ctx.setInviteDisplayName(e.target.value)}
+                  className="form-input"
+                />
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">Password (min 8 characters)</label>
                 <input
                   type="password"

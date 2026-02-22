@@ -29,6 +29,8 @@ export interface AppContextType {
   inviteNeedsRegister: boolean;
   invitePassword: string;
   setInvitePassword: React.Dispatch<React.SetStateAction<string>>;
+  inviteDisplayName: string;
+  setInviteDisplayName: React.Dispatch<React.SetStateAction<string>>;
   inviteJoining: boolean;
 
   // Auth
