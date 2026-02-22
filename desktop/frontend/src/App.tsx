@@ -3611,7 +3611,8 @@ function App() {
             try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
           }
 
-          await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+          // Key already saved with password in SetupWizard — don't overwrite with saveKeyToStorage
+          // (saveKeyToStorage uses a different passphrase and would break password-based login)
 
           setAppState(prev => ({
             ...prev,
@@ -3650,7 +3651,7 @@ function App() {
                 try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
               }
 
-              await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+              // Key already saved with password in SetupWizard — don't overwrite
 
               setAppState(prev => ({
                 ...prev,

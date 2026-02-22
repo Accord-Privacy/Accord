@@ -215,7 +215,7 @@ export const Settings: React.FC<SettingsProps> = ({
   // Load available media devices
   const loadMediaDevices = useCallback(async () => {
     try {
-      const devices = await navigator.mediaDevices?.enumerateDevices();
+      const devices = await navigator.mediaDevices?.enumerateDevices() ?? [];
       setInputDevices(devices.filter(device => device.kind === 'audioinput'));
       setOutputDevices(devices.filter(device => device.kind === 'audiooutput'));
       setDevicesError('');
