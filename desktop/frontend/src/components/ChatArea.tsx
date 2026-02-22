@@ -602,6 +602,8 @@ export const ChatArea: React.FC = () => {
                   ctx.setVoiceChannelId(null);
                   ctx.setVoiceChannelName("");
                   ctx.setVoiceConnectedAt(null);
+                  ctx.setVoiceMuted(false);
+                  ctx.setVoiceDeafened(false);
                 }}
               />
             </Suspense>

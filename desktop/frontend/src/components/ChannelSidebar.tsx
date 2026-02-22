@@ -12,9 +12,12 @@ export const VoiceConnectionPanel: React.FC<{
   connectedAt: number | null;
   onDisconnect: () => void;
 }> = ({ channelName, connectedAt, onDisconnect }) => {
+  const ctx = useAppContext();
   const [elapsed, setElapsed] = React.useState("00:00");
-  const [isMuted, setIsMuted] = React.useState(false);
-  const [isDeafened, setIsDeafened] = React.useState(false);
+  const isMuted = ctx.voiceMuted;
+  const setIsMuted = ctx.setVoiceMuted;
+  const isDeafened = ctx.voiceDeafened;
+  const setIsDeafened = ctx.setVoiceDeafened;
 
   React.useEffect(() => {
     if (!connectedAt) return;
@@ -500,8 +503,10 @@ const DMSection: React.FC = () => {
 
 const UserPanel: React.FC = () => {
   const ctx = useAppContext();
-  const [isMuted, setIsMuted] = React.useState(false);
-  const [isDeafened, setIsDeafened] = React.useState(false);
+  const isMuted = ctx.voiceMuted;
+  const setIsMuted = ctx.setVoiceMuted;
+  const isDeafened = ctx.voiceDeafened;
+  const setIsDeafened = ctx.setVoiceDeafened;
   const [elapsed, setElapsed] = React.useState("00:00");
 
   const inVoice = !!ctx.voiceChannelId;
@@ -569,6 +574,8 @@ const UserPanel: React.FC = () => {
                 ctx.setVoiceChannelId(null);
                 ctx.setVoiceChannelName("");
                 ctx.setVoiceConnectedAt(null);
+                ctx.setVoiceMuted(false);
+                ctx.setVoiceDeafened(false);
               }}
               title="Disconnect"
             >

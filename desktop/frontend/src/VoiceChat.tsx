@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useAppContext } from './components/AppContext';
 import { AccordWebSocket } from './ws';
 import { VoiceConnection } from './voice/webrtc';
 import { RelayVoiceConnection } from './voice/relay';
@@ -35,8 +36,11 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   channelName,
   onLeave,
 }) => {
-  const [isMuted, setIsMuted] = useState(true);
-  const [isDeafened, setIsDeafened] = useState(false);
+  const ctx = useAppContext();
+  const isMuted = ctx.voiceMuted;
+  const setIsMuted = ctx.setVoiceMuted;
+  const isDeafened = ctx.voiceDeafened;
+  const setIsDeafened = ctx.setVoiceDeafened;
   const [outputVolume, setOutputVolume] = useState(100);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [peers, setPeers] = useState<Map<string, PeerInfo>>(new Map());

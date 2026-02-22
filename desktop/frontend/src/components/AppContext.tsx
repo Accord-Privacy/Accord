@@ -133,6 +133,10 @@ export interface AppContextType {
   setVoiceChannelName: React.Dispatch<React.SetStateAction<string>>;
   voiceConnectedAt: number | null;
   setVoiceConnectedAt: React.Dispatch<React.SetStateAction<number | null>>;
+  voiceMuted: boolean;
+  setVoiceMuted: React.Dispatch<React.SetStateAction<boolean>>;
+  voiceDeafened: boolean;
+  setVoiceDeafened: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Custom status
   customStatus: string;
