@@ -136,7 +136,32 @@ export const ChatArea: React.FC = () => {
                   </button>
                   <button
                     className="btn btn-primary"
-                    onClick={() => { setInvitePreview(null); ctx.handleInviteLinkSubmit(); }}
+                    onClick={async () => {
+                      setInvitePreview(null);
+                      // Use handleJoinNode which handles same-relay join properly
+                      if (ctx.joinInviteCode !== undefined) {
+                        // joinInviteCode is already set from inviteLinkInput
+                      }
+                      // Directly join via the parsed invite
+                      const input = ctx.inviteLinkInput?.trim();
+                      if (!input) return;
+                      const parsed = parseInviteLink(input);
+                      const code = parsed ? parsed.inviteCode : input;
+                      try {
+                        let token = ctx.appState.token;
+                        if (!token) {
+                          setPreviewError("Not authenticated");
+                          return;
+                        }
+                        api.setToken(token);
+                        await api.joinNodeByInvite(code, token);
+                        ctx.setInviteLinkInput('');
+                        // Reload nodes
+                        if (ctx.loadNodes) ctx.loadNodes();
+                      } catch (e: any) {
+                        setPreviewError(e.message || "Failed to join node");
+                      }
+                    }}
                     style={{ minWidth: 80 }}
                   >
                     Join
@@ -152,20 +177,21 @@ export const ChatArea: React.FC = () => {
                 {previewError && (
                   <p style={{ margin: '0 0 12px', color: '#f04747', fontSize: 13 }}>{previewError}</p>
                 )}
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <input
                     type="text"
-                    placeholder="accord://host/invite/CODE or https://..."
+                    placeholder="Paste invite link here..."
                     value={ctx.inviteLinkInput ?? ''}
                     onChange={(e) => ctx.setInviteLinkInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handlePreviewInvite(); }}
                     className="form-input"
-                    style={{ flex: 1 }}
+                    style={{ width: '100%', padding: '10px 12px', fontSize: 14 }}
                   />
                   <button
                     className="btn btn-primary"
                     onClick={handlePreviewInvite}
                     disabled={!ctx.inviteLinkInput?.trim() || previewLoading}
+                    style={{ width: '100%', padding: '10px' }}
                   >
                     {previewLoading ? '...' : 'Preview →'}
                   </button>

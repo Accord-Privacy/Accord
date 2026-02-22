@@ -87,7 +87,25 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       const kp = await generateKeyPair();
       const pk = await exportPublicKey(kp.publicKey);
       const pkHash = await sha256Hex(pk);
-      const phrase = await keyPairToMnemonic(kp);
+      let phrase: string;
+      try {
+        phrase = await keyPairToMnemonic(kp);
+      } catch (mnErr) {
+        console.error("Mnemonic generation failed:", mnErr);
+        phrase = "";
+      }
+
+      if (!phrase || phrase.trim().split(/\s+/).length < 24) {
+        console.error("Invalid mnemonic generated, length:", phrase?.length, "words:", phrase?.trim().split(/\s+/).length);
+        // Fallback: extract raw bytes and try again
+        try {
+          const { getRawPrivateKey, entropyToMnemonic } = await import("./crypto");
+          const raw = await getRawPrivateKey(kp);
+          phrase = entropyToMnemonic(raw);
+        } catch (fallbackErr) {
+          console.error("Mnemonic fallback also failed:", fallbackErr);
+        }
+      }
 
       setActiveIdentity(pkHash);
       await saveKeyWithPassword(kp, password, pkHash);
@@ -95,7 +113,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       setKeyPair(kp);
       setPublicKey(pk);
       setPublicKeyHash(pkHash);
-      setGeneratedMnemonic(phrase);
+      setGeneratedMnemonic(phrase || "(Error: could not generate recovery phrase. Your identity is still saved.)");
       setCreateStep("mnemonic");
     } catch (e: any) {
       setError(e.message || "Failed to generate identity");
@@ -162,7 +180,18 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     setLoading(true);
     setError("");
     try {
-      const storedPkHash = localStorage.getItem("accord_active_identity");
+      let storedPkHash = localStorage.getItem("accord_active_identity");
+      // Fallback: check identity index
+      if (!storedPkHash) {
+        try {
+          const idx = JSON.parse(localStorage.getItem("accord_identity_index") || "[]");
+          if (idx.length > 0) storedPkHash = idx[idx.length - 1];
+        } catch {}
+      }
+      // Fallback: check legacy public key hash
+      if (!storedPkHash) {
+        storedPkHash = localStorage.getItem("accord_public_key_hash");
+      }
       if (!storedPkHash) {
         setError("No stored identity found. Try 'Create Identity' or 'Recover Identity' instead.");
         setLoading(false);
@@ -252,7 +281,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
               <h2 className="auth-title">Log In</h2>
               <p className="auth-subtitle">Enter your password to unlock your identity</p>
 
-              <div className="form-group" style={{ marginTop: 16 }}>
+              <div className="auth-info-box" style={{ marginTop: 16, marginBottom: 12 }}>
+                {hasStoredKeyPair() ? (
+                  <span style={{ color: 'var(--green, #43b581)' }}>🔑 Identity keypair found on this device</span>
+                ) : (
+                  <span style={{ color: 'var(--yellow, #faa61a)' }}>⚠️ No identity found — try Create or Recover instead</span>
+                )}
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">Password</label>
                 <input
                   type="password"

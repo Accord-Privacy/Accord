@@ -72,6 +72,8 @@ interface SettingsProps {
   onUnblockUser?: (userId: string) => void;
   /** Map of user IDs to display names for blocked users */
   blockedUserNames?: Map<string, string>;
+  /** Called when the user clicks Log Out */
+  onLogout?: () => void;
 }
 
 type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'server' | 'about';
@@ -118,6 +120,7 @@ export const Settings: React.FC<SettingsProps> = ({
   blockedUsers: blockedUsersProp,
   onUnblockUser,
   blockedUserNames,
+  onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
   
@@ -842,6 +845,31 @@ export const Settings: React.FC<SettingsProps> = ({
                   <div className="settings-info">
                     <strong>User ID:</strong> {currentUser?.id || 'Unknown'}
                   </div>
+                </div>
+
+                <div className="settings-group" style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+                  <button
+                    onClick={() => {
+                      onClose();
+                      if (onLogout) setTimeout(onLogout, 100);
+                    }}
+                    className="btn"
+                    style={{
+                      background: 'var(--red, #e74c3c)',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '10px 24px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: '14px',
+                    }}
+                  >
+                    🚪 Log Out
+                  </button>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                    Your identity keys are saved locally. You can log back in with your password.
+                  </p>
                 </div>
               </div>
             )}

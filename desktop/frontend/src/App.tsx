@@ -42,7 +42,7 @@ import { setNodeCustomEmojis } from "./customEmojiStore";
 import { UpdateBanner } from "./UpdateChecker";
 import {
   AppContext,
-  MnemonicModal, RecoverModal, KeyBackupScreen, WelcomeScreen, ServerConnectScreen, LoginScreen,
+  MnemonicModal, RecoverModal, KeyBackupScreen,
   ServerList, ChannelSidebar, ChatArea, MemberSidebar, AppModals,
 } from "./components";
 
@@ -302,14 +302,30 @@ function App() {
   // First-run setup wizard state
   const [showSetupWizard, setShowSetupWizard] = useState(() => {
     // Show wizard if no identity exists (first run)
-    if (hasStoredKeyPair()) return false;
+    if (hasStoredKeyPair()) {
+      // Have keys — but do we have a valid session?
+      const token = localStorage.getItem('accord_auth_token');
+      if (token) return false; // Have both keys and token, skip wizard
+      // Have keys but no token — show login to get password and re-auth
+      return true;
+    }
     // Also check localStorage identity index
     const idx = localStorage.getItem('accord_identity_index');
     if (idx) {
-      try { if (JSON.parse(idx).length > 0) return false; } catch {}
+      try {
+        if (JSON.parse(idx).length > 0) {
+          const token = localStorage.getItem('accord_auth_token');
+          if (token) return false;
+          return true; // Have identity but no token
+        }
+      } catch {}
     }
     // Check legacy keys
-    if (localStorage.getItem('accord_public_key')) return false;
+    if (localStorage.getItem('accord_public_key')) {
+      const token = localStorage.getItem('accord_auth_token');
+      if (token) return false;
+      return true;
+    }
     return true;
   });
 
@@ -2009,7 +2025,9 @@ function App() {
       const parsed = parseInviteLink(input);
       const code = parsed ? parsed.inviteCode : input;
 
-      if (parsed && parsed.relayUrl !== api.getBaseUrl()) {
+      // Compare relay hosts without scheme to handle http/https mismatch
+      const isSameRelay = !parsed || parsed.relayHost === new URL(api.getBaseUrl()).host;
+      if (parsed && !isSameRelay) {
         // Invite is for a different relay — connect via RelayManager
         const rm = relayManagerRef.current;
         const pw = passwordRef.current;
@@ -2030,8 +2048,40 @@ function App() {
         }
       } else {
         // Same relay — use existing API client
-        api.setToken(appState.token!);
-        await api.joinNodeByInvite(code, appState.token!);
+        let token = appState.token;
+
+        // If no token yet, register + auth on this relay first
+        if (!token && publicKey && passwordRef.current) {
+          try {
+            await api.register(publicKey, passwordRef.current);
+          } catch { /* may already be registered */ }
+          const response = await api.login(publicKey, passwordRef.current);
+          storeToken(response.token);
+          localStorage.setItem('accord_user_id', response.user_id);
+          token = response.token;
+          setAppState(prev => ({
+            ...prev,
+            token: response.token,
+            user: { ...prev.user!, id: response.user_id }
+          }));
+
+          // Connect WebSocket if not connected
+          if (!ws) {
+            const wsBaseUrl = serverUrl.replace(/^http/, 'ws');
+            const socket = new AccordWebSocket(response.token, wsBaseUrl);
+            setupWebSocketHandlers(socket);
+            setWs(socket);
+            socket.connect();
+          }
+        }
+
+        if (!token) {
+          setJoinError("Not authenticated — create an identity first");
+          return;
+        }
+
+        api.setToken(token);
+        await api.joinNodeByInvite(code, token);
       }
 
       setShowJoinNodeModal(false);
@@ -2129,12 +2179,20 @@ function App() {
 
     try {
       // Connect to the relay extracted from the invite link
-      api.setBaseUrl(parsed.relayUrl);
+      // Probe both HTTP and HTTPS to find the working scheme
+      let workingUrl: string;
+      try {
+        const { probeServerUrl } = await import("./api");
+        workingUrl = await probeServerUrl(parsed.relayUrl);
+      } catch {
+        workingUrl = parsed.relayUrl;
+      }
+      api.setBaseUrl(workingUrl);
       const health = await api.health();
       setServerConnected(true);
       setServerAvailable(true);
       setInviteRelayVersion(health.version);
-      setServerUrl(parsed.relayUrl);
+      setServerUrl(workingUrl);
 
       // Check if we already have credentials for this relay
       const existingToken = getRelayToken(parsed.relayHost);
@@ -2626,14 +2684,12 @@ function App() {
     setPublicKey("");
     setPublicKeyHash("");
     
-    // Reset welcome/invite state for re-entry
-    setShowWelcomeScreen(true);
-    setWelcomeMode('choose');
+    // Show setup wizard for re-entry (login with existing keys or create new)
+    setShowSetupWizard(true);
+    setShowWelcomeScreen(false);
     setInviteLinkInput("");
     setParsedInvite(null);
     setInviteError("");
-    setInviteNeedsRegister(false);
-    setInvitePassword("");
   };
 
   // Handle sending messages
@@ -3068,7 +3124,7 @@ function App() {
   // Check for existing session on mount (runs once when server becomes available)
   const sessionCheckedRef = useRef(false);
   useEffect(() => {
-    if (sessionCheckedRef.current || !serverAvailable) return;
+    if (sessionCheckedRef.current || !serverAvailable || isAuthenticated) return;
     sessionCheckedRef.current = true;
 
     const checkExistingSession = async () => {
@@ -3542,8 +3598,10 @@ function App() {
           api.setBaseUrl(relayUrl);
           setServerUrl(relayUrl);
 
-          // Register on the relay (with display name if provided)
-          await api.register(result.publicKey, result.password, result.displayName);
+          // Register on the relay (may already exist from previous session)
+          try {
+            await api.register(result.publicKey, result.password, result.displayName);
+          } catch { /* already registered — that's fine */ }
           const response = await api.login(result.publicKey, result.password);
           storeToken(response.token);
           localStorage.setItem('accord_user_id', response.user_id);
@@ -3577,13 +3635,60 @@ function App() {
           setServerAvailable(true);
           setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
         } else {
-          // Identity-only creation: no relay connection yet
-          setAppState(prev => ({
-            ...prev,
-            isAuthenticated: true,
-            user: { id: '', public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
-          }));
-          setIsAuthenticated(true);
+          // Identity-only creation: no explicit relay URL provided
+          // But if we detected a same-origin relay, auto-register with it
+          const detectedRelay = localStorage.getItem('accord_server_url');
+          if (detectedRelay) {
+            api.setBaseUrl(detectedRelay);
+          }
+          if (detectedRelay && await api.testConnection()) {
+            try {
+              await api.register(result.publicKey, result.password, result.displayName);
+              const response = await api.login(result.publicKey, result.password);
+              storeToken(response.token);
+              localStorage.setItem('accord_user_id', response.user_id);
+
+              if (result.displayName) {
+                try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
+              }
+
+              await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+
+              setAppState(prev => ({
+                ...prev,
+                isAuthenticated: true,
+                token: response.token,
+                user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+              }));
+              setIsAuthenticated(true);
+              setServerAvailable(true);
+
+              // Connect WebSocket
+              const wsBaseUrl = detectedRelay.replace(/^http/, 'ws');
+              const socket = new AccordWebSocket(response.token, wsBaseUrl);
+              setupWebSocketHandlers(socket);
+              setWs(socket);
+              socket.connect();
+
+              setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
+            } catch {
+              // Registration failed — proceed without relay (user can join later via invite)
+              setAppState(prev => ({
+                ...prev,
+                isAuthenticated: true,
+                user: { id: '', public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+              }));
+              setIsAuthenticated(true);
+            }
+          } else {
+            // No relay available — pure offline identity
+            setAppState(prev => ({
+              ...prev,
+              isAuthenticated: true,
+              user: { id: '', public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+            }));
+            setIsAuthenticated(true);
+          }
         }
 
         setHasExistingKey(true);
@@ -3596,9 +3701,7 @@ function App() {
         }
       } catch (e: any) {
         setAuthError(e.message || "Setup failed");
-        // Fall back to welcome screen
-        setShowSetupWizard(false);
-        setShowWelcomeScreen(true);
+        // Stay on setup wizard so user can retry
       }
     };
 
@@ -3609,28 +3712,21 @@ function App() {
     );
   }
 
-  if (showWelcomeScreen) {
-    return (
-      <AppContext.Provider value={contextValue}>
-        <WelcomeScreen />
-      </AppContext.Provider>
-    );
-  }
-
-  if (showServerScreen) {
-    return (
-      <AppContext.Provider value={contextValue}>
-        <ServerConnectScreen />
-      </AppContext.Provider>
-    );
-  }
-
+  // If not authenticated, show SetupWizard (handles both create and login)
   if (!isAuthenticated) {
-    return (
-      <AppContext.Provider value={contextValue}>
-        <LoginScreen />
-      </AppContext.Provider>
-    );
+    if (!showSetupWizard) {
+      // Edge case: have token but isAuthenticated not set yet (session check pending)
+      // Show a loading state briefly
+      return (
+        <AppContext.Provider value={contextValue}>
+          <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)' }}>
+            Connecting...
+          </div>
+        </AppContext.Provider>
+      );
+    }
+    // SetupWizard is already rendered above in the render chain
+    return null;
   }
 
   // ---- Main authenticated app ----

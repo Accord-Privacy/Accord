@@ -432,6 +432,11 @@ fn ensure_auto_tls_cert() -> Result<(String, String)> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider before anything else
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Initialize logging with broadcast writer for admin log streaming
     let log_tx = admin::new_log_broadcast();
     let log_writer = admin::TeeWriter::new(log_tx.clone());

@@ -401,10 +401,11 @@ export const LoginScreen: React.FC = () => {
               : 'A new keypair will be generated automatically'}
           </p>
           
-          <div className="auth-server-bar">
-            <span>🔗 {ctx.serverUrl} {ctx.serverAvailable && <span className="connected">● connected</span>}</span>
-            <button onClick={() => { ctx.setShowWelcomeScreen(true); ctx.setWelcomeMode('choose'); ctx.setAuthError(''); }} className="btn-ghost" style={{ fontSize: '12px' }}>Change</button>
-          </div>
+          {ctx.serverAvailable && (
+            <div className="auth-server-bar">
+              <span>● Connected</span>
+            </div>
+          )}
 
           {ctx.isLoginMode && (
             <div className="form-group">

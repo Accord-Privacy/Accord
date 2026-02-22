@@ -49,6 +49,7 @@ let activeIdentityHash: string | undefined;
 
 export function setActiveIdentity(pkHash: string) {
   activeIdentityHash = pkHash;
+  localStorage.setItem('accord_active_identity', pkHash);
 }
 
 function STORAGE_KEYS_FOR(pkHash?: string) {

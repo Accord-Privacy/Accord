@@ -391,7 +391,12 @@ export class AccordApi {
     member_count: number;
     server_build_hash: string;
   }> {
-    const url = `${relayUrl}/invites/${encodeURIComponent(inviteCode)}/preview`;
+    // Probe the relay URL to find the working scheme (http vs https)
+    let workingUrl = relayUrl;
+    try {
+      workingUrl = await probeServerUrl(relayUrl);
+    } catch { /* fall through to try original */ }
+    const url = `${workingUrl}/invites/${encodeURIComponent(inviteCode)}/preview`;
     const res = await fetch(url);
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: 'Request failed' }));
@@ -1018,7 +1023,7 @@ export function parseInviteLink(input: string): ParsedInviteLink | null {
   const trimmed = input.trim();
 
   // Try new compact format: accord://BASE64/CODE
-  const compactMatch = trimmed.match(/^accord:\/\/([A-Za-z0-9_-]+)\/([^/?#]+)$/);
+  const compactMatch = trimmed.match(/^accord:\/\/([A-Za-z0-9_+/=-]+)\/([^/?#]+)$/);
   if (compactMatch) {
     try {
       const relayHost = decodeRelayHost(compactMatch[1]);
