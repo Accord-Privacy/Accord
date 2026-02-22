@@ -13,8 +13,7 @@ fn sanitize_display_name(name: &str) -> String {
 use crate::models::{
     AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse,
     CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
-    MessageReactionsResponse, RegisterRequest, RegisterResponse,
-    UseInviteResponse, WsMessage,
+    MessageReactionsResponse, RegisterRequest, RegisterResponse, UseInviteResponse, WsMessage,
     WsMessageType,
 };
 use crate::node::NodeInfo;
@@ -950,10 +949,10 @@ pub async fn invite_preview_handler(
     // Check expiry
     if let Some(expires_at) = invite.expires_at {
         let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if now > expires_at {
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now > expires_at {
             return Err((
                 StatusCode::GONE,
                 Json(ErrorResponse {
