@@ -418,94 +418,8 @@ input, textarea, select, button {
 
 /* =================== Setup Wizard =================== */
 
-.setup-progress {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 32px;
-  margin-bottom: 24px;
-  position: relative;
-  padding: 0 16px;
-}
 
-.setup-progress-step {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  z-index: 1;
-}
 
-.setup-progress-dot {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--bg-input);
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
-  transition: all var(--transition-normal);
-  border: 2px solid transparent;
-}
-
-.setup-progress-step.active .setup-progress-dot {
-  background: var(--accent);
-  color: white;
-}
-
-.setup-progress-step.current .setup-progress-dot {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-light);
-}
-
-.setup-progress-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 500;
-}
-
-.setup-progress-step.active .setup-progress-label {
-  color: var(--text-secondary);
-}
-
-.setup-progress-line {
-  position: absolute;
-  top: 16px;
-  left: 72px;
-  right: 72px;
-  height: 2px;
-  background: var(--bg-input);
-  z-index: 0;
-}
-
-.setup-progress-line-fill {
-  height: 100%;
-  background: var(--accent);
-  transition: width 0.3s ease;
-  border-radius: 1px;
-}
-
-.setup-tooltip {
-  position: absolute;
-  bottom: 100%;
-  right: 0;
-  margin-bottom: 8px;
-  background: var(--bg-darkest);
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-high);
-  width: 260px;
-  z-index: 10;
-  pointer-events: none;
-}
 
 /* Key backup screen */
 .key-backup-card {
@@ -691,16 +605,6 @@ input, textarea, select, button {
   opacity: 0.85;
 }
 
-.message-pending {
-  opacity: 0.5;
-  font-style: italic;
-}
-
-.sidebar-header .demo-badge {
-  font-size: 10px;
-  color: var(--yellow);
-  margin-left: 8px;
-}
 
 .sidebar-role {
   font-size: 11px;
@@ -742,15 +646,6 @@ input, textarea, select, button {
   flex: 1;
   padding: 8px;
   overflow-y: auto;
-}
-
-.channel-section-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  padding: 16px 8px 4px;
-  letter-spacing: 0.02em;
 }
 
 .channel {
@@ -997,35 +892,6 @@ input, textarea, select, button {
   color: var(--green);
 }
 
-.user-panel-settings {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 16px;
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.user-panel-settings:hover {
-  color: var(--text-primary);
-  background: var(--bg-input);
-}
-
-.user-panel-logout {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 12px;
-  transition: color var(--transition-fast);
-}
-
-.user-panel-logout:hover {
-  color: var(--text-primary);
-}
-
 .user-panel-voice-info {
   font-size: 11px;
   color: var(--green, var(--green));
@@ -1050,18 +916,8 @@ input, textarea, select, button {
   flex-shrink: 0;
 }
 
-.trust-dot.trust-verified {
-  background-color: var(--green);
-}
 
-.trust-dot.trust-unknown {
-  background-color: var(--yellow);
-}
 
-.trust-dot.trust-unverified,
-.trust-dot.trust-revoked {
-  background-color: var(--red);
-}
 
 /* =================== Chat Area =================== */
 .chat-area {
@@ -1825,11 +1681,6 @@ input, textarea, select, button {
   margin-left: 2px;
 }
 
-.member-status-dot {
-  font-size: 12px;
-  color: var(--green);
-}
-
 .member-action-btn {
   background: var(--accent);
   border: none;
@@ -1862,20 +1713,6 @@ input, textarea, select, button {
 }
 
 /* =================== Notification Badges =================== */
-.notification-badge {
-  background: var(--red);
-  color: var(--text-primary);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 8px;
-  min-width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
 
 .notification-dot {
   background: var(--red);
@@ -1996,15 +1833,6 @@ input, textarea, select, button {
 }
 
 /* =================== Loading / Connecting States =================== */
-.connecting-overlay {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  background: var(--bg-darkest);
-  color: var(--text-secondary);
-}
 
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -2202,19 +2030,6 @@ input, textarea, select, button {
 .channel-filter-select:focus { background: var(--bg-elevated); }
 .channel-filter-select option { background: var(--bg-input); color: var(--text-primary); }
 
-.search-note, .search-error {
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.search-note {
-  background: var(--accent-light);
-  color: var(--accent);
-  border: 1px solid rgba(88, 101, 242, 0.2);
-}
-
 .search-error {
   background: rgba(218, 55, 60, 0.1);
   color: var(--red);
@@ -2259,14 +2074,6 @@ input, textarea, select, button {
 .search-result-snippet { color: var(--text-muted); font-size: 13px; opacity: 0.8; }
 
 /* search-overlay-footer styles moved below with search improvements */
-
-.search-encryption-note {
-  color: var(--text-faint);
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 
 .search-header-actions { display: flex; align-items: center; gap: 8px; }
 .search-filter-toggle {
@@ -2827,21 +2634,9 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
 .theme-button.light { background: #fff; color: var(--bg-dark); border-color: #e3e5e8; }
 .theme-button.light.active { border-color: var(--accent); background: var(--accent-light); }
 
-.test-button, .refresh-button, .clear-button {
-  background: var(--accent);
-  border: none;
-  color: var(--text-primary);
-  padding: 8px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: background var(--transition-fast);
-}
+.test-button, .clear-button {
 
 .test-button:hover { background: var(--accent-hover); }
-.refresh-button { background: var(--green); }
-.refresh-button:hover { background: var(--green-dark); }
 .clear-button { background: var(--red); }
 .clear-button:hover { background: var(--red-dark); }
 
@@ -2870,120 +2665,6 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
 .about-credits p { color: var(--text-faint); font-size: 13px; margin: 0; }
 
 /* =================== Pinned Messages Panel =================== */
-.pinned-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: 400px;
-  height: 100vh;
-  background: var(--bg-content);
-  border-left: 1px solid var(--border);
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  color: var(--text-primary);
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
-}
-
-.pinned-panel-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--bg-dark);
-}
-
-.pinned-panel-title { margin: 0; font-size: 16px; font-weight: 600; }
-
-.pinned-panel-close {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--text-faint);
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.pinned-panel-close:hover { color: var(--text-primary); background: var(--bg-input); }
-
-.pinned-panel-content { flex: 1; overflow-y: auto; padding: 16px; }
-
-.pinned-message {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: var(--bg-dark);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  transition: all var(--transition-fast);
-}
-
-.pinned-message:hover { border-color: var(--text-faint); }
-
-.pinned-message-header { display: flex; align-items: center; margin-bottom: 8px; font-size: 14px; }
-
-.pinned-message-avatar {
-  width: 24px; height: 24px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 8px;
-}
-
-.pinned-message-author { font-weight: 600; margin-right: 8px; }
-.pinned-message-time { color: var(--text-faint); font-size: 12px; }
-.pinned-message-content { margin-left: 32px; line-height: 1.4; }
-
-.pinned-message-footer {
-  margin-left: 32px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--text-faint);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.pinned-empty-state { text-align: center; color: var(--text-faint); margin-top: 50px; }
-.pinned-empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
-
-.pinned-toggle-btn {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--text-faint);
-  margin-right: 12px;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.pinned-toggle-btn:hover { color: var(--yellow); background: rgba(240, 178, 50, 0.1); }
-.pinned-toggle-btn.active { color: var(--yellow); }
-
-.message-pinned-indicator { font-size: 12px; color: var(--yellow); margin-left: 8px; }
-
-.message-pin-btn {
-  background: none;
-  border: none;
-  color: var(--text-faint);
-  cursor: pointer;
-  font-size: 16px;
-  padding: 4px;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.message-pin-btn:hover { color: var(--yellow); background: rgba(240, 178, 50, 0.1); }
-.message-pin-btn.pinned { color: var(--yellow); }
 
 /* =================== Unread Channel Indicators =================== */
 .channel.unread {
@@ -3057,11 +2738,6 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
   border-radius: 50%;
   border: 2px solid var(--bg-dark);
 }
-
-.presence-online { background: var(--green); }
-.presence-idle { background: var(--yellow); }
-.presence-dnd { background: var(--red); }
-.presence-offline { background: var(--text-faint); }
 
 .member-offline {
   opacity: 0.5;
@@ -3739,23 +3415,8 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
 }
 
 /* Message density classes */
-.density-compact .message { padding-top: 1px; padding-bottom: 1px; }
-.density-cozy .message { padding-top: 8px; padding-bottom: 8px; }
 
 /* ======= Channel Drag Handle ======= */
-.channel-drag-handle {
-  cursor: grab;
-  color: var(--text-faint, var(--bg-active));
-  font-size: 12px;
-  opacity: 0;
-  transition: opacity 0.15s;
-  user-select: none;
-  flex-shrink: 0;
-  margin-right: 2px;
-  line-height: 1;
-}
-.channel:hover .channel-drag-handle { opacity: 0.6; }
-.channel-drag-handle:hover { opacity: 1 !important; color: var(--text-muted, var(--text-muted)); }
 
 /* ======= Sidebar Node Description ======= */
 .sidebar-description {
@@ -4516,9 +4177,6 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
   border-radius: 4px; cursor: pointer; font-size: 14px;
 }
 .bot-response-text { color: var(--text-secondary); font-size: 14px; line-height: 1.4; }
-.bot-signature-badge {
-  font-size: 10px; margin-left: 6px; vertical-align: middle;
-}
 
 
 /* Custom emoji in messages */
