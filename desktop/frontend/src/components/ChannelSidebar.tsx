@@ -269,10 +269,10 @@ export const ChannelSidebar: React.FC = () => {
             {isVoiceChannel ? '🔊' : '#'} {channel.name}
           </span>
           {isVoiceChannel && !isConnectedToVoice && (
-            <span style={{ fontSize: '10px', color: '#8e9297', marginLeft: '4px' }}>Voice Channel</span>
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '4px' }}>Voice Channel</span>
           )}
           {isConnectedToVoice && (
-            <span style={{ fontSize: '10px', color: '#43b581' }}>●</span>
+            <span style={{ fontSize: '10px', color: 'var(--green)' }}>●</span>
           )}
         </div>
         <div className="channel-badges">

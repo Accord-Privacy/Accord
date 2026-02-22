@@ -3,8 +3,8 @@
 ## NEXT — Live Testing Bugs (2026-02-22)
 - [ ] **Mute/deafen sync** — ChannelSidebar and VoiceChat have independent useState, not synced. Lift to shared context.
 - [ ] **Encryption zeros after logout/login** — zeros appearing in encrypted content after logout/re-login cycle
-- [ ] **Message indentation bug** — 2nd messages in chat get indented incorrectly
-- [ ] **User panel display name** — shows public key hash instead of display name
+- [x] ~~Message indentation bug~~ — fixed: avatar spacer now position:absolute
+- [x] ~~User panel display name~~ — fixed: session restore now fetches profile
 - [ ] **Password verification on re-login** — copy-pasting exact same password fails with "wrong password" after logout
 - [ ] **Channel layout issues** — unspecified layout problems reported during VoIP testing
 

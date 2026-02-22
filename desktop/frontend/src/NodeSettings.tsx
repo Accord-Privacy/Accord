@@ -532,12 +532,12 @@ export function NodeSettings({
       zIndex: 1001
     }}>
       <div style={{
-        background: '#36393f',
+        background: 'var(--bg-content)',
         borderRadius: '8px',
         width: '90%',
         maxWidth: '600px',
         maxHeight: '80vh',
-        color: '#ffffff',
+        color: 'var(--text-on-accent)',
         display: 'flex',
         flexDirection: 'column'
       }}>
@@ -555,7 +555,7 @@ export function NodeSettings({
             style={{
               background: 'none',
               border: 'none',
-              color: '#b9bbbe',
+              color: 'var(--text-secondary)',
               fontSize: '24px',
               cursor: 'pointer',
               padding: '0',
@@ -570,7 +570,7 @@ export function NodeSettings({
         <div style={{
           display: 'flex',
           borderBottom: '1px solid #40444b',
-          background: '#2f3136'
+          background: 'var(--bg-dark)'
         }}>
           <button
             onClick={() => setActiveTab('general')}
@@ -705,14 +705,14 @@ export function NodeSettings({
                     width: '80px',
                     height: '80px',
                     borderRadius: '50%',
-                    background: '#40444b',
+                    background: 'var(--bg-active)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     cursor: isAdmin ? 'pointer' : 'default',
                     overflow: 'hidden',
                     fontSize: '32px',
-                    color: '#b9bbbe',
+                    color: 'var(--text-secondary)',
                     flexShrink: 0,
                     position: 'relative',
                   }}
@@ -735,11 +735,11 @@ export function NodeSettings({
                       fontSize: '10px',
                       textAlign: 'center',
                       padding: '2px',
-                      color: '#fff',
+                      color: 'var(--text-on-accent)',
                     }}>EDIT</div>
                   )}
                 </div>
-                <div style={{ color: '#b9bbbe', fontSize: '13px' }}>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
                   {isAdmin ? 'Click the icon to upload a new one (PNG, JPEG, GIF, WebP — max 256KB)' : 'Node icon'}
                 </div>
               </div>
@@ -750,7 +750,7 @@ export function NodeSettings({
                   marginBottom: '8px', 
                   fontSize: '14px', 
                   fontWeight: '600', 
-                  color: '#b9bbbe' 
+                  color: 'var(--text-secondary)' 
                 }}>
                   Node Name
                 </label>
@@ -766,7 +766,7 @@ export function NodeSettings({
                     borderRadius: '4px',
                     border: 'none',
                     background: isAdmin ? '#40444b' : '#2f3136',
-                    color: '#ffffff',
+                    color: 'var(--text-on-accent)',
                     fontSize: '14px'
                   }}
                 />
@@ -778,7 +778,7 @@ export function NodeSettings({
                   marginBottom: '8px', 
                   fontSize: '14px', 
                   fontWeight: '600', 
-                  color: '#b9bbbe' 
+                  color: 'var(--text-secondary)' 
                 }}>
                   Description
                 </label>
@@ -794,7 +794,7 @@ export function NodeSettings({
                     borderRadius: '4px',
                     border: 'none',
                     background: isAdmin ? '#40444b' : '#2f3136',
-                    color: '#ffffff',
+                    color: 'var(--text-on-accent)',
                     fontSize: '14px',
                     resize: 'vertical'
                   }}
@@ -807,9 +807,9 @@ export function NodeSettings({
                     onClick={handleUpdateNode}
                     disabled={isUpdating}
                     style={{
-                      background: '#43b581',
+                      background: 'var(--green)',
                       border: 'none',
-                      color: '#ffffff',
+                      color: 'var(--text-on-accent)',
                       padding: '10px 16px',
                       borderRadius: '4px',
                       cursor: isUpdating ? 'not-allowed' : 'pointer',
@@ -838,7 +838,7 @@ export function NodeSettings({
                 <p style={{ 
                   margin: '0 0 16px 0', 
                   fontSize: '14px', 
-                  color: '#b9bbbe' 
+                  color: 'var(--text-secondary)' 
                 }}>
                   {isAdmin 
                     ? 'Permanently delete this Node. This action cannot be undone.'
@@ -850,7 +850,7 @@ export function NodeSettings({
                   style={{
                     background: isAdmin ? '#f04747' : '#faa61a',
                     border: 'none',
-                    color: '#ffffff',
+                    color: 'var(--text-on-accent)',
                     padding: '10px 16px',
                     borderRadius: '4px',
                     cursor: 'pointer',
@@ -870,37 +870,37 @@ export function NodeSettings({
                 /* Role Editor */
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
-                    <button onClick={() => setEditingRole(null)} style={{ background: 'none', border: 'none', color: '#b9bbbe', cursor: 'pointer', fontSize: '18px' }}>←</button>
+                    <button onClick={() => setEditingRole(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '18px' }}>←</button>
                     <h4 style={{ margin: 0, fontSize: '16px' }}>Edit Role</h4>
                   </div>
 
                   <div style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe', fontWeight: 600 }}>Role Name</label>
+                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Role Name</label>
                     <input type="text" value={editRoleName} onChange={e => setEditRoleName(e.target.value)} maxLength={32}
-                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#fff', fontSize: '14px' }} />
+                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: 'var(--bg-active)', color: 'var(--text-on-accent)', fontSize: '14px' }} />
                   </div>
 
                   <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div>
-                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe', fontWeight: 600 }}>Color</label>
+                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Color</label>
                       <input type="color" value={editRoleColor} onChange={e => setEditRoleColor(e.target.value)}
                         style={{ width: '48px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }} />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <input type="checkbox" checked={editRoleHoist} onChange={e => setEditRoleHoist(e.target.checked)} /> Display separately in member list
                       </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                         <input type="checkbox" checked={editRoleMentionable} onChange={e => setEditRoleMentionable(e.target.checked)} /> Allow anyone to @mention this role
                       </label>
                     </div>
                   </div>
 
                   <div style={{ marginBottom: '20px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '12px', color: '#b9bbbe', fontWeight: 600 }}>Permissions</label>
+                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Permissions</label>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {PERMISSIONS.map(p => (
-                        <label key={p.bit} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                        <label key={p.bit} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                           <input type="checkbox" checked={(editRolePermissions & p.bit) !== 0}
                             onChange={e => setEditRolePermissions(prev => e.target.checked ? prev | p.bit : prev & ~p.bit)} />
                           {p.label}
@@ -911,11 +911,11 @@ export function NodeSettings({
 
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={handleSaveRole} disabled={savingRole}
-                      style={{ background: '#43b581', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
+                      style={{ background: 'var(--green)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 16px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
                       {savingRole ? 'Saving...' : 'Save Changes'}
                     </button>
                     <button onClick={() => handleDeleteRole(editingRole.id)}
-                      style={{ background: '#f04747', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+                      style={{ background: 'var(--red)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
                       Delete Role
                     </button>
                   </div>
@@ -926,39 +926,39 @@ export function NodeSettings({
                   <div style={{ marginBottom: '16px' }}>
                     {!showCreateRole ? (
                       <button onClick={() => setShowCreateRole(true)}
-                        style={{ background: '#7289da', border: 'none', color: '#fff', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>
+                        style={{ background: 'var(--accent)', border: 'none', color: 'var(--text-on-accent)', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>
                         ➕ Create Role
                       </button>
                     ) : (
-                      <div style={{ background: '#40444b', padding: '16px', borderRadius: '8px' }}>
+                      <div style={{ background: 'var(--bg-active)', padding: '16px', borderRadius: '8px' }}>
                         <h4 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>New Role</h4>
                         <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
                           <div style={{ flex: 1 }}>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe' }}>Name</label>
+                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>Name</label>
                             <input type="text" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} maxLength={32}
-                              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: '#36393f', color: '#fff', fontSize: '14px' }} />
+                              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: 'var(--bg-content)', color: 'var(--text-on-accent)', fontSize: '14px' }} />
                           </div>
                           <div>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: '#b9bbbe' }}>Color</label>
+                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>Color</label>
                             <input type="color" value={newRoleColor} onChange={e => setNewRoleColor(e.target.value)}
                               style={{ width: '48px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }} />
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                             <input type="checkbox" checked={newRoleHoist} onChange={e => setNewRoleHoist(e.target.checked)} /> Hoisted
                           </label>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#dcddde', cursor: 'pointer' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                             <input type="checkbox" checked={newRoleMentionable} onChange={e => setNewRoleMentionable(e.target.checked)} /> Mentionable
                           </label>
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <button onClick={handleCreateRole} disabled={savingRole}
-                            style={{ background: '#43b581', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
+                            style={{ background: 'var(--green)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 12px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
                             {savingRole ? 'Creating...' : 'Create'}
                           </button>
                           <button onClick={() => setShowCreateRole(false)}
-                            style={{ background: '#4f545c', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+                            style={{ background: 'var(--bg-active)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
                             Cancel
                           </button>
                         </div>
@@ -967,24 +967,24 @@ export function NodeSettings({
                   </div>
 
                   {loadingRoles ? (
-                    <div style={{ textAlign: 'center', padding: '20px', color: '#b9bbbe' }}>Loading roles...</div>
+                    <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>Loading roles...</div>
                   ) : roles.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '20px', color: '#72767d' }}>No roles created yet</div>
+                    <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-faint)' }}>No roles created yet</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                       {roles.map((role, idx) => (
-                        <div key={role.id} style={{ background: '#40444b', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div key={role.id} style={{ background: 'var(--bg-active)', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: role.color || '#99aab5', flexShrink: 0 }} />
                           <span style={{ flex: 1, fontSize: '14px', color: role.color || '#dcddde', fontWeight: 500, cursor: 'pointer' }}
                             onClick={() => startEditRole(role)}>
                             {role.name}
                           </span>
-                          {role.hoist && <span style={{ fontSize: '11px', color: '#72767d', background: '#2f3136', padding: '1px 6px', borderRadius: '3px' }}>hoisted</span>}
+                          {role.hoist && <span style={{ fontSize: '11px', color: 'var(--text-faint)', background: 'var(--bg-dark)', padding: '1px 6px', borderRadius: '3px' }}>hoisted</span>}
                           <div style={{ display: 'flex', gap: '2px' }}>
                             <button onClick={() => handleMoveRole(role.id, 'up')} disabled={idx === 0}
-                              style={{ background: 'none', border: 'none', color: idx === 0 ? '#4f545c' : '#b9bbbe', cursor: idx === 0 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▲</button>
+                              style={{ background: 'none', border: 'none', color: idx === 0 ? 'var(--bg-active)' : 'var(--text-secondary)', cursor: idx === 0 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▲</button>
                             <button onClick={() => handleMoveRole(role.id, 'down')} disabled={idx === roles.length - 1}
-                              style={{ background: 'none', border: 'none', color: idx === roles.length - 1 ? '#4f545c' : '#b9bbbe', cursor: idx === roles.length - 1 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▼</button>
+                              style={{ background: 'none', border: 'none', color: idx === roles.length - 1 ? 'var(--bg-active)' : 'var(--text-secondary)', cursor: idx === roles.length - 1 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▼</button>
                           </div>
                         </div>
                       ))}
@@ -995,8 +995,8 @@ export function NodeSettings({
               {/* Import Discord Template */}
               {isAdmin && (
                 <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #40444b' }}>
-                  <h4 style={{ color: '#b9bbbe', marginBottom: '8px' }}>Import Discord Template</h4>
-                  <p style={{ color: '#72767d', fontSize: '13px', marginBottom: '12px' }}>
+                  <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Import Discord Template</h4>
+                  <p style={{ color: 'var(--text-faint)', fontSize: '13px', marginBottom: '12px' }}>
                     Import channels, roles, and categories from a Discord server template.
                   </p>
                   <button 
@@ -1020,9 +1020,9 @@ export function NodeSettings({
                   <button
                     onClick={() => setShowCreateInvite(true)}
                     style={{
-                      background: '#7289da',
+                      background: 'var(--accent)',
                       border: 'none',
-                      color: '#ffffff',
+                      color: 'var(--text-on-accent)',
                       padding: '10px 16px',
                       borderRadius: '4px',
                       cursor: 'pointer',
@@ -1036,7 +1036,7 @@ export function NodeSettings({
                   </button>
                 ) : (
                   <div style={{
-                    background: '#40444b',
+                    background: 'var(--bg-active)',
                     padding: '16px',
                     borderRadius: '8px',
                     marginBottom: '16px'
@@ -1049,7 +1049,7 @@ export function NodeSettings({
                           display: 'block', 
                           marginBottom: '6px', 
                           fontSize: '12px', 
-                          color: '#b9bbbe' 
+                          color: 'var(--text-secondary)' 
                         }}>
                           Max Uses (optional)
                         </label>
@@ -1065,8 +1065,8 @@ export function NodeSettings({
                             padding: '8px',
                             borderRadius: '4px',
                             border: 'none',
-                            background: '#36393f',
-                            color: '#ffffff',
+                            background: 'var(--bg-content)',
+                            color: 'var(--text-on-accent)',
                             fontSize: '14px'
                           }}
                         />
@@ -1076,7 +1076,7 @@ export function NodeSettings({
                           display: 'block', 
                           marginBottom: '6px', 
                           fontSize: '12px', 
-                          color: '#b9bbbe' 
+                          color: 'var(--text-secondary)' 
                         }}>
                           Expires in (hours)
                         </label>
@@ -1092,8 +1092,8 @@ export function NodeSettings({
                             padding: '8px',
                             borderRadius: '4px',
                             border: 'none',
-                            background: '#36393f',
-                            color: '#ffffff',
+                            background: 'var(--bg-content)',
+                            color: 'var(--text-on-accent)',
                             fontSize: '14px'
                           }}
                         />
@@ -1105,9 +1105,9 @@ export function NodeSettings({
                         onClick={handleCreateInvite}
                         disabled={creatingInvite}
                         style={{
-                          background: '#43b581',
+                          background: 'var(--green)',
                           border: 'none',
-                          color: '#ffffff',
+                          color: 'var(--text-on-accent)',
                           padding: '8px 12px',
                           borderRadius: '4px',
                           cursor: creatingInvite ? 'not-allowed' : 'pointer',
@@ -1125,9 +1125,9 @@ export function NodeSettings({
                         }}
                         disabled={creatingInvite}
                         style={{
-                          background: '#4f545c',
+                          background: 'var(--bg-active)',
                           border: 'none',
-                          color: '#ffffff',
+                          color: 'var(--text-on-accent)',
                           padding: '8px 12px',
                           borderRadius: '4px',
                           cursor: creatingInvite ? 'not-allowed' : 'pointer',
@@ -1146,11 +1146,11 @@ export function NodeSettings({
                 <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>Active Invites</h4>
                 
                 {loadingInvites ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#b9bbbe' }}>
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
                     Loading invites...
                   </div>
                 ) : invites.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#72767d' }}>
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-faint)' }}>
                     No active invites
                   </div>
                 ) : (
@@ -1164,7 +1164,7 @@ export function NodeSettings({
                         <div
                           key={invite.code}
                           style={{
-                            background: '#40444b',
+                            background: 'var(--bg-active)',
                             padding: '12px',
                             borderRadius: '6px',
                             border: isInactive ? '1px solid #f04747' : 'none',
@@ -1173,7 +1173,7 @@ export function NodeSettings({
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                             <code style={{
-                              background: '#2f3136',
+                              background: 'var(--bg-dark)',
                               padding: '4px 8px',
                               borderRadius: '4px',
                               fontSize: '13px',
@@ -1186,9 +1186,9 @@ export function NodeSettings({
                                 onClick={() => copyInviteCode(invite.code)}
                                 disabled={isInactive}
                                 style={{
-                                  background: '#7289da',
+                                  background: 'var(--accent)',
                                   border: 'none',
-                                  color: '#ffffff',
+                                  color: 'var(--text-on-accent)',
                                   padding: '4px 8px',
                                   borderRadius: '4px',
                                   cursor: isInactive ? 'not-allowed' : 'pointer',
@@ -1201,9 +1201,9 @@ export function NodeSettings({
                               <button
                                 onClick={() => handleRevokeInvite(invite.code)}
                                 style={{
-                                  background: '#f04747',
+                                  background: 'var(--red)',
                                   border: 'none',
-                                  color: '#ffffff',
+                                  color: 'var(--text-on-accent)',
                                   padding: '4px 8px',
                                   borderRadius: '4px',
                                   cursor: 'pointer',
@@ -1214,7 +1214,7 @@ export function NodeSettings({
                               </button>
                             </div>
                           </div>
-                          <div style={{ fontSize: '12px', color: '#b9bbbe', display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
                             <span>Created: {formatDate(invite.created_at)}</span>
                             <span>Uses: {invite.uses}{invite.max_uses ? `/${invite.max_uses}` : ''}</span>
                             {invite.expires_at && (
@@ -1222,7 +1222,7 @@ export function NodeSettings({
                                 {expired ? 'Expired: ' : 'Expires: '}{formatDate(invite.expires_at)}
                               </span>
                             )}
-                            {maxedOut && <span style={{ color: '#f04747' }}>Max uses reached</span>}
+                            {maxedOut && <span style={{ color: 'var(--red)' }}>Max uses reached</span>}
                           </div>
                         </div>
                       );
@@ -1238,20 +1238,20 @@ export function NodeSettings({
             <div>
               {/* Slow Mode Section */}
               <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>⏱️ Slow Mode</h4>
-              <p style={{ fontSize: '13px', color: '#b9bbbe', marginBottom: '16px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                 Limit how often users can send messages in a channel.
               </p>
               {nodeChannels.length === 0 ? (
-                <div style={{ color: '#72767d', fontSize: '14px', marginBottom: '24px' }}>Loading channels...</div>
+                <div style={{ color: 'var(--text-faint)', fontSize: '14px', marginBottom: '24px' }}>Loading channels...</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '32px' }}>
                   {nodeChannels.map(ch => (
-                    <div key={ch.id} style={{ background: '#40444b', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ flex: 1, fontSize: '14px', color: '#dcddde' }}>#{ch.name}</span>
+                    <div key={ch.id} style={{ background: 'var(--bg-active)', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-secondary)' }}>#{ch.name}</span>
                       <select
                         value={slowModeChannels[ch.id] || 0}
                         onChange={(e) => handleSetSlowMode(ch.id, parseInt(e.target.value))}
-                        style={{ padding: '6px 10px', borderRadius: '4px', border: 'none', background: '#36393f', color: '#fff', fontSize: '13px', cursor: 'pointer' }}
+                        style={{ padding: '6px 10px', borderRadius: '4px', border: 'none', background: 'var(--bg-content)', color: 'var(--text-on-accent)', fontSize: '13px', cursor: 'pointer' }}
                       >
                         <option value="0">Off</option>
                         <option value="5">5 seconds</option>
@@ -1266,7 +1266,7 @@ export function NodeSettings({
 
               {/* Auto-Mod Word Filter Section */}
               <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>🛡️ Word Filter</h4>
-              <p style={{ fontSize: '13px', color: '#b9bbbe', marginBottom: '16px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                 Block or warn when messages contain specific words.
               </p>
 
@@ -1279,12 +1279,12 @@ export function NodeSettings({
                   onChange={(e) => setNewWord(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleAddWord(); }}
                   maxLength={100}
-                  style={{ flex: 1, padding: '8px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#fff', fontSize: '14px' }}
+                  style={{ flex: 1, padding: '8px', borderRadius: '4px', border: 'none', background: 'var(--bg-active)', color: 'var(--text-on-accent)', fontSize: '14px' }}
                 />
                 <select
                   value={newWordAction}
                   onChange={(e) => setNewWordAction(e.target.value as 'block' | 'warn')}
-                  style={{ padding: '8px 10px', borderRadius: '4px', border: 'none', background: '#40444b', color: '#fff', fontSize: '13px', cursor: 'pointer' }}
+                  style={{ padding: '8px 10px', borderRadius: '4px', border: 'none', background: 'var(--bg-active)', color: 'var(--text-on-accent)', fontSize: '13px', cursor: 'pointer' }}
                 >
                   <option value="block">Block</option>
                   <option value="warn">Warn</option>
@@ -1292,7 +1292,7 @@ export function NodeSettings({
                 <button
                   onClick={handleAddWord}
                   disabled={!newWord.trim()}
-                  style={{ background: '#43b581', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: newWord.trim() ? 'pointer' : 'not-allowed', fontSize: '13px', opacity: newWord.trim() ? 1 : 0.5 }}
+                  style={{ background: 'var(--green)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 14px', borderRadius: '4px', cursor: newWord.trim() ? 'pointer' : 'not-allowed', fontSize: '13px', opacity: newWord.trim() ? 1 : 0.5 }}
                 >
                   Add
                 </button>
@@ -1300,27 +1300,27 @@ export function NodeSettings({
 
               {/* Word list */}
               {loadingAutoMod ? (
-                <div style={{ color: '#b9bbbe', textAlign: 'center', padding: '20px' }}>Loading...</div>
+                <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>Loading...</div>
               ) : autoModWords.length === 0 ? (
-                <div style={{ color: '#72767d', textAlign: 'center', padding: '20px' }}>No filtered words yet</div>
+                <div style={{ color: 'var(--text-faint)', textAlign: 'center', padding: '20px' }}>No filtered words yet</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   {autoModWords.map(w => (
-                    <div key={w.word} style={{ background: '#40444b', padding: '8px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ flex: 1, fontSize: '14px', color: '#dcddde', fontFamily: 'monospace' }}>{w.word}</span>
+                    <div key={w.word} style={{ background: 'var(--bg-active)', padding: '8px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{w.word}</span>
                       <span style={{
                         fontSize: '11px',
                         padding: '2px 8px',
                         borderRadius: '3px',
                         background: w.action === 'block' ? '#f04747' : '#faa61a',
-                        color: '#fff',
+                        color: 'var(--text-on-accent)',
                         fontWeight: 600
                       }}>
                         {w.action.toUpperCase()}
                       </span>
                       <button
                         onClick={() => handleRemoveWord(w.word)}
-                        style={{ background: 'none', border: 'none', color: '#f04747', cursor: 'pointer', fontSize: '16px', padding: '0 4px' }}
+                        style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '16px', padding: '0 4px' }}
                         title="Remove word"
                       >
                         ×
@@ -1335,30 +1335,30 @@ export function NodeSettings({
           {/* Emojis Tab */}
           {activeTab === 'emojis' && isAdmin && (
             <div>
-              <h3 style={{ color: '#ffffff', marginBottom: '16px' }}>Custom Emojis</h3>
+              <h3 style={{ color: 'var(--text-on-accent)', marginBottom: '16px' }}>Custom Emojis</h3>
               
               {/* Upload new emoji */}
-              <div style={{ marginBottom: '20px', padding: '16px', background: '#2f3136', borderRadius: '8px' }}>
-                <h4 style={{ color: '#b9bbbe', marginBottom: '12px' }}>Upload Emoji</h4>
+              <div style={{ marginBottom: '20px', padding: '16px', background: 'var(--bg-dark)', borderRadius: '8px' }}>
+                <h4 style={{ color: 'var(--text-secondary)', marginBottom: '12px' }}>Upload Emoji</h4>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                   <div>
-                    <label style={{ color: '#b9bbbe', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Name</label>
+                    <label style={{ color: 'var(--text-secondary)', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Name</label>
                     <input
                       type="text"
                       value={newEmojiName}
                       onChange={e => setNewEmojiName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
                       placeholder="emoji_name"
                       maxLength={32}
-                      style={{ padding: '8px 12px', background: '#202225', border: '1px solid #40444b', borderRadius: '4px', color: '#dcddde', fontSize: '14px', width: '200px' }}
+                      style={{ padding: '8px 12px', background: 'var(--bg-darkest)', border: '1px solid var(--bg-active)', borderRadius: '4px', color: 'var(--text-secondary)', fontSize: '14px', width: '200px' }}
                     />
                   </div>
                   <div>
-                    <label style={{ color: '#b9bbbe', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Image (PNG/GIF/WebP, max 256KB)</label>
+                    <label style={{ color: 'var(--text-secondary)', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Image (PNG/GIF/WebP, max 256KB)</label>
                     <input
                       type="file"
                       accept="image/png,image/gif,image/webp"
                       onChange={e => setNewEmojiFile(e.target.files?.[0] || null)}
-                      style={{ color: '#b9bbbe', fontSize: '13px' }}
+                      style={{ color: 'var(--text-secondary)', fontSize: '13px' }}
                     />
                   </div>
                   <button
@@ -1382,7 +1382,7 @@ export function NodeSettings({
                         setUploadingEmoji(false);
                       }
                     }}
-                    style={{ padding: '8px 16px', background: uploadingEmoji ? '#4f545c' : '#5865f2', color: '#fff', border: 'none', borderRadius: '4px', cursor: uploadingEmoji ? 'default' : 'pointer', fontSize: '14px' }}
+                    style={{ padding: '8px 16px', background: uploadingEmoji ? '#4f545c' : '#5865f2', color: 'var(--text-on-accent)', border: 'none', borderRadius: '4px', cursor: uploadingEmoji ? 'default' : 'pointer', fontSize: '14px' }}
                   >
                     {uploadingEmoji ? 'Uploading...' : 'Upload'}
                   </button>
@@ -1391,16 +1391,16 @@ export function NodeSettings({
 
               {/* Emoji list */}
               {loadingEmojis ? (
-                <div style={{ color: '#b9bbbe' }}>Loading emojis...</div>
+                <div style={{ color: 'var(--text-secondary)' }}>Loading emojis...</div>
               ) : customEmojis.length === 0 ? (
-                <div style={{ color: '#72767d', fontStyle: 'italic' }}>No custom emojis yet. Upload one above!</div>
+                <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No custom emojis yet. Upload one above!</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
                   {customEmojis.map(emoji => (
-                    <div key={emoji.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: '#2f3136', borderRadius: '6px' }}>
+                    <div key={emoji.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'var(--bg-dark)', borderRadius: '6px' }}>
                       <img src={api.getEmojiUrl(emoji.content_hash)} alt={`:${emoji.name}:`} style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ color: '#dcddde', fontSize: '14px', fontWeight: '500' }}>:{emoji.name}:</div>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '500' }}>:{emoji.name}:</div>
                       </div>
                       <button
                         onClick={async () => {
@@ -1413,7 +1413,7 @@ export function NodeSettings({
                             setError(err instanceof Error ? err.message : 'Failed to delete emoji');
                           }
                         }}
-                        style={{ background: 'transparent', border: 'none', color: '#ed4245', cursor: 'pointer', fontSize: '16px', padding: '4px' }}
+                        style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '16px', padding: '4px' }}
                         title="Delete emoji"
                       >
                         ✕
@@ -1435,7 +1435,7 @@ export function NodeSettings({
                   marginBottom: '8px', 
                   fontSize: '14px', 
                   fontWeight: '600', 
-                  color: '#b9bbbe' 
+                  color: 'var(--text-secondary)' 
                 }}>
                   Filter by Action
                 </label>
@@ -1446,8 +1446,8 @@ export function NodeSettings({
                     padding: '8px 12px',
                     borderRadius: '4px',
                     border: 'none',
-                    background: '#40444b',
-                    color: '#ffffff',
+                    background: 'var(--bg-active)',
+                    color: 'var(--text-on-accent)',
                     fontSize: '14px',
                     cursor: 'pointer',
                     minWidth: '200px'
@@ -1472,11 +1472,11 @@ export function NodeSettings({
                 <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>Recent Activity</h4>
                 
                 {loadingAudit && auditEntries.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#b9bbbe' }}>
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
                     Loading audit log...
                   </div>
                 ) : getFilteredAuditEntries().length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#72767d' }}>
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-faint)' }}>
                     No audit entries found
                   </div>
                 ) : (
@@ -1491,7 +1491,7 @@ export function NodeSettings({
                       <div
                         key={entry.id}
                         style={{
-                          background: '#40444b',
+                          background: 'var(--bg-active)',
                           padding: '12px',
                           borderRadius: '6px',
                           display: 'flex',
@@ -1504,23 +1504,23 @@ export function NodeSettings({
                         </div>
                         <div style={{ flex: 1 }}>
                           <div style={{ marginBottom: '4px', fontSize: '14px' }}>
-                            <span style={{ fontWeight: '600', color: '#ffffff' }}>
+                            <span style={{ fontWeight: '600', color: 'var(--text-on-accent)' }}>
                               {entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
                             </span>{' '}
-                            <span style={{ color: '#b9bbbe' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>
                               {getActionDescription(entry)}
                             </span>
                           </div>
                           <div style={{ 
                             fontSize: '12px', 
-                            color: '#72767d',
+                            color: 'var(--text-faint)',
                             display: 'flex',
                             alignItems: 'center',
                             gap: '16px'
                           }}>
                             <span>{formatDate(entry.created_at)}</span>
                             <span style={{ 
-                              background: '#2f3136',
+                              background: 'var(--bg-dark)',
                               padding: '2px 6px',
                               borderRadius: '3px',
                               fontSize: '11px',
@@ -1540,9 +1540,9 @@ export function NodeSettings({
                           onClick={loadMoreAudit}
                           disabled={loadingAudit}
                           style={{
-                            background: '#7289da',
+                            background: 'var(--accent)',
                             border: 'none',
-                            color: '#ffffff',
+                            color: 'var(--text-on-accent)',
                             padding: '8px 16px',
                             borderRadius: '4px',
                             cursor: loadingAudit ? 'not-allowed' : 'pointer',
@@ -1568,7 +1568,7 @@ export function NodeSettings({
             top: '16px',
             right: '16px',
             background: error ? '#f04747' : '#43b581',
-            color: '#ffffff',
+            color: 'var(--text-on-accent)',
             padding: '8px 12px',
             borderRadius: '4px',
             fontSize: '14px',

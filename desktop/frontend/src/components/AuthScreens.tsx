@@ -59,7 +59,7 @@ export const MnemonicModal: React.FC = () => {
                 }
               }}
               className="btn btn-primary"
-              style={ctx.mnemonicConfirmStep === 1 ? { background: '#e67e22' } : ctx.mnemonicConfirmStep === 2 ? { background: '#e74c3c' } : {}}
+              style={ctx.mnemonicConfirmStep === 1 ? { background: 'var(--orange)' } : ctx.mnemonicConfirmStep === 2 ? { background: 'var(--red)' } : {}}
             >
               {ctx.mnemonicConfirmStep === 0
                 ? (ctx.isAuthenticated ? 'I\'ve saved my phrase' : 'I\'ve saved my phrase — Continue to Login')

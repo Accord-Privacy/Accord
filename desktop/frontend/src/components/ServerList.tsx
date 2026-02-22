@@ -8,7 +8,7 @@ export const ServerList: React.FC = () => {
 
   return (
     <div className="server-list" key={ctx.forceUpdate}>
-      <div className="server-icon accord-home" title="Accord" style={{ marginBottom: '8px', borderBottom: '2px solid var(--border-color, #333)', paddingBottom: '8px', background: '#000', overflow: 'hidden' }}>
+      <div className="server-icon accord-home" title="Accord" style={{ marginBottom: '8px', borderBottom: '2px solid var(--border)', paddingBottom: '8px', background: 'var(--bg-darkest)', overflow: 'hidden' }}>
         <img src="/logo.png?v=2" alt="A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
       </div>
       {ctx.nodes.length > 0 && ctx.servers.map((s, i) => {

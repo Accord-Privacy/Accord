@@ -175,7 +175,7 @@ export const ChatArea: React.FC = () => {
                   Join a Node to start chatting. Paste an invite link below.
                 </p>
                 {previewError && (
-                  <p style={{ margin: '0 0 12px', color: '#f04747', fontSize: 13 }}>{previewError}</p>
+                  <p style={{ margin: '0 0 12px', color: 'var(--red)', fontSize: 13 }}>{previewError}</p>
                 )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <input
@@ -541,12 +541,12 @@ export const ChatArea: React.FC = () => {
                             const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
                             return (
                               <span key={r.user_id} className="read-receipt-avatar" title={`Read by ${name}`}
-                                style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: '#5865F2', color: '#fff', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+                                style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: 'var(--accent)', color: 'var(--text-on-accent)', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
                                 {name[0]?.toUpperCase()}
                               </span>
                             );
                           })}
-                          {readBy.length > 5 && <span style={{ fontSize: '10px', color: '#8e9297' }}>+{readBy.length - 5}</span>}
+                          {readBy.length > 5 && <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>+{readBy.length - 5}</span>}
                         </div>
                       );
                     })()}
@@ -638,7 +638,7 @@ export const ChatArea: React.FC = () => {
             {ctx.messageError && (
               <div style={{
                 position: 'absolute', top: '-36px', left: '50%', transform: 'translateX(-50%)',
-                background: '#f04747', color: '#fff', padding: '6px 14px', borderRadius: '4px',
+                background: 'var(--red)', color: 'var(--text-on-accent)', padding: '6px 14px', borderRadius: '4px',
                 fontSize: '13px', fontWeight: 500, zIndex: 11, maxWidth: '90%', textAlign: 'center',
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               }}>
@@ -648,7 +648,7 @@ export const ChatArea: React.FC = () => {
             {ctx.slowModeCooldown > 0 && !ctx.messageError && (
               <div style={{
                 position: 'absolute', top: '-28px', left: '50%', transform: 'translateX(-50%)',
-                background: '#faa61a', color: '#fff', padding: '4px 12px', borderRadius: '4px',
+                background: 'var(--yellow)', color: 'var(--text-on-accent)', padding: '4px 12px', borderRadius: '4px',
                 fontSize: '12px', fontWeight: 600, zIndex: 10, whiteSpace: 'nowrap',
               }}>
                 ⏱️ Slow mode: wait {ctx.slowModeCooldown}s

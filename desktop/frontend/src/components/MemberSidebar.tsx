@@ -78,7 +78,7 @@ export const MemberSidebar: React.FC = () => {
         )}
         {offline.length > 0 && (
           <>
-            <div className="role-section-header" style={{ color: '#72767d' }}>Offline — {offline.length}</div>
+            <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>Offline — {offline.length}</div>
             {offline.map(m => renderMember(m))}
           </>
         )}
@@ -121,7 +121,7 @@ export const MemberSidebar: React.FC = () => {
       )}
       {offline.length > 0 && (
         <>
-          <div className="role-section-header" style={{ color: '#72767d' }}>Offline — {offline.length}</div>
+          <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>Offline — {offline.length}</div>
           {offline.map(m => renderMember(m))}
         </>
       )}

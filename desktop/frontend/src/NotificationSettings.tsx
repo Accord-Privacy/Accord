@@ -67,7 +67,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
   return (
     <div className="notification-modal">
       <div className="notification-modal-content">
-        <h3 style={{ margin: '0 0 16px 0', color: '#ffffff' }}>
+        <h3 style={{ margin: '0 0 16px 0', color: 'var(--text-on-accent)' }}>
           Notification Settings
         </h3>
 
@@ -127,9 +127,9 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
               onClick={testNotification}
               style={{
                 flex: 1,
-                background: '#7289da',
+                background: 'var(--accent)',
                 border: 'none',
-                color: '#ffffff',
+                color: 'var(--text-on-accent)',
                 padding: '8px 12px',
                 borderRadius: '4px',
                 cursor: 'pointer',
@@ -142,9 +142,9 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
               onClick={testSound}
               style={{
                 flex: 1,
-                background: '#43b581',
+                background: 'var(--green)',
                 border: 'none',
-                color: '#ffffff',
+                color: 'var(--text-on-accent)',
                 padding: '8px 12px',
                 borderRadius: '4px',
                 cursor: 'pointer',
@@ -159,9 +159,9 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
             onClick={clearAllUnreads}
             style={{
               width: '100%',
-              background: '#f04747',
+              background: 'var(--red)',
               border: 'none',
-              color: '#ffffff',
+              color: 'var(--text-on-accent)',
               padding: '8px 12px',
               borderRadius: '4px',
               cursor: 'pointer',
@@ -177,9 +177,9 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
           <button
             onClick={onClose}
             style={{
-              background: '#747f8d',
+              background: 'var(--text-faint)',
               border: 'none',
-              color: '#ffffff',
+              color: 'var(--text-on-accent)',
               padding: '8px 16px',
               borderRadius: '4px',
               cursor: 'pointer'
@@ -191,7 +191,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
 
         <div style={{ 
           fontSize: '11px', 
-          color: '#72767d', 
+          color: 'var(--text-faint)', 
           marginTop: '12px',
           lineHeight: '1.4'
         }}>

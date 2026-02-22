@@ -729,14 +729,14 @@ export const Settings: React.FC<SettingsProps> = ({
                       width: '80px',
                       height: '80px',
                       borderRadius: '50%',
-                      background: '#40444b',
+                      background: 'var(--bg-active)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       cursor: 'pointer',
                       overflow: 'hidden',
                       fontSize: '32px',
-                      color: '#b9bbbe',
+                      color: 'var(--text-secondary)',
                       flexShrink: 0,
                       position: 'relative',
                     }}
@@ -759,10 +759,10 @@ export const Settings: React.FC<SettingsProps> = ({
                       fontSize: '10px',
                       textAlign: 'center',
                       padding: '2px',
-                      color: '#fff',
+                      color: 'var(--text-on-accent)',
                     }}>EDIT</div>
                   </div>
-                  <div style={{ color: '#b9bbbe', fontSize: '13px' }}>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
                     Click to upload avatar (PNG, JPEG, GIF, WebP — max 256KB)
                   </div>
                 </div>
@@ -856,7 +856,7 @@ export const Settings: React.FC<SettingsProps> = ({
                     className="btn"
                     style={{
                       background: 'var(--red, #e74c3c)',
-                      color: '#fff',
+                      color: 'var(--text-on-accent)',
                       border: 'none',
                       padding: '10px 24px',
                       borderRadius: '6px',
@@ -1605,7 +1605,7 @@ export const Settings: React.FC<SettingsProps> = ({
             <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '12px 0 4px' }}>
               Scan this QR code on your other device to sync your identity.
             </p>
-            <p style={{ color: '#f0a030', fontSize: 12, margin: '4px 0 12px' }}>
+            <p style={{ color: 'var(--yellow)', fontSize: 12, margin: '4px 0 12px' }}>
               ⚠️ This QR code contains your encrypted identity. Only share with your own devices.
             </p>
             <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px' }} onClick={() => setShowQrModal(false)}>Close</button>
@@ -1620,7 +1620,7 @@ export const Settings: React.FC<SettingsProps> = ({
             <h3 style={{ margin: '0 0 12px', color: 'var(--text-primary)' }}>Scan Identity QR Code</h3>
             {scanError ? (
               <div>
-                <p style={{ color: '#f44', fontSize: 14, margin: '16px 0' }}>{scanError}</p>
+                <p style={{ color: 'var(--red)', fontSize: 14, margin: '16px 0' }}>{scanError}</p>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>You can use file import as an alternative.</p>
               </div>
             ) : (

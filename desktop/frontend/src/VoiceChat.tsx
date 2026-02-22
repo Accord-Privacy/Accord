@@ -215,7 +215,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   return (
     <div style={{
-      background: '#2f3136',
+      background: 'var(--bg-dark)',
       borderTop: '1px solid #202225',
       display: 'flex',
       flexDirection: 'column',
@@ -233,7 +233,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           <span style={{ fontSize: '14px', fontWeight: 600, color: connectionError ? '#f04747' : '#43b581' }}>
             {connectionError ? '⚠️ Voice Error' : '🔊 Voice Connected'}
           </span>
-          <span style={{ fontSize: '13px', color: '#b9bbbe' }}>
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
             {connectionError || channelName}
           </span>
           {/* Voice mode indicator */}
@@ -259,9 +259,9 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         <button
           onClick={handleDisconnect}
           style={{
-            background: '#f04747',
+            background: 'var(--red)',
             border: 'none',
-            color: '#ffffff',
+            color: 'var(--text-on-accent)',
             padding: '6px 12px',
             borderRadius: '4px',
             cursor: 'pointer',
@@ -282,7 +282,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       }}>
         {/* Users */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, overflow: 'auto' }}>
-          <span style={{ fontSize: '12px', color: '#8e9297', marginRight: '8px' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginRight: '8px' }}>
             Users ({peerList.length + 1}):
           </span>
 
@@ -311,7 +311,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             style={{
               width: '36px', height: '36px', borderRadius: '50%', border: 'none',
               background: isMuted ? '#f04747' : '#3ba55d',
-              color: '#fff', cursor: 'pointer',
+              color: 'var(--text-on-accent)', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px',
             }}
             title={isMuted ? 'Unmute' : 'Mute'}
@@ -324,7 +324,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             style={{
               width: '36px', height: '36px', borderRadius: '50%', border: 'none',
               background: isDeafened ? '#f04747' : '#4f545c',
-              color: '#fff', cursor: 'pointer',
+              color: 'var(--text-on-accent)', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px',
             }}
             title={isDeafened ? 'Undeafen' : 'Deafen'}
@@ -333,14 +333,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '120px' }}>
-            <span style={{ fontSize: '12px', color: '#8e9297' }}>Vol:</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Vol:</span>
             <input
               type="range" min="0" max="100"
               value={outputVolume}
               onChange={(e) => setOutputVolume(parseInt(e.target.value))}
-              style={{ flex: 1, height: '4px', borderRadius: '2px', background: '#4f545c', outline: 'none', cursor: 'pointer' }}
+              style={{ flex: 1, height: '4px', borderRadius: '2px', background: 'var(--bg-active)', outline: 'none', cursor: 'pointer' }}
             />
-            <span style={{ fontSize: '11px', color: '#8e9297', minWidth: '25px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', minWidth: '25px' }}>
               {outputVolume}%
             </span>
           </div>
@@ -367,14 +367,14 @@ const UserAvatar: React.FC<{
   }}>
     <div style={{
       width: '24px', height: '24px', borderRadius: '50%',
-      background: '#5865f2',
+      background: 'var(--accent)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: '12px', color: '#fff',
+      fontSize: '12px', color: 'var(--text-on-accent)',
     }}>
       {label[0]?.toUpperCase()}
     </div>
-    <span style={{ fontSize: '12px', color: '#dcddde' }}>{label}</span>
-    {isMuted && <span style={{ fontSize: '10px', color: '#f04747' }}>🔇</span>}
-    {isConnecting && <span style={{ fontSize: '10px', color: '#faa61a' }}>⋯</span>}
+    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{label}</span>
+    {isMuted && <span style={{ fontSize: '10px', color: 'var(--red)' }}>🔇</span>}
+    {isConnecting && <span style={{ fontSize: '10px', color: 'var(--yellow)' }}>⋯</span>}
   </div>
 );

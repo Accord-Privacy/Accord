@@ -25,17 +25,17 @@ export const AppModals: React.FC = () => {
             position: 'absolute',
             top: Math.min(ctx.showRolePopup.y, window.innerHeight - 300),
             left: Math.min(ctx.showRolePopup.x, window.innerWidth - 220),
-            background: '#2f3136', border: '1px solid #40444b', borderRadius: '6px',
+            background: 'var(--bg-dark)', border: '1px solid #40444b', borderRadius: '6px',
             padding: '8px', minWidth: '200px', maxHeight: '280px', overflowY: 'auto',
             boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
           }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: '12px', color: '#b9bbbe', fontWeight: 600, padding: '4px 8px', marginBottom: '4px' }}>ASSIGN ROLES</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, padding: '4px 8px', marginBottom: '4px' }}>ASSIGN ROLES</div>
             {ctx.nodeRoles.length === 0 ? (
-              <div style={{ padding: '8px', color: '#72767d', fontSize: '13px' }}>No roles available</div>
+              <div style={{ padding: '8px', color: 'var(--text-faint)', fontSize: '13px' }}>No roles available</div>
             ) : ctx.nodeRoles.sort((a, b) => b.position - a.position).map(role => {
               const userHasRole = (ctx.memberRolesMap[ctx.showRolePopup!.userId] || []).some(r => r.id === role.id);
               return (
-                <label key={role.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', color: '#dcddde' }}
+                <label key={role.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-secondary)' }}
                   onMouseEnter={e => (e.currentTarget.style.background = '#40444b')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                   <input type="checkbox" checked={userHasRole} onChange={() => ctx.toggleMemberRole(ctx.showRolePopup!.userId, role.id, userHasRole)} />
@@ -156,11 +156,11 @@ export const AppModals: React.FC = () => {
             <h3>📥 Import Discord Template</h3>
             {!ctx.templateResult ? (
               <>
-                <p style={{ color: '#b9bbbe', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
                 <div className="form-group">
                   <input type="text" placeholder="discord.new/CODE or template code" value={ctx.templateInput} onChange={(e) => ctx.setTemplateInput(e.target.value)} className="form-input" disabled={ctx.templateImporting} />
                 </div>
-                {ctx.templateError && <div style={{ color: '#f04747', fontSize: '13px', marginBottom: '8px' }}>{ctx.templateError}</div>}
+                {ctx.templateError && <div style={{ color: 'var(--red)', fontSize: '13px', marginBottom: '8px' }}>{ctx.templateError}</div>}
                 <div className="modal-actions">
                   <button className="btn btn-green" disabled={ctx.templateImporting || !ctx.templateInput.trim()} onClick={async () => {
                     ctx.setTemplateError('');
@@ -185,8 +185,8 @@ export const AppModals: React.FC = () => {
               </>
             ) : (
               <>
-                <div style={{ color: '#43b581', marginBottom: '12px', fontSize: '14px' }}>✅ Import complete!</div>
-                <div style={{ color: '#dcddde', fontSize: '13px', lineHeight: '1.6' }}>
+                <div style={{ color: 'var(--green)', marginBottom: '12px', fontSize: '14px' }}>✅ Import complete!</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.6' }}>
                   {ctx.templateResult.roles_created !== undefined && <div>Roles created: <strong>{ctx.templateResult.roles_created}</strong></div>}
                   {ctx.templateResult.channels_created !== undefined && <div>Channels created: <strong>{ctx.templateResult.channels_created}</strong></div>}
                   {ctx.templateResult.categories_created !== undefined && <div>Categories created: <strong>{ctx.templateResult.categories_created}</strong></div>}
@@ -493,7 +493,7 @@ export const AppModals: React.FC = () => {
             </p>
             <div className="modal-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button onClick={() => ctx.setShowBlockConfirm(null)} className="btn btn-outline" style={{ width: 'auto' }}>Cancel</button>
-              <button onClick={() => ctx.handleBlockUser(ctx.showBlockConfirm!.userId)} className="btn" style={{ width: 'auto', background: 'var(--red, #ed4245)', color: '#fff' }}>Block</button>
+              <button onClick={() => ctx.handleBlockUser(ctx.showBlockConfirm!.userId)} className="btn" style={{ width: 'auto', background: 'var(--red, #ed4245)', color: 'var(--text-on-accent)' }}>Block</button>
             </div>
           </div>
         </div>
