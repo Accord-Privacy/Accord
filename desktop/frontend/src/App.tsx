@@ -3158,11 +3158,18 @@ function App() {
           setPublicKey(pk);
         }
 
+        // Fetch display name from server profile
+        let displayName = fingerprint(pkHash);
+        try {
+          const profile = await api.getUserProfile(userId, token);
+          if (profile?.display_name) displayName = profile.display_name;
+        } catch { /* fallback to fingerprint */ }
+
         setAppState(prev => ({
           ...prev,
           isAuthenticated: true,
           token,
-          user: { id: userId, public_key_hash: pkHash, public_key: '', created_at: 0, display_name: fingerprint(pkHash) }
+          user: { id: userId, public_key_hash: pkHash, public_key: '', created_at: 0, display_name: displayName }
         }));
         setIsAuthenticated(true);
 
