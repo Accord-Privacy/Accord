@@ -26,7 +26,7 @@ export const MemberSidebar: React.FC = () => {
               src={`${api.getUserAvatarUrl(member.user_id)}`}
               alt={ctx.displayName(member.user)[0]}
               style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = ctx.displayName(member.user)[0]; }}
+              onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = ctx.displayName(member.user)[0]; }}
             />
           </div>
           <span className={`presence-dot presence-${presence}`} title={presence}></span>

@@ -8,7 +8,7 @@ import { LoadingSpinner } from "../LoadingSpinner";
 import { ProfileCard } from "../ProfileCard";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { SHORTCUTS } from "../keyboard";
-// WebSocket imports removed — socket management centralized in App.tsx connectSocket()
+// Note: WebSocket imports removed — socket management centralized in App.tsx connectSocket()
 const NodeSettings = React.lazy(() => import("../NodeSettings").then(m => ({ default: m.NodeSettings })));
 const NotificationSettings = React.lazy(() => import("../NotificationSettings").then(m => ({ default: m.NotificationSettings })));
 const Settings = React.lazy(() => import("../Settings").then(m => ({ default: m.Settings })));

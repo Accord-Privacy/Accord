@@ -744,10 +744,10 @@ export const Settings: React.FC<SettingsProps> = ({
                   >
                     {currentUser?.id ? (
                       <img 
-                        src={`${api.getUserAvatarUrl(currentUser.id)}?t=${Date.now()}`}
+                        src={`${api.getUserAvatarUrl(currentUser.id)}`}
                         alt={(currentUser?.display_name || "U")[0]}
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (currentUser?.display_name || "U")[0]; }}
+                        onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (currentUser?.display_name || "U")[0]; }}
                       />
                     ) : (currentUser?.display_name || "U")[0]}
                     <div style={{

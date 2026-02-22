@@ -110,8 +110,8 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
               src={avatarUrl}
               alt={displayName[0]}
               onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-                (e.target as HTMLImageElement).parentElement!.textContent = displayName[0];
+                const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src');
+                if (img.parentElement) img.parentElement.textContent = displayName[0];
               }}
             />
           </div>

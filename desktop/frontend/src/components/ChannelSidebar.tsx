@@ -525,7 +525,7 @@ const UserPanel: React.FC = () => {
             src={`${api.getUserAvatarUrl(ctx.appState.user.id)}`}
             alt={(ctx.appState.user?.display_name || "U")[0]}
             style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = (ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U"; }}
+            onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U"; }}
           />
         ) : ((ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U")}
       </div>

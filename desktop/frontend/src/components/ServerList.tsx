@@ -31,7 +31,7 @@ export const ServerList: React.FC = () => {
                 src={`${api.getNodeIconUrl(ctx.nodes[i].id)}?v=${ctx.nodes[i].icon_hash}`}
                 alt={s[0]}
                 style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.textContent = s[0]; }}
+                onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = s[0]; }}
               />
             ) : s[0]}
             {nodeUnreads.totalMentions > 0 && (
