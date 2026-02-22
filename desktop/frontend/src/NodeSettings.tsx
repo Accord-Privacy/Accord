@@ -438,7 +438,7 @@ export function NodeSettings({
   }, [isAdmin, node.id, token, onLeaveNode, onClose]);
 
   const copyInviteCode = (inviteCode: string) => {
-    navigator.clipboard.writeText(inviteCode).then(() => {
+    navigator.clipboard?.writeText(inviteCode).then(() => {
       setSuccess('Invite code copied to clipboard!');
     }).catch(() => {
       // Fallback for browsers that don't support clipboard API

@@ -991,12 +991,12 @@ async fn main() -> Result<()> {
                 axum::http::header::CONTENT_SECURITY_POLICY,
                 HeaderValue::from_static(
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                     img-src 'self' data: blob:; connect-src 'self' wss: ws:; frame-ancestors 'none'",
+                     img-src 'self' data: blob:; connect-src 'self' wss: ws: https: http:; frame-ancestors 'none'",
                 ),
             ))
             .layer(SetResponseHeaderLayer::overriding(
                 axum::http::HeaderName::from_static("permissions-policy"),
-                HeaderValue::from_static("camera=(), microphone=(self), geolocation=()"),
+                HeaderValue::from_static("camera=(self), microphone=(self), geolocation=()"),
             ))
             // ── CORS ──
             .layer({

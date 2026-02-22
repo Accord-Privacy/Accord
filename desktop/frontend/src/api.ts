@@ -941,7 +941,10 @@ function inferScheme(host: string): 'https' | 'http' {
   const portMatch = host.match(/:(\d+)$/);
   if (portMatch) {
     const port = parseInt(portMatch[1], 10);
-    if (port === 443 || port === 8443) return 'https';
+    if (port === 443) return 'https';
+    // 8443 could be either — probeServerUrl will try both
+    // Default to http for local/dev servers
+    return 'http';
   } else {
     // No explicit port — assume https for production domains
     return 'https';

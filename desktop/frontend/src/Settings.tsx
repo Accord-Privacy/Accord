@@ -215,7 +215,7 @@ export const Settings: React.FC<SettingsProps> = ({
   // Load available media devices
   const loadMediaDevices = useCallback(async () => {
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
+      const devices = await navigator.mediaDevices?.enumerateDevices();
       setInputDevices(devices.filter(device => device.kind === 'audioinput'));
       setOutputDevices(devices.filter(device => device.kind === 'audiooutput'));
       setDevicesError('');
@@ -315,7 +315,7 @@ export const Settings: React.FC<SettingsProps> = ({
   // Test functions for voice settings
   const testMicrophone = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices?.getUserMedia({ audio: true });
       setTimeout(() => {
         stream.getTracks().forEach(track => track.stop());
         alert('Microphone test completed!');
@@ -489,7 +489,7 @@ export const Settings: React.FC<SettingsProps> = ({
     setScanError('');
     setShowScanModal(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      const stream = await navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'environment' } });
       scanStreamRef.current = stream;
       const video = scanVideoRef.current;
       if (!video) { stopScan(); return; }
@@ -1453,7 +1453,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       className="settings-info copyable"
                       style={{ fontFamily: 'var(--font-mono)', fontSize: 13, cursor: 'pointer' }}
                       title="Click to copy"
-                      onClick={() => { navigator.clipboard.writeText(serverInfo.buildHash); }}
+                      onClick={() => { navigator.clipboard?.writeText(serverInfo.buildHash); }}
                     >
                       {serverInfo.buildHash} 📋
                     </div>
@@ -1524,7 +1524,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       <code
                         style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '3px' }}
                         title={`Full hash: ${CLIENT_BUILD_HASH}\nClick to copy`}
-                        onClick={() => navigator.clipboard.writeText(CLIENT_BUILD_HASH)}
+                        onClick={() => navigator.clipboard?.writeText(CLIENT_BUILD_HASH)}
                       >
                         {shortHash(CLIENT_BUILD_HASH)}
                       </code>
@@ -1540,7 +1540,7 @@ export const Settings: React.FC<SettingsProps> = ({
                           <code
                             style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '3px' }}
                             title={`Full hash: ${serverInfo.buildHash}\nClick to copy`}
-                            onClick={() => navigator.clipboard.writeText(serverInfo.buildHash)}
+                            onClick={() => navigator.clipboard?.writeText(serverInfo.buildHash)}
                           >
                             {shortHash(serverInfo.buildHash)}
                           </code>

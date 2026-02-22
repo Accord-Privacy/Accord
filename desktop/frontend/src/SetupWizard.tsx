@@ -222,8 +222,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     }
   }, [password, onComplete]);
 
-  const handleCopyMnemonic = () => {
-    navigator.clipboard.writeText(generatedMnemonic);
+  const handleCopyMnemonic = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedMnemonic);
+    } catch {
+      // Fallback for non-HTTPS contexts
+      const ta = document.createElement('textarea');
+      ta.value = generatedMnemonic;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
     setMnemonicCopied(true);
     setTimeout(() => setMnemonicCopied(false), 2000);
   };
