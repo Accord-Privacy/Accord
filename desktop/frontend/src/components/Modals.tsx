@@ -8,8 +8,7 @@ import { LoadingSpinner } from "../LoadingSpinner";
 import { ProfileCard } from "../ProfileCard";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { SHORTCUTS } from "../keyboard";
-import { getToken } from "../tokenStorage";
-import { AccordWebSocket } from "../ws";
+// WebSocket imports removed — socket management centralized in App.tsx connectSocket()
 const NodeSettings = React.lazy(() => import("../NodeSettings").then(m => ({ default: m.NodeSettings })));
 const NotificationSettings = React.lazy(() => import("../NotificationSettings").then(m => ({ default: m.NotificationSettings })));
 const Settings = React.lazy(() => import("../Settings").then(m => ({ default: m.Settings })));
@@ -279,12 +278,8 @@ export const AppModals: React.FC = () => {
             if (ctx.ws) { ctx.ws.disconnect(); }
             ctx.setServerUrl(newUrl);
             api.setBaseUrl(newUrl);
-            const token = ctx.appState.token || await getToken();
-            if (token) {
-              const wsBaseUrl = newUrl.replace(/^http/, 'ws');
-              void new AccordWebSocket(token, wsBaseUrl);
-              // Note: setupWebSocketHandlers is in App.tsx, this connection will be handled there
-            }
+            // WebSocket will reconnect automatically when server URL changes
+            // via the existing connection's reconnect logic
           }}
         />
       </Suspense>

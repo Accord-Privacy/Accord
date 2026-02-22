@@ -715,11 +715,7 @@ function App() {
           localStorage.setItem('accord_user_id', response.user_id);
           setAppState(prev => ({ ...prev, token: response.token }));
           // Reconnect WebSocket with new token
-          socket.disconnect();
-          const newSocket = new AccordWebSocket(response.token, serverUrlRef.current.replace(/^http/, "ws"));
-          setupWebSocketHandlers(newSocket);
-          setWs(newSocket);
-          newSocket.connect();
+          connectSocket(response.token, serverUrlRef.current.replace(/^http/, "ws"));
           return;
         } catch {
           // Re-auth failed, fall through to logout
@@ -1218,6 +1214,20 @@ function App() {
     });
 
   }, [encryptionEnabled, keyPair]);
+
+  // Centralized WebSocket connection — disconnects any existing socket before creating a new one.
+  // ALL code paths that need a WebSocket MUST use this instead of `new AccordWebSocket` directly.
+  const connectSocket = useCallback((token: string, wsBaseUrl: string): AccordWebSocket => {
+    // Tear down existing socket to prevent orphaned connections
+    if (ws) {
+      ws.disconnect();
+    }
+    const socket = new AccordWebSocket(token, wsBaseUrl);
+    setupWebSocketHandlers(socket);
+    setWs(socket);
+    socket.connect();
+    return socket;
+  }, [ws, setupWebSocketHandlers]);
 
   // Cleanup typing timeouts on unmount
   useEffect(() => {
@@ -2068,10 +2078,7 @@ function App() {
           // Connect WebSocket if not connected
           if (!ws) {
             const wsBaseUrl = serverUrl.replace(/^http/, 'ws');
-            const socket = new AccordWebSocket(response.token, wsBaseUrl);
-            setupWebSocketHandlers(socket);
-            setWs(socket);
-            socket.connect();
+            connectSocket(response.token, wsBaseUrl);
           }
         }
 
@@ -2249,10 +2256,7 @@ function App() {
 
           // Initialize WebSocket — pass server URL so it connects to the right relay
           const wsBaseUrl = serverUrl.replace(/^http/, 'ws');
-          const socket = new AccordWebSocket(existingToken, wsBaseUrl);
-          setupWebSocketHandlers(socket);
-          setWs(socket);
-          socket.connect();
+          connectSocket(existingToken, wsBaseUrl);
 
           setShowWelcomeScreen(false);
           setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
@@ -2353,10 +2357,7 @@ function App() {
       notificationManager.setCurrentUsername(displayName);
 
       // Initialize WebSocket
-      const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
-      setupWebSocketHandlers(socket);
-      setWs(socket);
-      socket.connect();
+      connectSocket(response.token, serverUrl.replace(/^http/, "ws"));
 
       // Show mnemonic backup modal, then land in app
       setShowMnemonicModal(true);
@@ -2515,10 +2516,7 @@ function App() {
         notificationManager.setCurrentUsername(displayName);
 
         // Initialize WebSocket connection
-        const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
-        setupWebSocketHandlers(socket);
-        setWs(socket);
-        socket.connect();
+        connectSocket(response.token, serverUrl.replace(/^http/, "ws"));
 
         // Load initial data
         setTimeout(() => {
@@ -2629,10 +2627,7 @@ function App() {
       notificationManager.setCurrentUsername(fingerprint(pkHash));
       
       // Initialize WebSocket
-      const socket = new AccordWebSocket(response.token, serverUrl.replace(/^http/, "ws"));
-      setupWebSocketHandlers(socket);
-      setWs(socket);
-      socket.connect();
+      connectSocket(response.token, serverUrl.replace(/^http/, "ws"));
       
       setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
     } catch (error) {
@@ -3165,10 +3160,7 @@ function App() {
         setIsAuthenticated(true);
 
         // Initialize WebSocket connection
-        const socket = new AccordWebSocket(token, serverUrl.replace(/^http/, "ws"));
-        setupWebSocketHandlers(socket);
-        setWs(socket);
-        socket.connect();
+        connectSocket(token, serverUrl.replace(/^http/, "ws"));
 
         // Load initial data
         setTimeout(() => {
@@ -3627,10 +3619,7 @@ function App() {
 
           // Connect WebSocket
           const wsBaseUrl = relayUrl.replace(/^http/, 'ws');
-          const socket = new AccordWebSocket(response.token, wsBaseUrl);
-          setupWebSocketHandlers(socket);
-          setWs(socket);
-          socket.connect();
+          connectSocket(response.token, wsBaseUrl);
 
           setServerAvailable(true);
           setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
@@ -3665,10 +3654,7 @@ function App() {
 
               // Connect WebSocket
               const wsBaseUrl = detectedRelay.replace(/^http/, 'ws');
-              const socket = new AccordWebSocket(response.token, wsBaseUrl);
-              setupWebSocketHandlers(socket);
-              setWs(socket);
-              socket.connect();
+              connectSocket(response.token, wsBaseUrl);
 
               setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
             } catch {
