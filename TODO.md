@@ -1,45 +1,37 @@
 # TODO.md — Accord
 
-## NEXT
-- [ ] Add Accord logo/favicon to frontend (index.html, login screen, sidebar header)
-- [ ] Wire frontend to batch API endpoints (in progress)
-- [x] ~~Token refresh mutex~~ — already implemented (`_refreshingToken` dedup in api.ts)
-- [ ] CSRF protection + security headers (in progress)
+## NEXT — Live Testing Bugs (2026-02-22)
+- [ ] **Mute/deafen sync** — ChannelSidebar and VoiceChat have independent useState, not synced. Lift to shared context.
+- [ ] **Encryption zeros after logout/login** — zeros appearing in encrypted content after logout/re-login cycle
+- [ ] **Message indentation bug** — 2nd messages in chat get indented incorrectly
+- [ ] **User panel display name** — shows public key hash instead of display name
+- [ ] **Password verification on re-login** — copy-pasting exact same password fails with "wrong password" after logout
+- [ ] **Channel layout issues** — unspecified layout problems reported during VoIP testing
 
 ## Security — Critical
 - [ ] **Proper channel E2EE** — Sender Keys or MLS (current `channelId + salt` is placeholder, server can derive same key) (audit #3)
 - [ ] Bot API crypto — implement X25519 key exchange, AES-256-GCM encrypt, Ed25519 sign (6 TODOs in bot_api.rs)
-- [ ] CSRF protection — add CSRF tokens or SameSite cookie policy (audit #6)
 - [ ] Client-side search for E2EE content — server search returns metadata only, frontend SearchOverlay needs local decryption search (audit #13)
 
 ## Security — Medium
-- [x] ~~Message ordering~~ — seq numbers implemented
 - [ ] File encryption consistency — ensure noble crypto used everywhere, not mixed subtle/noble (audit #23)
 - [ ] DER encoding assumes small sizes in crypto.ts (audit #24)
 - [ ] Auth tokens reload on server restart — document or fix that in-memory tokens clear on restart (audit #2)
 - [ ] Auto-mod on encrypted data — document limitation, consider client-side moderation hooks (audit #4)
 
 ## Features
-- [ ] Landing page deployed (website/ exists, needs hosting — GitHub Pages?)
+- [ ] Landing page deployed (website/ exists, needs GitHub Pages)
 - [ ] App store submissions (blocked: need Apple/Google developer accounts)
 - [ ] On-device mobile testing (blocked: need physical devices)
-- [ ] GitHub Pages or Cloudflare Pages for website/
-- [ ] cargo audit in CI (audit #25 — install and add to workflow)
-- [ ] Message scroll-to on search result click (TODO in App.tsx:1885)
+- [ ] cargo audit in CI (audit #25)
+- [ ] Message scroll-to on search result click
 - [ ] Notification sounds / desktop notifications polish
-- [x] ~~Thread/reply support~~ — already implemented
-- [x] ~~Message reactions~~ — already implemented
-- [x] ~~Message pinning~~ — already implemented
-- [x] ~~User blocking~~ — already implemented
-- [ ] Channel categories drag-and-drop reorder
-- [ ] Rich link previews for shared URLs
-- [ ] Custom emoji support (server-hosted)
 - [ ] Screen sharing in voice channels
 - [ ] Video calls
+- [ ] Password reset endpoint (sign challenge with private key to prove ownership)
 
 ## Code Quality
-- [ ] Frontend build in QA script verified working (nvm sourcing added, needs CI test)
-- [ ] Remove old v1 bot stubs from state.rs (lines 1519-1540) — replaced by bot_api.rs
+- [ ] Remove old v1 bot stubs from state.rs — replaced by bot_api.rs
 - [ ] Consolidate crypto path — ensure all encryption uses noble, remove any remaining subtle fallbacks
 - [ ] Add frontend unit tests (currently 0 for React components)
 - [ ] E2E Playwright tests for critical flows (login, send message, join node)
@@ -47,12 +39,23 @@
 ## Low Priority / Future
 - [ ] Relay mesh for cross-relay DMs
 - [ ] Federation discovery
-- [ ] Custom emoji support
 - [ ] Sticker packs
-- [ ] Screen sharing in voice channels
-- [ ] Video calls
-- [ ] Message pinning
 - [ ] Scheduled messages
+
+## Done (2026-02-22)
+- [x] WebSocket reconnect loop fix
+- [x] Display name in invite flow (required)
+- [x] Management Node auto-creation + first-joiner admin
+- [x] Logo replacement (bird logo, all icon sizes)
+- [x] Recovery display name prompt removed
+- [x] CSP fix for HTTP servers
+- [x] Clipboard/mediaDevices crash guards
+- [x] inferScheme fix (port 8443 no longer assumes HTTPS)
+- [x] Avatar 404 infinite loop fix (6 files)
+- [x] Voice WS envelope format fix
+- [x] getUserMedia HTTPS guard
+- [x] Voice panel overlap fix (inline rendering)
+- [x] Windows Build badge fix
 
 ## Done (2026-02-19/20)
 - [x] TLS by default with auto-generated self-signed certs
@@ -72,3 +75,12 @@
 - [x] App.tsx split (audit #17)
 - [x] QA script nvm fix
 - [x] iOS + Android mobile app scaffolds
+- [x] CSRF protection + security headers
+- [x] Custom emoji support
+- [x] Channel drag-and-drop reorder
+- [x] Client-side encrypted search
+- [x] Rich link previews
+- [x] Thread/reply support
+- [x] Message reactions
+- [x] Message pinning
+- [x] User blocking

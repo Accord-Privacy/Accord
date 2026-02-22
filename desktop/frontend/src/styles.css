@@ -3656,6 +3656,8 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
   display: flex;
   align-items: center;
   justify-content: center;
+  position: absolute;
+  left: 16px;
 }
 
 .message-hover-time {
