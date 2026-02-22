@@ -62,6 +62,47 @@ export const ChatArea: React.FC = () => {
     return true;
   });
 
+  // Empty state: no nodes joined yet
+  if (ctx.nodes.length === 0 && !ctx.selectedDmChannel) {
+    return (
+      <>
+        <div className="chat-area" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{
+            textAlign: 'center',
+            maxWidth: 420,
+            padding: '40px 32px',
+            background: 'var(--bg-secondary)',
+            borderRadius: 12,
+            border: '1px solid var(--border)',
+          }}>
+            <h2 style={{ margin: '0 0 8px', fontSize: 22, color: 'var(--text-primary)' }}>Welcome to Accord!</h2>
+            <p style={{ margin: '0 0 24px', color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
+              Join a Node to start chatting. Paste an invite link below.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                placeholder="accord://host/invite/CODE or https://..."
+                value={ctx.inviteLinkInput ?? ''}
+                onChange={(e) => ctx.setInviteLinkInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleInviteLinkSubmit(); }}
+                className="form-input"
+                style={{ flex: 1 }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={() => ctx.handleInviteLinkSubmit()}
+                disabled={!ctx.inviteLinkInput.trim()}
+              >
+                Join →
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="chat-area">

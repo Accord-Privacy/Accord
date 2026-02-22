@@ -3462,64 +3462,75 @@ function App() {
         passwordRef.current = result.password;
         if (result.mnemonic) setMnemonicPhrase(result.mnemonic);
 
-        // Store relay URL
-        const relayUrl = result.relayUrl;
-        localStorage.setItem('accord_server_url', relayUrl);
-        api.setBaseUrl(relayUrl);
-        setServerUrl(relayUrl);
+        // Save key with password-based wrapping
+        await saveKeyWithPassword(result.keyPair, result.password, result.publicKeyHash);
 
         // Store mesh preference
         if (result.meshEnabled) {
           localStorage.setItem('accord_mesh_enabled', 'true');
         }
 
-        // Register on the relay (with display name if provided)
-        await api.register(result.publicKey, result.password, result.displayName);
-        const response = await api.login(result.publicKey, result.password);
-        storeToken(response.token);
-        localStorage.setItem('accord_user_id', response.user_id);
-
-        // If display name was provided during setup, also set it via profile update
         const chosenDisplayName = result.displayName || fingerprint(result.publicKeyHash);
-        if (result.displayName) {
-          try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
+
+        // If relay URL provided (backward compat or login with existing relay), connect to it
+        if (result.relayUrl) {
+          const relayUrl = result.relayUrl;
+          localStorage.setItem('accord_server_url', relayUrl);
+          api.setBaseUrl(relayUrl);
+          setServerUrl(relayUrl);
+
+          // Register on the relay (with display name if provided)
+          await api.register(result.publicKey, result.password, result.displayName);
+          const response = await api.login(result.publicKey, result.password);
+          storeToken(response.token);
+          localStorage.setItem('accord_user_id', response.user_id);
+
+          if (result.displayName) {
+            try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
+          }
+
+          await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+
+          setAppState(prev => ({
+            ...prev,
+            isAuthenticated: true,
+            token: response.token,
+            user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+          }));
+          setIsAuthenticated(true);
+
+          // Join via invite if provided
+          if (result.inviteCode) {
+            try { await api.joinNodeByInvite(result.inviteCode, response.token); } catch {}
+          }
+
+          // Connect WebSocket
+          const wsBaseUrl = relayUrl.replace(/^http/, 'ws');
+          const socket = new AccordWebSocket(response.token, wsBaseUrl);
+          setupWebSocketHandlers(socket);
+          setWs(socket);
+          socket.connect();
+
+          setServerAvailable(true);
+          setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
+        } else {
+          // Identity-only creation: no relay connection yet
+          setAppState(prev => ({
+            ...prev,
+            isAuthenticated: true,
+            user: { id: '', public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+          }));
+          setIsAuthenticated(true);
         }
-
-        // Save key with both password-based and token-based wrapping
-        await saveKeyWithPassword(result.keyPair, result.password, result.publicKeyHash);
-        await saveKeyToStorage(result.keyPair, result.publicKeyHash);
-
-        setAppState(prev => ({
-          ...prev,
-          isAuthenticated: true,
-          token: response.token,
-          user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
-        }));
-        setIsAuthenticated(true);
-
-        // Join via invite if provided
-        if (result.inviteCode) {
-          try { await api.joinNodeByInvite(result.inviteCode, response.token); } catch {}
-        }
-
-        // Connect WebSocket
-        const wsBaseUrl = relayUrl.replace(/^http/, 'ws');
-        const socket = new AccordWebSocket(response.token, wsBaseUrl);
-        setupWebSocketHandlers(socket);
-        setWs(socket);
-        socket.connect();
 
         setHasExistingKey(true);
         setShowSetupWizard(false);
         setShowWelcomeScreen(false);
-        setServerAvailable(true);
 
         // Prompt for display name only if not already set during setup
         if (!result.displayName) {
           setShowDisplayNamePrompt(true);
         }
-
-        setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
       } catch (e: any) {
         setAuthError(e.message || "Setup failed");
         // Fall back to welcome screen
@@ -3535,10 +3546,7 @@ function App() {
     );
   }
 
-  // Guard: if user has identity but no relay URL, block access to main UI
-  const needsRelayUrl = !showSetupWizard && !isAuthenticated && !localStorage.getItem('accord_server_url') && hasStoredKeyPair();
-
-  if (showWelcomeScreen || needsRelayUrl) {
+  if (showWelcomeScreen) {
     return (
       <AppContext.Provider value={contextValue}>
         <WelcomeScreen />
