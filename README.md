@@ -209,15 +209,16 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
 ## Comparison
 
-| | Accord | Discord | Signal | Matrix |
-|---|:---:|:---:|:---:|:---:|
-| E2E encryption | ✅ | ❌ | ✅ | ✅ |
-| Community features | ✅ | ✅ | ❌ | ✅ |
-| Voice channels | ✅ | ✅ | ❌ | ⚠️ |
-| Zero-knowledge server | ✅ | ❌ | ✅ | ❌ |
-| Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
-| No PII required | ✅ | ❌ | ❌ | ❌ |
-| Open source | ✅ | ❌ | ✅ | ✅ |
+| | Accord | Discord | Signal | Matrix | Fluxer |
+|---|:---:|:---:|:---:|:---:|:---:|
+| E2E encryption | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Community features | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Voice channels | ✅ | ✅ | ❌ | ⚠️ | ✅ |
+| Zero-knowledge server | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Self-hostable | ✅ | ❌ | ⚠️ | ✅ | ✅ |
+| No PII required | ✅ | ❌ | ❌ | ❌ | ❌ |
+| No paywalled features | ✅ | ❌ | ✅ | ✅ | ❌ |
+| Open source | ✅ | ❌ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -242,6 +243,24 @@ We welcome contributions! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup i
 For security design details and vulnerability reporting, see **[SECURITY.md](SECURITY.md)**.
 
 **Never** open a public issue for security vulnerabilities — use [GitHub Security Advisories](https://github.com/Accord-Privacy/Accord/security/advisories).
+
+## Funding & Philosophy
+
+Accord is **donationware**. Every feature is available to every user — there are no premium tiers, no paywalled functionality, and no plans for monetization. We believe privacy tools should be accessible to everyone, not just those who can afford a subscription.
+
+Development is sustained entirely by community donations. If Accord is useful to you, consider supporting the project:
+
+- **[Donate →](https://accord.chat/donate)** *(coming soon)*
+
+This is a deliberate choice: the moment a privacy tool has paying customers, incentives shift from protecting users to retaining subscribers. We'd rather build something good and let people support it voluntarily.
+
+## Acknowledgments
+
+Accord is built on the shoulders of great open-source projects. We'd like to credit:
+
+- **[Fluxer](https://github.com/fluxerapp/fluxer)** — UI/UX design patterns and CSS architecture inspiration. Fluxer's component design system and visual polish influenced our frontend approach. Check out their project if you're looking for a feature-rich chat platform without the encryption focus.
+- **[Signal](https://signal.org)** — Cryptographic protocol foundations (Double Ratchet, X3DH).
+- **[Matrix](https://matrix.org)** — Federated architecture concepts.
 
 ## License
 
