@@ -11,7 +11,7 @@ export const ServerList: React.FC = () => {
       <div className="server-icon accord-home" title="Accord" style={{ marginBottom: '8px', borderBottom: '2px solid var(--border-color, #333)', paddingBottom: '8px' }}>
         <img src="/logo.png" alt="Accord" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
       </div>
-      {ctx.servers.map((s, i) => {
+      {ctx.nodes.length > 0 && ctx.servers.map((s, i) => {
         const nodeId = ctx.nodes.length > 0 ? ctx.nodes[i]?.id : null;
         const nodeUnreads = nodeId ? notificationManager.getNodeUnreads(nodeId) : { totalUnreads: 0, totalMentions: 0 };
         

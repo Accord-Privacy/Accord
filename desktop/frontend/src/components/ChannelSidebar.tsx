@@ -306,7 +306,7 @@ export const ChannelSidebar: React.FC = () => {
         <div className="sidebar-header-row">
           <div style={{ display: 'flex', alignItems: 'center' }}>
             {ctx.servers[ctx.activeServer]}
-            {ctx.serverAvailable && (
+            {ctx.serverAvailable && ctx.nodes.length > 0 && (
               <span className="connection-status">
                 <span className={`connection-dot ${ctx.connectionInfo.status}`}>●</span>
                 <span className="connection-label">
@@ -324,7 +324,6 @@ export const ChannelSidebar: React.FC = () => {
                 )}
               </span>
             )}
-            {!ctx.serverAvailable && <span className="demo-badge">DEMO</span>}
           </div>
           
           <div className="sidebar-admin-buttons">
@@ -533,7 +532,7 @@ const UserPanel: React.FC = () => {
       <div className="user-info">
         <div className="username">{ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || '') || "You"}</div>
         <div className="user-status" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }} style={{ cursor: 'pointer' }} title="Click to set custom status">
-          {ctx.customStatus || (ctx.appState.isConnected ? "Online" : "Offline")}
+          {ctx.customStatus || (ctx.appState.isConnected ? "Online" : (ctx.nodes.length === 0 ? "Ready" : "Offline"))}
         </div>
         {inVoice && (
           <div className="user-panel-voice-info">
