@@ -3691,7 +3691,8 @@ function App() {
         setShowWelcomeScreen(false);
 
         // Prompt for display name only if not already set during setup
-        if (!result.displayName) {
+        // Skip for recovery — existing account already has a display name on the server
+        if (!result.displayName && !result.isRecovery) {
           setShowDisplayNamePrompt(true);
         }
       } catch (e: any) {

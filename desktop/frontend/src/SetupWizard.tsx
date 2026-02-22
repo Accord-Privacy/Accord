@@ -21,6 +21,7 @@ export interface SetupResult {
   inviteCode?: string;
   meshEnabled?: boolean;
   displayName?: string;
+  isRecovery?: boolean;
 }
 
 interface SetupWizardProps {
@@ -162,13 +163,13 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         publicKeyHash: pkHash,
         password,
         mnemonic: mnemonic.trim(),
-        displayName: displayName.trim() || undefined,
+        isRecovery: true,
       });
     } catch (e: any) {
       setError(e.message || "Recovery failed");
       setLoading(false);
     }
-  }, [mnemonic, password, displayName, onComplete]);
+  }, [mnemonic, password, onComplete]);
 
   // === LOGIN ===
   const handleLogin = useCallback(async () => {
@@ -213,13 +214,13 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         password,
         mnemonic: "",
         relayUrl: existingRelayUrl,
-        displayName: displayName.trim() || undefined,
+        isRecovery: true, // existing account — don't prompt for display name
       });
     } catch (e: any) {
       setError(e.message || "Login failed — wrong password?");
       setLoading(false);
     }
-  }, [password, displayName, onComplete]);
+  }, [password, onComplete]);
 
   const handleCopyMnemonic = () => {
     navigator.clipboard.writeText(generatedMnemonic);
