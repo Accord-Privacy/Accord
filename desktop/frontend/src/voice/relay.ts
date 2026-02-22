@@ -64,6 +64,9 @@ export class RelayVoiceConnection {
   }
 
   async connect(): Promise<void> {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Microphone access requires HTTPS or localhost. Voice is not available on plain HTTP.');
+    }
     this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -77,20 +80,14 @@ export class RelayVoiceConnection {
     this.setupCapture();
     this.setupVAD();
 
-    this.ws.send(JSON.stringify({
-      type: 'JoinVoiceChannel',
-      channel_id: this.channelId,
-    }));
+    this.ws.joinVoiceChannel(this.channelId);
   }
 
   disconnect(): void {
     if (this.destroyed) return;
     this.destroyed = true;
 
-    this.ws.send(JSON.stringify({
-      type: 'LeaveVoiceChannel',
-      channel_id: this.channelId,
-    }));
+    this.ws.leaveVoiceChannel(this.channelId);
 
     this.stopVAD();
     this.stopCapture();
@@ -159,12 +156,7 @@ export class RelayVoiceConnection {
       // Send as base64-encoded VoicePacket
       const bytes = new Uint8Array(int16.buffer);
 
-      this.ws.send(JSON.stringify({
-        type: 'VoicePacket',
-        channel_id: this.channelId,
-        encrypted_audio: Array.from(bytes),
-        sequence: this.sequence++,
-      }));
+      this.ws.sendVoicePacket(this.channelId, Array.from(bytes), this.sequence++);
     };
 
     source.connect(this.scriptProcessor);
@@ -272,12 +264,7 @@ export class RelayVoiceConnection {
   }
 
   private sendSpeakingState(speaking: boolean): void {
-    this.ws.send(JSON.stringify({
-      type: 'VoiceSpeakingState',
-      channel_id: this.channelId,
-      user_id: this.userId,
-      speaking,
-    }));
+    this.ws.sendVoiceSpeakingState(this.channelId, this.userId, speaking);
   }
 
   // ── VAD ──

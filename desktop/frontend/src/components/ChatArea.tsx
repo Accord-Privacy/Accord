@@ -590,6 +590,23 @@ export const ChatArea: React.FC = () => {
             />
           )}
 
+          {/* Voice Chat Component — inline between messages and input */}
+          {ctx.voiceChannelId && (
+            <Suspense fallback={<LoadingSpinner />}>
+              <VoiceChat
+                ws={ctx.ws}
+                currentUserId={localStorage.getItem('accord_user_id')}
+                channelId={ctx.voiceChannelId}
+                channelName={ctx.voiceChannelName}
+                onLeave={() => {
+                  ctx.setVoiceChannelId(null);
+                  ctx.setVoiceChannelName("");
+                  ctx.setVoiceConnectedAt(null);
+                }}
+              />
+            </Suspense>
+          )}
+
           {/* Message Input */}
           <div className="message-input-container" style={{ position: 'relative' }}>
             <SlashCommandAutocomplete
@@ -687,22 +704,7 @@ export const ChatArea: React.FC = () => {
         </FileDropZone>
       </div>
 
-      {/* Voice Chat Component */}
-      {ctx.voiceChannelId && (
-        <Suspense fallback={<LoadingSpinner />}>
-          <VoiceChat
-            ws={ctx.ws}
-            currentUserId={localStorage.getItem('accord_user_id')}
-            channelId={ctx.voiceChannelId}
-            channelName={ctx.voiceChannelName}
-            onLeave={() => {
-              ctx.setVoiceChannelId(null);
-              ctx.setVoiceChannelName("");
-              ctx.setVoiceConnectedAt(null);
-            }}
-          />
-        </Suspense>
-      )}
+      {/* Voice Chat Component moved inline above message input */}
     </>
   );
 };

@@ -128,6 +128,13 @@ export type WsMessageType =
   | { StoreSenderKey: { channel_id: string; to_user_id: string; payload: string } }
   | { GetPendingSenderKeys: Record<string, never> }
   | { AckSenderKeys: { ids: string[] } }
+  | { JoinVoiceChannel: { channel_id: string } }
+  | { LeaveVoiceChannel: { channel_id: string } }
+  | { GetVoiceParticipants: { channel_id: string } }
+  | { VoicePacket: { channel_id: string; encrypted_audio: number[]; sequence: number } }
+  | { VoiceSpeakingState: { channel_id: string; user_id: string; speaking: boolean } }
+  | { SetVoiceMode: { channel_id: string; mode: string } }
+  | { P2PSignal: { channel_id: string; target_user_id: string; signal_data: string } }
   | 'Ping'
   | 'Pong';
 

@@ -66,6 +66,9 @@ export class VoiceConnection {
 
   /** Start: acquire mic and join voice channel via WS. */
   async connect(): Promise<void> {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Microphone access requires HTTPS or localhost. Voice is not available on plain HTTP.');
+    }
     // Acquire microphone
     this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -83,10 +86,7 @@ export class VoiceConnection {
     this.setupVAD();
 
     // Join voice channel — server will respond with participant list
-    this.ws.send(JSON.stringify({
-      type: 'JoinVoiceChannel',
-      channel_id: this.channelId,
-    }));
+    this.ws.joinVoiceChannel(this.channelId);
   }
 
   /** Disconnect from voice and clean up all peers. */
@@ -95,10 +95,7 @@ export class VoiceConnection {
     this.destroyed = true;
 
     // Leave voice channel
-    this.ws.send(JSON.stringify({
-      type: 'LeaveVoiceChannel',
-      channel_id: this.channelId,
-    }));
+    this.ws.leaveVoiceChannel(this.channelId);
 
     this.stopVAD();
 
@@ -204,21 +201,11 @@ export class VoiceConnection {
   }
 
   private sendSignal(targetUserId: string, signalData: any): void {
-    this.ws.send(JSON.stringify({
-      type: 'P2PSignal',
-      channel_id: this.channelId,
-      target_user_id: targetUserId,
-      signal_data: JSON.stringify(signalData),
-    }));
+    this.ws.sendP2PSignal(this.channelId, targetUserId, JSON.stringify(signalData));
   }
 
   private sendSpeakingState(speaking: boolean): void {
-    this.ws.send(JSON.stringify({
-      type: 'VoiceSpeakingState',
-      channel_id: this.channelId,
-      user_id: this.userId,
-      speaking,
-    }));
+    this.ws.sendVoiceSpeakingState(this.channelId, this.userId, speaking);
   }
 
   // ── Private: Peer Connection Management ──

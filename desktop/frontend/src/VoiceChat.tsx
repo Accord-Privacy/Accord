@@ -207,11 +207,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const toggleVoiceMode = useCallback(() => {
     if (!ws) return;
     const newMode: VoiceMode = voiceMode === 'relay' ? 'p2p' : 'relay';
-    ws.send(JSON.stringify({
-      type: 'SetVoiceMode',
-      channel_id: channelId,
-      mode: newMode,
-    }));
+    ws.setVoiceMode(channelId, newMode);
     // Mode will update via voice_mode_changed event, which triggers reconnect via useEffect
   }, [ws, channelId, voiceMode]);
 
@@ -219,16 +215,11 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   return (
     <div style={{
-      position: 'fixed',
-      bottom: 0,
-      left: '312px',
-      right: '240px',
-      height: '120px',
       background: '#2f3136',
       borderTop: '1px solid #202225',
       display: 'flex',
       flexDirection: 'column',
-      zIndex: 1000,
+      flexShrink: 0,
     }}>
       {/* Header */}
       <div style={{

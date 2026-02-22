@@ -1156,7 +1156,7 @@ input, textarea, select, button {
 }
 
 .messages.with-voice {
-  margin-bottom: 120px;
+  /* Voice panel now renders inline — no extra margin needed */
 }
 
 .messages-loading {

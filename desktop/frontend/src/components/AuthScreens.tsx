@@ -269,10 +269,11 @@ export const WelcomeScreen: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Display Name (optional)</label>
+                <label className="form-label">Display Name <span style={{ color: "var(--accent)" }}>*</span></label>
                 <input
                   type="text"
-                  placeholder="How others will see you"
+                  placeholder="How others will see you (required)"
+                  required
                   value={ctx.inviteDisplayName ?? ''}
                   onChange={(e) => ctx.setInviteDisplayName(e.target.value)}
                   className="form-input"

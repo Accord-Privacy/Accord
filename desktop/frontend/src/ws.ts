@@ -450,6 +450,35 @@ export class AccordWebSocket {
     this.sendMessage({ TypingStart: { channel_id: channelId } });
   }
 
+  // Voice operations
+  joinVoiceChannel(channelId: string): void {
+    this.sendMessage({ JoinVoiceChannel: { channel_id: channelId } });
+  }
+
+  leaveVoiceChannel(channelId: string): void {
+    this.sendMessage({ LeaveVoiceChannel: { channel_id: channelId } });
+  }
+
+  getVoiceParticipants(channelId: string): void {
+    this.sendMessage({ GetVoiceParticipants: { channel_id: channelId } });
+  }
+
+  sendVoicePacket(channelId: string, encryptedAudio: number[], sequence: number): void {
+    this.sendMessage({ VoicePacket: { channel_id: channelId, encrypted_audio: encryptedAudio, sequence } });
+  }
+
+  sendVoiceSpeakingState(channelId: string, userId: string, speaking: boolean): void {
+    this.sendMessage({ VoiceSpeakingState: { channel_id: channelId, user_id: userId, speaking } });
+  }
+
+  setVoiceMode(channelId: string, mode: string): void {
+    this.sendMessage({ SetVoiceMode: { channel_id: channelId, mode } });
+  }
+
+  sendP2PSignal(channelId: string, targetUserId: string, signalData: string): void {
+    this.sendMessage({ P2PSignal: { channel_id: channelId, target_user_id: targetUserId, signal_data: signalData } });
+  }
+
   // Note: encryptedData should be base64-encoded encrypted content
   // The App component handles encryption before calling this method
 
