@@ -48,9 +48,9 @@ Users see available bot commands in the UI (slash commands, command palette, or 
 {
   "type": "command_invocation",
   "command": "forecast",
-  "invoker_display_name": "Gage",
+  "invoker_display_name": "Alice",
   "params": {
-    "location": "Grand Rapids, MN",
+    "location": "Minneapolis, MN",
     "days": 5
   },
   "invocation_id": "abc123",

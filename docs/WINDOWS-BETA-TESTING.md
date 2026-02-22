@@ -34,7 +34,7 @@ When reporting bugs or design feedback:
 1. **Screenshot** the issue if visual
 2. Note what you were doing when it happened
 3. Check `%APPDATA%\chat.accord.desktop\logs` for error logs
-4. Open a GitHub issue or message Gage directly
+4. Open a GitHub issue at https://github.com/Accord-Privacy/Accord/issues
 
 ---
 

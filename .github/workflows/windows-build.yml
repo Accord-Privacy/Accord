@@ -155,7 +155,7 @@ jobs:
             - This is a beta — expect rough edges
 
             ### Feedback
-            Report issues or design feedback to Gage directly or open a GitHub issue.
+            Report issues or design feedback by opening a GitHub issue.
           files: |
             artifacts/**/*.exe
             artifacts/**/*.msi

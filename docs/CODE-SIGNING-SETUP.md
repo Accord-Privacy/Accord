@@ -7,7 +7,7 @@ Without code signing, Windows shows SmartScreen warnings that scare users. For b
 
 ### 1. Self-Signed (Free, beta only)
 - Still shows warnings but installer works
-- **Current approach** — fine for Gage's testing
+- **Current approach** — fine for alpha/beta testing
 
 ### 2. SignPath.io (Free for OSS)
 - Free code signing for open-source projects

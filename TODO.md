@@ -22,7 +22,7 @@
 ## Features
 - [ ] Landing page deployed (website/ exists, needs hosting — GitHub Pages?)
 - [ ] App store submissions (blocked: need Apple/Google developer accounts)
-- [ ] On-device mobile testing (blocked: need Gage's devices)
+- [ ] On-device mobile testing (blocked: need physical devices)
 - [ ] GitHub Pages or Cloudflare Pages for website/
 - [ ] cargo audit in CI (audit #25 — install and add to workflow)
 - [ ] Message scroll-to on search result click (TODO in App.tsx:1885)

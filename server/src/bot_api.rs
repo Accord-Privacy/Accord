@@ -1166,12 +1166,12 @@ mod tests {
         let invocation = CommandInvocation {
             msg_type: "command_invocation".into(),
             command: "forecast".into(),
-            invoker_display_name: "Gage".into(),
+            invoker_display_name: "Alice".into(),
             params: {
                 let mut m = HashMap::new();
                 m.insert(
                     "location".into(),
-                    serde_json::Value::String("Grand Rapids".into()),
+                    serde_json::Value::String("Minneapolis".into()),
                 );
                 m
             },
@@ -1180,7 +1180,7 @@ mod tests {
         };
         let json = serde_json::to_string(&invocation).unwrap();
         assert!(json.contains("\"command\":\"forecast\""));
-        assert!(json.contains("\"invoker_display_name\":\"Gage\""));
+        assert!(json.contains("\"invoker_display_name\":\"Alice\""));
     }
 
     #[test]
