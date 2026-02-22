@@ -8,6 +8,7 @@
  */
 
 import { AccordApi } from './api';
+import { AccordWebSocket, WsEvents } from './ws';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -25,8 +26,14 @@ export interface RelayConnection {
   token: string | null;
   userId: string | null;
   api: AccordApi;
+  ws: AccordWebSocket | null;
   connected: boolean;
 }
+
+/** Partial WsEvents handler map — callers provide only the events they care about */
+export type WsEventHandlers = {
+  [K in keyof WsEvents]?: WsEvents[K];
+};
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -197,11 +204,16 @@ export class RelayManager {
     this.relays.set(url, { url, token: token!, userId: userId!, nodeIds });
     this.saveToStorage();
 
+    // Create WebSocket for this relay
+    const wsBaseUrl = url.replace(/^http/, 'ws');
+    const wsInstance = new AccordWebSocket(token!, wsBaseUrl);
+
     const conn: RelayConnection = {
       url,
       token,
       userId,
       api,
+      ws: wsInstance,
       connected: true,
     };
     this.connections.set(url, conn);
@@ -213,6 +225,10 @@ export class RelayManager {
     const url = normalizeRelayUrl(relayUrl);
     const conn = this.connections.get(url);
     if (conn) {
+      if (conn.ws) {
+        conn.ws.disconnect();
+        conn.ws = null;
+      }
       conn.connected = false;
       this.connections.delete(url);
     }
@@ -247,4 +263,63 @@ export class RelayManager {
     relay.nodeIds = relay.nodeIds.filter((id) => id !== nodeId);
     this.saveToStorage();
   }
+
+  // ── WebSocket helpers ─────────────────────────────────────────────────
+
+  /**
+   * Set up event handlers on a relay's WebSocket.
+   * Handlers receive data from that specific relay's WS.
+   */
+  setupWebSocketHandlers(relayUrl: string, handlers: WsEventHandlers): void {
+    const url = normalizeRelayUrl(relayUrl);
+    const conn = this.connections.get(url);
+    if (!conn?.ws) return;
+
+    for (const [event, handler] of Object.entries(handlers)) {
+      if (handler) {
+        conn.ws.on(event as keyof WsEvents, handler as any);
+      }
+    }
+  }
+
+  /** Connect the WebSocket for a relay (call after connectRelay). */
+  connectWebSocket(relayUrl: string): void {
+    const url = normalizeRelayUrl(relayUrl);
+    const conn = this.connections.get(url);
+    if (conn?.ws) {
+      conn.ws.connect();
+    }
+  }
+
+  /** Get the WebSocket for a specific relay. */
+  getWebSocket(relayUrl: string): AccordWebSocket | null {
+    const url = normalizeRelayUrl(relayUrl);
+    return this.connections.get(url)?.ws ?? null;
+  }
+
+  /** Get the API client for the relay that owns a given node. */
+  getApiForNode(nodeId: string): AccordApi | undefined {
+    const relay = this.getRelayForNode(nodeId);
+    if (!relay) return undefined;
+    return this.connections.get(relay.url)?.api;
+  }
+
+  /** Get the WebSocket for the relay that owns a given node. */
+  getWebSocketForNode(nodeId: string): AccordWebSocket | null {
+    const relay = this.getRelayForNode(nodeId);
+    if (!relay) return null;
+    return this.connections.get(relay.url)?.ws ?? null;
+  }
+}
+
+// ── Singleton ──────────────────────────────────────────────────────────────
+
+let _instance: RelayManager | null = null;
+
+/** Get or create the singleton RelayManager instance. */
+export function getRelayManager(): RelayManager {
+  if (!_instance) {
+    _instance = new RelayManager();
+  }
+  return _instance;
 }

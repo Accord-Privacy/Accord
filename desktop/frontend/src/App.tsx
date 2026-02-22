@@ -28,6 +28,7 @@ async function storeToken(token: string, lifetimeMs?: number): Promise<void> {
   api.setToken(token);
   return _storeToken(token, lifetimeMs);
 }
+import { getRelayManager, RelayManager } from "./RelayManager";
 import { StagedFile } from "./FileManager";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import { SetupWizard, SetupResult } from "./SetupWizard";
@@ -172,6 +173,7 @@ function App() {
   const [activeServer, setActiveServer] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [ws, setWs] = useState<AccordWebSocket | null>(null);
+  const relayManagerRef = useRef<RelayManager>(getRelayManager());
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo>({ status: 'disconnected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
   const [lastConnectionError, setLastConnectionError] = useState<string>("");
 
@@ -1216,6 +1218,13 @@ function App() {
       const userNodes = await api.getUserNodes(appState.token);
       setNodes(Array.isArray(userNodes) ? userNodes : []);
       
+      // Register loaded nodes with RelayManager for the current relay
+      const currentRelayUrl = api.getBaseUrl();
+      const rm = relayManagerRef.current;
+      for (const node of (Array.isArray(userNodes) ? userNodes : [])) {
+        rm.addNodeToRelay(currentRelayUrl, node.id);
+      }
+
       // Auto-select first node if none selected (use functional update to avoid dep on selectedNodeId)
       if (userNodes.length > 0) {
         setSelectedNodeId(prev => prev ?? userNodes[0].id);
@@ -1656,6 +1665,23 @@ function App() {
     setIsLoadingOlderMessages(false);
     setHasMoreMessages(true);
     setOldestMessageCursor(undefined);
+
+    // If this node is on a different relay, switch the global api client to that relay
+    const rm = relayManagerRef.current;
+    const nodeRelay = rm.getRelayForNode(nodeId);
+    if (nodeRelay && nodeRelay.url !== api.getBaseUrl()) {
+      const conn = rm.getConnection(nodeRelay.url);
+      if (conn) {
+        // Switch global api to this relay
+        api.setBaseUrl(conn.url);
+        api.setToken(conn.token!);
+        setServerUrl(conn.url);
+        // Switch WS to this relay's WS
+        if (conn.ws) {
+          setWs(conn.ws);
+        }
+      }
+    }
     
     // Try batch overview first, fall back to individual calls
     try {
@@ -1973,19 +1999,41 @@ function App() {
 
   // Handle creating a new node
   const handleJoinNode = async () => {
-    if (!appState.token || !joinInviteCode.trim()) return;
+    if (!joinInviteCode.trim()) return;
+    // Need either an existing token or identity keys to register on a new relay
+    if (!appState.token && !publicKey) return;
     setJoiningNode(true);
     setJoinError("");
     try {
-      // Ensure API client has the token
-      api.setToken(appState.token);
-      
-      // Parse invite link or use as raw code
       const input = joinInviteCode.trim();
       const parsed = parseInviteLink(input);
       const code = parsed ? parsed.inviteCode : input;
-      
-      await api.joinNodeByInvite(code, appState.token);
+
+      if (parsed && parsed.relayUrl !== api.getBaseUrl()) {
+        // Invite is for a different relay — connect via RelayManager
+        const rm = relayManagerRef.current;
+        const pw = passwordRef.current;
+        if (!publicKey || !pw) {
+          setJoinError("Identity not available — unlock your identity first");
+          return;
+        }
+        const conn = await rm.connectRelay(parsed.relayUrl, publicKey, pw);
+        // Join the node on that relay
+        const joinResult = await conn.api.joinNodeByInvite(code, conn.token!);
+        if (joinResult?.id) {
+          rm.addNodeToRelay(parsed.relayUrl, joinResult.id);
+        }
+        // Set up WS handlers and connect
+        if (conn.ws) {
+          setupWebSocketHandlers(conn.ws);
+          conn.ws.connect();
+        }
+      } else {
+        // Same relay — use existing API client
+        api.setToken(appState.token!);
+        await api.joinNodeByInvite(code, appState.token!);
+      }
+
       setShowJoinNodeModal(false);
       setShowCreateNodeModal(false);
       setJoinInviteCode("");
@@ -2127,10 +2175,18 @@ function App() {
           setIsAuthenticated(true);
 
           // Join node via invite code
+          let joinedNodeId: string | undefined;
           try {
-            await api.joinNodeByInvite(parsed.inviteCode, existingToken);
+            const joinResult = await api.joinNodeByInvite(parsed.inviteCode, existingToken);
+            joinedNodeId = joinResult?.id;
           } catch (_e) {
             // May already be a member, that's fine
+          }
+
+          // Register relay with RelayManager
+          const rm = relayManagerRef.current;
+          if (joinedNodeId) {
+            rm.addNodeToRelay(parsed.relayUrl, joinedNodeId);
           }
 
           // Initialize WebSocket — pass server URL so it connects to the right relay
@@ -2209,10 +2265,17 @@ function App() {
       storeRelayUserId(parsedInvite.relayHost, response.user_id);
 
       // Join node via invite
+      let joinedNodeId: string | undefined;
       try {
-        await api.joinNodeByInvite(parsedInvite.inviteCode, response.token);
+        const joinResult = await api.joinNodeByInvite(parsedInvite.inviteCode, response.token);
+        joinedNodeId = joinResult?.id;
       } catch (_e) {
         // May already be a member
+      }
+
+      // Register relay + node with RelayManager
+      if (joinedNodeId) {
+        relayManagerRef.current.addNodeToRelay(parsedInvite.relayUrl, joinedNodeId);
       }
 
       let displayName = fingerprint(pkHash);
