@@ -409,8 +409,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 />
               </div>
 
-              {renderDisplayNameField()}
-
               <div className="form-group" style={{ marginTop: 12 }}>
                 <label className="form-label">New Password (min 8 characters)</label>
                 <input
