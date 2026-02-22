@@ -384,6 +384,22 @@ export class AccordApi {
     });
   }
 
+  // Preview an invite (public, no auth required) — hits a specific relay URL
+  async previewInvite(relayUrl: string, inviteCode: string): Promise<{
+    node_name: string;
+    node_id: string;
+    member_count: number;
+    server_build_hash: string;
+  }> {
+    const url = `${relayUrl}/invites/${encodeURIComponent(inviteCode)}/preview`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
   // Join a Node via invite code
   async joinNodeByInvite(inviteCode: string, _token: string): Promise<NodeInfo> {
     return this.request<NodeInfo>(`/invites/${inviteCode}/join`, {

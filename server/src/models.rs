@@ -736,6 +736,15 @@ pub struct CreateInviteResponse {
     pub created_at: u64,
 }
 
+/// Invite preview response (public, no auth required)
+#[derive(Debug, Serialize)]
+pub struct InvitePreviewResponse {
+    pub node_name: String,
+    pub node_id: Uuid,
+    pub member_count: i64,
+    pub server_build_hash: String,
+}
+
 /// Use invite response
 #[derive(Debug, Serialize)]
 pub struct UseInviteResponse {

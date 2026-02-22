@@ -86,6 +86,12 @@ interface StoredRelay {
 - Reconnect logic per relay
 - Presence per relay
 
+### Phase 3.5: Invite Preview
+- New server endpoint: `GET /invites/:code/preview` (no auth required)
+- Returns: node name, node ID hash, member count, server build hash
+- Frontend shows preview card before joining: name, fingerprint, members, trust status
+- User confirms "Join" or cancels
+
 ### Phase 4: Wire Everything
 - App.tsx state management refactor
 - Node sidebar shows Nodes from all relays

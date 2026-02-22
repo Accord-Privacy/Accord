@@ -1,6 +1,7 @@
 import React, { Suspense, useState, useCallback, useEffect } from "react";
 import { useAppContext } from "./AppContext";
-import { api } from "../api";
+import { api, parseInviteLink } from "../api";
+import { verifyBuildHash, getTrustIndicator } from "../buildHash";
 import { notificationManager } from "../notifications";
 import { renderMessageMarkdown } from "../markdown";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
@@ -62,6 +63,36 @@ export const ChatArea: React.FC = () => {
     return true;
   });
 
+  // Invite preview state
+  const [invitePreview, setInvitePreview] = useState<{
+    node_name: string;
+    node_id: string;
+    member_count: number;
+    server_build_hash: string;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+
+  const handlePreviewInvite = useCallback(async () => {
+    const input = ctx.inviteLinkInput?.trim();
+    if (!input) return;
+    const parsed = parseInviteLink(input);
+    if (!parsed) {
+      setPreviewError("Invalid invite link format");
+      return;
+    }
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const preview = await api.previewInvite(parsed.relayUrl, parsed.inviteCode);
+      setInvitePreview(preview);
+    } catch (e: any) {
+      setPreviewError(e.message || "Failed to fetch invite preview");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [ctx.inviteLinkInput]);
+
   // Empty state: no nodes joined yet
   if (ctx.nodes.length === 0 && !ctx.selectedDmChannel) {
     return (
@@ -75,28 +106,72 @@ export const ChatArea: React.FC = () => {
             borderRadius: 12,
             border: '1px solid var(--border)',
           }}>
-            <h2 style={{ margin: '0 0 8px', fontSize: 22, color: 'var(--text-primary)' }}>Welcome to Accord!</h2>
-            <p style={{ margin: '0 0 24px', color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
-              Join a Node to start chatting. Paste an invite link below.
-            </p>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="text"
-                placeholder="accord://host/invite/CODE or https://..."
-                value={ctx.inviteLinkInput ?? ''}
-                onChange={(e) => ctx.setInviteLinkInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleInviteLinkSubmit(); }}
-                className="form-input"
-                style={{ flex: 1 }}
-              />
-              <button
-                className="btn btn-primary"
-                onClick={() => ctx.handleInviteLinkSubmit()}
-                disabled={!ctx.inviteLinkInput.trim()}
-              >
-                Join →
-              </button>
-            </div>
+            {invitePreview ? (
+              <>
+                <h2 style={{ margin: '0 0 16px', fontSize: 22, color: 'var(--text-primary)' }}>{invitePreview.node_name}</h2>
+                <div style={{ margin: '0 0 8px', fontFamily: 'monospace', fontSize: 13, color: 'var(--text-secondary)' }}>
+                  {invitePreview.node_id.substring(0, 16)}
+                </div>
+                <div style={{ margin: '0 0 8px', color: 'var(--text-secondary)', fontSize: 14 }}>
+                  {invitePreview.member_count} member{invitePreview.member_count !== 1 ? 's' : ''}
+                </div>
+                <div style={{ margin: '0 0 20px', fontSize: 13 }}>
+                  {(() => {
+                    const trust = verifyBuildHash(invitePreview.server_build_hash, ctx.knownHashes);
+                    const indicator = getTrustIndicator(trust);
+                    return (
+                      <span style={{ color: indicator.color }}>
+                        {indicator.emoji} {indicator.label}
+                      </span>
+                    );
+                  })()}
+                </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <button
+                    className="btn"
+                    onClick={() => { setInvitePreview(null); setPreviewError(""); }}
+                    style={{ minWidth: 80 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => { setInvitePreview(null); ctx.handleInviteLinkSubmit(); }}
+                    style={{ minWidth: 80 }}
+                  >
+                    Join
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 style={{ margin: '0 0 8px', fontSize: 22, color: 'var(--text-primary)' }}>Welcome to Accord!</h2>
+                <p style={{ margin: '0 0 24px', color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
+                  Join a Node to start chatting. Paste an invite link below.
+                </p>
+                {previewError && (
+                  <p style={{ margin: '0 0 12px', color: '#f04747', fontSize: 13 }}>{previewError}</p>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    placeholder="accord://host/invite/CODE or https://..."
+                    value={ctx.inviteLinkInput ?? ''}
+                    onChange={(e) => ctx.setInviteLinkInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handlePreviewInvite(); }}
+                    className="form-input"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={handlePreviewInvite}
+                    disabled={!ctx.inviteLinkInput?.trim() || previewLoading}
+                  >
+                    {previewLoading ? '...' : 'Preview →'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </>

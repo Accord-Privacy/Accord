@@ -52,7 +52,8 @@ use handlers::{
     get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
     get_node_user_profiles_handler, get_pending_sender_keys_handler, get_pinned_messages_handler,
     get_prekey_messages_handler, get_slow_mode_handler, get_user_avatar_handler,
-    get_user_profile_handler, health_handler, import_discord_template_handler, join_node_handler,
+    get_user_profile_handler, health_handler, import_discord_template_handler,
+    invite_preview_handler, join_node_handler,
     kick_user_handler, leave_node_handler, link_preview_handler, list_auto_mod_words_handler,
     list_bans_handler, list_channel_files_handler, list_channel_overwrites_handler,
     list_custom_emojis_handler, list_friend_requests_handler, list_friends_handler,
@@ -813,6 +814,7 @@ async fn main() -> Result<()> {
         .route("/nodes/:id/invites", get(list_invites_handler))
         .route("/invites/:invite_id", delete(revoke_invite_handler))
         .route("/invites/:code/join", post(use_invite_handler))
+        .route("/invites/:code/preview", get(invite_preview_handler))
         // Webhook endpoints
         .route(
             "/nodes/:id/webhooks",

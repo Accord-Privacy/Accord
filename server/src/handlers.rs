@@ -13,7 +13,8 @@ fn sanitize_display_name(name: &str) -> String {
 use crate::models::{
     AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse,
     CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
-    MessageReactionsResponse, RegisterRequest, RegisterResponse, UseInviteResponse, WsMessage,
+    MessageReactionsResponse, RegisterRequest, RegisterResponse,
+    UseInviteResponse, WsMessage,
     WsMessageType,
 };
 use crate::node::NodeInfo;
@@ -915,6 +916,118 @@ pub async fn revoke_invite_handler(
             }),
         )),
     }
+}
+
+/// Preview an invite code (GET /invites/:code/preview) — public, no auth
+pub async fn invite_preview_handler(
+    State(state): State<SharedState>,
+    Path(invite_code): Path<String>,
+) -> Result<Json<crate::models::InvitePreviewResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Look up invite
+    let invite = state
+        .db
+        .get_node_invite_by_code(&invite_code)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Invalid invite code".to_string(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    // Check expiry
+    if let Some(expires_at) = invite.expires_at {
+        let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now > expires_at {
+            return Err((
+                StatusCode::GONE,
+                Json(ErrorResponse {
+                    error: "Invite has expired".to_string(),
+                    code: 410,
+                }),
+            ));
+        }
+    }
+
+    // Check max uses
+    if let Some(max_uses) = invite.max_uses {
+        if invite.current_uses >= max_uses {
+            return Err((
+                StatusCode::GONE,
+                Json(ErrorResponse {
+                    error: "Invite has reached maximum uses".to_string(),
+                    code: 410,
+                }),
+            ));
+        }
+    }
+
+    // Get node info
+    let node = state
+        .db
+        .get_node(invite.node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: "Node not found".to_string(),
+                    code: 404,
+                }),
+            )
+        })?;
+
+    // Count members
+    let members = state
+        .db
+        .get_node_members(invite.node_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    let build_hash = state
+        .build_verification
+        .server_build_info
+        .build_hash
+        .clone();
+
+    Ok(Json(crate::models::InvitePreviewResponse {
+        node_name: node.name,
+        node_id: node.id,
+        member_count: members.len() as i64,
+        server_build_hash: build_hash,
+    }))
 }
 
 /// Use an invite code to join a Node (POST /invites/:code/join)
