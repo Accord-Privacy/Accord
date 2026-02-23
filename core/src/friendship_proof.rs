@@ -182,8 +182,8 @@ mod tests {
         let (seed_a, pub_a) = gen_keypair();
         let (seed_b, pub_b) = gen_keypair();
 
-        let hash_a = hex::encode(Sha256::digest(&pub_a));
-        let hash_b = hex::encode(Sha256::digest(&pub_b));
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
         let now = 1700000000u64;
 
         let request = create_proof_request(&hash_a, &hash_b, now, &seed_a, &pub_a).unwrap();
@@ -197,8 +197,8 @@ mod tests {
         let (seed_b, pub_b) = gen_keypair();
         let (_seed_c, pub_c) = gen_keypair();
 
-        let hash_a = hex::encode(Sha256::digest(&pub_a));
-        let hash_b = hex::encode(Sha256::digest(&pub_b));
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
 
         let request = create_proof_request(&hash_a, &hash_b, 100, &seed_a, &pub_a).unwrap();
         let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
@@ -213,8 +213,8 @@ mod tests {
     fn test_serialization_round_trip() {
         let (seed_a, pub_a) = gen_keypair();
         let (seed_b, pub_b) = gen_keypair();
-        let hash_a = hex::encode(Sha256::digest(&pub_a));
-        let hash_b = hex::encode(Sha256::digest(&pub_b));
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
 
         let request = create_proof_request(&hash_a, &hash_b, 42, &seed_a, &pub_a).unwrap();
         let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();

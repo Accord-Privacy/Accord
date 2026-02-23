@@ -572,146 +572,6 @@ pub unsafe extern "C" fn accord_voice_get_stats(
     ACCORD_OK
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::CString;
-
-    #[test]
-    fn test_keymaterial_roundtrip() {
-        unsafe {
-            let km = accord_keymaterial_generate(5);
-            assert!(!km.is_null());
-
-            let ik = accord_keymaterial_identity_key(km);
-            assert!(!ik.is_null());
-            assert_eq!((*ik).len, 32);
-
-            let spk = accord_keymaterial_signed_prekey(km);
-            assert!(!spk.is_null());
-            assert_eq!((*spk).len, 32);
-
-            let bundle = accord_keymaterial_publishable_bundle(km);
-            assert!(!bundle.is_null());
-            assert!((*bundle).len > 0);
-
-            accord_buffer_free(ik);
-            accord_buffer_free(spk);
-            accord_buffer_free(bundle);
-            accord_keymaterial_free(km);
-        }
-    }
-
-    #[test]
-    fn test_session_manager_ffi_roundtrip() {
-        unsafe {
-            let alice_km = accord_keymaterial_generate(5);
-            let bob_km = accord_keymaterial_generate(5);
-
-            let alice_mgr = accord_session_manager_new();
-            let bob_mgr = accord_session_manager_new();
-
-            // Get Bob's bundle
-            let bob_ik_buf = accord_keymaterial_identity_key(bob_km);
-            let bob_spk_buf = accord_keymaterial_signed_prekey(bob_km);
-
-            // Serialize Bob's PreKeyBundle
-            let bob_bundle_buf = accord_prekey_bundle_serialize(
-                (*bob_ik_buf).data,
-                (*bob_spk_buf).data,
-                ptr::null(),
-            );
-
-            let peer_bob = CString::new("bob").unwrap();
-            let peer_alice = CString::new("alice").unwrap();
-            let channel = CString::new("general").unwrap();
-            let first_msg = b"Hello Bob!";
-
-            // Alice initiates
-            let initial_buf = accord_session_manager_initiate(
-                alice_mgr,
-                alice_km,
-                peer_bob.as_ptr(),
-                channel.as_ptr(),
-                (*bob_bundle_buf).data,
-                (*bob_bundle_buf).len,
-                first_msg.as_ptr(),
-                first_msg.len(),
-            );
-            assert!(!initial_buf.is_null());
-
-            // Bob receives
-            let decrypted_buf = accord_session_manager_receive_initial(
-                bob_mgr,
-                bob_km,
-                peer_alice.as_ptr(),
-                channel.as_ptr(),
-                (*initial_buf).data,
-                (*initial_buf).len,
-            );
-            assert!(!decrypted_buf.is_null());
-
-            let decrypted = slice::from_raw_parts((*decrypted_buf).data, (*decrypted_buf).len);
-            assert_eq!(decrypted, b"Hello Bob!");
-
-            // Bob encrypts reply
-            let reply = b"Hello Alice!";
-            let encrypted_buf = accord_session_manager_encrypt(
-                bob_mgr,
-                peer_alice.as_ptr(),
-                channel.as_ptr(),
-                reply.as_ptr(),
-                reply.len(),
-            );
-            assert!(!encrypted_buf.is_null());
-
-            // Alice decrypts
-            let dec2_buf = accord_session_manager_decrypt(
-                alice_mgr,
-                peer_bob.as_ptr(),
-                channel.as_ptr(),
-                (*encrypted_buf).data,
-                (*encrypted_buf).len,
-            );
-            assert!(!dec2_buf.is_null());
-            let dec2 = slice::from_raw_parts((*dec2_buf).data, (*dec2_buf).len);
-            assert_eq!(dec2, b"Hello Alice!");
-
-            // Cleanup
-            accord_buffer_free(bob_ik_buf);
-            accord_buffer_free(bob_spk_buf);
-            accord_buffer_free(bob_bundle_buf);
-            accord_buffer_free(initial_buf);
-            accord_buffer_free(decrypted_buf);
-            accord_buffer_free(encrypted_buf);
-            accord_buffer_free(dec2_buf);
-            accord_session_manager_free(alice_mgr);
-            accord_session_manager_free(bob_mgr);
-            accord_keymaterial_free(alice_km);
-            accord_keymaterial_free(bob_km);
-        }
-    }
-
-    #[test]
-    fn test_null_safety() {
-        unsafe {
-            // All functions should handle null gracefully
-            accord_buffer_free(ptr::null_mut());
-            accord_keymaterial_free(ptr::null_mut());
-            accord_session_manager_free(ptr::null_mut());
-
-            assert!(accord_keymaterial_identity_key(ptr::null()).is_null());
-            assert!(accord_keymaterial_signed_prekey(ptr::null()).is_null());
-            assert!(accord_keymaterial_publishable_bundle(ptr::null()).is_null());
-
-            assert_eq!(
-                accord_session_manager_has_session(ptr::null(), ptr::null(), ptr::null()),
-                ACCORD_ERR_NULL_PTR
-            );
-        }
-    }
-}
-
 // ─── Sender Keys FFI ─────────────────────────────────────────────────────────
 
 use crate::sender_keys::{self, SenderKeyStore};
@@ -858,5 +718,145 @@ pub unsafe extern "C" fn accord_sender_key_process_distribution(
             ACCORD_OK
         }
         Err(_) => ACCORD_ERR_CRYPTO,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    #[test]
+    fn test_keymaterial_roundtrip() {
+        unsafe {
+            let km = accord_keymaterial_generate(5);
+            assert!(!km.is_null());
+
+            let ik = accord_keymaterial_identity_key(km);
+            assert!(!ik.is_null());
+            assert_eq!((*ik).len, 32);
+
+            let spk = accord_keymaterial_signed_prekey(km);
+            assert!(!spk.is_null());
+            assert_eq!((*spk).len, 32);
+
+            let bundle = accord_keymaterial_publishable_bundle(km);
+            assert!(!bundle.is_null());
+            assert!((*bundle).len > 0);
+
+            accord_buffer_free(ik);
+            accord_buffer_free(spk);
+            accord_buffer_free(bundle);
+            accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_session_manager_ffi_roundtrip() {
+        unsafe {
+            let alice_km = accord_keymaterial_generate(5);
+            let bob_km = accord_keymaterial_generate(5);
+
+            let alice_mgr = accord_session_manager_new();
+            let bob_mgr = accord_session_manager_new();
+
+            // Get Bob's bundle
+            let bob_ik_buf = accord_keymaterial_identity_key(bob_km);
+            let bob_spk_buf = accord_keymaterial_signed_prekey(bob_km);
+
+            // Serialize Bob's PreKeyBundle
+            let bob_bundle_buf = accord_prekey_bundle_serialize(
+                (*bob_ik_buf).data,
+                (*bob_spk_buf).data,
+                ptr::null(),
+            );
+
+            let peer_bob = CString::new("bob").unwrap();
+            let peer_alice = CString::new("alice").unwrap();
+            let channel = CString::new("general").unwrap();
+            let first_msg = b"Hello Bob!";
+
+            // Alice initiates
+            let initial_buf = accord_session_manager_initiate(
+                alice_mgr,
+                alice_km,
+                peer_bob.as_ptr(),
+                channel.as_ptr(),
+                (*bob_bundle_buf).data,
+                (*bob_bundle_buf).len,
+                first_msg.as_ptr(),
+                first_msg.len(),
+            );
+            assert!(!initial_buf.is_null());
+
+            // Bob receives
+            let decrypted_buf = accord_session_manager_receive_initial(
+                bob_mgr,
+                bob_km,
+                peer_alice.as_ptr(),
+                channel.as_ptr(),
+                (*initial_buf).data,
+                (*initial_buf).len,
+            );
+            assert!(!decrypted_buf.is_null());
+
+            let decrypted = slice::from_raw_parts((*decrypted_buf).data, (*decrypted_buf).len);
+            assert_eq!(decrypted, b"Hello Bob!");
+
+            // Bob encrypts reply
+            let reply = b"Hello Alice!";
+            let encrypted_buf = accord_session_manager_encrypt(
+                bob_mgr,
+                peer_alice.as_ptr(),
+                channel.as_ptr(),
+                reply.as_ptr(),
+                reply.len(),
+            );
+            assert!(!encrypted_buf.is_null());
+
+            // Alice decrypts
+            let dec2_buf = accord_session_manager_decrypt(
+                alice_mgr,
+                peer_bob.as_ptr(),
+                channel.as_ptr(),
+                (*encrypted_buf).data,
+                (*encrypted_buf).len,
+            );
+            assert!(!dec2_buf.is_null());
+            let dec2 = slice::from_raw_parts((*dec2_buf).data, (*dec2_buf).len);
+            assert_eq!(dec2, b"Hello Alice!");
+
+            // Cleanup
+            accord_buffer_free(bob_ik_buf);
+            accord_buffer_free(bob_spk_buf);
+            accord_buffer_free(bob_bundle_buf);
+            accord_buffer_free(initial_buf);
+            accord_buffer_free(decrypted_buf);
+            accord_buffer_free(encrypted_buf);
+            accord_buffer_free(dec2_buf);
+            accord_session_manager_free(alice_mgr);
+            accord_session_manager_free(bob_mgr);
+            accord_keymaterial_free(alice_km);
+            accord_keymaterial_free(bob_km);
+        }
+    }
+
+    #[test]
+    fn test_null_safety() {
+        unsafe {
+            // All functions should handle null gracefully
+            accord_buffer_free(ptr::null_mut());
+            accord_keymaterial_free(ptr::null_mut());
+            accord_session_manager_free(ptr::null_mut());
+
+            assert!(accord_keymaterial_identity_key(ptr::null()).is_null());
+            assert!(accord_keymaterial_signed_prekey(ptr::null()).is_null());
+            assert!(accord_keymaterial_publishable_bundle(ptr::null()).is_null());
+
+            assert_eq!(
+                accord_session_manager_has_session(ptr::null(), ptr::null(), ptr::null()),
+                ACCORD_ERR_NULL_PTR
+            );
+        }
     }
 }

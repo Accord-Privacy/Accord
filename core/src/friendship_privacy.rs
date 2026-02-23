@@ -58,8 +58,8 @@ mod tests {
         let mut k = [0u8; 32];
         k[0] = seed;
         // Fill with deterministic pattern
-        for i in 1..32 {
-            k[i] = seed.wrapping_add(i as u8);
+        for (i, byte) in k.iter_mut().enumerate().skip(1) {
+            *byte = seed.wrapping_add(i as u8);
         }
         k
     }

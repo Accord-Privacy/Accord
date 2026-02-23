@@ -68,8 +68,8 @@ mod tests {
 
     fn make_id(seed: u8) -> [u8; 32] {
         let mut id = [0u8; 32];
-        for i in 0..32 {
-            id[i] = seed.wrapping_add(i as u8);
+        for (i, byte) in id.iter_mut().enumerate() {
+            *byte = seed.wrapping_add(i as u8);
         }
         id
     }

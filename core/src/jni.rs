@@ -7,7 +7,11 @@
 //! All functions follow the naming convention:
 //!   `Java_com_accord_core_AccordCore_<methodName>`
 
-#![cfg(feature = "android")]
+// All JNI exports share the same safety contract: the JVM must provide valid
+// JNIEnv and JClass pointers, and all jobject / jbyteArray / jstring arguments
+// must be valid JNI local references (or null where documented).  These
+// invariants are guaranteed by the JVM when calling native methods.
+#![allow(clippy::missing_safety_doc)]
 
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, JNI_FALSE, JNI_TRUE};

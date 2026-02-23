@@ -518,8 +518,10 @@ mod tests {
     fn test_invite_validation() {
         let mut manager = InviteManager::new();
 
-        let mut quality_gates = QualityGates::default();
-        quality_gates.min_account_age_days = Some(30);
+        let quality_gates = QualityGates {
+            min_account_age_days: Some(30),
+            ..Default::default()
+        };
 
         let config = InviteConfig {
             expiry_duration: Some(Duration::days(1)),
@@ -562,8 +564,10 @@ mod tests {
     fn test_approval_workflow() {
         let mut manager = InviteManager::new();
 
-        let mut quality_gates = QualityGates::default();
-        quality_gates.require_approval = true;
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
 
         let config = InviteConfig {
             expiry_duration: None,

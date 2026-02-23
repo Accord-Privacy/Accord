@@ -101,7 +101,7 @@ mod tests {
     fn jitter_delay_in_range() {
         for _ in 0..100 {
             let d = jitter_delay(100, 50);
-            assert!(d >= 100 && d <= 150, "delay {} out of range", d);
+            assert!((100..=150).contains(&d), "delay {} out of range", d);
         }
     }
 
