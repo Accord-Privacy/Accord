@@ -3160,12 +3160,24 @@ function App() {
           setPublicKey(pk);
         }
 
-        // Fetch display name from server profile
+        // Validate token by fetching profile — catches stale tokens after DB wipe
         let displayName = fingerprint(pkHash);
         try {
           const profile = await api.getUserProfile(userId, token);
           if (profile?.display_name) displayName = profile.display_name;
-        } catch { /* fallback to fingerprint */ }
+        } catch (err: any) {
+          // If server rejects the token (401/403), clear stale session and show setup
+          const msg = err?.message || '';
+          if (/HTTP 40[13]|unauthorized|forbidden|not found|invalid.*token/i.test(msg)) {
+            console.warn('Stale session detected — clearing and showing setup wizard');
+            localStorage.removeItem('accord_auth_token');
+            localStorage.removeItem('accord_user_id');
+            localStorage.removeItem('accord_server_url');
+            setShowSetupWizard(true);
+            return;
+          }
+          // Other errors (network down, etc.) — proceed with fallback name
+        }
 
         setAppState(prev => ({
           ...prev,
