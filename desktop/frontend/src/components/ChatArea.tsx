@@ -444,7 +444,7 @@ export const ChatArea: React.FC = () => {
                       {/* Link Preview — disabled for now */}
 
                       {/* Thread reply count */}
-                      {msg.reply_count && msg.reply_count > 0 && (
+                      {msg.reply_count != null && msg.reply_count > 0 && (
                         <div className="thread-indicator">
                           <span className="thread-icon">💬</span>
                           <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
