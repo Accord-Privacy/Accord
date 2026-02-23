@@ -523,67 +523,51 @@ const UserPanel: React.FC = () => {
   }, [ctx.voiceConnectedAt]);
 
   return (
-    <div className="user-panel">
-      <div className="user-avatar">
-        {ctx.appState.user?.id ? (
-          <img 
-            src={`${api.getUserAvatarUrl(ctx.appState.user.id)}`}
-            alt={(ctx.appState.user?.display_name || "U")[0]}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
-            onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U"; }}
-          />
-        ) : ((ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U")}
-      </div>
-      <div className="user-info">
-        <div className="username">{ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || '') || "You"}</div>
-        <div className="user-status" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }} style={{ cursor: 'pointer' }} title="Click to set custom status">
-          {ctx.customStatus || (ctx.appState.isConnected ? "Online" : (ctx.nodes.length === 0 ? "Ready" : "Offline"))}
-        </div>
-        {inVoice && (
-          <div className="user-panel-voice-info">
-            <span className="voice-connection-dot">●</span>
-            Voice Connected — #{ctx.voiceChannelName} {elapsed}
+    <>
+      {inVoice && (
+        <div className="voice-connection-panel">
+          <div className="voice-connection-info">
+            <span className="voice-connection-dot" style={{ color: 'var(--green)' }}>●</span>
+            <div className="voice-connection-details">
+              <span className="voice-connection-label">Voice Connected</span>
+              <span className="voice-connection-channel">#{ctx.voiceChannelName} — {elapsed}</span>
+            </div>
           </div>
-        )}
+          <div className="voice-connection-controls">
+            <button className="voice-ctrl-btn voice-disconnect-btn" onClick={() => {
+              ctx.setVoiceChannelId(null); ctx.setVoiceChannelName(""); ctx.setVoiceConnectedAt(null);
+              ctx.setVoiceMuted(false); ctx.setVoiceDeafened(false);
+            }} title="Disconnect">📞</button>
+          </div>
+        </div>
+      )}
+      <div className="user-panel">
+        <div className="user-avatar">
+          {ctx.appState.user?.id ? (
+            <img
+              src={`${api.getUserAvatarUrl(ctx.appState.user.id)}`}
+              alt={(ctx.appState.user?.display_name || "U")[0]}
+              onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U"; }}
+            />
+          ) : ((ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U")}
+          <span className={`presence-dot ${ctx.appState.isConnected ? 'online' : 'offline'}`} />
+        </div>
+        <div className="user-info" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }} style={{ cursor: 'pointer' }}>
+          <div className="username">{ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || '') || "You"}</div>
+          <div className="user-status">
+            {ctx.customStatus || (ctx.appState.isConnected ? "Online" : (ctx.nodes.length === 0 ? "Ready" : "Offline"))}
+          </div>
+        </div>
         <div className="user-panel-controls">
-          <button
-            className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`}
-            onClick={() => setIsMuted(!isMuted)}
-            title={isMuted ? 'Unmute' : 'Mute'}
-          >
+          <button className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`} onClick={() => setIsMuted(!isMuted)} title={isMuted ? 'Unmute' : 'Mute'}>
             {isMuted ? '🔇' : '🎤'}
           </button>
-          <button
-            className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`}
-            onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }}
-            title={isDeafened ? 'Undeafen' : 'Deafen'}
-          >
+          <button className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`} onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }} title={isDeafened ? 'Undeafen' : 'Deafen'}>
             {isDeafened ? '🔇' : '🔊'}
           </button>
-          <button
-            onClick={() => ctx.setShowSettings(true)}
-            className="voice-ctrl-btn"
-            title="Settings (Ctrl+,)"
-          >
-            ⚙️
-          </button>
-          {inVoice && (
-            <button
-              className="voice-ctrl-btn voice-disconnect-btn"
-              onClick={() => {
-                ctx.setVoiceChannelId(null);
-                ctx.setVoiceChannelName("");
-                ctx.setVoiceConnectedAt(null);
-                ctx.setVoiceMuted(false);
-                ctx.setVoiceDeafened(false);
-              }}
-              title="Disconnect"
-            >
-              📞
-            </button>
-          )}
+          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn" title="Settings (Ctrl+,)">⚙️</button>
         </div>
       </div>
-    </div>
+    </>
   );
 };

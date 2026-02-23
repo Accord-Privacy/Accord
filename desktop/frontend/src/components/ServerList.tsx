@@ -8,9 +8,10 @@ export const ServerList: React.FC = () => {
 
   return (
     <div className="server-list" key={ctx.forceUpdate}>
-      <div className="server-icon accord-home" title="Accord" style={{ marginBottom: '8px', borderBottom: '2px solid var(--border)', paddingBottom: '8px', background: 'var(--bg-darkest)', overflow: 'hidden' }}>
-        <img src="/logo.png?v=2" alt="A" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+      <div className="server-icon accord-home active" title="Home">
+        <img src="/logo.png?v=2" alt="A" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
       </div>
+      <div className="server-list-separator" />
       {ctx.nodes.length > 0 && ctx.servers.map((s, i) => {
         const nodeId = ctx.nodes.length > 0 ? ctx.nodes[i]?.id : null;
         const nodeUnreads = nodeId ? notificationManager.getNodeUnreads(nodeId) : { totalUnreads: 0, totalMentions: 0 };
