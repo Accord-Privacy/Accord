@@ -1,6 +1,7 @@
 //! Integration tests for the Accord server
 //!
 //! These tests spawn the server in-process and test all major endpoints and flows.
+#![allow(clippy::all, unused_imports, dead_code)]
 
 use axum::{
     routing::{get, post},

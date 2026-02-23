@@ -46,14 +46,14 @@ fn bench_user_registration(c: &mut Criterion) {
         let mut counter = 0u64;
         b.to_async(&rt).iter(|| {
             counter += 1;
-            let username = format!("user_{}", counter);
+            let _username = format!("user_{}", counter);
             let state_ref = &state;
             async move {
                 black_box(
                     state_ref
-                        .register_user(username, "pubkey123".into(), "password".into())
+                        .register_user("pubkey123".into(), "password".into())
                         .await,
-                );
+                )
             }
         });
     });
@@ -64,12 +64,8 @@ fn bench_user_registration(c: &mut Criterion) {
 fn bench_authentication(c: &mut Criterion) {
     let rt = rt();
     let state = rt.block_on(AppState::new_in_memory()).unwrap();
-    rt.block_on(state.register_user(
-        "bench_user".into(),
-        "pubkey".into(),
-        "bench_password".into(),
-    ))
-    .unwrap();
+    rt.block_on(state.register_user("pubkey".into(), "bench_password".into()))
+        .unwrap();
 
     c.bench_function("user/authenticate", |b| {
         b.to_async(&rt).iter(|| {
@@ -79,7 +75,7 @@ fn bench_authentication(c: &mut Criterion) {
                     state_ref
                         .authenticate_user("bench_user".into(), "bench_password".into())
                         .await,
-                );
+                )
             }
         });
     });
@@ -90,7 +86,7 @@ fn bench_authentication(c: &mut Criterion) {
 fn bench_token_validation(c: &mut Criterion) {
     let rt = rt();
     let state = rt.block_on(AppState::new_in_memory()).unwrap();
-    rt.block_on(state.register_user("tv_user".into(), "pk".into(), "pw".into()))
+    rt.block_on(state.register_user("pk".into(), "pw".into()))
         .unwrap();
     let auth = rt
         .block_on(state.authenticate_user("tv_user".into(), "pw".into()))
@@ -114,7 +110,7 @@ fn bench_node_operations(c: &mut Criterion) {
     let rt = rt();
     let state = rt.block_on(AppState::new_in_memory()).unwrap();
     let owner = rt
-        .block_on(state.register_user("owner".into(), "pk".into(), "pw".into()))
+        .block_on(state.register_user("pk".into(), "pw".into()))
         .unwrap();
 
     let mut group = c.benchmark_group("node");
@@ -140,15 +136,16 @@ fn bench_node_operations(c: &mut Criterion) {
         let mut counter = 0u64;
         b.to_async(&rt).iter(|| {
             counter += 1;
-            let username = format!("joiner_{}", counter);
+            let _username = format!("joiner_{}", counter);
             let state_ref = &state;
             let node_id = node.id;
             async move {
                 let uid = state_ref
-                    .register_user(username, "pk".into(), "".into())
+                    .register_user("pk".into(), "".into())
                     .await
                     .unwrap();
-                black_box(state_ref.join_node(uid, node_id).await.unwrap());
+                state_ref.join_node(uid, node_id).await.unwrap();
+                black_box(());
             }
         });
     });
@@ -162,7 +159,7 @@ fn bench_message_storage(c: &mut Criterion) {
     let rt = rt();
     let state = rt.block_on(AppState::new_in_memory()).unwrap();
     let owner = rt
-        .block_on(state.register_user("msg_owner".into(), "pk".into(), "pw".into()))
+        .block_on(state.register_user("pk".into(), "pw".into()))
         .unwrap();
     let node = rt
         .block_on(state.create_node("msg_node".into(), owner, None))
@@ -209,7 +206,7 @@ fn bench_broadcast(c: &mut Criterion) {
                 let state = rt.block_on(AppState::new_in_memory()).unwrap();
                 let state = Arc::new(state);
                 let owner = rt
-                    .block_on(state.register_user("bc_owner".into(), "pk".into(), "".into()))
+                    .block_on(state.register_user("pk".into(), "".into()))
                     .unwrap();
                 let node = rt
                     .block_on(state.create_node("bc_node".into(), owner, None))
@@ -219,9 +216,9 @@ fn bench_broadcast(c: &mut Criterion) {
                     .unwrap();
 
                 // Register users and add WebSocket connections (broadcast senders)
-                for i in 0..n {
+                for _ in 0..n {
                     let uid = rt
-                        .block_on(state.register_user(format!("bc_u{}", i), "pk".into(), "".into()))
+                        .block_on(state.register_user("pk".into(), "".into()))
                         .unwrap();
                     rt.block_on(state.join_node(uid, node.id)).unwrap();
                     rt.block_on(state.join_channel(uid, channel.id)).unwrap();
@@ -236,7 +233,8 @@ fn bench_broadcast(c: &mut Criterion) {
                     let m = msg.clone();
                     let ch_id = channel.id;
                     async move {
-                        black_box(state_ref.send_to_channel(ch_id, m).await.unwrap());
+                        state_ref.send_to_channel(ch_id, m).await.unwrap();
+                        black_box(());
                     }
                 });
             },
