@@ -700,8 +700,9 @@ export const Settings: React.FC<SettingsProps> = ({
                 <h3>Profile</h3>
 
                 {/* Avatar Upload */}
-                <div className="settings-group" style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+                <div className="settings-avatar-upload">
                   <div 
+                    className="settings-avatar-circle"
                     onClick={() => {
                       const input = document.createElement('input');
                       input.type = 'file';
@@ -717,7 +718,6 @@ export const Settings: React.FC<SettingsProps> = ({
                           const token = localStorage.getItem('accord_auth_token') || '';
                           await api.uploadUserAvatar(file, token);
                           setProfileSaveMsg('Avatar updated!');
-                          // Force re-render by setting a timestamp
                           setProfileDirty(false);
                         } catch (err) {
                           setProfileSaveMsg(err instanceof Error ? err.message : 'Failed to upload avatar');
@@ -725,53 +725,27 @@ export const Settings: React.FC<SettingsProps> = ({
                       };
                       input.click();
                     }}
-                    style={{
-                      width: '80px',
-                      height: '80px',
-                      borderRadius: '50%',
-                      background: 'var(--bg-active)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      overflow: 'hidden',
-                      fontSize: '32px',
-                      color: 'var(--text-secondary)',
-                      flexShrink: 0,
-                      position: 'relative',
-                    }}
                     title="Click to upload avatar"
                   >
                     {currentUser?.id ? (
                       <img 
                         src={`${api.getUserAvatarUrl(currentUser.id)}`}
                         alt={(currentUser?.display_name || "U")[0]}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (currentUser?.display_name || "U")[0]; }}
                       />
                     ) : (currentUser?.display_name || "U")[0]}
-                    <div style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      background: 'rgba(0,0,0,0.6)',
-                      fontSize: '10px',
-                      textAlign: 'center',
-                      padding: '2px',
-                      color: 'var(--text-on-accent)',
-                    }}>EDIT</div>
+                    <div className="settings-avatar-edit">EDIT</div>
                   </div>
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  <span className="settings-avatar-hint">
                     Click to upload avatar (PNG, JPEG, GIF, WebP — max 256KB)
-                  </div>
+                  </span>
                 </div>
 
                 {/* Fingerprint */}
                 {currentUser?.public_key_hash && (
                   <div className="settings-group">
                     <label className="settings-label">Public Key Fingerprint</label>
-                    <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: '0.05em' }}>
+                    <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: 0.5 }}>
                       {formatFingerprint(currentUser.public_key_hash)}
                     </div>
                   </div>
@@ -825,7 +799,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
 
                 {/* Save button */}
-                <div className="settings-group" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="settings-group settings-action-row">
                   <button
                     className="btn btn-primary"
                     style={{ width: 'auto', padding: '10px 24px' }}
@@ -835,7 +809,7 @@ export const Settings: React.FC<SettingsProps> = ({
                     {profileSaving ? 'Saving...' : 'Save Profile'}
                   </button>
                   {profileSaveMsg && (
-                    <span style={{ fontSize: 13, color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)' }}>
+                    <span className="settings-help" style={{ color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)', margin: 0 }}>
                       {profileSaveMsg}
                     </span>
                   )}
@@ -847,27 +821,14 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
                 </div>
 
-                <div className="settings-group" style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+                <div className="settings-logout-section">
                   <button
-                    onClick={() => {
-                      onClose();
-                      if (onLogout) setTimeout(onLogout, 100);
-                    }}
-                    className="btn"
-                    style={{
-                      background: 'var(--red, #e74c3c)',
-                      color: 'var(--text-on-accent)',
-                      border: 'none',
-                      padding: '10px 24px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                      fontSize: '14px',
-                    }}
+                    className="settings-logout-btn"
+                    onClick={() => { onClose(); if (onLogout) setTimeout(onLogout, 100); }}
                   >
                     🚪 Log Out
                   </button>
-                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                  <p className="settings-logout-hint">
                     Your identity keys are saved locally. You can log back in with your password.
                   </p>
                 </div>
@@ -1321,7 +1282,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
                 <div className="settings-group">
                   <label className="settings-label">Connect to Relay Manually</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div className="settings-relay-row">
                     <input
                       type="text"
                       className="settings-input"
@@ -1340,7 +1301,7 @@ export const Settings: React.FC<SettingsProps> = ({
                     </button>
                   </div>
                   {relayConnectMsg && (
-                    <div style={{ fontSize: 13, marginTop: 4, color: relayConnectMsg.startsWith('✅') ? 'var(--green, #4caf50)' : 'var(--red, #f44)' }}>
+                    <div className={`settings-relay-msg ${relayConnectMsg.startsWith('✅') ? 'ok' : 'fail'}`}>
                       {relayConnectMsg}
                     </div>
                   )}
@@ -1376,11 +1337,11 @@ export const Settings: React.FC<SettingsProps> = ({
                     Export your encrypted identity to a JSON file for backup or transfer to another browser. Import a previously exported identity file to restore access.
                   </div>
                   {importStatus && <div className="auth-success" style={{ marginTop: 8 }}>{importStatus}</div>}
-                  {importError && <div style={{ color: 'var(--red, #f44)', marginTop: 8, fontSize: 13 }}>{importError}</div>}
+                  {importError && <div className="settings-help" style={{ color: 'var(--red)', marginTop: 8 }}>{importError}</div>}
                   {importPasswordPrompt && (
-                    <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8 }}>
+                    <div className="settings-import-prompt">
                       <div style={{ marginBottom: 8, fontSize: 14 }}>
-                        Enter password to decrypt identity <code>{importPasswordPrompt.hash16}</code>:
+                        Enter password to decrypt identity <code className="settings-hash-code">{importPasswordPrompt.hash16}</code>:
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <input
@@ -1510,54 +1471,45 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
 
                   {/* Build Hash Verification */}
-                  <div className="about-build-hashes" style={{ margin: '16px 0', padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
-                    <h4 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>Build Verification</h4>
+                  <div className="settings-build-card">
+                    <h4>Build Verification</h4>
                     
-                    {/* Trust indicator */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', padding: '8px 12px', borderRadius: '6px', background: `${indicator.color}15`, border: `1px solid ${indicator.color}40` }}>
-                      <span style={{ fontSize: '18px' }}>{indicator.emoji}</span>
+                    <div className="settings-trust-badge" style={{ background: `${indicator.color}15`, border: `1px solid ${indicator.color}40` }}>
+                      <span style={{ fontSize: 18 }}>{indicator.emoji}</span>
                       <span style={{ fontWeight: 600, color: indicator.color }}>{indicator.label}</span>
                     </div>
 
-                    <div className="info-row" style={{ marginBottom: '6px' }}>
+                    <div className="info-row" style={{ marginBottom: 6 }}>
                       <strong>Client Build:</strong>{' '}
-                      <code
-                        style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '3px' }}
-                        title={`Full hash: ${CLIENT_BUILD_HASH}\nClick to copy`}
-                        onClick={() => navigator.clipboard?.writeText(CLIENT_BUILD_HASH)}
-                      >
+                      <code className="settings-hash-code" title={`Full hash: ${CLIENT_BUILD_HASH}\nClick to copy`} onClick={() => navigator.clipboard?.writeText(CLIENT_BUILD_HASH)}>
                         {shortHash(CLIENT_BUILD_HASH)}
                       </code>
-                      <span style={{ marginLeft: '6px', fontSize: '11px', color: getTrustIndicator(clientTrust).color }}>
+                      <span style={{ marginLeft: 6, fontSize: 11, color: getTrustIndicator(clientTrust).color }}>
                         {getTrustIndicator(clientTrust).emoji} {getTrustIndicator(clientTrust).label}
                       </span>
                     </div>
 
-                    <div className="info-row" style={{ marginBottom: '6px' }}>
+                    <div className="info-row" style={{ marginBottom: 6 }}>
                       <strong>Server Build:</strong>{' '}
                       {serverInfo?.buildHash ? (
                         <>
-                          <code
-                            style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', cursor: 'pointer', background: 'var(--bg-secondary)', padding: '2px 6px', borderRadius: '3px' }}
-                            title={`Full hash: ${serverInfo.buildHash}\nClick to copy`}
-                            onClick={() => navigator.clipboard?.writeText(serverInfo.buildHash)}
-                          >
+                          <code className="settings-hash-code" title={`Full hash: ${serverInfo.buildHash}\nClick to copy`} onClick={() => navigator.clipboard?.writeText(serverInfo.buildHash)}>
                             {shortHash(serverInfo.buildHash)}
                           </code>
                           {serverTrust && (
-                            <span style={{ marginLeft: '6px', fontSize: '11px', color: getTrustIndicator(serverTrust).color }}>
+                            <span style={{ marginLeft: 6, fontSize: 11, color: getTrustIndicator(serverTrust).color }}>
                               {getTrustIndicator(serverTrust).emoji} {getTrustIndicator(serverTrust).label}
                             </span>
                           )}
                         </>
                       ) : (
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        <span className="settings-help" style={{ margin: 0 }}>
                           {serverInfo?.isConnected ? 'Not reported' : 'Not connected'}
                         </span>
                       )}
                     </div>
 
-                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                    <div className="settings-help" style={{ marginTop: 8 }}>
                       Build hashes verify that client and server code hasn't been tampered with.
                       Official releases are signed and verified against a known hash registry.
                     </div>
@@ -1599,13 +1551,13 @@ export const Settings: React.FC<SettingsProps> = ({
       {/* QR Code Show Modal */}
       {showQrModal && (
         <div className="settings-overlay" style={{ zIndex: 10001 }} onClick={() => setShowQrModal(false)}>
-          <div style={{ background: 'var(--bg-secondary, #2f3136)', borderRadius: 12, padding: 24, maxWidth: 360, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 12px', color: 'var(--text-primary)' }}>Identity QR Code</h3>
-            <img src={qrDataUrl} alt="Identity QR Code" style={{ width: 280, height: 280, borderRadius: 8, background: '#fff', padding: 8 }} />
-            <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '12px 0 4px' }}>
+          <div className="settings-qr-modal" onClick={e => e.stopPropagation()}>
+            <h3>Identity QR Code</h3>
+            <img src={qrDataUrl} alt="Identity QR Code" className="settings-qr-img" />
+            <p className="settings-help" style={{ margin: '12px 0 4px' }}>
               Scan this QR code on your other device to sync your identity.
             </p>
-            <p style={{ color: 'var(--yellow)', fontSize: 12, margin: '4px 0 12px' }}>
+            <p className="settings-qr-warning">
               ⚠️ This QR code contains your encrypted identity. Only share with your own devices.
             </p>
             <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px' }} onClick={() => setShowQrModal(false)}>Close</button>
@@ -1616,18 +1568,18 @@ export const Settings: React.FC<SettingsProps> = ({
       {/* QR Code Scan Modal */}
       {showScanModal && (
         <div className="settings-overlay" style={{ zIndex: 10001 }} onClick={closeScanModal}>
-          <div style={{ background: 'var(--bg-secondary, #2f3136)', borderRadius: 12, padding: 24, maxWidth: 400, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 12px', color: 'var(--text-primary)' }}>Scan Identity QR Code</h3>
+          <div className="settings-qr-modal" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+            <h3>Scan Identity QR Code</h3>
             {scanError ? (
               <div>
                 <p style={{ color: 'var(--red)', fontSize: 14, margin: '16px 0' }}>{scanError}</p>
-                <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>You can use file import as an alternative.</p>
+                <p className="settings-help">You can use file import as an alternative.</p>
               </div>
             ) : (
-              <div style={{ position: 'relative' }}>
+              <div>
                 <video ref={scanVideoRef} style={{ width: '100%', maxWidth: 340, borderRadius: 8, background: '#000' }} muted playsInline />
                 <canvas ref={scanCanvasRef} style={{ display: 'none' }} />
-                <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 8 }}>Point your camera at an Accord identity QR code.</p>
+                <p className="settings-help" style={{ marginTop: 8 }}>Point your camera at an Accord identity QR code.</p>
               </div>
             )}
             <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px', marginTop: 12 }} onClick={closeScanModal}>Cancel</button>

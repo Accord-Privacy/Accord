@@ -93,7 +93,6 @@ export function NodeSettings({
 
   const loadInvites = useCallback(async () => {
     if (!canManageInvites) return;
-    
     setLoadingInvites(true);
     setError('');
     try {
@@ -106,7 +105,6 @@ export function NodeSettings({
     }
   }, [node.id, token, canManageInvites]);
 
-  // Role management functions
   const loadRoles = useCallback(async () => {
     if (!canManageRoles) return;
     setLoadingRoles(true);
@@ -181,7 +179,6 @@ export function NodeSettings({
   const handleMoveRole = useCallback(async (roleId: string, direction: 'up' | 'down') => {
     const idx = roles.findIndex(r => r.id === roleId);
     if (idx < 0) return;
-    // roles sorted by position desc, so "up" means higher position
     const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (swapIdx < 0 || swapIdx >= roles.length) return;
     try {
@@ -204,7 +201,6 @@ export function NodeSettings({
     setEditRolePermissions(role.permissions);
   }, []);
 
-  // Permission bit definitions
   const PERMISSIONS = [
     { bit: 1, label: 'Manage Channels' },
     { bit: 2, label: 'Manage Members' },
@@ -221,7 +217,6 @@ export function NodeSettings({
     try {
       const maxUsesNum = maxUses ? parseInt(maxUses, 10) : undefined;
       const expiresHoursNum = expiresHours ? parseInt(expiresHours, 10) : undefined;
-      
       await api.createInviteWithOptions(node.id, token, maxUsesNum, expiresHoursNum);
       setSuccess('Invite created successfully!');
       setMaxUses('');
@@ -237,7 +232,6 @@ export function NodeSettings({
 
   const handleRevokeInvite = useCallback(async (inviteCode: string) => {
     if (!confirm('Are you sure you want to revoke this invite?')) return;
-    
     try {
       await api.revokeInvite(node.id, inviteCode, token);
       setSuccess('Invite revoked successfully!');
@@ -247,23 +241,19 @@ export function NodeSettings({
     }
   }, [node.id, token, loadInvites]);
 
-  // Audit log functions
   const loadAuditLog = useCallback(async (reset: boolean = false) => {
     if (!canViewAuditLog) return;
-    
     setLoadingAudit(true);
     setError('');
     try {
       const cursor = reset ? undefined : nextAuditCursor;
       const response = await api.getNodeAuditLog(node.id, token, 50, cursor);
       const entries = Array.isArray(response?.entries) ? response.entries : [];
-      
       if (reset) {
         setAuditEntries(entries);
       } else {
         setAuditEntries(prev => [...prev, ...entries]);
       }
-      
       setHasMoreAudit(response?.has_more ?? false);
       setNextAuditCursor(response?.next_cursor);
     } catch (error) {
@@ -283,7 +273,6 @@ export function NodeSettings({
     return auditEntries.filter(entry => entry.action === auditFilter);
   }, [auditEntries, auditFilter]);
 
-  // Audit log utility functions
   const getActionIcon = (action: string) => {
     switch (action) {
       case 'channel_create': return '📝';
@@ -303,36 +292,22 @@ export function NodeSettings({
 
   const getActionDescription = (entry: AuditLogEntry) => {
     const details = entry.details ? JSON.parse(entry.details) : {};
-    
     switch (entry.action) {
-      case 'channel_create':
-        return `created channel #${details.channel_name || 'unknown'}`;
-      case 'channel_delete':
-        return `deleted channel #${details.channel_name || 'unknown'}`;
-      case 'member_kick':
-        return `kicked a user`;
-      case 'member_ban':
-        return `banned a user`;
-      case 'role_change':
-        return `changed user role to ${details.new_role || 'unknown'}`;
-      case 'invite_create':
-        return `created an invite`;
-      case 'invite_revoke':
-        return `revoked invite ${details.invite_code || 'unknown'}`;
-      case 'message_pin':
-        return `pinned a message`;
-      case 'message_unpin':
-        return `unpinned a message`;
-      case 'message_delete':
-        return `deleted a message`;
-      case 'node_settings_update':
-        return `updated node settings`;
-      default:
-        return entry.action.replace(/_/g, ' ');
+      case 'channel_create': return `created channel #${details.channel_name || 'unknown'}`;
+      case 'channel_delete': return `deleted channel #${details.channel_name || 'unknown'}`;
+      case 'member_kick': return `kicked a user`;
+      case 'member_ban': return `banned a user`;
+      case 'role_change': return `changed user role to ${details.new_role || 'unknown'}`;
+      case 'invite_create': return `created an invite`;
+      case 'invite_revoke': return `revoked invite ${details.invite_code || 'unknown'}`;
+      case 'message_pin': return `pinned a message`;
+      case 'message_unpin': return `unpinned a message`;
+      case 'message_delete': return `deleted a message`;
+      case 'node_settings_update': return `updated node settings`;
+      default: return entry.action.replace(/_/g, ' ');
     }
   };
 
-  // Moderation functions
   const loadAutoModWords = useCallback(async () => {
     if (!isAdmin) return;
     setLoadingAutoMod(true);
@@ -372,7 +347,6 @@ export function NodeSettings({
     try {
       const channels = await api.getNodeChannels(node.id, token);
       setNodeChannels(channels.map((c: any) => ({ id: c.id, name: c.name })));
-      // Load slow mode for each channel
       const modes: Record<string, number> = {};
       for (const ch of channels) {
         try {
@@ -396,20 +370,12 @@ export function NodeSettings({
 
   const handleUpdateNode = useCallback(async () => {
     if (!isAdmin) return;
-    
     setIsUpdating(true);
     setError('');
     try {
-      // Note: This would need to be implemented in the API
-      // For now, just show success message
       setSuccess('Node settings saved!');
       if (onNodeUpdated) {
-        const updatedNode: Node = {
-          ...node,
-          name: nodeName,
-          description: nodeDescription,
-        };
-        onNodeUpdated(updatedNode);
+        onNodeUpdated({ ...node, name: nodeName, description: nodeDescription });
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to update node');
@@ -422,16 +388,11 @@ export function NodeSettings({
     const confirmMessage = isAdmin 
       ? 'Are you sure you want to leave this Node? As the admin, this will delete the Node permanently!'
       : 'Are you sure you want to leave this Node?';
-    
     if (!confirm(confirmMessage)) return;
-    
     try {
       await api.leaveNode(node.id, token);
       setSuccess('Left Node successfully!');
-      setTimeout(() => {
-        onLeaveNode?.();
-        onClose();
-      }, 1000);
+      setTimeout(() => { onLeaveNode?.(); onClose(); }, 1000);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to leave node');
     }
@@ -441,7 +402,6 @@ export function NodeSettings({
     navigator.clipboard?.writeText(inviteCode).then(() => {
       setSuccess('Invite code copied to clipboard!');
     }).catch(() => {
-      // Fallback for browsers that don't support clipboard API
       const textArea = document.createElement('textarea');
       textArea.value = inviteCode;
       document.body.appendChild(textArea);
@@ -465,7 +425,6 @@ export function NodeSettings({
     return !!(invite.max_uses && invite.uses >= invite.max_uses);
   };
 
-  // Load moderation data when opening the moderation tab
   useEffect(() => {
     if (isOpen && activeTab === 'emojis' && isAdmin) {
       setLoadingEmojis(true);
@@ -473,209 +432,74 @@ export function NodeSettings({
         setCustomEmojis(emojis);
       }).catch(() => {}).finally(() => setLoadingEmojis(false));
     }
-
     if (isOpen && activeTab === 'moderation' && isAdmin) {
       loadAutoModWords();
       loadNodeChannelsForMod();
     }
   }, [isOpen, activeTab, isAdmin, loadAutoModWords, loadNodeChannelsForMod]);
 
-  // Load roles when opening the roles tab
   useEffect(() => {
-    if (isOpen && activeTab === 'roles' && canManageRoles) {
-      loadRoles();
-    }
+    if (isOpen && activeTab === 'roles' && canManageRoles) loadRoles();
   }, [isOpen, activeTab, canManageRoles, loadRoles]);
 
-  // Load invites when opening the invites tab
   useEffect(() => {
-    if (isOpen && activeTab === 'invites' && canManageInvites) {
-      loadInvites();
-    }
+    if (isOpen && activeTab === 'invites' && canManageInvites) loadInvites();
   }, [isOpen, activeTab, canManageInvites, loadInvites]);
 
-  // Load audit log when opening the audit tab
   useEffect(() => {
-    if (isOpen && activeTab === 'audit' && canViewAuditLog) {
-      loadAuditLog(true);
-    }
+    if (isOpen && activeTab === 'audit' && canViewAuditLog) loadAuditLog(true);
   }, [isOpen, activeTab, canViewAuditLog, loadAuditLog]);
 
-  // Clear messages after a delay
   useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 3000);
-      return () => clearTimeout(timer);
-    }
+    if (success) { const t = setTimeout(() => setSuccess(''), 3000); return () => clearTimeout(t); }
   }, [success]);
 
   useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(''), 5000);
-      return () => clearTimeout(timer);
-    }
+    if (error) { const t = setTimeout(() => setError(''), 5000); return () => clearTimeout(t); }
   }, [error]);
 
   if (!isOpen) return null;
 
+  const tabs: Array<{ key: typeof activeTab; label: string; visible: boolean }> = [
+    { key: 'general', label: 'General', visible: true },
+    { key: 'roles', label: 'Roles', visible: canManageRoles },
+    { key: 'invites', label: 'Invites', visible: canManageInvites },
+    { key: 'moderation', label: 'Moderation', visible: isAdmin },
+    { key: 'emojis', label: 'Emojis', visible: isAdmin },
+    { key: 'audit', label: 'Audit Log', visible: canViewAuditLog },
+  ];
+
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(0, 0, 0, 0.8)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 1001
-    }}>
-      <div style={{
-        background: 'var(--bg-content)',
-        borderRadius: '8px',
-        width: '90%',
-        maxWidth: '600px',
-        maxHeight: '80vh',
-        color: 'var(--text-on-accent)',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
+    <div className="node-settings-overlay">
+      <div className="node-settings-modal">
         {/* Header */}
-        <div style={{
-          padding: '20px',
-          borderBottom: '1px solid #40444b',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
-          <h2 style={{ margin: 0, fontSize: '20px' }}>Node Settings</h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-secondary)',
-              fontSize: '24px',
-              cursor: 'pointer',
-              padding: '0',
-              lineHeight: 1
-            }}
-          >
-            ×
-          </button>
+        <div className="node-settings-header">
+          <h2>Node Settings</h2>
+          <button className="settings-close" onClick={onClose}>×</button>
         </div>
 
         {/* Tabs */}
-        <div style={{
-          display: 'flex',
-          borderBottom: '1px solid #40444b',
-          background: 'var(--bg-dark)'
-        }}>
-          <button
-            onClick={() => setActiveTab('general')}
-            style={{
-              background: activeTab === 'general' ? '#40444b' : 'transparent',
-              border: 'none',
-              color: activeTab === 'general' ? '#ffffff' : '#b9bbbe',
-              padding: '12px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '500'
-            }}
-          >
-            General
-          </button>
-          {canManageRoles && (
+        <div className="node-settings-tabs">
+          {tabs.filter(t => t.visible).map(t => (
             <button
-              onClick={() => setActiveTab('roles')}
-              style={{
-                background: activeTab === 'roles' ? '#40444b' : 'transparent',
-                border: 'none',
-                color: activeTab === 'roles' ? '#ffffff' : '#b9bbbe',
-                padding: '12px 20px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
+              key={t.key}
+              className={`node-settings-tab ${activeTab === t.key ? 'active' : ''}`}
+              onClick={() => setActiveTab(t.key)}
             >
-              Roles
+              {t.label}
             </button>
-          )}
-          {canManageInvites && (
-            <button
-              onClick={() => setActiveTab('invites')}
-              style={{
-                background: activeTab === 'invites' ? '#40444b' : 'transparent',
-                border: 'none',
-                color: activeTab === 'invites' ? '#ffffff' : '#b9bbbe',
-                padding: '12px 20px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
-            >
-              Invites
-            </button>
-          )}
-          {isAdmin && (
-            <button
-              onClick={() => setActiveTab('moderation')}
-              style={{
-                background: activeTab === 'moderation' ? '#40444b' : 'transparent',
-                border: 'none',
-                color: activeTab === 'moderation' ? '#ffffff' : '#b9bbbe',
-                padding: '12px 20px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
-            >
-              Moderation
-            </button>
-          )}
-          {isAdmin && (
-            <button
-              onClick={() => setActiveTab('emojis')}
-              style={{
-                background: activeTab === 'emojis' ? '#40444b' : 'transparent',
-                border: 'none',
-                color: activeTab === 'emojis' ? '#ffffff' : '#b9bbbe',
-                padding: '12px 20px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
-            >
-              Emojis
-            </button>
-          )}
-          {canViewAuditLog && (
-            <button
-              onClick={() => setActiveTab('audit')}
-              style={{
-                background: activeTab === 'audit' ? '#40444b' : 'transparent',
-                border: 'none',
-                color: activeTab === 'audit' ? '#ffffff' : '#b9bbbe',
-                padding: '12px 20px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
-            >
-              Audit Log
-            </button>
-          )}
+          ))}
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-          {/* General Tab */}
+        <div className="node-settings-body">
+          {/* =================== GENERAL =================== */}
           {activeTab === 'general' && (
             <div>
               {/* Node Icon Upload */}
-              <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div 
+              <div className="node-icon-upload">
+                <div
+                  className={`node-icon-circle ${isAdmin ? 'editable' : ''}`}
                   onClick={() => {
                     if (!isAdmin) return;
                     const input = document.createElement('input');
@@ -684,223 +508,114 @@ export function NodeSettings({
                     input.onchange = async (e) => {
                       const file = (e.target as HTMLInputElement).files?.[0];
                       if (!file) return;
-                      if (file.size > 256 * 1024) {
-                        setError('Icon must be under 256KB');
-                        return;
-                      }
+                      if (file.size > 256 * 1024) { setError('Icon must be under 256KB'); return; }
                       try {
                         setError('');
                         const result = await api.uploadNodeIcon(node.id, file, token);
                         setSuccess('Node icon updated!');
-                        if (onNodeUpdated) {
-                          onNodeUpdated({ ...node, icon_hash: result.icon_hash });
-                        }
+                        if (onNodeUpdated) onNodeUpdated({ ...node, icon_hash: result.icon_hash });
                       } catch (err) {
                         setError(err instanceof Error ? err.message : 'Failed to upload icon');
                       }
                     };
                     input.click();
                   }}
-                  style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '50%',
-                    background: 'var(--bg-active)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: isAdmin ? 'pointer' : 'default',
-                    overflow: 'hidden',
-                    fontSize: '32px',
-                    color: 'var(--text-secondary)',
-                    flexShrink: 0,
-                    position: 'relative',
-                  }}
                   title={isAdmin ? 'Click to upload icon' : 'Node icon'}
                 >
                   {node.icon_hash ? (
-                    <img 
-                      src={`${api.getNodeIconUrl(node.id)}?v=${node.icon_hash}`}
-                      alt={node.name[0]}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
+                    <img src={`${api.getNodeIconUrl(node.id)}?v=${node.icon_hash}`} alt={node.name[0]} />
                   ) : node.name[0]}
-                  {isAdmin && (
-                    <div style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      background: 'rgba(0,0,0,0.6)',
-                      fontSize: '10px',
-                      textAlign: 'center',
-                      padding: '2px',
-                      color: 'var(--text-on-accent)',
-                    }}>EDIT</div>
-                  )}
+                  {isAdmin && <div className="node-icon-edit-badge">Edit</div>}
                 </div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                <span className="ns-help">
                   {isAdmin ? 'Click the icon to upload a new one (PNG, JPEG, GIF, WebP — max 256KB)' : 'Node icon'}
-                </div>
+                </span>
               </div>
 
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ 
-                  display: 'block', 
-                  marginBottom: '8px', 
-                  fontSize: '14px', 
-                  fontWeight: '600', 
-                  color: 'var(--text-secondary)' 
-                }}>
-                  Node Name
-                </label>
+              <div className="ns-field">
+                <label className="ns-label">Node Name</label>
                 <input
                   type="text"
+                  className="ns-input"
                   value={nodeName}
                   onChange={(e) => setNodeName(e.target.value)}
                   disabled={!isAdmin || isUpdating}
                   maxLength={32}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    border: 'none',
-                    background: isAdmin ? '#40444b' : '#2f3136',
-                    color: 'var(--text-on-accent)',
-                    fontSize: '14px'
-                  }}
                 />
               </div>
 
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ 
-                  display: 'block', 
-                  marginBottom: '8px', 
-                  fontSize: '14px', 
-                  fontWeight: '600', 
-                  color: 'var(--text-secondary)' 
-                }}>
-                  Description
-                </label>
+              <div className="ns-field">
+                <label className="ns-label">Description</label>
                 <textarea
+                  className="ns-textarea"
                   value={nodeDescription}
                   onChange={(e) => setNodeDescription(e.target.value)}
                   disabled={!isAdmin || isUpdating}
                   maxLength={200}
                   rows={3}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    border: 'none',
-                    background: isAdmin ? '#40444b' : '#2f3136',
-                    color: 'var(--text-on-accent)',
-                    fontSize: '14px',
-                    resize: 'vertical'
-                  }}
                 />
               </div>
 
               {isAdmin && (
-                <div style={{ marginBottom: '20px' }}>
-                  <button
-                    onClick={handleUpdateNode}
-                    disabled={isUpdating}
-                    style={{
-                      background: 'var(--green)',
-                      border: 'none',
-                      color: 'var(--text-on-accent)',
-                      padding: '10px 16px',
-                      borderRadius: '4px',
-                      cursor: isUpdating ? 'not-allowed' : 'pointer',
-                      fontSize: '14px',
-                      opacity: isUpdating ? 0.6 : 1
-                    }}
-                  >
+                <div className="ns-field">
+                  <button className="ns-btn ns-btn-success" onClick={handleUpdateNode} disabled={isUpdating}>
                     {isUpdating ? 'Saving...' : 'Save Changes'}
                   </button>
                 </div>
               )}
 
-              {/* Leave Node Section */}
-              <div style={{
-                marginTop: '40px',
-                paddingTop: '20px',
-                borderTop: '1px solid #40444b'
-              }}>
-                <h3 style={{ 
-                  margin: '0 0 12px 0', 
-                  fontSize: '16px', 
-                  color: isAdmin ? '#f04747' : '#faa61a' 
-                }}>
+              {/* Leave/Delete Node */}
+              <div className="ns-divider">
+                <h3 className={`ns-danger-title ${isAdmin ? 'admin' : 'member'}`}>
                   {isAdmin ? 'Delete Node' : 'Leave Node'}
                 </h3>
-                <p style={{ 
-                  margin: '0 0 16px 0', 
-                  fontSize: '14px', 
-                  color: 'var(--text-secondary)' 
-                }}>
+                <p className="ns-section-desc">
                   {isAdmin 
                     ? 'Permanently delete this Node. This action cannot be undone.'
-                    : 'Leave this Node. You can rejoin later with an invite.'
-                  }
+                    : 'Leave this Node. You can rejoin later with an invite.'}
                 </p>
-                <button
-                  onClick={handleLeaveNode}
-                  style={{
-                    background: isAdmin ? '#f04747' : '#faa61a',
-                    border: 'none',
-                    color: 'var(--text-on-accent)',
-                    padding: '10px 16px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '14px'
-                  }}
-                >
+                <button className={`ns-btn ${isAdmin ? 'ns-btn-danger' : 'ns-btn-warning'}`} onClick={handleLeaveNode}>
                   {isAdmin ? 'Delete Node' : 'Leave Node'}
                 </button>
               </div>
             </div>
           )}
 
-          {/* Roles Tab */}
+          {/* =================== ROLES =================== */}
           {activeTab === 'roles' && canManageRoles && (
             <div>
               {editingRole ? (
-                /* Role Editor */
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
-                    <button onClick={() => setEditingRole(null)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '18px' }}>←</button>
-                    <h4 style={{ margin: 0, fontSize: '16px' }}>Edit Role</h4>
+                  <div className="settings-action-row" style={{ marginBottom: 20 }}>
+                    <button className="ns-back-btn" onClick={() => setEditingRole(null)}>←</button>
+                    <h4 className="ns-section-title" style={{ margin: 0 }}>Edit Role</h4>
                   </div>
 
-                  <div style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Role Name</label>
-                    <input type="text" value={editRoleName} onChange={e => setEditRoleName(e.target.value)} maxLength={32}
-                      style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: 'var(--bg-active)', color: 'var(--text-on-accent)', fontSize: '14px' }} />
+                  <div className="ns-field">
+                    <label className="ns-label">Role Name</label>
+                    <input type="text" className="ns-input" value={editRoleName} onChange={e => setEditRoleName(e.target.value)} maxLength={32} />
                   </div>
 
-                  <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div className="ns-field" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div>
-                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Color</label>
-                      <input type="color" value={editRoleColor} onChange={e => setEditRoleColor(e.target.value)}
-                        style={{ width: '48px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }} />
+                      <label className="ns-label">Color</label>
+                      <input type="color" value={editRoleColor} onChange={e => setEditRoleColor(e.target.value)} style={{ width: 48, height: 32, border: 'none', background: 'none', cursor: 'pointer' }} />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <label className="ns-perm-item">
                         <input type="checkbox" checked={editRoleHoist} onChange={e => setEditRoleHoist(e.target.checked)} /> Display separately in member list
                       </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      <label className="ns-perm-item">
                         <input type="checkbox" checked={editRoleMentionable} onChange={e => setEditRoleMentionable(e.target.checked)} /> Allow anyone to @mention this role
                       </label>
                     </div>
                   </div>
 
-                  <div style={{ marginBottom: '20px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Permissions</label>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div className="ns-field">
+                    <label className="ns-label">Permissions</label>
+                    <div className="ns-perm-list">
                       {PERMISSIONS.map(p => (
-                        <label key={p.bit} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        <label key={p.bit} className="ns-perm-item">
                           <input type="checkbox" checked={(editRolePermissions & p.bit) !== 0}
                             onChange={e => setEditRolePermissions(prev => e.target.checked ? prev | p.bit : prev & ~p.bit)} />
                           {p.label}
@@ -909,82 +624,69 @@ export function NodeSettings({
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={handleSaveRole} disabled={savingRole}
-                      style={{ background: 'var(--green)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 16px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="ns-btn ns-btn-success" onClick={handleSaveRole} disabled={savingRole}>
                       {savingRole ? 'Saving...' : 'Save Changes'}
                     </button>
-                    <button onClick={() => handleDeleteRole(editingRole.id)}
-                      style={{ background: 'var(--red)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+                    <button className="ns-btn ns-btn-danger" onClick={() => handleDeleteRole(editingRole.id)}>
                       Delete Role
                     </button>
                   </div>
                 </div>
               ) : (
-                /* Role List */
                 <div>
-                  <div style={{ marginBottom: '16px' }}>
+                  <div style={{ marginBottom: 16 }}>
                     {!showCreateRole ? (
-                      <button onClick={() => setShowCreateRole(true)}
-                        style={{ background: 'var(--accent)', border: 'none', color: 'var(--text-on-accent)', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>
+                      <button className="ns-btn ns-btn-primary" onClick={() => setShowCreateRole(true)}>
                         ➕ Create Role
                       </button>
                     ) : (
-                      <div style={{ background: 'var(--bg-active)', padding: '16px', borderRadius: '8px' }}>
-                        <h4 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>New Role</h4>
-                        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                      <div className="ns-form-card">
+                        <h4>New Role</h4>
+                        <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
                           <div style={{ flex: 1 }}>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>Name</label>
-                            <input type="text" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} maxLength={32}
-                              style={{ width: '100%', padding: '8px', borderRadius: '4px', border: 'none', background: 'var(--bg-content)', color: 'var(--text-on-accent)', fontSize: '14px' }} />
+                            <label className="ns-label">Name</label>
+                            <input type="text" className="ns-input" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} maxLength={32} />
                           </div>
                           <div>
-                            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>Color</label>
-                            <input type="color" value={newRoleColor} onChange={e => setNewRoleColor(e.target.value)}
-                              style={{ width: '48px', height: '32px', border: 'none', background: 'none', cursor: 'pointer' }} />
+                            <label className="ns-label">Color</label>
+                            <input type="color" value={newRoleColor} onChange={e => setNewRoleColor(e.target.value)} style={{ width: 48, height: 32, border: 'none', background: 'none', cursor: 'pointer' }} />
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '16px', marginBottom: '12px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                          <label className="ns-perm-item">
                             <input type="checkbox" checked={newRoleHoist} onChange={e => setNewRoleHoist(e.target.checked)} /> Hoisted
                           </label>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                          <label className="ns-perm-item">
                             <input type="checkbox" checked={newRoleMentionable} onChange={e => setNewRoleMentionable(e.target.checked)} /> Mentionable
                           </label>
                         </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button onClick={handleCreateRole} disabled={savingRole}
-                            style={{ background: 'var(--green)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 12px', borderRadius: '4px', cursor: savingRole ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: savingRole ? 0.6 : 1 }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="ns-btn ns-btn-success" onClick={handleCreateRole} disabled={savingRole}>
                             {savingRole ? 'Creating...' : 'Create'}
                           </button>
-                          <button onClick={() => setShowCreateRole(false)}
-                            style={{ background: 'var(--bg-active)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
-                            Cancel
-                          </button>
+                          <button className="ns-btn ns-btn-ghost" onClick={() => setShowCreateRole(false)}>Cancel</button>
                         </div>
                       </div>
                     )}
                   </div>
 
                   {loadingRoles ? (
-                    <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>Loading roles...</div>
+                    <div className="ns-loading">Loading roles...</div>
                   ) : roles.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-faint)' }}>No roles created yet</div>
+                    <div className="ns-empty">No roles created yet</div>
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {roles.map((role, idx) => (
-                        <div key={role.id} style={{ background: 'var(--bg-active)', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: role.color || '#99aab5', flexShrink: 0 }} />
-                          <span style={{ flex: 1, fontSize: '14px', color: role.color || '#dcddde', fontWeight: 500, cursor: 'pointer' }}
-                            onClick={() => startEditRole(role)}>
+                        <div key={role.id} className="ns-role-item">
+                          <div className="ns-role-dot" style={{ background: role.color || '#99aab5' }} />
+                          <span className="ns-role-name" style={{ color: role.color || 'var(--text-secondary)' }} onClick={() => startEditRole(role)}>
                             {role.name}
                           </span>
-                          {role.hoist && <span style={{ fontSize: '11px', color: 'var(--text-faint)', background: 'var(--bg-dark)', padding: '1px 6px', borderRadius: '3px' }}>hoisted</span>}
-                          <div style={{ display: 'flex', gap: '2px' }}>
-                            <button onClick={() => handleMoveRole(role.id, 'up')} disabled={idx === 0}
-                              style={{ background: 'none', border: 'none', color: idx === 0 ? 'var(--bg-active)' : 'var(--text-secondary)', cursor: idx === 0 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▲</button>
-                            <button onClick={() => handleMoveRole(role.id, 'down')} disabled={idx === roles.length - 1}
-                              style={{ background: 'none', border: 'none', color: idx === roles.length - 1 ? 'var(--bg-active)' : 'var(--text-secondary)', cursor: idx === roles.length - 1 ? 'default' : 'pointer', fontSize: '14px', padding: '2px 4px' }}>▼</button>
+                          {role.hoist && <span className="ns-badge">hoisted</span>}
+                          <div style={{ display: 'flex', gap: 2 }}>
+                            <button className="ns-arrow-btn" onClick={() => handleMoveRole(role.id, 'up')} disabled={idx === 0}>▲</button>
+                            <button className="ns-arrow-btn" onClick={() => handleMoveRole(role.id, 'down')} disabled={idx === roles.length - 1}>▼</button>
                           </div>
                         </div>
                       ))}
@@ -992,18 +694,13 @@ export function NodeSettings({
                   )}
                 </div>
               )}
+
               {/* Import Discord Template */}
               {isAdmin && (
-                <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #40444b' }}>
-                  <h4 style={{ color: 'var(--text-secondary)', marginBottom: '8px' }}>Import Discord Template</h4>
-                  <p style={{ color: 'var(--text-faint)', fontSize: '13px', marginBottom: '12px' }}>
-                    Import channels, roles, and categories from a Discord server template.
-                  </p>
-                  <button 
-                    onClick={() => { if (onClose) onClose(); if (onShowTemplateImport) setTimeout(onShowTemplateImport, 100); }}
-                    className="btn btn-outline btn-sm"
-                    style={{ fontSize: '13px' }}
-                  >
+                <div className="ns-divider">
+                  <h4 className="ns-section-title" style={{ fontSize: 14 }}>Import Discord Template</h4>
+                  <p className="ns-section-desc">Import channels, roles, and categories from a Discord server template.</p>
+                  <button className="ns-btn ns-btn-ghost" onClick={() => { onClose(); if (onShowTemplateImport) setTimeout(onShowTemplateImport, 100); }}>
                     📥 Import Template
                   </button>
                 </div>
@@ -1011,129 +708,32 @@ export function NodeSettings({
             </div>
           )}
 
-          {/* Invites Tab */}
+          {/* =================== INVITES =================== */}
           {activeTab === 'invites' && canManageInvites && (
             <div>
-              {/* Create Invite Section */}
-              <div style={{ marginBottom: '24px' }}>
+              <div style={{ marginBottom: 24 }}>
                 {!showCreateInvite ? (
-                  <button
-                    onClick={() => setShowCreateInvite(true)}
-                    style={{
-                      background: 'var(--accent)',
-                      border: 'none',
-                      color: 'var(--text-on-accent)',
-                      padding: '10px 16px',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
-                  >
+                  <button className="ns-btn ns-btn-primary" onClick={() => setShowCreateInvite(true)}>
                     ➕ Create Invite
                   </button>
                 ) : (
-                  <div style={{
-                    background: 'var(--bg-active)',
-                    padding: '16px',
-                    borderRadius: '8px',
-                    marginBottom: '16px'
-                  }}>
-                    <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>Create New Invite</h4>
-                    
-                    <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                  <div className="ns-form-card">
+                    <h4>Create New Invite</h4>
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
                       <div style={{ flex: 1 }}>
-                        <label style={{ 
-                          display: 'block', 
-                          marginBottom: '6px', 
-                          fontSize: '12px', 
-                          color: 'var(--text-secondary)' 
-                        }}>
-                          Max Uses (optional)
-                        </label>
-                        <input
-                          type="number"
-                          placeholder="∞"
-                          value={maxUses}
-                          onChange={(e) => setMaxUses(e.target.value)}
-                          min="1"
-                          max="100"
-                          style={{
-                            width: '100%',
-                            padding: '8px',
-                            borderRadius: '4px',
-                            border: 'none',
-                            background: 'var(--bg-content)',
-                            color: 'var(--text-on-accent)',
-                            fontSize: '14px'
-                          }}
-                        />
+                        <label className="ns-label">Max Uses (optional)</label>
+                        <input type="number" className="ns-input" placeholder="∞" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} min="1" max="100" />
                       </div>
                       <div style={{ flex: 1 }}>
-                        <label style={{ 
-                          display: 'block', 
-                          marginBottom: '6px', 
-                          fontSize: '12px', 
-                          color: 'var(--text-secondary)' 
-                        }}>
-                          Expires in (hours)
-                        </label>
-                        <input
-                          type="number"
-                          placeholder="Never"
-                          value={expiresHours}
-                          onChange={(e) => setExpiresHours(e.target.value)}
-                          min="1"
-                          max="8760"
-                          style={{
-                            width: '100%',
-                            padding: '8px',
-                            borderRadius: '4px',
-                            border: 'none',
-                            background: 'var(--bg-content)',
-                            color: 'var(--text-on-accent)',
-                            fontSize: '14px'
-                          }}
-                        />
+                        <label className="ns-label">Expires in (hours)</label>
+                        <input type="number" className="ns-input" placeholder="Never" value={expiresHours} onChange={(e) => setExpiresHours(e.target.value)} min="1" max="8760" />
                       </div>
                     </div>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={handleCreateInvite}
-                        disabled={creatingInvite}
-                        style={{
-                          background: 'var(--green)',
-                          border: 'none',
-                          color: 'var(--text-on-accent)',
-                          padding: '8px 12px',
-                          borderRadius: '4px',
-                          cursor: creatingInvite ? 'not-allowed' : 'pointer',
-                          fontSize: '13px',
-                          opacity: creatingInvite ? 0.6 : 1
-                        }}
-                      >
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="ns-btn ns-btn-success" onClick={handleCreateInvite} disabled={creatingInvite}>
                         {creatingInvite ? 'Creating...' : 'Create'}
                       </button>
-                      <button
-                        onClick={() => {
-                          setShowCreateInvite(false);
-                          setMaxUses('');
-                          setExpiresHours('');
-                        }}
-                        disabled={creatingInvite}
-                        style={{
-                          background: 'var(--bg-active)',
-                          border: 'none',
-                          color: 'var(--text-on-accent)',
-                          padding: '8px 12px',
-                          borderRadius: '4px',
-                          cursor: creatingInvite ? 'not-allowed' : 'pointer',
-                          fontSize: '13px'
-                        }}
-                      >
+                      <button className="ns-btn ns-btn-ghost" onClick={() => { setShowCreateInvite(false); setMaxUses(''); setExpiresHours(''); }} disabled={creatingInvite}>
                         Cancel
                       </button>
                     </div>
@@ -1141,117 +741,64 @@ export function NodeSettings({
                 )}
               </div>
 
-              {/* Invites List */}
-              <div>
-                <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>Active Invites</h4>
-                
-                {loadingInvites ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
-                    Loading invites...
-                  </div>
-                ) : invites.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-faint)' }}>
-                    No active invites
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {invites.map((invite) => {
-                      const expired = isInviteExpired(invite);
-                      const maxedOut = isInviteMaxedOut(invite);
-                      const isInactive = expired || maxedOut;
-                      
-                      return (
-                        <div
-                          key={invite.code}
-                          style={{
-                            background: 'var(--bg-active)',
-                            padding: '12px',
-                            borderRadius: '6px',
-                            border: isInactive ? '1px solid #f04747' : 'none',
-                            opacity: isInactive ? 0.7 : 1
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                            <code style={{
-                              background: 'var(--bg-dark)',
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              fontSize: '13px',
-                              fontFamily: 'monospace'
-                            }}>
-                              {invite.code}
-                            </code>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                onClick={() => copyInviteCode(invite.code)}
-                                disabled={isInactive}
-                                style={{
-                                  background: 'var(--accent)',
-                                  border: 'none',
-                                  color: 'var(--text-on-accent)',
-                                  padding: '4px 8px',
-                                  borderRadius: '4px',
-                                  cursor: isInactive ? 'not-allowed' : 'pointer',
-                                  fontSize: '12px',
-                                  opacity: isInactive ? 0.5 : 1
-                                }}
-                              >
-                                Copy
-                              </button>
-                              <button
-                                onClick={() => handleRevokeInvite(invite.code)}
-                                style={{
-                                  background: 'var(--red)',
-                                  border: 'none',
-                                  color: 'var(--text-on-accent)',
-                                  padding: '4px 8px',
-                                  borderRadius: '4px',
-                                  cursor: 'pointer',
-                                  fontSize: '12px'
-                                }}
-                              >
-                                Revoke
-                              </button>
-                            </div>
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
-                            <span>Created: {formatDate(invite.created_at)}</span>
-                            <span>Uses: {invite.uses}{invite.max_uses ? `/${invite.max_uses}` : ''}</span>
-                            {invite.expires_at && (
-                              <span style={{ color: expired ? '#f04747' : '#b9bbbe' }}>
-                                {expired ? 'Expired: ' : 'Expires: '}{formatDate(invite.expires_at)}
-                              </span>
-                            )}
-                            {maxedOut && <span style={{ color: 'var(--red)' }}>Max uses reached</span>}
+              <h4 className="ns-section-title">Active Invites</h4>
+              {loadingInvites ? (
+                <div className="ns-loading">Loading invites...</div>
+              ) : invites.length === 0 ? (
+                <div className="ns-empty">No active invites</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {invites.map((invite) => {
+                    const expired = isInviteExpired(invite);
+                    const maxedOut = isInviteMaxedOut(invite);
+                    const isInactive = expired || maxedOut;
+                    return (
+                      <div key={invite.code} className={`ns-invite-card ${isInactive ? 'inactive' : ''}`}>
+                        <div className="ns-invite-header">
+                          <code className="ns-invite-code">{invite.code}</code>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button className="ns-btn ns-btn-primary" onClick={() => copyInviteCode(invite.code)} disabled={isInactive} style={{ padding: '4px 8px', fontSize: 12 }}>
+                              Copy
+                            </button>
+                            <button className="ns-btn ns-btn-danger" onClick={() => handleRevokeInvite(invite.code)} style={{ padding: '4px 8px', fontSize: 12 }}>
+                              Revoke
+                            </button>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                        <div className="ns-invite-meta">
+                          <span>Created: {formatDate(invite.created_at)}</span>
+                          <span>Uses: {invite.uses}{invite.max_uses ? `/${invite.max_uses}` : ''}</span>
+                          {invite.expires_at && (
+                            <span style={{ color: expired ? 'var(--red)' : 'var(--text-muted)' }}>
+                              {expired ? 'Expired: ' : 'Expires: '}{formatDate(invite.expires_at)}
+                            </span>
+                          )}
+                          {maxedOut && <span style={{ color: 'var(--red)' }}>Max uses reached</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Moderation Tab */}
+          {/* =================== MODERATION =================== */}
           {activeTab === 'moderation' && isAdmin && (
             <div>
-              {/* Slow Mode Section */}
-              <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>⏱️ Slow Mode</h4>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                Limit how often users can send messages in a channel.
-              </p>
+              <h4 className="ns-section-title">⏱️ Slow Mode</h4>
+              <p className="ns-section-desc">Limit how often users can send messages in a channel.</p>
               {nodeChannels.length === 0 ? (
-                <div style={{ color: 'var(--text-faint)', fontSize: '14px', marginBottom: '24px' }}>Loading channels...</div>
+                <div className="ns-loading" style={{ marginBottom: 32 }}>Loading channels...</div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '32px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 32 }}>
                   {nodeChannels.map(ch => (
-                    <div key={ch.id} style={{ background: 'var(--bg-active)', padding: '10px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-secondary)' }}>#{ch.name}</span>
+                    <div key={ch.id} className="ns-channel-row">
+                      <span className="ns-channel-name">#{ch.name}</span>
                       <select
+                        className="ns-select" style={{ width: 'auto' }}
                         value={slowModeChannels[ch.id] || 0}
                         onChange={(e) => handleSetSlowMode(ch.id, parseInt(e.target.value))}
-                        style={{ padding: '6px 10px', borderRadius: '4px', border: 'none', background: 'var(--bg-content)', color: 'var(--text-on-accent)', fontSize: '13px', cursor: 'pointer' }}
                       >
                         <option value="0">Off</option>
                         <option value="5">5 seconds</option>
@@ -1264,67 +811,38 @@ export function NodeSettings({
                 </div>
               )}
 
-              {/* Auto-Mod Word Filter Section */}
-              <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>🛡️ Word Filter</h4>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                Block or warn when messages contain specific words.
-              </p>
+              <h4 className="ns-section-title">🛡️ Word Filter</h4>
+              <p className="ns-section-desc">Block or warn when messages contain specific words.</p>
 
-              {/* Add word form */}
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                 <input
-                  type="text"
+                  type="text" className="ns-input" style={{ flex: 1 }}
                   placeholder="Enter word to filter..."
                   value={newWord}
                   onChange={(e) => setNewWord(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleAddWord(); }}
                   maxLength={100}
-                  style={{ flex: 1, padding: '8px', borderRadius: '4px', border: 'none', background: 'var(--bg-active)', color: 'var(--text-on-accent)', fontSize: '14px' }}
                 />
-                <select
-                  value={newWordAction}
-                  onChange={(e) => setNewWordAction(e.target.value as 'block' | 'warn')}
-                  style={{ padding: '8px 10px', borderRadius: '4px', border: 'none', background: 'var(--bg-active)', color: 'var(--text-on-accent)', fontSize: '13px', cursor: 'pointer' }}
-                >
+                <select className="ns-select" style={{ width: 'auto' }} value={newWordAction} onChange={(e) => setNewWordAction(e.target.value as 'block' | 'warn')}>
                   <option value="block">Block</option>
                   <option value="warn">Warn</option>
                 </select>
-                <button
-                  onClick={handleAddWord}
-                  disabled={!newWord.trim()}
-                  style={{ background: 'var(--green)', border: 'none', color: 'var(--text-on-accent)', padding: '8px 14px', borderRadius: '4px', cursor: newWord.trim() ? 'pointer' : 'not-allowed', fontSize: '13px', opacity: newWord.trim() ? 1 : 0.5 }}
-                >
-                  Add
-                </button>
+                <button className="ns-btn ns-btn-success" onClick={handleAddWord} disabled={!newWord.trim()}>Add</button>
               </div>
 
-              {/* Word list */}
               {loadingAutoMod ? (
-                <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>Loading...</div>
+                <div className="ns-loading">Loading...</div>
               ) : autoModWords.length === 0 ? (
-                <div style={{ color: 'var(--text-faint)', textAlign: 'center', padding: '20px' }}>No filtered words yet</div>
+                <div className="ns-empty">No filtered words yet</div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {autoModWords.map(w => (
-                    <div key={w.word} style={{ background: 'var(--bg-active)', padding: '8px 12px', borderRadius: '6px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ flex: 1, fontSize: '14px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{w.word}</span>
-                      <span style={{
-                        fontSize: '11px',
-                        padding: '2px 8px',
-                        borderRadius: '3px',
-                        background: w.action === 'block' ? '#f04747' : '#faa61a',
-                        color: 'var(--text-on-accent)',
-                        fontWeight: 600
-                      }}>
+                    <div key={w.word} className="ns-word-row">
+                      <span className="ns-word">{w.word}</span>
+                      <span className={`ns-badge ${w.action === 'block' ? 'ns-badge-block' : 'ns-badge-warn'}`}>
                         {w.action.toUpperCase()}
                       </span>
-                      <button
-                        onClick={() => handleRemoveWord(w.word)}
-                        style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '16px', padding: '0 4px' }}
-                        title="Remove word"
-                      >
-                        ×
-                      </button>
+                      <button className="ns-remove-btn" onClick={() => handleRemoveWord(w.word)} title="Remove word">×</button>
                     </div>
                   ))}
                 </div>
@@ -1332,77 +850,61 @@ export function NodeSettings({
             </div>
           )}
 
-          {/* Emojis Tab */}
+          {/* =================== EMOJIS =================== */}
           {activeTab === 'emojis' && isAdmin && (
             <div>
-              <h3 style={{ color: 'var(--text-on-accent)', marginBottom: '16px' }}>Custom Emojis</h3>
-              
-              {/* Upload new emoji */}
-              <div style={{ marginBottom: '20px', padding: '16px', background: 'var(--bg-dark)', borderRadius: '8px' }}>
-                <h4 style={{ color: 'var(--text-secondary)', marginBottom: '12px' }}>Upload Emoji</h4>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <h4 className="ns-section-title">Custom Emojis</h4>
+
+              <div className="ns-form-card" style={{ marginBottom: 20 }}>
+                <h4>Upload Emoji</h4>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                   <div>
-                    <label style={{ color: 'var(--text-secondary)', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Name</label>
-                    <input
-                      type="text"
+                    <label className="ns-label">Name</label>
+                    <input type="text" className="ns-input" style={{ width: 200 }}
                       value={newEmojiName}
                       onChange={e => setNewEmojiName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
-                      placeholder="emoji_name"
-                      maxLength={32}
-                      style={{ padding: '8px 12px', background: 'var(--bg-darkest)', border: '1px solid var(--bg-active)', borderRadius: '4px', color: 'var(--text-secondary)', fontSize: '14px', width: '200px' }}
+                      placeholder="emoji_name" maxLength={32}
                     />
                   </div>
                   <div>
-                    <label style={{ color: 'var(--text-secondary)', fontSize: '12px', display: 'block', marginBottom: '4px' }}>Image (PNG/GIF/WebP, max 256KB)</label>
-                    <input
-                      type="file"
-                      accept="image/png,image/gif,image/webp"
+                    <label className="ns-label">Image (PNG/GIF/WebP, max 256KB)</label>
+                    <input type="file" accept="image/png,image/gif,image/webp"
                       onChange={e => setNewEmojiFile(e.target.files?.[0] || null)}
-                      style={{ color: 'var(--text-secondary)', fontSize: '13px' }}
+                      style={{ color: 'var(--text-secondary)', fontSize: 13 }}
                     />
                   </div>
-                  <button
+                  <button className="ns-btn ns-btn-primary"
                     disabled={uploadingEmoji || !newEmojiName || newEmojiName.length < 2 || !newEmojiFile}
                     onClick={async () => {
                       if (!newEmojiFile || !newEmojiName) return;
-                      setUploadingEmoji(true);
-                      setError('');
-                      setSuccess('');
+                      setUploadingEmoji(true); setError(''); setSuccess('');
                       try {
                         await api.uploadEmoji(node.id, newEmojiName, newEmojiFile, token);
                         setSuccess(`Emoji :${newEmojiName}: uploaded!`);
-                        setNewEmojiName('');
-                        setNewEmojiFile(null);
-                        // Reload emojis
+                        setNewEmojiName(''); setNewEmojiFile(null);
                         const emojis = await api.listCustomEmojis(node.id);
                         setCustomEmojis(emojis);
                       } catch (err) {
                         setError(err instanceof Error ? err.message : 'Failed to upload emoji');
-                      } finally {
-                        setUploadingEmoji(false);
-                      }
+                      } finally { setUploadingEmoji(false); }
                     }}
-                    style={{ padding: '8px 16px', background: uploadingEmoji ? '#4f545c' : '#5865f2', color: 'var(--text-on-accent)', border: 'none', borderRadius: '4px', cursor: uploadingEmoji ? 'default' : 'pointer', fontSize: '14px' }}
                   >
                     {uploadingEmoji ? 'Uploading...' : 'Upload'}
                   </button>
                 </div>
               </div>
 
-              {/* Emoji list */}
               {loadingEmojis ? (
-                <div style={{ color: 'var(--text-secondary)' }}>Loading emojis...</div>
+                <div className="ns-loading">Loading emojis...</div>
               ) : customEmojis.length === 0 ? (
-                <div style={{ color: 'var(--text-faint)', fontStyle: 'italic' }}>No custom emojis yet. Upload one above!</div>
+                <div className="ns-empty">No custom emojis yet. Upload one above!</div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
+                <div className="ns-emoji-grid">
                   {customEmojis.map(emoji => (
-                    <div key={emoji.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'var(--bg-dark)', borderRadius: '6px' }}>
-                      <img src={api.getEmojiUrl(emoji.content_hash)} alt={`:${emoji.name}:`} style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ color: 'var(--text-secondary)', fontSize: '14px', fontWeight: '500' }}>:{emoji.name}:</div>
-                      </div>
-                      <button
+                    <div key={emoji.id} className="ns-emoji-item">
+                      <img src={api.getEmojiUrl(emoji.content_hash)} alt={`:${emoji.name}:`} />
+                      <span className="ns-emoji-name">:{emoji.name}:</span>
+                      <button className="ns-remove-btn" title="Delete emoji"
                         onClick={async () => {
                           setError('');
                           try {
@@ -1413,11 +915,7 @@ export function NodeSettings({
                             setError(err instanceof Error ? err.message : 'Failed to delete emoji');
                           }
                         }}
-                        style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '16px', padding: '4px' }}
-                        title="Delete emoji"
-                      >
-                        ✕
-                      </button>
+                      >✕</button>
                     </div>
                   ))}
                 </div>
@@ -1425,34 +923,12 @@ export function NodeSettings({
             </div>
           )}
 
-          {/* Audit Log Tab */}
+          {/* =================== AUDIT LOG =================== */}
           {activeTab === 'audit' && canViewAuditLog && (
             <div>
-              {/* Filter */}
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ 
-                  display: 'block', 
-                  marginBottom: '8px', 
-                  fontSize: '14px', 
-                  fontWeight: '600', 
-                  color: 'var(--text-secondary)' 
-                }}>
-                  Filter by Action
-                </label>
-                <select
-                  value={auditFilter}
-                  onChange={(e) => setAuditFilter(e.target.value)}
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    border: 'none',
-                    background: 'var(--bg-active)',
-                    color: 'var(--text-on-accent)',
-                    fontSize: '14px',
-                    cursor: 'pointer',
-                    minWidth: '200px'
-                  }}
-                >
+              <div className="ns-field">
+                <label className="ns-label">Filter by Action</label>
+                <select className="ns-select" style={{ width: 'auto', minWidth: 200 }} value={auditFilter} onChange={(e) => setAuditFilter(e.target.value)}>
                   <option value="all">All Actions</option>
                   <option value="channel_create">Channel Create</option>
                   <option value="channel_delete">Channel Delete</option>
@@ -1467,114 +943,46 @@ export function NodeSettings({
                 </select>
               </div>
 
-              {/* Audit Log Entries */}
-              <div>
-                <h4 style={{ margin: '0 0 16px 0', fontSize: '16px' }}>Recent Activity</h4>
-                
-                {loadingAudit && auditEntries.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
-                    Loading audit log...
-                  </div>
-                ) : getFilteredAuditEntries().length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-faint)' }}>
-                    No audit entries found
-                  </div>
-                ) : (
-                  <div style={{ 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    gap: '8px',
-                    maxHeight: '400px',
-                    overflowY: 'auto'
-                  }}>
-                    {getFilteredAuditEntries().map((entry) => (
-                      <div
-                        key={entry.id}
-                        style={{
-                          background: 'var(--bg-active)',
-                          padding: '12px',
-                          borderRadius: '6px',
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: '12px'
-                        }}
-                      >
-                        <div style={{ fontSize: '18px', marginTop: '2px' }}>
-                          {getActionIcon(entry.action)}
+              <h4 className="ns-section-title">Recent Activity</h4>
+              {loadingAudit && auditEntries.length === 0 ? (
+                <div className="ns-loading">Loading audit log...</div>
+              ) : getFilteredAuditEntries().length === 0 ? (
+                <div className="ns-empty">No audit entries found</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflowY: 'auto' }}>
+                  {getFilteredAuditEntries().map((entry) => (
+                    <div key={entry.id} className="ns-audit-entry">
+                      <span className="ns-audit-icon">{getActionIcon(entry.action)}</span>
+                      <div className="ns-audit-content">
+                        <div style={{ marginBottom: 4, fontSize: 14 }}>
+                          <span className="ns-audit-actor">
+                            {entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
+                          </span>{' '}
+                          <span className="ns-audit-action">{getActionDescription(entry)}</span>
                         </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ marginBottom: '4px', fontSize: '14px' }}>
-                            <span style={{ fontWeight: '600', color: 'var(--text-on-accent)' }}>
-                              {entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
-                            </span>{' '}
-                            <span style={{ color: 'var(--text-secondary)' }}>
-                              {getActionDescription(entry)}
-                            </span>
-                          </div>
-                          <div style={{ 
-                            fontSize: '12px', 
-                            color: 'var(--text-faint)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '16px'
-                          }}>
-                            <span>{formatDate(entry.created_at)}</span>
-                            <span style={{ 
-                              background: 'var(--bg-dark)',
-                              padding: '2px 6px',
-                              borderRadius: '3px',
-                              fontSize: '11px',
-                              fontFamily: 'monospace'
-                            }}>
-                              {entry.target_type}
-                            </span>
-                          </div>
+                        <div className="ns-audit-meta">
+                          <span>{formatDate(entry.created_at)}</span>
+                          <span className="ns-audit-type">{entry.target_type}</span>
                         </div>
                       </div>
-                    ))}
-                    
-                    {/* Load More Button */}
-                    {hasMoreAudit && (
-                      <div style={{ textAlign: 'center', marginTop: '12px' }}>
-                        <button
-                          onClick={loadMoreAudit}
-                          disabled={loadingAudit}
-                          style={{
-                            background: 'var(--accent)',
-                            border: 'none',
-                            color: 'var(--text-on-accent)',
-                            padding: '8px 16px',
-                            borderRadius: '4px',
-                            cursor: loadingAudit ? 'not-allowed' : 'pointer',
-                            fontSize: '13px',
-                            opacity: loadingAudit ? 0.6 : 1
-                          }}
-                        >
-                          {loadingAudit ? 'Loading...' : 'Load More'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                    </div>
+                  ))}
+                  {hasMoreAudit && (
+                    <div style={{ textAlign: 'center', marginTop: 12 }}>
+                      <button className="ns-btn ns-btn-primary" onClick={loadMoreAudit} disabled={loadingAudit}>
+                        {loadingAudit ? 'Loading...' : 'Load More'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Messages */}
+        {/* Toast messages */}
         {(error || success) && (
-          <div style={{
-            position: 'absolute',
-            top: '16px',
-            right: '16px',
-            background: error ? '#f04747' : '#43b581',
-            color: 'var(--text-on-accent)',
-            padding: '8px 12px',
-            borderRadius: '4px',
-            fontSize: '14px',
-            maxWidth: '300px',
-            zIndex: 1002
-          }}>
+          <div className={`ns-toast ${error ? 'error' : 'success'}`}>
             {error || success}
           </div>
         )}
