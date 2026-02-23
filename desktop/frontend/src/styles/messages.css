@@ -2,20 +2,20 @@
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
 }
 
 .messages.with-voice {
-  /* Voice panel now renders inline — no extra margin needed */
+  /* Voice panel now renders inline */
 }
 
 .messages-loading {
   text-align: center;
   padding: 12px;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--font-base);
 }
 
 .messages-loading .spinner {
@@ -32,9 +32,9 @@
 
 .messages-beginning {
   text-align: center;
-  padding: 16px;
+  padding: 16px 16px 8px;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--font-sm);
   border-bottom: 1px solid var(--border-subtle);
   margin: 0 16px 8px;
 }
@@ -54,7 +54,7 @@
 .empty-state-icon {
   font-size: 48px;
   margin-bottom: 16px;
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .empty-state-title {
@@ -65,43 +65,62 @@
 }
 
 .empty-state-text {
-  font-size: 14px;
+  font-size: var(--font-base);
   color: var(--text-faint);
   max-width: 360px;
-  line-height: 1.5;
+  line-height: var(--lh-relaxed);
 }
 
-/* Message item */
+/* =================== Message Item =================== */
 .message {
   display: flex;
-  gap: 16px;
   padding: 2px 48px 2px 72px;
-  margin-top: 16px;
+  margin-top: 17px;
   position: relative;
+  min-height: 44px;
   transition: background var(--transition-fast);
 }
 
+/* Grouped messages (same author within 7min) — compact */
 .message-grouped {
   margin-top: 0;
+  min-height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 .message:hover {
-  background: var(--bg-hover);
+  background: var(--bg-modifier-hover);
 }
 
+/* Avatar */
 .message-avatar {
   width: 40px;
   height: 40px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   flex-shrink: 0;
   position: absolute;
   left: 16px;
+  top: 2px;
+  cursor: pointer;
+  overflow: hidden;
+  user-select: none;
+}
+
+.message-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.message-avatar:hover {
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .message-body {
@@ -109,18 +128,20 @@
   flex: 1;
 }
 
+/* Header: author + timestamp */
 .message-header {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  flex-wrap: wrap;
+  line-height: 22px;
 }
 
 .message-author {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--font-lg);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .message-author:hover {
@@ -128,81 +149,84 @@
 }
 
 .message-time {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-faint);
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .message-edited {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-faint);
-  font-style: italic;
   margin-left: 4px;
 }
 
 .message-encrypted-badge {
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--green);
-  margin-left: 4px;
+  margin-left: 2px;
 }
 
 .message-pinned-badge {
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--yellow);
-  margin-left: 4px;
+  margin-left: 2px;
 }
 
+/* Content */
 .message-content {
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.375;
-  margin-top: 2px;
+  font-size: var(--font-lg);
+  line-height: var(--lh-normal);
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
-/* Message actions toolbar */
+.message-content p {
+  margin: 0;
+}
+
+/* =================== Message Actions Toolbar =================== */
 .message-actions {
   display: flex;
   position: absolute;
   top: -16px;
-  right: 16px;
-  background: var(--bg-dark);
+  right: 14px;
+  background: var(--bg-floating);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 2px;
-  gap: 1px;
-  box-shadow: var(--shadow-high);
-  z-index: 1;
+  border-radius: var(--radius-sm);
+  padding: 0 2px;
+  gap: 0;
+  box-shadow: var(--shadow-elevation-high);
+  z-index: 2;
   opacity: 0;
-  transform: scale(0.95);
   pointer-events: none;
-  transition: opacity 0.1s ease, transform 0.1s ease;
+  transition: opacity 0.1s ease;
 }
 
 .message:hover .message-actions {
   opacity: 1;
-  transform: scale(1);
   pointer-events: auto;
 }
 
 .message-action-btn {
-  background: none;
+  background: transparent;
   border: none;
-  padding: 4px 6px;
-  font-size: 16px;
+  padding: 6px 6px;
+  font-size: 18px;
   cursor: pointer;
-  border-radius: 3px;
-  opacity: 0.7;
-  transition: opacity var(--transition-fast), background-color var(--transition-fast);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
   line-height: 1;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .message-action-btn:hover {
-  opacity: 1;
-  background: var(--bg-input);
+  color: var(--text-primary);
+  background: var(--bg-modifier-hover);
 }
 
-/* Message editing */
+/* =================== Message Editing =================== */
 .message-edit-container {
   margin-top: 8px;
 }
@@ -211,10 +235,10 @@
   width: 100%;
   background: var(--bg-input);
   border: 1px solid var(--bg-darkest);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  padding: 11px 16px;
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--font-lg);
   font-family: inherit;
   outline: none;
   transition: border-color var(--transition-fast);
@@ -228,42 +252,37 @@
   display: flex;
   gap: 8px;
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .edit-save-btn {
   background: var(--accent);
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   border: none;
   border-radius: var(--radius-sm);
-  padding: 4px 12px;
+  padding: 4px 16px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 500;
-  transition: background var(--transition-fast);
 }
 
-.edit-save-btn:hover {
-  background: var(--accent-hover);
-}
+.edit-save-btn:hover { background: var(--accent-hover); }
 
 .edit-cancel-btn {
   background: transparent;
   color: var(--text-muted);
   border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 12px;
+  padding: 4px 16px;
   cursor: pointer;
-  font-size: 12px;
-  transition: all var(--transition-fast);
+  font-size: var(--font-sm);
 }
 
 .edit-cancel-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  text-decoration: underline;
 }
 
-/* Delete confirmation */
+/* =================== Delete Confirmation =================== */
 .delete-confirm-overlay {
   position: fixed;
   top: 0;
@@ -278,62 +297,63 @@
 }
 
 .delete-confirm-dialog {
-  background: var(--bg-dark);
-  border-radius: var(--radius-md);
-  padding: 24px;
+  background: var(--bg-floating);
+  border-radius: var(--radius-sm);
+  padding: 0;
   max-width: 440px;
   width: 90%;
-  box-shadow: var(--shadow-high);
+  box-shadow: var(--shadow-elevation-high);
+  overflow: hidden;
 }
 
 .delete-confirm-dialog h3 {
   color: var(--text-primary);
-  font-size: 18px;
-  margin: 0 0 8px;
+  font-size: var(--font-xl);
+  font-weight: 600;
+  padding: 16px 16px 0;
 }
 
 .delete-confirm-dialog p {
   color: var(--text-muted);
-  margin: 0 0 20px;
-  font-size: 14px;
-  line-height: 1.4;
+  padding: 8px 16px 0;
+  font-size: var(--font-base);
+  line-height: var(--lh-relaxed);
 }
 
 .delete-confirm-actions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  padding: 16px;
+  background: var(--bg-darkest);
+  margin-top: 16px;
 }
 
 .delete-confirm-btn {
   background: var(--red);
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   border: none;
-  border-radius: var(--radius-sm);
-  padding: 10px 20px;
+  border-radius: var(--radius-xs);
+  padding: 8px 24px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-base);
   font-weight: 500;
-  transition: background var(--transition-fast);
+  min-height: 38px;
 }
 
-.delete-confirm-btn:hover {
-  background: var(--red-dark);
-}
+.delete-confirm-btn:hover { background: var(--red-dark); }
 
 .delete-cancel-btn {
   background: transparent;
   color: var(--text-secondary);
   border: none;
-  border-radius: var(--radius-sm);
-  padding: 10px 20px;
+  padding: 8px 24px;
   cursor: pointer;
-  font-size: 14px;
-  transition: all var(--transition-fast);
+  font-size: var(--font-base);
+  min-height: 38px;
 }
 
 .delete-cancel-btn:hover {
   color: var(--text-primary);
   text-decoration: underline;
 }
-

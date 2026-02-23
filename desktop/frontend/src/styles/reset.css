@@ -1,8 +1,13 @@
-/* =================== Reset =================== */
+/* =================== Reset & Base =================== */
 *, *::before, *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
 }
 
 body {
@@ -10,38 +15,59 @@ body {
   background: var(--bg-content);
   color: var(--text-primary);
   overflow: hidden;
-  font-size: 15px;
-  line-height: 1.375;
+  font-size: var(--font-lg);
+  line-height: var(--lh-normal);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 input, textarea, select, button {
   font-family: inherit;
+  font-size: inherit;
 }
 
-/* Focus ring — visible only for keyboard navigation */
+a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+/* Focus ring — keyboard only */
 :focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
+  border-radius: var(--radius-xs);
 }
 
 :focus:not(:focus-visible) {
   outline: none;
 }
 
-/* Smooth transitions on all interactive elements */
+/* Global transitions on interactive elements */
 a, button, input, textarea, select {
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+  transition: background var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              opacity var(--transition-fast);
 }
 
-/* Selection color */
+/* Selection */
 ::selection {
-  background: var(--accent-light);
-  color: var(--text-primary);
+  background: var(--accent);
+  color: var(--text-on-accent);
 }
 
-/* =================== Scrollbar =================== */
+/* Scrollbar — thin, Discord-style */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -49,18 +75,32 @@ a, button, input, textarea, select {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+  margin: 4px 0;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--bg-darkest);
-  border-radius: 4px;
+  border-radius: 100px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  min-height: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--bg-deepest);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
+/* Utility: hide scrollbar but keep scrollable */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

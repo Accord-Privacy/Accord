@@ -1,18 +1,18 @@
 /* =================== Member Sidebar =================== */
 .member-sidebar {
-  width: 240px;
+  width: var(--member-sidebar-width);
   background: var(--bg-dark);
-  padding: 16px 8px;
+  padding: 0;
   flex-shrink: 0;
   overflow-y: auto;
 }
 
 .member-header {
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-xs);
+  font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
-  padding: 0 8px 12px;
+  padding: 24px 8px 4px 16px;
   letter-spacing: 0.02em;
 }
 
@@ -20,72 +20,103 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 8px;
+  padding: 1px 8px;
+  margin: 1px 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--transition-fast);
+  min-height: 42px;
 }
 
 .member:hover {
-  background: var(--bg-hover);
+  background: var(--bg-modifier-hover);
 }
 
 .member-avatar {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
   background: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.member-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.member-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
 }
 
 .member-name {
-  font-size: 14px;
+  font-size: var(--font-lg);
+  font-weight: 500;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: var(--lh-tight);
 }
 
 .member:hover .member-name {
-  color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.member-status-text {
+  font-size: var(--font-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: var(--lh-tight);
+}
+
+/* Offline members */
+.member.offline .member-avatar {
+  opacity: 0.4;
+}
+
+.member.offline .member-name {
+  color: var(--text-faint);
 }
 
 .member-role-badge {
-  font-size: 12px;
+  font-size: var(--font-sm);
   margin-left: 2px;
 }
 
 .member-action-btn {
   background: var(--accent);
   border: none;
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   padding: 2px 6px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--font-xs);
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-.member:hover .member-action-btn {
-  opacity: 0.7;
-}
-
-.member-action-btn:hover {
-  opacity: 1 !important;
-}
-
-.member-action-btn.danger {
-  background: var(--red);
-}
+.member:hover .member-action-btn { opacity: 0.7; }
+.member-action-btn:hover { opacity: 1 !important; }
+.member-action-btn.danger { background: var(--red); }
 
 .members-empty {
   padding: 16px;
   color: var(--text-faint);
-  font-size: 13px;
+  font-size: var(--font-sm);
   text-align: center;
 }
-

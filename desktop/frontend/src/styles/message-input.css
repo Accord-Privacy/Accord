@@ -2,40 +2,70 @@
 .message-input-container {
   padding: 0 16px 24px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 0;
   flex-shrink: 0;
   position: relative;
   flex-wrap: wrap;
 }
 
-.message-input {
+.message-input-wrapper {
   flex: 1;
-  padding: 12px 16px;
+  display: flex;
+  align-items: center;
   background: var(--bg-input);
-  border: none;
   border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: 15px;
-  outline: none;
+  padding: 0 16px;
+  min-height: 44px;
   transition: background var(--transition-fast);
-  min-width: 0;
 }
 
-.message-input:focus {
+.message-input-wrapper:focus-within {
   background: var(--bg-elevated);
+}
+
+.message-input {
+  flex: 1;
+  padding: 11px 0;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: var(--font-lg);
+  outline: none;
+  min-width: 0;
+  line-height: 22px;
 }
 
 .message-input::placeholder {
   color: var(--text-faint);
 }
 
-/* Reply input bar */
+/* Input toolbar buttons (attach, emoji) */
+.message-input-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color var(--transition-fast);
+}
+
+.message-input-btn:hover {
+  color: var(--text-primary);
+}
+
+/* =================== Reply Preview =================== */
 .reply-input-preview {
   display: flex;
   align-items: center;
   background: var(--bg-input);
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   padding: 8px 12px;
   margin: 0 16px;
   border-left: 3px solid var(--accent);
@@ -60,7 +90,7 @@
 }
 
 .reply-input-text {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -73,71 +103,77 @@
   border: none;
   color: var(--text-faint);
   font-size: 18px;
-  font-weight: bold;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 2px 4px;
   margin-left: 8px;
-  border-radius: 2px;
-  transition: all var(--transition-fast);
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
 
 .reply-cancel-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: var(--bg-modifier-hover);
 }
 
-/* Reply preview in messages */
+/* =================== Reply in Messages =================== */
 .reply-message { position: relative; }
 
 .reply-preview {
   display: flex;
-  align-items: flex-start;
-  margin-left: 56px;
+  align-items: center;
   margin-bottom: 4px;
-  padding: 4px 8px;
-  border-radius: 3px;
-  background: var(--bg-hover);
+  padding: 2px 0;
   cursor: pointer;
-  transition: background var(--transition-fast);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  gap: 4px;
+}
+
+.reply-preview::before {
+  content: '';
+  display: block;
+  width: 33px;
+  height: 12px;
+  border-left: 2px solid var(--text-faint);
+  border-top: 2px solid var(--text-faint);
+  border-radius: 8px 0 0 0;
+  margin-right: 4px;
+  margin-top: 8px;
+  flex-shrink: 0;
 }
 
 .reply-preview:hover {
-  background: var(--bg-active);
+  color: var(--text-primary);
 }
 
 .reply-bar {
-  width: 2px;
-  background: var(--text-faint);
-  border-radius: 1px;
-  margin-right: 8px;
-  flex-shrink: 0;
-  min-height: 20px;
+  display: none; /* Using ::before instead */
 }
 
 .reply-content {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   min-width: 0;
   flex: 1;
+  gap: 4px;
 }
 
 .reply-author {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-sm);
+  font-weight: 600;
   color: var(--text-secondary);
-  margin-bottom: 2px;
+  white-space: nowrap;
 }
 
 .reply-snippet {
-  font-size: 12px;
-  color: var(--text-faint);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Thread reply count indicator */
+/* =================== Thread Indicator =================== */
 .thread-indicator {
   display: flex;
   align-items: center;
@@ -146,28 +182,20 @@
   padding: 2px 8px;
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: background var(--transition-fast);
   width: fit-content;
 }
 
-.thread-indicator:hover {
-  background: var(--bg-hover);
-}
+.thread-indicator:hover { background: var(--bg-modifier-hover); }
 
-.thread-icon {
-  font-size: 12px;
-}
-
+.thread-icon { font-size: var(--font-sm); }
 .thread-count {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 500;
   color: var(--accent);
 }
 
-/* Highlight effect for scrolled-to messages */
+/* Scroll-to highlight */
 .highlight-message {
   background: rgba(88, 101, 242, 0.08) !important;
-  border-radius: var(--radius-sm);
   transition: background 2s ease;
 }
-

@@ -1,21 +1,37 @@
-/* =================== Server List (left bar) =================== */
+/* =================== Server List (Guild Bar) =================== */
 .server-list {
-  width: 72px;
-  background: var(--bg-darkest);
+  width: var(--server-bar-width);
+  background: var(--bg-deepest);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 0;
+  padding: 12px 0 12px;
   gap: 8px;
   flex-shrink: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
 }
 
+.server-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* Separator between home and servers */
+.server-list-separator {
+  width: 32px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* Server icon — the circular/rounded-square morph */
 .server-icon {
   position: relative;
   width: 48px;
   height: 48px;
-  border-radius: 50%;
+  border-radius: 24px;
   background: var(--bg-content);
   display: flex;
   align-items: center;
@@ -24,57 +40,100 @@
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: border-radius var(--transition-normal), background var(--transition-normal), color var(--transition-normal);
+  overflow: hidden;
+  transition: border-radius 0.15s ease, background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
 }
 
-.server-icon:hover,
-.server-icon.active {
-  border-radius: var(--radius-xl);
+.server-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.server-icon:hover {
+  border-radius: 16px;
   background: var(--accent);
-  color: var(--text-primary);
+  color: var(--text-on-accent);
 }
 
+.server-icon.active {
+  border-radius: 16px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+/* Pill indicator (left side) */
+.server-icon::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  width: 8px;
+  border-radius: 0 4px 4px 0;
+  background: var(--text-primary);
+  transition: height 0.15s ease, opacity 0.15s ease;
+  height: 0;
+  opacity: 0;
+}
+
+.server-icon:hover::before {
+  height: 20px;
+  opacity: 1;
+}
+
+.server-icon.active::before {
+  height: 40px;
+  opacity: 1;
+}
+
+.server-icon.has-unread::before {
+  height: 8px;
+  opacity: 1;
+}
+
+/* Add server button */
 .server-icon.add-server {
   background: transparent;
-  border: 2px dashed var(--bg-input);
+  border: none;
   color: var(--green);
   font-size: 24px;
 }
 
 .server-icon.add-server:hover {
   background: var(--green);
-  color: var(--text-primary);
-  border-color: var(--green);
-  border-radius: var(--radius-xl);
+  color: var(--text-on-accent);
+  border-radius: 16px;
 }
 
+/* Notification badges */
 .server-notification {
   position: absolute;
-  top: -2px;
-  right: -2px;
+  bottom: -1px;
+  right: -1px;
   background: var(--red);
-  border: 2px solid var(--bg-darkest);
-  width: 16px;
+  border: 3px solid var(--bg-deepest);
+  min-width: 22px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 10px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--text-on-accent);
+  padding: 0 4px;
+  line-height: 1;
 }
 
 .server-notification.mention {
-  background: var(--yellow);
-  color: var(--bg-darkest);
+  background: var(--red);
 }
 
 .server-notification.dot {
   width: 8px;
   height: 8px;
-  top: 2px;
-  right: 2px;
-  border: 1px solid var(--bg-darkest);
+  min-width: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-deepest);
+  padding: 0;
 }
-

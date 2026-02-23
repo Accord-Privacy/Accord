@@ -1,25 +1,25 @@
 /* ============================================
-   Accord — Discord-like Dark Theme
-   Color Palette:
-     --bg-darkest:  #1e1f22
-     --bg-dark:     #2b2d31
-     --bg-content:  #313338
-     --bg-input:    #383a40
-     --accent:      #5865f2
+   Accord — Discord-inspired Dark Theme
+   Layered greys create visual depth.
    ============================================ */
 
-/* CSS Variables */
 :root {
+  /* Grey depth system (darkest → lightest) */
+  --bg-deepest: #111214;
   --bg-darkest: #1e1f22;
   --bg-dark: #2b2d31;
   --bg-content: #313338;
   --bg-input: #383a40;
-  --bg-hover: #2e3035;
-  --bg-active: #404249;
+  --bg-hover: rgba(78, 80, 88, 0.3);
+  --bg-active: rgba(78, 80, 88, 0.6);
   --bg-overlay: rgba(0, 0, 0, 0.85);
-  --bg-deepest: #111214;
   --bg-elevated: #404349;
+  --bg-floating: #2b2d31;
+  --bg-modifier-hover: rgba(78, 80, 88, 0.3);
+  --bg-modifier-active: rgba(78, 80, 88, 0.48);
+  --bg-modifier-selected: rgba(78, 80, 88, 0.6);
 
+  /* Brand / Accent */
   --accent: #5865f2;
   --accent-hover: #4752c4;
   --accent-light: rgba(88, 101, 242, 0.15);
@@ -30,33 +30,49 @@
   --yellow: #f0b232;
   --orange: #e67e22;
 
+  /* Text hierarchy */
   --text-primary: #f2f3f5;
   --text-on-accent: #fff;
-  --text-secondary: #b5bac1;
+  --text-secondary: #dbdee1;
   --text-muted: #949ba4;
   --text-faint: #6d6f78;
   --text-link: #00a8fc;
+  --text-positive: #23a559;
+  --text-danger: #da373c;
+  --text-warning: #f0b232;
 
-  --border: #1e1f22;
+  /* Borders */
+  --border: rgba(0, 0, 0, 0.24);
   --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.48);
 
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  /* Typography */
+  --font-sans: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'Consolas', 'Andale Mono WT', 'Andale Mono', 'Lucida Console', monospace;
+  --font-display: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
+  /* Radii */
+  --radius-xs: 3px;
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+  --radius-round: 50%;
+  --radius-pill: 9999px;
 
+  /* Shadows */
   --shadow-low: 0 1px 0 rgba(0, 0, 0, 0.2), 0 1.5px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.24);
-  --shadow-high: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-high: 0 8px 16px rgba(0, 0, 0, 0.24);
+  --shadow-elevation-low: 0 1px 5px rgba(0, 0, 0, 0.3);
+  --shadow-elevation-high: 0 8px 16px rgba(0, 0, 0, 0.24);
 
-  --transition-fast: 0.15s ease;
+  /* Transitions */
+  --transition-fast: 0.1s ease;
   --transition-normal: 0.2s ease;
   --transition-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Spacing scale */
+  /* Spacing */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
@@ -69,8 +85,18 @@
   --font-sm: 12px;
   --font-base: 14px;
   --font-md: 15px;
-  --font-lg: 18px;
+  --font-lg: 16px;
   --font-xl: 20px;
   --font-2xl: 24px;
-}
 
+  /* Line heights */
+  --lh-tight: 1.25;
+  --lh-normal: 1.375;
+  --lh-relaxed: 1.5;
+
+  /* Specific component sizing */
+  --header-height: 48px;
+  --server-bar-width: 72px;
+  --sidebar-width: 240px;
+  --member-sidebar-width: 240px;
+}
