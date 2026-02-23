@@ -76,12 +76,17 @@
   display: flex;
   gap: 16px;
   padding: 2px 48px 2px 72px;
+  margin-top: 16px;
   position: relative;
   transition: background var(--transition-fast);
 }
 
+.message-grouped {
+  margin-top: 0;
+}
+
 .message:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--bg-hover);
 }
 
 .message-avatar {
@@ -157,21 +162,27 @@
 
 /* Message actions toolbar */
 .message-actions {
-  display: none;
+  display: flex;
   position: absolute;
   top: -16px;
   right: 16px;
   background: var(--bg-dark);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: 2px;
-  gap: 2px;
-  box-shadow: var(--shadow-md);
+  gap: 1px;
+  box-shadow: var(--shadow-high);
   z-index: 1;
+  opacity: 0;
+  transform: scale(0.95);
+  pointer-events: none;
+  transition: opacity 0.1s ease, transform 0.1s ease;
 }
 
 .message:hover .message-actions {
-  display: flex;
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
 }
 
 .message-action-btn {

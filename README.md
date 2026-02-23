@@ -217,8 +217,10 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 | Zero-knowledge server | ✅ | ❌ | ✅ | ❌ | ❌ |
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ | ✅ |
 | No PII required | ✅ | ❌ | ❌ | ❌ | ❌ |
-| No paywalled features | ✅ | ❌ | ✅ | ✅ | ❌ |
+| No paywalled features | ✅ | ❌ | ✅ | ✅ | ⚠️¹ |
 | Open source | ✅ | ❌ | ✅ | ✅ | ✅ |
+
+> ¹ Fluxer is fully open source — all features are available when self-hosted. Paywalling only applies to their official hosted servers.
 
 ---
 
