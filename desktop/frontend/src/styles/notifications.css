@@ -1,0 +1,81 @@
+/* =================== Notification Badges =================== */
+
+.notification-dot {
+  background: var(--red);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mention-badge {
+  background: var(--yellow);
+  color: var(--bg-darkest);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  min-width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  margin-left: 4px;
+}
+
+/* =================== Modals (generic) =================== */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+}
+
+.modal-card {
+  background: var(--bg-dark);
+  padding: 24px;
+  border-radius: var(--radius-md);
+  max-width: 440px;
+  width: 90%;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-high);
+}
+
+.modal-card h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.modal-card p {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 0 0 16px;
+  line-height: 1.4;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.modal-code-block {
+  background: var(--bg-darkest);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  word-break: break-all;
+  user-select: text;
+  color: var(--text-secondary);
+}
+

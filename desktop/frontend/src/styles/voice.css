@@ -1,0 +1,102 @@
+/* Voice Connection Panel */
+.voice-connection-panel {
+  background: var(--bg-darkest);
+  border-top: 1px solid var(--bg-darkest);
+  padding: 8px 10px;
+}
+.voice-connection-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.voice-connection-dot {
+  color: var(--green);
+  font-size: 14px;
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.voice-connection-details {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.voice-connection-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+}
+.voice-connection-channel {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-connection-timer {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.voice-connection-controls {
+  display: flex;
+  gap: 6px;
+}
+.voice-ctrl-btn {
+  flex: 1;
+  background: var(--bg-active);
+  border: none;
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.15s;
+}
+.voice-ctrl-btn:hover {
+  background: var(--text-faint);
+}
+.voice-ctrl-btn.active {
+  background: var(--red);
+}
+.voice-disconnect-btn {
+  background: var(--red) !important;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+}
+.voice-disconnect-btn:hover {
+  background: var(--red) !important;
+}
+
+/* Voice Channel Users */
+.voice-channel-users {
+  padding: 2px 0 4px 28px;
+}
+.voice-channel-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.voice-user-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.voice-user-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Custom Status Popover */

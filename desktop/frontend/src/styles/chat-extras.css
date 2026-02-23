@@ -1,0 +1,184 @@
+/* ======= Message Grouping ======= */
+.message-grouped {
+  padding-top: 1px !important;
+  padding-bottom: 1px !important;
+  min-height: unset;
+}
+
+.message-avatar-spacer {
+  width: 40px;
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  left: 16px;
+}
+
+.message-hover-time {
+  display: none;
+  font-size: 10px;
+  color: var(--text-faint, var(--text-faint));
+  white-space: nowrap;
+}
+
+.message-grouped:hover .message-hover-time {
+  display: block;
+}
+
+/* ======= Date Separators ======= */
+.date-separator {
+  display: flex;
+  align-items: center;
+  margin: 12px 16px;
+  gap: 8px;
+}
+
+.date-separator::before,
+.date-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border, var(--bg-active));
+}
+
+.date-separator-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, var(--text-muted));
+  white-space: nowrap;
+  padding: 0 4px;
+}
+
+/* ======= Scroll to Bottom Button ======= */
+.scroll-to-bottom-btn {
+  position: sticky;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--primary, var(--accent));
+  color: var(--text-primary);
+  border: none;
+  border-radius: 20px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3);
+  transition: background 0.15s;
+  margin: 0 auto;
+  width: fit-content;
+}
+
+.scroll-to-bottom-btn:hover {
+  background: var(--primary-hover, var(--accent-hover));
+}
+
+.scroll-to-bottom-count {
+  background: var(--red, var(--red));
+  color: var(--text-primary);
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 11px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 18px;
+}
+
+/* Message density classes */
+
+/* ======= Channel Drag Handle ======= */
+
+/* ======= Sidebar Node Description ======= */
+.sidebar-description {
+  font-size: 11px;
+  color: var(--text-muted, var(--text-muted));
+  padding: 0 12px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ======= Quick React Bar ======= */
+.quick-react-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--background-modifier-accent, var(--bg-dark));
+  border-radius: 6px;
+  padding: 2px 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+.quick-react-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.1s, transform 0.1s;
+  line-height: 1;
+}
+.quick-react-btn:hover {
+  background: var(--background-modifier-hover, var(--bg-active));
+  transform: scale(1.2);
+}
+
+/* ======= Delete Channel Confirm (btn-red) ======= */
+.btn-red {
+  background: var(--red, var(--red));
+  color: var(--text-primary);
+  border: none;
+  padding: 10px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+.btn-red:hover { background: var(--red-dark); }
+
+/* ======= Channel Categories ======= */
+.channel-category {
+  margin-top: 8px;
+}
+.category-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+.category-header:hover {
+  color: var(--text-secondary);
+}
+.category-arrow {
+  font-size: 10px;
+  margin-right: 4px;
+  width: 12px;
+  text-align: center;
+}
+.category-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ======= Role Section Headers ======= */
+.role-section-header {
+  padding: 8px 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}

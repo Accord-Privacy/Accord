@@ -1,0 +1,30 @@
+/* =================== Setup Wizard =================== */
+
+
+
+
+/* Key backup screen */
+.key-backup-card {
+  max-width: 520px;
+}
+
+.key-value {
+  background: var(--bg-darkest);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.key-backup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.key-backup-actions .btn {
+  flex: 1;
+}
+

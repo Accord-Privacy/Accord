@@ -1,0 +1,87 @@
+/* =================== Chat Area =================== */
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-content);
+}
+
+.chat-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-low);
+  flex-shrink: 0;
+}
+
+.chat-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-channel-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.chat-topic {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.chat-header-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.chat-header-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.chat-header-btn.active {
+  color: var(--yellow);
+}
+
+.e2ee-badge {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.e2ee-badge.enabled {
+  color: var(--green);
+}
+
+.e2ee-badge.pending {
+  color: var(--yellow);
+}
+
+.e2ee-badge.warning {
+  color: var(--yellow);
+}
+
+.e2ee-badge.disabled {
+  color: var(--text-faint);
+}
+

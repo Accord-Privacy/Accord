@@ -1,0 +1,67 @@
+/* ======= Emoji Picker (message input) ======= */
+.emoji-picker-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.emoji-picker-toggle {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  line-height: 1;
+}
+
+.emoji-picker-toggle:hover {
+  background: var(--bg-active, var(--bg-hover));
+}
+
+.emoji-picker-popup {
+  position: absolute;
+  bottom: 36px;
+  right: 0;
+  width: 300px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--background-modifier-accent, var(--bg-dark));
+  border: 1px solid var(--border, var(--bg-active));
+  border-radius: 8px;
+  padding: 8px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+
+.emoji-picker-category-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted, var(--text-muted));
+  padding: 6px 4px 4px;
+  letter-spacing: 0.5px;
+}
+
+.emoji-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+}
+
+.emoji-picker-item {
+  background: none;
+  border: none;
+  font-size: 22px;
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+  line-height: 1.2;
+}
+
+.emoji-picker-item:hover {
+  background: var(--bg-active, var(--bg-hover));
+}
+

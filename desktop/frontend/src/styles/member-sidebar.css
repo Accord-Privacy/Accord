@@ -1,0 +1,91 @@
+/* =================== Member Sidebar =================== */
+.member-sidebar {
+  width: 240px;
+  background: var(--bg-dark);
+  padding: 16px 8px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.member-header {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 8px 12px;
+  letter-spacing: 0.02em;
+}
+
+.member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.member:hover {
+  background: var(--bg-hover);
+}
+
+.member-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.member-name {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.member:hover .member-name {
+  color: var(--text-secondary);
+}
+
+.member-role-badge {
+  font-size: 12px;
+  margin-left: 2px;
+}
+
+.member-action-btn {
+  background: var(--accent);
+  border: none;
+  color: var(--text-primary);
+  padding: 2px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.member:hover .member-action-btn {
+  opacity: 0.7;
+}
+
+.member-action-btn:hover {
+  opacity: 1 !important;
+}
+
+.member-action-btn.danger {
+  background: var(--red);
+}
+
+.members-empty {
+  padding: 16px;
+  color: var(--text-faint);
+  font-size: 13px;
+  text-align: center;
+}
+
