@@ -94,9 +94,38 @@
   --lh-normal: 1.375;
   --lh-relaxed: 1.5;
 
-  /* Specific component sizing */
+  /* Specific component sizing — matched to Fluxer/Discord */
   --header-height: 48px;
   --server-bar-width: 72px;
   --sidebar-width: 240px;
-  --member-sidebar-width: 240px;
+  --member-sidebar-width: 264px;
+  --user-area-height: 52px;
+  --user-area-content-height: 36px;
+  --guild-icon-size: 48px;
+
+  /* Fluxer-compatible aliases */
+  --background-secondary: var(--bg-dark);
+  --background-secondary-lighter: var(--bg-content);
+  --background-tertiary: var(--bg-deepest);
+  --background-primary: var(--bg-content);
+  --background-modifier-hover: var(--bg-modifier-hover);
+  --background-modifier-selected: var(--bg-modifier-selected);
+  --background-modifier-accent: var(--border-subtle);
+  --background-textarea: var(--bg-input);
+  --user-area-divider-color: var(--border);
+  --panel-control-bg: var(--bg-darkest);
+  --text-primary-muted: var(--text-muted);
+  --text-tertiary-muted: var(--text-faint);
+  --text-chat: var(--text-secondary);
+  --control-button-normal-text: var(--text-muted);
+  --control-button-hover-text: var(--text-primary);
+  --control-button-danger-text: var(--red);
+  --guild-list-foreground: var(--bg-elevated);
+  --brand-primary: var(--accent);
+  --status-online: var(--green);
+  --status-danger: var(--red);
+  --scrollbar-thumb-bg: rgba(0, 0, 0, 0.4);
+  --scrollbar-thumb-hover-bg: rgba(0, 0, 0, 0.6);
+  --scrollbar-track-bg: rgba(0, 0, 0, 0.2);
+  --chat-horizontal-padding: 16px;
 }

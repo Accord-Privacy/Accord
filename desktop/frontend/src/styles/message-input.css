@@ -1,4 +1,5 @@
 /* =================== Message Input =================== */
+/* Modeled after Fluxer TextareaInput — rounded container, inset shadow */
 .message-input-container {
   padding: 0 16px 24px;
   display: flex;
@@ -14,7 +15,7 @@
   display: flex;
   align-items: center;
   background: var(--bg-input);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   padding: 0 16px;
   min-height: 44px;
   transition: background var(--transition-fast);
@@ -29,15 +30,19 @@
   padding: 11px 0;
   background: transparent;
   border: none;
-  color: var(--text-primary);
-  font-size: var(--font-lg);
+  color: var(--text-secondary);
+  font-size: 16px;
   outline: none;
   min-width: 0;
   line-height: 22px;
+  caret-color: var(--text-secondary);
 }
 
 .message-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Input toolbar buttons (attach, emoji) */
@@ -48,7 +53,7 @@
   font-size: 22px;
   cursor: pointer;
   padding: 4px;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -65,7 +70,7 @@
   display: flex;
   align-items: center;
   background: var(--bg-input);
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border-radius: 12px 12px 0 0;
   padding: 8px 12px;
   margin: 0 16px;
   border-left: 3px solid var(--accent);
@@ -147,7 +152,7 @@
 }
 
 .reply-bar {
-  display: none; /* Using ::before instead */
+  display: none;
 }
 
 .reply-content {

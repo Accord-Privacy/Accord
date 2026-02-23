@@ -15,16 +15,25 @@ body {
   background: var(--bg-content);
   color: var(--text-primary);
   overflow: hidden;
-  font-size: var(--font-lg);
-  line-height: var(--lh-normal);
+  font-size: 16px;
+  line-height: 1.375;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-track-bg);
 }
 
 input, textarea, select, button {
   font-family: inherit;
   font-size: inherit;
+}
+
+input {
+  color-scheme: dark;
+}
+
+b, strong {
+  font-weight: 600;
 }
 
 a {

@@ -1,4 +1,5 @@
 /* =================== Channel Sidebar =================== */
+/* Modeled after Fluxer GuildNavbar + ChannelItem + GuildHeader */
 .channel-sidebar {
   width: var(--sidebar-width);
   background: var(--bg-dark);
@@ -7,20 +8,19 @@
   flex-shrink: 0;
 }
 
-/* Node header */
+/* Node header — Fluxer GuildHeader.module.css */
 .sidebar-header {
   min-height: var(--header-height);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 12px 16px;
+  padding: 0 16px;
   font-weight: 600;
-  font-size: var(--font-lg);
+  font-size: 15px;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-elevation-low);
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition: background-color var(--transition-normal);
   flex-shrink: 0;
   overflow: hidden;
 }
@@ -33,6 +33,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  height: var(--header-height);
+  min-width: 0;
 }
 
 .sidebar-header .connection-status {
@@ -78,14 +80,14 @@
   font-size: var(--font-xs);
   color: var(--text-muted);
   opacity: 0.8;
-  margin-top: 2px;
+  padding-bottom: 4px;
 }
 
 .sidebar-description {
   font-size: 11px;
   color: var(--text-faint);
   font-weight: 400;
-  margin-top: 2px;
+  padding-bottom: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -111,25 +113,26 @@
 .sidebar-admin-btn.danger { background: var(--red); }
 .sidebar-admin-btn.danger:hover { background: var(--red-dark); }
 
-/* Channel list */
+/* Channel list — Fluxer ChannelListContent.module.css */
 .channel-list {
   flex: 1;
-  padding: 0 8px;
+  padding: 0;
+  padding-right: 8px;
   overflow-y: auto;
-  margin-top: 8px;
+  margin-top: 0;
 }
 
-/* Individual channel */
+/* Individual channel — Fluxer ChannelItem.module.css */
 .channel {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 6px 8px;
-  margin: 1px 0;
-  border-radius: var(--radius-sm);
+  margin: 1px 0 1px 8px;
+  border-radius: 6px;
   cursor: pointer;
-  color: var(--text-muted);
-  font-size: var(--font-lg);
+  color: var(--text-faint);
+  font-size: 16px;
   font-weight: 500;
   transition: background var(--transition-fast), color var(--transition-fast);
   position: relative;
@@ -151,7 +154,7 @@
   background: rgba(35, 165, 89, 0.12);
 }
 
-/* Unread indicator — bold white text */
+/* Unread indicator — Fluxer-style white pill on left edge */
 .channel.unread {
   color: var(--text-primary);
 }
@@ -164,12 +167,12 @@
   transform: translateY(-50%);
   width: 4px;
   height: 8px;
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 9999px 9999px 0;
   background: var(--text-primary);
 }
 
 .channel-name {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -177,10 +180,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 20px;
+  max-height: 20px;
 }
 
 .channel-name .hash-icon {
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-weight: 400;
   opacity: 0.7;
   flex-shrink: 0;
@@ -190,7 +195,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-left: 8px;
+  margin-left: auto;
   flex-shrink: 0;
 }
 
@@ -208,6 +213,16 @@
 
 .channel:hover .channel-delete-btn { opacity: 0.6; }
 .channel-delete-btn:hover { opacity: 1 !important; color: var(--text-primary); }
+
+/* Category headers — Fluxer ChannelItem category */
+.role-section-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  padding: 16px 8px 4px 8px;
+}
 
 /* Create channel form */
 .create-channel-form {
@@ -245,16 +260,16 @@
 
 /* =================== DM Section =================== */
 .dm-section {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-  margin-top: 8px;
+  border-top: 1px solid var(--bg-modifier-hover);
+  padding-top: 8px;
+  margin-top: 4px;
 }
 
 .dm-header {
-  font-size: var(--font-xs);
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--text-faint);
   text-transform: uppercase;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.02em;
   margin-bottom: 4px;
   padding: 0 8px 4px;
@@ -266,7 +281,7 @@
 .dm-header-add-btn {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-faint);
   cursor: pointer;
   font-size: var(--font-base);
   padding: 2px 4px;
@@ -280,8 +295,8 @@
   align-items: center;
   padding: 6px 8px;
   cursor: pointer;
-  border-radius: var(--radius-sm);
-  margin: 1px 0;
+  border-radius: 6px;
+  margin: 1px 0 1px 8px;
   transition: background var(--transition-fast);
 }
 
@@ -291,7 +306,7 @@
 .dm-avatar {
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-round);
+  border-radius: 50%;
   background: var(--accent);
   display: flex;
   align-items: center;
@@ -314,15 +329,16 @@
 }
 
 .dm-name {
-  font-size: var(--font-lg);
-  color: var(--text-muted);
+  font-size: 16px;
+  color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
 }
 
-.dm-item.active .dm-name {
+.dm-item.active .dm-name,
+.dm-item:hover .dm-name {
   color: var(--text-primary);
 }
 
@@ -341,21 +357,22 @@
   text-align: center;
 }
 
-/* =================== User Panel =================== */
+/* =================== User Panel — Fluxer UserArea.module.css =================== */
 .user-panel {
   background: var(--bg-deepest);
   display: flex;
   align-items: center;
   padding: 0 8px;
-  height: 52px;
+  height: var(--user-area-height);
   gap: 8px;
   flex-shrink: 0;
+  border-top: 1px solid var(--border);
 }
 
 .user-avatar {
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-round);
+  border-radius: 50%;
   background: var(--accent);
   display: flex;
   align-items: center;
@@ -384,36 +401,40 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  gap: 1px;
 }
 
 .username {
-  font-size: var(--font-base);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
   color: var(--text-primary);
-  line-height: var(--lh-tight);
+  line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .user-status {
-  font-size: var(--font-xs);
-  color: var(--text-positive);
-  line-height: var(--lh-tight);
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 16px;
+  font-weight: 500;
+  opacity: 0.85;
 }
 
+/* Control buttons — Fluxer pattern: 32x32, transparent, 6px radius */
 .user-panel-controls {
   display: flex;
-  gap: 0;
+  gap: 4px;
   flex-shrink: 0;
+  padding-left: 4px;
 }
 
 .user-panel-controls button,
 .user-panel-controls .voice-ctrl-btn {
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -423,15 +444,21 @@
   justify-content: center;
   font-size: 16px;
   padding: 0;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .user-panel-controls button:hover {
-  background: var(--bg-modifier-hover);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-primary);
 }
 
 .user-panel-controls .voice-ctrl-btn.active {
   color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.user-panel-controls .voice-ctrl-btn.active:hover {
+  background: color-mix(in srgb, var(--red) 20%, transparent);
 }
 
 /* Presence dot (shared) */
@@ -441,7 +468,7 @@
   right: -1px;
   width: 12px;
   height: 12px;
-  border-radius: var(--radius-round);
+  border-radius: 50%;
   border: 3px solid var(--bg-dark);
 }
 
