@@ -573,6 +573,34 @@ pub async fn join_node_handler(
         }
     }
 
+    // Check device fingerprint account cap before joining
+    if let Some(ref fph) = fingerprint_hash {
+        let max_accounts = state
+            .db
+            .get_node_max_accounts_per_device(node_id)
+            .await
+            .unwrap_or(3);
+        if max_accounts > 0 {
+            let existing_count = state
+                .db
+                .count_members_with_fingerprint(node_id, fph)
+                .await
+                .unwrap_or(0);
+            if existing_count >= max_accounts {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "Device account limit reached ({} accounts per device for this node)",
+                            max_accounts
+                        ),
+                        code: 403,
+                    }),
+                ));
+            }
+        }
+    }
+
     match state.join_node(user_id, node_id).await {
         Ok(()) => {
             // Store device fingerprint hash if provided
@@ -637,12 +665,24 @@ pub async fn update_node_handler(
         .get("description")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let max_accounts_per_device = request
+        .get("max_accounts_per_device")
+        .and_then(|v| v.as_i64());
 
     match state
         .update_node(node_id, user_id, name.clone(), description.clone())
         .await
     {
         Ok(()) => {
+            // Apply device account limit if provided
+            if let Some(limit) = max_accounts_per_device {
+                let clamped = limit.max(0); // 0 = unlimited
+                let _ = state
+                    .db
+                    .set_node_max_accounts_per_device(node_id, clamped)
+                    .await;
+            }
+
             // Log audit event
             let mut details = serde_json::Map::new();
             if let Some(ref name) = name {
@@ -652,6 +692,12 @@ pub async fn update_node_handler(
                 details.insert(
                     "description".to_string(),
                     serde_json::Value::String(description.clone()),
+                );
+            }
+            if let Some(limit) = max_accounts_per_device {
+                details.insert(
+                    "max_accounts_per_device".to_string(),
+                    serde_json::Value::Number(limit.into()),
                 );
             }
             let details_str = if !details.is_empty() {

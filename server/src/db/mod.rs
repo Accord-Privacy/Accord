@@ -697,6 +697,14 @@ impl Database {
             .await
             .ok();
 
+        // ── Per-device account limit per Node (default 3, 0 = unlimited) ──
+        sqlx::query(
+            "ALTER TABLE nodes ADD COLUMN max_accounts_per_device INTEGER NOT NULL DEFAULT 3",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
         // Build hash allowlist per Node
         sqlx::query(
             r#"
@@ -1411,6 +1419,42 @@ impl Database {
         .execute(&self.pool)
         .await
         .context("Failed to set member device fingerprint")?;
+        Ok(())
+    }
+
+    /// Count how many members in a Node share the same device fingerprint hash
+    pub async fn count_members_with_fingerprint(
+        &self,
+        node_id: Uuid,
+        device_fingerprint_hash: &str,
+    ) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM node_members WHERE node_id = ? AND device_fingerprint_hash = ?",
+        )
+        .bind(node_id.to_string())
+        .bind(device_fingerprint_hash)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count"))
+    }
+
+    /// Get the max accounts per device limit for a Node (0 = unlimited)
+    pub async fn get_node_max_accounts_per_device(&self, node_id: Uuid) -> Result<i64> {
+        let row = sqlx::query("SELECT max_accounts_per_device FROM nodes WHERE id = ?")
+            .bind(node_id.to_string())
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("max_accounts_per_device"))
+    }
+
+    /// Set the max accounts per device limit for a Node
+    pub async fn set_node_max_accounts_per_device(&self, node_id: Uuid, limit: i64) -> Result<()> {
+        sqlx::query("UPDATE nodes SET max_accounts_per_device = ? WHERE id = ?")
+            .bind(limit)
+            .bind(node_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to set max_accounts_per_device")?;
         Ok(())
     }
 
