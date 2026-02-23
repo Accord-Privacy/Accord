@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { api } from './api';
 import { Node } from './types';
+import { Button, Modal } from './components/ui';
 
 interface JoinNodeDialogProps {
   isOpen: boolean;
@@ -53,48 +54,35 @@ export function JoinNodeDialog({ isOpen, onClose, onNodeJoined, token }: JoinNod
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-card" style={{ maxWidth: '400px' }}>
-        <h3>Join a Node</h3>
-        <p>
-          Enter an invite code to join a Node
-        </p>
-
-        <div className="form-group">
-          <input
-            type="text"
-            className="form-input"
-            placeholder="Enter invite code..."
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            autoFocus
-          />
-        </div>
-
-        {error && (
-          <div className="form-error">{error}</div>
-        )}
-
-        <div className="modal-actions">
-          <button
-            className="btn btn-outline"
-            onClick={onClose}
-            disabled={isLoading}
-          >
-            Cancel
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleJoinNode}
-            disabled={isLoading || !inviteCode.trim()}
-          >
-            {isLoading ? 'Joining...' : 'Join Node'}
-          </button>
-        </div>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Join a Node"
+      description="Enter an invite code to join a Node"
+      maxWidth={400}
+      actions={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={isLoading}>Cancel</Button>
+          <Button onClick={handleJoinNode} disabled={isLoading || !inviteCode.trim()} loading={isLoading}>
+            Join Node
+          </Button>
+        </>
+      }
+    >
+      <div className="form-group">
+        <input
+          type="text"
+          className="form-input"
+          placeholder="Enter invite code..."
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isLoading}
+          autoFocus
+        />
       </div>
-    </div>
+      {error && <div className="form-error">{error}</div>}
+    </Modal>
   );
 }
 
@@ -151,68 +139,53 @@ export function CreateNodeDialog({ isOpen, onClose, onNodeCreated, token }: Crea
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-card" style={{ maxWidth: '500px' }}>
-        <h3>Create a Node</h3>
-        <p>
-          Create your own Node to chat with friends
-        </p>
-
-        <div className="form-group">
-          <label className="form-label">Node Name *</label>
-          <input
-            type="text"
-            className="form-input"
-            placeholder="My Awesome Node"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            maxLength={32}
-            autoFocus
-          />
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Description (optional)</label>
-          <textarea
-            className="form-input form-textarea"
-            placeholder="What's your Node about?"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            maxLength={200}
-            rows={3}
-          />
-        </div>
-
-        {error && (
-          <div className="form-error">{error}</div>
-        )}
-
-        <div className="modal-actions">
-          <button
-            className="btn btn-outline"
-            onClick={onClose}
-            disabled={isLoading}
-          >
-            Cancel
-          </button>
-          <button
-            className="btn btn-green"
-            onClick={handleCreateNode}
-            disabled={isLoading || !name.trim()}
-          >
-            {isLoading ? 'Creating...' : 'Create Node'}
-          </button>
-        </div>
-
-        <p style={{ margin: '12px 0 0', color: 'var(--text-faint)', fontSize: '12px' }}>
-          Press Ctrl+Enter to create
-        </p>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Create a Node"
+      description="Create your own Node to chat with friends"
+      maxWidth={500}
+      actions={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={isLoading}>Cancel</Button>
+          <Button variant="green" onClick={handleCreateNode} disabled={isLoading || !name.trim()} loading={isLoading}>
+            Create Node
+          </Button>
+        </>
+      }
+    >
+      <div className="form-group">
+        <label className="form-label">Node Name *</label>
+        <input
+          type="text"
+          className="form-input"
+          placeholder="My Awesome Node"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isLoading}
+          maxLength={32}
+          autoFocus
+        />
       </div>
-    </div>
+      <div className="form-group">
+        <label className="form-label">Description (optional)</label>
+        <textarea
+          className="form-input form-textarea"
+          placeholder="What's your Node about?"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isLoading}
+          maxLength={200}
+          rows={3}
+        />
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <p style={{ margin: '12px 0 0', color: 'var(--text-faint)', fontSize: '12px' }}>
+        Press Ctrl+Enter to create
+      </p>
+    </Modal>
   );
 }
 
