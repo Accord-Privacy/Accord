@@ -100,11 +100,11 @@ export const ChatArea: React.FC = () => {
         <div className="chat-area" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{
             textAlign: 'center',
-            maxWidth: 420,
-            padding: '40px 32px',
-            background: 'var(--bg-secondary)',
-            borderRadius: 12,
-            border: '1px solid var(--border)',
+            maxWidth: 460,
+            padding: '48px 40px',
+            background: 'var(--bg-dark)',
+            borderRadius: 8,
+            boxShadow: '0 8px 16px rgba(0,0,0,0.24)',
           }}>
             {invitePreview ? (
               <>

@@ -117,17 +117,18 @@
 .form-input {
   width: 100%;
   padding: 10px 12px;
-  background: var(--bg-darkest);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  border: none;
+  border-radius: var(--radius-xs);
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--font-lg);
   outline: none;
-  transition: border-color var(--transition-fast);
+  height: 40px;
+  transition: box-shadow var(--transition-fast);
 }
 
 .form-input:focus {
-  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .form-input::placeholder {
@@ -164,14 +165,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 10px 20px;
+  padding: 2px 16px;
   border: none;
-  border-radius: var(--radius-sm);
-  font-size: 15px;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-base);
   font-weight: 500;
   cursor: pointer;
   transition: background-color var(--transition-fast), opacity var(--transition-fast);
-  line-height: 1.2;
+  line-height: 1;
+  min-height: 38px;
+  min-width: 96px;
 }
 
 .btn:disabled {

@@ -4,20 +4,20 @@
    ============================================ */
 
 :root {
-  /* Grey depth system (darkest → lightest) */
-  --bg-deepest: #111214;
-  --bg-darkest: #1e1f22;
-  --bg-dark: #2b2d31;
-  --bg-content: #313338;
-  --bg-input: #383a40;
-  --bg-hover: rgba(78, 80, 88, 0.3);
-  --bg-active: rgba(78, 80, 88, 0.6);
+  /* Grey depth system — strong contrast between layers */
+  --bg-deepest: #0e0f11;      /* Server bar — near black */
+  --bg-darkest: #1a1b1e;      /* User panel, headers */
+  --bg-dark: #232428;          /* Channel sidebar */
+  --bg-content: #2e3035;       /* Main chat area */
+  --bg-input: #1e1f23;         /* Input fields — darker than content */
+  --bg-hover: rgba(79, 84, 92, 0.32);
+  --bg-active: rgba(79, 84, 92, 0.52);
   --bg-overlay: rgba(0, 0, 0, 0.85);
-  --bg-elevated: #404349;
-  --bg-floating: #2b2d31;
-  --bg-modifier-hover: rgba(78, 80, 88, 0.3);
-  --bg-modifier-active: rgba(78, 80, 88, 0.48);
-  --bg-modifier-selected: rgba(78, 80, 88, 0.6);
+  --bg-elevated: #393c42;
+  --bg-floating: #232428;      /* Popups, tooltips, context menus */
+  --bg-modifier-hover: rgba(79, 84, 92, 0.16);
+  --bg-modifier-active: rgba(79, 84, 92, 0.24);
+  --bg-modifier-selected: rgba(79, 84, 92, 0.32);
 
   /* Brand / Accent */
   --accent: #5865f2;
