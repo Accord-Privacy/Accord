@@ -4,114 +4,74 @@
   background: var(--red);
   width: 8px;
   height: 8px;
-  border-radius: var(--radius-full);
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
 .mention-badge {
-  background: var(--red);
-  color: #fff;
-  font-size: var(--font-xs);
+  background: var(--yellow);
+  color: var(--bg-darkest);
+  font-size: 10px;
   font-weight: 700;
   padding: 1px 6px;
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   min-width: 16px;
   height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
-  margin-left: var(--spacing-1);
+  margin-left: 4px;
 }
 
 /* =================== Modals (generic) =================== */
 .modal-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: var(--bg-overlay);
-  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: var(--z-index-modal);
-  animation: modal-backdrop-in 150ms ease-out;
-}
-
-@keyframes modal-backdrop-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  z-index: 1001;
 }
 
 .modal-card {
   background: var(--bg-dark);
-  padding: var(--spacing-6);
-  border-radius: var(--radius-xl);
+  padding: 24px;
+  border-radius: var(--radius-md);
   max-width: 440px;
   width: 90%;
   color: var(--text-primary);
   box-shadow: var(--shadow-high);
-  position: relative;
-  animation: modal-card-in 200ms cubic-bezier(0.2, 0, 0, 1);
-}
-
-@keyframes modal-card-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
 }
 
 .modal-card h3 {
-  margin: 0 0 var(--spacing-3);
+  margin: 0 0 12px;
   font-size: 18px;
   font-weight: 600;
 }
 
 .modal-card p {
   color: var(--text-muted);
-  font-size: var(--font-base);
-  margin: 0 0 var(--spacing-4);
-  line-height: var(--lh-relaxed);
-}
-
-.modal-close {
-  position: absolute;
-  top: var(--spacing-4);
-  right: var(--spacing-4);
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 18px;
-  cursor: pointer;
-  transition: background-color 70ms ease-out, color 70ms ease-out;
-}
-
-.modal-close:hover {
-  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
-  color: var(--text-primary);
+  font-size: 14px;
+  margin: 0 0 16px;
+  line-height: 1.4;
 }
 
 .modal-actions {
   display: flex;
-  gap: var(--spacing-2);
+  gap: 8px;
   justify-content: flex-end;
 }
 
 .modal-code-block {
   background: var(--bg-darkest);
-  padding: var(--spacing-3);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--spacing-4);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
   font-family: var(--font-mono);
   font-size: 13px;
   word-break: break-all;
@@ -119,50 +79,3 @@
   color: var(--text-secondary);
 }
 
-/* Modal form inputs */
-.modal-card .form-group {
-  margin-bottom: var(--spacing-4);
-}
-
-.modal-card .form-input,
-.modal-card input[type="text"],
-.modal-card input[type="password"],
-.modal-card input[type="url"],
-.modal-card textarea {
-  width: 100%;
-  padding: var(--spacing-2-5, 10px) var(--spacing-3);
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: var(--font-base);
-  outline: none;
-  transition: border-color 70ms ease-out;
-}
-
-.modal-card .form-input:focus,
-.modal-card input:focus,
-.modal-card textarea:focus {
-  border-color: var(--accent);
-}
-
-/* Modal header/body/footer pattern */
-.modal-header {
-  padding: var(--spacing-4) var(--spacing-6);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.modal-body {
-  padding: var(--spacing-4) var(--spacing-6);
-}
-
-.modal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--spacing-2);
-  padding: var(--spacing-4) var(--spacing-6);
-  border-top: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--bg-dark) 95%, black);
-  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
-}

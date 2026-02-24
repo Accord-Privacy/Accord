@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import clsx from 'clsx';
 import { notificationManager, NotificationPreferences } from './notifications';
 import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
@@ -8,8 +7,6 @@ import { UpdateSection } from './UpdateChecker';
 import { themes, applyTheme, getSavedTheme } from './themes';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
-import s from './Settings.module.css';
-import btnStyles from './components/uikit/button/Button.module.css';
 
 // Types for settings
 interface AccountSettings {
@@ -625,65 +622,65 @@ export const Settings: React.FC<SettingsProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className={s.overlay}>
-      <div className={s.modal}>
-        <div className={s.sidebar}>
-          <div className={s.sidebarHeader}>
+    <div className="settings-overlay">
+      <div className="settings-modal">
+        <div className="settings-sidebar">
+          <div className="settings-header">
             <h2>Settings</h2>
           </div>
-          <nav className={s.nav}>
+          <nav className="settings-nav">
             <button
-              className={activeTab === 'account' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'account' ? 'active' : ''}`}
               onClick={() => setActiveTab('account')}
             >
               👤 Profile
             </button>
             <button
-              className={activeTab === 'appearance' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'appearance' ? 'active' : ''}`}
               onClick={() => setActiveTab('appearance')}
             >
               🎨 Appearance
             </button>
             <button
-              className={activeTab === 'notifications' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'notifications' ? 'active' : ''}`}
               onClick={() => setActiveTab('notifications')}
             >
               🔔 Notifications
             </button>
             <button
-              className={activeTab === 'voice' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'voice' ? 'active' : ''}`}
               onClick={() => setActiveTab('voice')}
             >
               🎤 Voice & Audio
             </button>
             <button
-              className={activeTab === 'privacy' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'privacy' ? 'active' : ''}`}
               onClick={() => setActiveTab('privacy')}
             >
               🔒 Privacy
             </button>
             <button
-              className={activeTab === 'advanced' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'advanced' ? 'active' : ''}`}
               onClick={() => setActiveTab('advanced')}
             >
               ⚙️ Advanced
             </button>
             <button
-              className={activeTab === 'server' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'server' ? 'active' : ''}`}
               onClick={() => setActiveTab('server')}
             >
               🖥️ Server Info
             </button>
             {onShowShortcuts && (
               <button
-                className={s.navItemPlain}
+                className="settings-nav-item"
                 onClick={() => { onClose(); onShowShortcuts(); }}
               >
                 ⌨️ Keyboard Shortcuts
               </button>
             )}
             <button
-              className={activeTab === 'about' ? s.navItemActive : s.navItem}
+              className={`settings-nav-item ${activeTab === 'about' ? 'active' : ''}`}
               onClick={() => setActiveTab('about')}
             >
               ℹ️ About
@@ -691,21 +688,21 @@ export const Settings: React.FC<SettingsProps> = ({
           </nav>
         </div>
 
-        <div className={s.content}>
-          <div className={s.contentHeader}>
-            <button className={s.closeButton} onClick={onClose}>×</button>
+        <div className="settings-content">
+          <div className="settings-content-header">
+            <button className="settings-close" onClick={onClose}>×</button>
           </div>
 
-          <div className={s.panel}>
+          <div className="settings-panel">
             {/* =================== PROFILE =================== */}
             {activeTab === 'account' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Profile</h3>
 
                 {/* Avatar Upload */}
-                <div className={s.avatarUpload}>
+                <div className="settings-avatar-upload">
                   <div 
-                    className={s.avatarCircle}
+                    className="settings-avatar-circle"
                     onClick={() => {
                       const input = document.createElement('input');
                       input.type = 'file';
@@ -737,28 +734,28 @@ export const Settings: React.FC<SettingsProps> = ({
                         onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (currentUser?.display_name || "U")[0]; }}
                       />
                     ) : (currentUser?.display_name || "U")[0]}
-                    <div className={s.avatarEdit}>EDIT</div>
+                    <div className="settings-avatar-edit">EDIT</div>
                   </div>
-                  <span className={s.avatarHint}>
+                  <span className="settings-avatar-hint">
                     Click to upload avatar (PNG, JPEG, GIF, WebP — max 256KB)
                   </span>
                 </div>
 
                 {/* Fingerprint */}
                 {currentUser?.public_key_hash && (
-                  <div className={s.group}>
-                    <label className={s.label}>Public Key Fingerprint</label>
-                    <div className={s.info} style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: 0.5 }}>
+                  <div className="settings-group">
+                    <label className="settings-label">Public Key Fingerprint</label>
+                    <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: 0.5 }}>
                       {formatFingerprint(currentUser.public_key_hash)}
                     </div>
                   </div>
                 )}
 
-                <div className={s.group}>
-                  <label className={s.label}>Display Name</label>
+                <div className="settings-group">
+                  <label className="settings-label">Display Name</label>
                   <input
                     type="text"
-                    className={s.input}
+                    className="settings-input"
                     value={accountSettings.displayName}
                     onChange={(e) => updateAccountLocally({
                       ...accountSettings,
@@ -768,10 +765,10 @@ export const Settings: React.FC<SettingsProps> = ({
                   />
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Bio</label>
+                <div className="settings-group">
+                  <label className="settings-label">Bio</label>
                   <textarea
-                    className={s.textarea}
+                    className="settings-textarea"
                     value={accountSettings.bio}
                     onChange={(e) => updateAccountLocally({
                       ...accountSettings,
@@ -782,8 +779,8 @@ export const Settings: React.FC<SettingsProps> = ({
                   />
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Status</label>
+                <div className="settings-group">
+                  <label className="settings-label">Status</label>
                   <div className="status-buttons">
                     {(['online', 'away', 'busy', 'invisible'] as const).map(status => (
                       <button
@@ -802,9 +799,9 @@ export const Settings: React.FC<SettingsProps> = ({
                 </div>
 
                 {/* Save button */}
-                <div className={clsx(s.group, s.actionRow)}>
+                <div className="settings-group settings-action-row">
                   <button
-                    className={clsx(btnStyles.button, btnStyles.primary)}
+                    className="btn btn-primary"
                     style={{ width: 'auto', padding: '10px 24px' }}
                     disabled={!profileDirty || profileSaving}
                     onClick={saveProfileToServer}
@@ -812,26 +809,26 @@ export const Settings: React.FC<SettingsProps> = ({
                     {profileSaving ? 'Saving...' : 'Save Profile'}
                   </button>
                   {profileSaveMsg && (
-                    <span className={s.help} style={{ color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)', margin: 0 }}>
+                    <span className="settings-help" style={{ color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)', margin: 0 }}>
                       {profileSaveMsg}
                     </span>
                   )}
                 </div>
 
-                <div className={s.group}>
-                  <div className={s.info}>
+                <div className="settings-group">
+                  <div className="settings-info">
                     <strong>User ID:</strong> {currentUser?.id || 'Unknown'}
                   </div>
                 </div>
 
-                <div className={s.logoutSection}>
+                <div className="settings-logout-section">
                   <button
-                    className={s.logoutBtn}
+                    className="settings-logout-btn"
                     onClick={() => { onClose(); if (onLogout) setTimeout(onLogout, 100); }}
                   >
                     🚪 Log Out
                   </button>
-                  <p className={s.logoutHint}>
+                  <p className="settings-logout-hint">
                     Your identity keys are saved locally. You can log back in with your password.
                   </p>
                 </div>
@@ -840,11 +837,11 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== APPEARANCE =================== */}
             {activeTab === 'appearance' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Appearance</h3>
                 
-                <div className={s.group}>
-                  <label className={s.label}>Theme</label>
+                <div className="settings-group">
+                  <label className="settings-label">Theme</label>
                   <div className="theme-buttons" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                     {Object.values(themes).map((theme) => (
                       <button
@@ -894,13 +891,13 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>
+                <div className="settings-group">
+                  <label className="settings-label">
                     Font Size: {appearanceSettings.fontSize}px
                   </label>
                   <input
                     type="range"
-                    className={s.slider}
+                    className="settings-slider"
                     min="12"
                     max="20"
                     step="1"
@@ -910,13 +907,13 @@ export const Settings: React.FC<SettingsProps> = ({
                       fontSize: parseInt(e.target.value)
                     })}
                   />
-                  <div className={s.help} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <div className="settings-help" style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>12px</span><span>20px</span>
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Message Density</label>
+                <div className="settings-group">
+                  <label className="settings-label">Message Density</label>
                   <div className="font-size-buttons">
                     {(['compact', 'comfortable', 'cozy'] as const).map(d => (
                       <button
@@ -931,7 +928,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       </button>
                     ))}
                   </div>
-                  <div className={s.help}>
+                  <div className="settings-help">
                     Controls spacing between messages. Compact shows more messages on screen.
                   </div>
                 </div>
@@ -940,11 +937,11 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== NOTIFICATIONS =================== */}
             {activeTab === 'notifications' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Notification Settings</h3>
                 
-                <div className={s.group}>
-                  <label className={s.checkbox}>
+                <div className="settings-group">
+                  <label className="settings-checkbox">
                     <input
                       type="checkbox"
                       checked={notificationPreferences.enabled}
@@ -958,8 +955,8 @@ export const Settings: React.FC<SettingsProps> = ({
                   </label>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Notification Mode</label>
+                <div className="settings-group">
+                  <label className="settings-label">Notification Mode</label>
                   <div className="notification-mode-buttons">
                     {(['all', 'mentions', 'dms', 'none'] as const).map(mode => (
                       <button
@@ -979,8 +976,8 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.checkbox}>
+                <div className="settings-group">
+                  <label className="settings-checkbox">
                     <input
                       type="checkbox"
                       checked={notificationPreferences.sounds}
@@ -994,7 +991,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   </label>
                 </div>
 
-                <div className={s.group}>
+                <div className="settings-group">
                   <div className="test-buttons">
                     <button
                       className="test-button"
@@ -1040,21 +1037,21 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== VOICE =================== */}
             {activeTab === 'voice' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Voice & Audio</h3>
-                <p className={s.sectionDesc}>Configure your microphone, speakers, and voice processing settings.</p>
+                <p className="settings-section-desc">Configure your microphone, speakers, and voice processing settings.</p>
                 
                 {devicesError && (
-                  <div className={s.error}>{devicesError}</div>
+                  <div className="settings-error">{devicesError}</div>
                 )}
 
                 {/* Input Device */}
-                <div className={s.subsection}>
-                  <h4 className={s.subsectionTitle}>🎤 Input Device</h4>
-                  <div className={s.group}>
-                    <label className={s.label}>Microphone</label>
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">🎤 Input Device</h4>
+                  <div className="settings-group">
+                    <label className="settings-label">Microphone</label>
                     <select
-                      className={s.select}
+                      className="settings-select"
                       value={voiceSettings.inputDevice}
                       onChange={(e) => saveVoiceSettings({
                         ...voiceSettings,
@@ -1069,14 +1066,14 @@ export const Settings: React.FC<SettingsProps> = ({
                       ))}
                     </select>
                   </div>
-                  <div className={s.group}>
-                    <label className={s.label}>
+                  <div className="settings-group">
+                    <label className="settings-label">
                       Input Volume
-                      <span className={s.labelValue}>{voiceSettings.inputVolume}%</span>
+                      <span className="settings-label-value">{voiceSettings.inputVolume}%</span>
                     </label>
                     <input
                       type="range"
-                      className={s.slider}
+                      className="settings-slider"
                       min="0"
                       max="100"
                       value={voiceSettings.inputVolume}
@@ -1086,18 +1083,18 @@ export const Settings: React.FC<SettingsProps> = ({
                       })}
                     />
                   </div>
-                  <button className={s.btnSecondary} onClick={testMicrophone}>
+                  <button className="settings-btn-secondary" onClick={testMicrophone}>
                     Test Microphone
                   </button>
                 </div>
 
                 {/* Output Device */}
-                <div className={s.subsection}>
-                  <h4 className={s.subsectionTitle}>🔊 Output Device</h4>
-                  <div className={s.group}>
-                    <label className={s.label}>Speakers</label>
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">🔊 Output Device</h4>
+                  <div className="settings-group">
+                    <label className="settings-label">Speakers</label>
                     <select
-                      className={s.select}
+                      className="settings-select"
                       value={voiceSettings.outputDevice}
                       onChange={(e) => saveVoiceSettings({
                         ...voiceSettings,
@@ -1112,14 +1109,14 @@ export const Settings: React.FC<SettingsProps> = ({
                       ))}
                     </select>
                   </div>
-                  <div className={s.group}>
-                    <label className={s.label}>
+                  <div className="settings-group">
+                    <label className="settings-label">
                       Output Volume
-                      <span className={s.labelValue}>{voiceSettings.outputVolume}%</span>
+                      <span className="settings-label-value">{voiceSettings.outputVolume}%</span>
                     </label>
                     <input
                       type="range"
-                      className={s.slider}
+                      className="settings-slider"
                       min="0"
                       max="100"
                       value={voiceSettings.outputVolume}
@@ -1129,23 +1126,23 @@ export const Settings: React.FC<SettingsProps> = ({
                       })}
                     />
                   </div>
-                  <button className={s.btnSecondary} onClick={testSpeakers}>
+                  <button className="settings-btn-secondary" onClick={testSpeakers}>
                     Test Speakers
                   </button>
                 </div>
 
                 {/* Voice Activity Detection */}
-                <div className={s.subsection}>
-                  <h4 className={s.subsectionTitle}>🗣️ Input Sensitivity</h4>
-                  <p className={s.subsectionDesc}>Controls how loud you need to be before your mic activates. Higher values require louder audio.</p>
-                  <div className={s.group}>
-                    <label className={s.label}>
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">🗣️ Input Sensitivity</h4>
+                  <p className="settings-subsection-desc">Controls how loud you need to be before your mic activates. Higher values require louder audio.</p>
+                  <div className="settings-group">
+                    <label className="settings-label">
                       Voice Activity Sensitivity
-                      <span className={s.labelValue}>{voiceSettings.vadSensitivity}%</span>
+                      <span className="settings-label-value">{voiceSettings.vadSensitivity}%</span>
                     </label>
                     <input
                       type="range"
-                      className={s.slider}
+                      className="settings-slider"
                       min="0"
                       max="100"
                       value={voiceSettings.vadSensitivity}
@@ -1154,53 +1151,53 @@ export const Settings: React.FC<SettingsProps> = ({
                         vadSensitivity: parseInt(e.target.value)
                       })}
                     />
-                    <div className={s.sliderLabels}>
+                    <div className="settings-slider-labels">
                       <span>Sensitive</span><span>Aggressive</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Voice Processing */}
-                <div className={s.subsection}>
-                  <h4 className={s.subsectionTitle}>⚡ Voice Processing</h4>
-                  <p className={s.subsectionDesc}>Audio processing filters applied to your microphone input.</p>
-                  <div className={s.toggleGroup}>
-                    <label className={s.toggleRow}>
-                      <div className={s.toggleInfo}>
-                        <span className={s.toggleLabel}>Echo Cancellation</span>
-                        <span className={s.toggleDesc}>Removes echo from your speakers being picked up by your mic</span>
+                <div className="settings-subsection">
+                  <h4 className="settings-subsection-title">⚡ Voice Processing</h4>
+                  <p className="settings-subsection-desc">Audio processing filters applied to your microphone input.</p>
+                  <div className="settings-toggle-group">
+                    <label className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <span className="settings-toggle-label">Echo Cancellation</span>
+                        <span className="settings-toggle-desc">Removes echo from your speakers being picked up by your mic</span>
                       </div>
                       <div className={`settings-toggle ${voiceSettings.echoCancellation ? 'active' : ''}`}
                         onClick={() => saveVoiceSettings({ ...voiceSettings, echoCancellation: !voiceSettings.echoCancellation })}>
-                        <div className={s.toggleKnob} />
+                        <div className="settings-toggle-knob" />
                       </div>
                     </label>
-                    <label className={s.toggleRow}>
-                      <div className={s.toggleInfo}>
-                        <span className={s.toggleLabel}>Noise Suppression</span>
-                        <span className={s.toggleDesc}>Filters out background noise like fans, keyboards, and ambient sounds</span>
+                    <label className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <span className="settings-toggle-label">Noise Suppression</span>
+                        <span className="settings-toggle-desc">Filters out background noise like fans, keyboards, and ambient sounds</span>
                       </div>
                       <div className={`settings-toggle ${voiceSettings.noiseSuppression ? 'active' : ''}`}
                         onClick={() => saveVoiceSettings({ ...voiceSettings, noiseSuppression: !voiceSettings.noiseSuppression })}>
-                        <div className={s.toggleKnob} />
+                        <div className="settings-toggle-knob" />
                       </div>
                     </label>
-                    <label className={s.toggleRow}>
-                      <div className={s.toggleInfo}>
-                        <span className={s.toggleLabel}>Automatic Gain Control</span>
-                        <span className={s.toggleDesc}>Automatically adjusts your mic volume to maintain consistent levels</span>
+                    <label className="settings-toggle-row">
+                      <div className="settings-toggle-info">
+                        <span className="settings-toggle-label">Automatic Gain Control</span>
+                        <span className="settings-toggle-desc">Automatically adjusts your mic volume to maintain consistent levels</span>
                       </div>
                       <div className={`settings-toggle ${voiceSettings.autoGainControl ? 'active' : ''}`}
                         onClick={() => saveVoiceSettings({ ...voiceSettings, autoGainControl: !voiceSettings.autoGainControl })}>
-                        <div className={s.toggleKnob} />
+                        <div className="settings-toggle-knob" />
                       </div>
                     </label>
                   </div>
                 </div>
 
                 {/* Refresh Devices */}
-                <div className={s.group} style={{ paddingTop: '8px' }}>
-                  <button className={s.btnSecondary} onClick={loadMediaDevices}>
+                <div className="settings-group" style={{ paddingTop: '8px' }}>
+                  <button className="settings-btn-secondary" onClick={loadMediaDevices}>
                     🔄 Refresh Devices
                   </button>
                 </div>
@@ -1209,11 +1206,11 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== PRIVACY =================== */}
             {activeTab === 'privacy' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Privacy Settings</h3>
                 
-                <div className={s.group}>
-                  <label className={s.checkbox}>
+                <div className="settings-group">
+                  <label className="settings-checkbox">
                     <input
                       type="checkbox"
                       checked={privacySettings.readReceipts}
@@ -1225,13 +1222,13 @@ export const Settings: React.FC<SettingsProps> = ({
                     <span className="checkmark"></span>
                     Send Read Receipts
                   </label>
-                  <div className={s.help}>
+                  <div className="settings-help">
                     Let others know when you've read their messages.
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.checkbox}>
+                <div className="settings-group">
+                  <label className="settings-checkbox">
                     <input
                       type="checkbox"
                       checked={privacySettings.typingIndicators}
@@ -1243,16 +1240,16 @@ export const Settings: React.FC<SettingsProps> = ({
                     <span className="checkmark"></span>
                     Show Typing Indicators
                   </label>
-                  <div className={s.help}>
+                  <div className="settings-help">
                     Show when you're typing to other users.
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Block List</label>
+                <div className="settings-group">
+                  <label className="settings-label">Block List</label>
                   <div className="blocked-users">
                     {(!blockedUsersProp || blockedUsersProp.size === 0) ? (
-                      <div className={s.help}>No blocked users</div>
+                      <div className="settings-help">No blocked users</div>
                     ) : (
                       Array.from(blockedUsersProp).map(userId => (
                         <div key={userId} className="blocked-user">
@@ -1273,29 +1270,29 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== ADVANCED =================== */}
             {activeTab === 'advanced' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Advanced</h3>
 
-                <div className={s.group}>
-                  <label className={s.label}>Current Relay URL</label>
-                  <div className={s.info} style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                <div className="settings-group">
+                  <label className="settings-label">Current Relay URL</label>
+                  <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
                     {api.getBaseUrl()}
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Connect to Relay Manually</label>
-                  <div className={s.relayRow}>
+                <div className="settings-group">
+                  <label className="settings-label">Connect to Relay Manually</label>
+                  <div className="settings-relay-row">
                     <input
                       type="text"
-                      className={s.input}
+                      className="settings-input"
                       value={manualRelayUrl}
                       onChange={(e) => setManualRelayUrl(e.target.value)}
                       placeholder="e.g. 192.168.1.100:8080"
                       onKeyDown={(e) => { if (e.key === 'Enter') handleConnectManualRelay(); }}
                     />
                     <button
-                      className={clsx(btnStyles.button, btnStyles.primary)}
+                      className="btn btn-primary"
                       style={{ width: 'auto', padding: '10px 16px', whiteSpace: 'nowrap' }}
                       onClick={handleConnectManualRelay}
                       disabled={!manualRelayUrl.trim() || relayConnecting}
@@ -1308,13 +1305,13 @@ export const Settings: React.FC<SettingsProps> = ({
                       {relayConnectMsg}
                     </div>
                   )}
-                  <div className={s.help}>
+                  <div className="settings-help">
                     Enter a relay server address to connect to a different server. This will save the URL and reconnect.
                   </div>
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Identity Key Management</label>
+                <div className="settings-group">
+                  <label className="settings-label">Identity Key Management</label>
                   <div className="test-buttons" style={{ flexWrap: 'wrap' }}>
                     <button className="test-button" onClick={handleExportIdentity}>
                       📤 Export Identity
@@ -1336,15 +1333,15 @@ export const Settings: React.FC<SettingsProps> = ({
                       onChange={handleImportFile}
                     />
                   </div>
-                  <div className={s.help}>
+                  <div className="settings-help">
                     Export your encrypted identity to a JSON file for backup or transfer to another browser. Import a previously exported identity file to restore access.
                   </div>
                   {importStatus && <div className="auth-success" style={{ marginTop: 8 }}>{importStatus}</div>}
-                  {importError && <div className={s.help} style={{ color: 'var(--red)', marginTop: 8 }}>{importError}</div>}
+                  {importError && <div className="settings-help" style={{ color: 'var(--red)', marginTop: 8 }}>{importError}</div>}
                   {importPasswordPrompt && (
-                    <div className={s.importPrompt}>
+                    <div className="settings-import-prompt">
                       <div style={{ marginBottom: 8, fontSize: 14 }}>
-                        Enter password to decrypt identity <code className={s.hashCode}>{importPasswordPrompt.hash16}</code>:
+                        Enter password to decrypt identity <code className="settings-hash-code">{importPasswordPrompt.hash16}</code>:
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <input
@@ -1353,7 +1350,7 @@ export const Settings: React.FC<SettingsProps> = ({
                           value={importPassword}
                           onChange={(e) => setImportPassword(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') handleImportConfirm(); }}
-                          className={s.input}
+                          className="form-input"
                           style={{ flex: 1 }}
                           autoFocus
                         />
@@ -1368,8 +1365,8 @@ export const Settings: React.FC<SettingsProps> = ({
                   )}
                 </div>
 
-                <div className={s.group}>
-                  <label className={s.label}>Clear Local Data</label>
+                <div className="settings-group">
+                  <label className="settings-label">Clear Local Data</label>
                   {!clearConfirm ? (
                     <button className="clear-button" onClick={handleClearLocalData}>
                       🗑️ Clear Local Data
@@ -1384,7 +1381,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       </button>
                     </div>
                   )}
-                  <div className={s.help}>
+                  <div className="settings-help">
                     Removes all locally stored settings, keys, and tokens. This cannot be undone.
                   </div>
                 </div>
@@ -1393,28 +1390,28 @@ export const Settings: React.FC<SettingsProps> = ({
 
             {/* =================== SERVER INFO =================== */}
             {activeTab === 'server' && (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>Server Info</h3>
 
-                <div className={s.group}>
-                  <label className={s.label}>Connection Status</label>
-                  <div className={s.info}>
+                <div className="settings-group">
+                  <label className="settings-label">Connection Status</label>
+                  <div className="settings-info">
                     {serverInfo?.isConnected ? '🟢 Connected' : '🔴 Disconnected'}
                   </div>
                 </div>
 
                 {serverInfo?.version && (
-                  <div className={s.group}>
-                    <label className={s.label}>Server Version</label>
-                    <div className={s.info}>{serverInfo.version}</div>
+                  <div className="settings-group">
+                    <label className="settings-label">Server Version</label>
+                    <div className="settings-info">{serverInfo.version}</div>
                   </div>
                 )}
 
                 {serverInfo?.buildHash && (
-                  <div className={s.group}>
-                    <label className={s.label}>Server Build Hash</label>
+                  <div className="settings-group">
+                    <label className="settings-label">Server Build Hash</label>
                     <div
-                      className={s.info}
+                      className="settings-info copyable"
                       style={{ fontFamily: 'var(--font-mono)', fontSize: 13, cursor: 'pointer' }}
                       title="Click to copy"
                       onClick={() => { navigator.clipboard?.writeText(serverInfo.buildHash); }}
@@ -1425,17 +1422,17 @@ export const Settings: React.FC<SettingsProps> = ({
                 )}
 
                 {serverInfo?.connectedSince && (
-                  <div className={s.group}>
-                    <label className={s.label}>Connected Since</label>
-                    <div className={s.info}>
+                  <div className="settings-group">
+                    <label className="settings-label">Connected Since</label>
+                    <div className="settings-info">
                       {new Date(serverInfo.connectedSince).toLocaleString()}
                     </div>
                   </div>
                 )}
 
-                <div className={s.group}>
-                  <label className={s.label}>Relay Address</label>
-                  <div className={s.info} style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+                <div className="settings-group">
+                  <label className="settings-label">Relay Address</label>
+                  <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>
                     {serverInfo?.relayAddress || api.getBaseUrl()}
                   </div>
                 </div>
@@ -1452,7 +1449,7 @@ export const Settings: React.FC<SettingsProps> = ({
               const indicator = getTrustIndicator(combinedTrust);
 
               return (
-              <div className={s.section}>
+              <div className="settings-section">
                 <h3>About Accord</h3>
                 
                 <div className="about-content">
@@ -1474,17 +1471,17 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
 
                   {/* Build Hash Verification */}
-                  <div className={s.buildCard}>
+                  <div className="settings-build-card">
                     <h4>Build Verification</h4>
                     
-                    <div className={s.trustBadge} style={{ background: `${indicator.color}15`, border: `1px solid ${indicator.color}40` }}>
+                    <div className="settings-trust-badge" style={{ background: `${indicator.color}15`, border: `1px solid ${indicator.color}40` }}>
                       <span style={{ fontSize: 18 }}>{indicator.emoji}</span>
                       <span style={{ fontWeight: 600, color: indicator.color }}>{indicator.label}</span>
                     </div>
 
                     <div className="info-row" style={{ marginBottom: 6 }}>
                       <strong>Client Build:</strong>{' '}
-                      <code className={s.hashCode} title={`Full hash: ${CLIENT_BUILD_HASH}\nClick to copy`} onClick={() => navigator.clipboard?.writeText(CLIENT_BUILD_HASH)}>
+                      <code className="settings-hash-code" title={`Full hash: ${CLIENT_BUILD_HASH}\nClick to copy`} onClick={() => navigator.clipboard?.writeText(CLIENT_BUILD_HASH)}>
                         {shortHash(CLIENT_BUILD_HASH)}
                       </code>
                       <span style={{ marginLeft: 6, fontSize: 11, color: getTrustIndicator(clientTrust).color }}>
@@ -1496,7 +1493,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       <strong>Server Build:</strong>{' '}
                       {serverInfo?.buildHash ? (
                         <>
-                          <code className={s.hashCode} title={`Full hash: ${serverInfo.buildHash}\nClick to copy`} onClick={() => navigator.clipboard?.writeText(serverInfo.buildHash)}>
+                          <code className="settings-hash-code" title={`Full hash: ${serverInfo.buildHash}\nClick to copy`} onClick={() => navigator.clipboard?.writeText(serverInfo.buildHash)}>
                             {shortHash(serverInfo.buildHash)}
                           </code>
                           {serverTrust && (
@@ -1506,13 +1503,13 @@ export const Settings: React.FC<SettingsProps> = ({
                           )}
                         </>
                       ) : (
-                        <span className={s.help} style={{ margin: 0 }}>
+                        <span className="settings-help" style={{ margin: 0 }}>
                           {serverInfo?.isConnected ? 'Not reported' : 'Not connected'}
                         </span>
                       )}
                     </div>
 
-                    <div className={s.help} style={{ marginTop: 8 }}>
+                    <div className="settings-help" style={{ marginTop: 8 }}>
                       Build hashes verify that client and server code hasn't been tampered with.
                       Official releases are signed and verified against a known hash registry.
                     </div>
@@ -1553,39 +1550,39 @@ export const Settings: React.FC<SettingsProps> = ({
       </div>
       {/* QR Code Show Modal */}
       {showQrModal && (
-        <div className={s.overlay} style={{ zIndex: 10001 }} onClick={() => setShowQrModal(false)}>
-          <div className={s.qrModal} onClick={e => e.stopPropagation()}>
+        <div className="settings-overlay" style={{ zIndex: 10001 }} onClick={() => setShowQrModal(false)}>
+          <div className="settings-qr-modal" onClick={e => e.stopPropagation()}>
             <h3>Identity QR Code</h3>
-            <img src={qrDataUrl} alt="Identity QR Code" className={s.qrImg} />
-            <p className={s.help} style={{ margin: '12px 0 4px' }}>
+            <img src={qrDataUrl} alt="Identity QR Code" className="settings-qr-img" />
+            <p className="settings-help" style={{ margin: '12px 0 4px' }}>
               Scan this QR code on your other device to sync your identity.
             </p>
-            <p className={s.qrWarning}>
+            <p className="settings-qr-warning">
               ⚠️ This QR code contains your encrypted identity. Only share with your own devices.
             </p>
-            <button className={clsx(btnStyles.button, btnStyles.primary)} style={{ width: 'auto', padding: '8px 24px' }} onClick={() => setShowQrModal(false)}>Close</button>
+            <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px' }} onClick={() => setShowQrModal(false)}>Close</button>
           </div>
         </div>
       )}
 
       {/* QR Code Scan Modal */}
       {showScanModal && (
-        <div className={s.overlay} style={{ zIndex: 10001 }} onClick={closeScanModal}>
-          <div className={s.qrModal} style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
+        <div className="settings-overlay" style={{ zIndex: 10001 }} onClick={closeScanModal}>
+          <div className="settings-qr-modal" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
             <h3>Scan Identity QR Code</h3>
             {scanError ? (
               <div>
                 <p style={{ color: 'var(--red)', fontSize: 14, margin: '16px 0' }}>{scanError}</p>
-                <p className={s.help}>You can use file import as an alternative.</p>
+                <p className="settings-help">You can use file import as an alternative.</p>
               </div>
             ) : (
               <div>
                 <video ref={scanVideoRef} style={{ width: '100%', maxWidth: 340, borderRadius: 8, background: '#000' }} muted playsInline />
                 <canvas ref={scanCanvasRef} style={{ display: 'none' }} />
-                <p className={s.help} style={{ marginTop: 8 }}>Point your camera at an Accord identity QR code.</p>
+                <p className="settings-help" style={{ marginTop: 8 }}>Point your camera at an Accord identity QR code.</p>
               </div>
             )}
-            <button className={clsx(btnStyles.button, btnStyles.primary)} style={{ width: 'auto', padding: '8px 24px', marginTop: 12 }} onClick={closeScanModal}>Cancel</button>
+            <button className="btn btn-primary" style={{ width: 'auto', padding: '8px 24px', marginTop: 12 }} onClick={closeScanModal}>Cancel</button>
           </div>
         </div>
       )}

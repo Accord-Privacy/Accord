@@ -11,18 +11,17 @@
 
 /* Chat header — Fluxer ChannelHeader: grid layout, 1fr auto */
 .chat-header {
-  height: var(--layout-header-height);
-  min-height: var(--layout-header-height);
+  height: var(--header-height);
+  min-height: var(--header-height);
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: var(--spacing-4);
-  padding: 0 var(--spacing-4);
-  border-bottom: 1px solid var(--user-area-divider-color);
+  gap: 16px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 3;
-  background: var(--background-secondary-lighter);
-  color: var(--text-primary);
+  background: var(--bg-content);
 }
 
 .chat-header-left {

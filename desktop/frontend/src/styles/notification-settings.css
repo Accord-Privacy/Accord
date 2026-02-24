@@ -1,83 +1,62 @@
 /* =================== Notification Settings Modal =================== */
 .notification-modal {
   position: fixed;
-  inset: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   background: var(--bg-overlay);
-  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: var(--z-index-modal);
-  animation: modal-backdrop-in 150ms ease-out;
+  z-index: 1001;
 }
 
 .notification-modal-content {
   background: var(--bg-dark);
-  padding: var(--spacing-6);
-  border-radius: var(--radius-xl);
+  padding: 24px;
+  border-radius: var(--radius-md);
   max-width: 400px;
   width: 90%;
   color: var(--text-primary);
-  box-shadow: var(--shadow-high);
-  animation: modal-card-in 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .notification-setting {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--spacing-4);
-  gap: var(--spacing-4);
+  margin-bottom: 16px;
 }
 
-.notification-setting label {
-  font-size: var(--font-base);
-  color: var(--text-primary);
-  font-weight: 500;
-}
+.notification-setting label { font-size: 14px; color: var(--text-primary); }
 
 .notification-toggle {
   background: var(--bg-input);
   border: none;
   color: var(--text-primary);
-  padding: var(--spacing-1-5) var(--spacing-3);
-  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: var(--font-sm);
-  font-weight: 500;
-  transition: background-color 70ms ease-out;
+  font-size: 12px;
+  transition: background var(--transition-fast);
 }
 
-.notification-toggle:hover {
-  background: color-mix(in srgb, var(--bg-input) 80%, white);
-}
-
-.notification-toggle.active {
-  background: var(--green);
-  color: #fff;
-}
+.notification-toggle.active { background: var(--green); color: var(--text-on-accent); }
 
 .notification-checkbox {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--bg-elevated);
-  border-radius: var(--radius-xs);
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--bg-input);
+  border-radius: 2px;
   background: transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--green);
-  flex-shrink: 0;
-  transition: all 70ms ease-out;
-}
-
-.notification-checkbox:hover {
-  border-color: color-mix(in srgb, var(--bg-elevated) 70%, white);
+  transition: all var(--transition-fast);
 }
 
 .notification-checkbox.checked {
   background: var(--green);
   border-color: var(--green);
-  color: #fff;
+  color: var(--text-primary);
 }
+

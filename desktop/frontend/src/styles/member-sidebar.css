@@ -1,0 +1,135 @@
+/* =================== Member Sidebar =================== */
+/* Modeled after Fluxer MemberListContainer + MemberListItem */
+.member-sidebar {
+  width: var(--member-sidebar-width);
+  background: var(--bg-content);
+  padding: 10px 8px 16px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.member-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 16px 8px 4px 8px;
+  letter-spacing: 0.02em;
+}
+
+/* Member item — Fluxer MemberListItem: 32px grid height, 6px radius */
+.member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  margin: 1px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  min-height: 32px;
+  color: var(--text-secondary);
+}
+
+.member:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+}
+
+.member-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-on-accent);
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.member-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.member-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.member-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 20px;
+  max-height: 20px;
+}
+
+.member-status-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 14px;
+}
+
+/* Offline members — Fluxer: opacity 0.3 */
+.member-offline {
+  opacity: 0.3;
+}
+
+.member-offline:hover {
+  opacity: 1;
+}
+
+.member-role-badge {
+  font-size: var(--font-sm);
+  margin-left: 2px;
+}
+
+/* Role section headers */
+.role-section-header {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+  padding: 16px 8px 4px 8px;
+}
+
+.member-action-btn {
+  background: var(--accent);
+  border: none;
+  color: var(--text-on-accent);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font-size: var(--font-xs);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.member:hover .member-action-btn { opacity: 0.7; }
+.member-action-btn:hover { opacity: 1 !important; }
+.member-action-btn.danger { background: var(--red); }
+
+.members-empty {
+  padding: 16px;
+  color: var(--text-faint);
+  font-size: var(--font-sm);
+  text-align: center;
+}

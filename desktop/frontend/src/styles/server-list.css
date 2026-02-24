@@ -1,0 +1,143 @@
+/* =================== Server List (Guild Bar) =================== */
+/* Modeled after Fluxer GuildsLayout.module.css */
+.server-list {
+  width: var(--server-bar-width);
+  background: var(--bg-deepest);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0 8px;
+  gap: 6px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.server-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* Separator between home and servers */
+.server-list-separator {
+  width: 32px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--bg-modifier-hover);
+  flex-shrink: 0;
+  margin: 6px 0;
+}
+
+/* Server icon — circle → 30% radius morph on hover/active (Fluxer pattern) */
+.server-icon {
+  position: relative;
+  width: var(--guild-icon-size);
+  height: var(--guild-icon-size);
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-radius 70ms ease-out, background-color 70ms ease-out, color 70ms ease-out;
+  flex-shrink: 0;
+}
+
+.server-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.server-icon:hover {
+  border-radius: 30%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.server-icon.active {
+  border-radius: 30%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+/* Pill indicator (left side) — Fluxer-style */
+.server-icon::before {
+  content: '';
+  position: absolute;
+  left: -15px;
+  width: 8px;
+  border-radius: 0 4px 4px 0;
+  background: var(--text-primary);
+  transition: height 70ms ease-out, opacity 70ms ease-out;
+  height: 0;
+  opacity: 0;
+}
+
+.server-icon:hover::before {
+  height: 20px;
+  opacity: 1;
+}
+
+.server-icon.active::before {
+  height: 40px;
+  opacity: 1;
+}
+
+.server-icon.has-unread::before {
+  height: 8px;
+  opacity: 1;
+}
+
+/* Add server button — dashed border (Fluxer pattern) */
+.server-icon.add-server {
+  background: transparent;
+  border: 2px dashed var(--border-subtle);
+  color: var(--green);
+  font-size: 24px;
+  transition: border-radius 70ms ease-out, border-color 70ms ease-out;
+}
+
+.server-icon.add-server:hover {
+  background: var(--green);
+  color: var(--text-on-accent);
+  border-radius: 30%;
+  border-color: transparent;
+}
+
+/* Notification badges */
+.server-notification {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  background: var(--red);
+  border: 3px solid var(--bg-deepest);
+  min-width: 22px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-on-accent);
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.server-notification.mention {
+  background: var(--red);
+}
+
+.server-notification.dot {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-deepest);
+  padding: 0;
+}

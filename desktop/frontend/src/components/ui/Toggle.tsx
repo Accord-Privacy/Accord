@@ -1,5 +1,4 @@
 import React from 'react';
-import clsx from 'clsx';
 
 interface ToggleProps {
   checked: boolean;
@@ -19,13 +18,13 @@ export const Toggle: React.FC<ToggleProps> = ({
   className,
 }) => {
   return (
-    <label className={clsx('toggle-row', disabled && 'toggle-disabled', className)}
-      style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', cursor: disabled ? 'not-allowed' : 'pointer' }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {label && <span style={{ display: 'block', fontWeight: 500, color: 'var(--text-primary)', fontSize: '14px' }}>{label}</span>}
-        {description && <span style={{ display: 'block', fontSize: '13px', color: 'var(--text-tertiary-muted)', marginTop: '2px' }}>{description}</span>}
+    <label className={`toggle-row ${disabled ? 'toggle-disabled' : ''} ${className || ''}`}>
+      <div className="toggle-content">
+        {label && <span className="toggle-label">{label}</span>}
+        {description && <span className="toggle-description">{description}</span>}
       </div>
       <div
+        className={`toggle-switch ${checked ? 'toggle-on' : ''}`}
         role="switch"
         aria-checked={checked}
         tabIndex={disabled ? -1 : 0}
@@ -36,20 +35,8 @@ export const Toggle: React.FC<ToggleProps> = ({
             onChange(!checked);
           }
         }}
-        style={{
-          width: '40px', height: '24px', borderRadius: '12px', position: 'relative',
-          backgroundColor: checked ? 'var(--accent)' : 'var(--background-tertiary)',
-          transition: 'background-color 0.15s ease', cursor: disabled ? 'not-allowed' : 'pointer',
-          flexShrink: 0, marginLeft: '12px',
-        }}
       >
-        <div style={{
-          width: '18px', height: '18px', borderRadius: '50%',
-          backgroundColor: '#ffffff',
-          position: 'absolute', top: '3px',
-          left: checked ? '19px' : '3px',
-          transition: 'left 0.15s ease',
-        }} />
+        <div className="toggle-knob" />
       </div>
     </label>
   );

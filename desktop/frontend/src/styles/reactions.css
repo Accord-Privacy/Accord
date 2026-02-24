@@ -1,6 +1,4 @@
 /* =================== Message Reactions =================== */
-/* Fluxer MessageReactions patterns — pill-shaped chips with brand color states */
-
 .message-reactions-container {
   margin-top: 4px;
   position: relative;
@@ -12,127 +10,82 @@
 .message-reactions {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  padding-top: 0.25rem;
-  user-select: none;
-  gap: 0.25rem;
+  gap: 4px;
+  margin-bottom: 4px;
 }
 
-/* Reaction chip — pill-shaped with border */
 .reaction {
-  position: relative;
-  border-radius: 0.5rem;
-  margin-bottom: 0;
-}
-
-.reaction-button {
-  appearance: none;
-  background: var(--bg-input);
-  border: 1px solid transparent;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  padding: 0;
-  transition:
-    background-color 0.1s ease,
-    border-color 0.1s ease;
-  color: var(--text-faint);
-}
-
-.reaction-button:hover {
-  background-color: var(--background-modifier-hover);
-  border-color: var(--background-modifier-accent);
-}
-
-/* Inner layout: emoji + count */
-.reaction-inner {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  padding: 0.125rem 0.375rem;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.reaction:hover {
+  background: var(--bg-active);
+  border-color: var(--text-faint);
+}
+
+.reaction-user-reacted {
+  background: var(--accent-light);
+  border-color: rgba(88, 101, 242, 0.3);
+}
+
+.reaction-user-reacted:hover {
+  background: rgba(88, 101, 242, 0.25);
+  border-color: rgba(88, 101, 242, 0.5);
 }
 
 .reaction-emoji {
-  height: 1.25rem;
-  width: 1.25rem;
-  margin: 0.125rem 0;
-  min-height: auto;
-  min-width: auto;
-  object-fit: contain;
-  display: block;
-  flex-shrink: 0;
-  font-size: 1.25rem;
+  font-size: 14px;
   line-height: 1;
-}
-
-span.reaction-emoji {
-  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .reaction-count {
-  color: var(--text-faint);
-  font-weight: 600;
-  min-width: 12px;
-  line-height: 1;
-  position: relative;
-  overflow: hidden;
-  height: 1rem;
-  margin-inline-start: 0.375rem;
-  text-align: center;
-  user-select: none;
   font-size: 12px;
-}
-
-/* User-reacted state — brand color border and background */
-.reaction-user-reacted .reaction-button {
-  background-color: color-mix(in srgb, var(--accent) 36%, var(--bg-input) 64%);
-  border-color: var(--accent);
-  color: var(--text-on-accent);
-}
-
-.reaction-user-reacted .reaction-button:hover {
-  background-color: color-mix(in srgb, var(--accent) 48%, var(--bg-input) 52%);
-  border-color: var(--accent);
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 10px;
+  text-align: center;
 }
 
 .reaction-user-reacted .reaction-count {
-  color: var(--text-on-accent);
+  color: var(--accent);
 }
 
-/* "Add reaction" button at end of row */
 .add-reaction-container {
   position: relative;
   display: inline-block;
 }
 
 .add-reaction-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: auto;
-  padding: 0.25rem 0.375rem;
-  border-radius: 0.5rem;
-  background: transparent;
-  border: none;
-  color: var(--text-faint);
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 14px;
   cursor: pointer;
-  transition:
-    background-color 0.1s ease,
-    color 0.1s ease;
+  transition: all var(--transition-fast);
+  opacity: 0.5;
 }
 
 .add-reaction-btn:hover {
-  background-color: var(--background-modifier-hover);
-  color: var(--text-primary);
+  background: var(--bg-active);
+  border-color: var(--text-faint);
+  opacity: 1;
 }
 
-/* Emoji picker dropdown */
 .emoji-picker {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: var(--z-index-modal);
+  z-index: 1000;
   background: var(--bg-dark);
   border: 1px solid var(--bg-input);
   border-radius: var(--radius-md);
@@ -158,3 +111,4 @@ span.reaction-emoji {
 .emoji-option:hover {
   background: var(--bg-active);
 }
+
