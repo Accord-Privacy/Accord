@@ -19,3 +19,11 @@
 @import './styles/emoji-picker.css';
 @import './styles/extras.css';
 @import './styles/uikit.css';
+
+/* Restored global styles for components not yet migrated to CSS Modules */
+@import './styles/chat-area.css';
+@import './styles/messages.css';
+@import './styles/message-input.css';
+@import './styles/reactions.css';
+@import './styles/voice.css';
+@import './styles/chat-extras.css';
