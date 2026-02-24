@@ -39,12 +39,12 @@ import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
 import { setNodeCustomEmojis } from "./customEmojiStore";
-import { UpdateBanner } from "./UpdateChecker";
 import {
   AppContext,
   MnemonicModal, RecoverModal, KeyBackupScreen,
-  ServerList, ChannelSidebar, ChatArea, MemberSidebar, AppModals,
+  AppModals,
 } from "./components";
+import { AccordShell } from "./components/layout/AccordShell";
 
 // Utility: robust clipboard copy that works in non-secure contexts
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -3750,18 +3750,11 @@ function App() {
   }
 
   // ---- Main authenticated app ----
+  const selectedNodeName = nodes.find(n => n.id === selectedNodeId)?.name || '';
   return (
     <AppContext.Provider value={contextValue}>
       <div className="app">
-        <UpdateBanner />
-        <ServerList />
-        <div className="app-content">
-          <ChannelSidebar />
-          <div className="main-content">
-            <ChatArea />
-            <MemberSidebar />
-          </div>
-        </div>
+        <AccordShell serverName={selectedNodeName} />
         <AppModals />
       </div>
     </AppContext.Provider>

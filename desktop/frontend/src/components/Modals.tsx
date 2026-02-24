@@ -1,8 +1,12 @@
 import React, { Suspense } from "react";
+import clsx from "clsx";
 import { useAppContext } from "./AppContext";
 import { api, parseInviteLink } from "../api";
 import { renderMessageMarkdown } from "../markdown";
 import { notificationManager } from "../notifications";
+import modalStyles from "./modals/Modal.module.css";
+import btnStyles from "./uikit/button/Button.module.css";
+import ctxStyles from "./uikit/context_menu/ContextMenu.module.css";
 import { SearchOverlay } from "../SearchOverlay";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { ProfileCard } from "../ProfileCard";
@@ -58,22 +62,22 @@ export const AppModals: React.FC = () => {
 
       {/* Join/Create Node Modal */}
       {ctx.showCreateNodeModal && !ctx.showJoinNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)}>
             <h3>Join a Node</h3>
             <p>Enter an invite link to join an existing community.</p>
             <div className="form-group">
-              <label className="form-label">Invite Code or Link</label>
-              <input type="text" placeholder="accord://host/invite/CODE or just the code" value={ctx.joinInviteCode} onChange={(e) => ctx.setJoinInviteCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ctx.joinInviteCode.trim()) ctx.handleJoinNode(); }} className="form-input" />
+              <label style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.02em", color: "var(--text-tertiary-muted)", display: "block", marginBottom: "6px" }}>Invite Code or Link</label>
+              <input type="text" placeholder="accord://host/invite/CODE or just the code" value={ctx.joinInviteCode} onChange={(e) => ctx.setJoinInviteCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ctx.joinInviteCode.trim()) ctx.handleJoinNode(); }} style={{ width: "100%", padding: "10px 12px", fontSize: "14px", backgroundColor: "var(--background-tertiary)", border: "1px solid transparent", borderRadius: "6px", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const }} />
             </div>
-            {ctx.joinError && <div className="auth-error">{ctx.joinError}</div>}
-            <div className="modal-actions">
-              <button onClick={ctx.handleJoinNode} disabled={ctx.joiningNode || !ctx.joinInviteCode.trim()} className="btn btn-primary">{ctx.joiningNode ? 'Joining...' : 'Join Node'}</button>
-              <button onClick={() => { ctx.setShowCreateNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); }} className="btn btn-outline">Cancel</button>
+            {ctx.joinError && <div style={{ color: "var(--red)", fontSize: "13px", marginBottom: "12px", padding: "8px 12px", background: "rgba(237,66,69,0.1)", borderRadius: "6px" }}>{ctx.joinError}</div>}
+            <div className={clsx(modalStyles.layout, modalStyles.footer)}>
+              <button onClick={ctx.handleJoinNode} disabled={ctx.joiningNode || !ctx.joinInviteCode.trim()} className={clsx(btnStyles.button, btnStyles.primary)}>{ctx.joiningNode ? 'Joining...' : 'Join Node'}</button>
+              <button onClick={() => { ctx.setShowCreateNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); }} className={clsx(btnStyles.button, btnStyles.secondary)}>Cancel</button>
             </div>
             <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
               <p style={{ fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>Or create your own community</p>
-              <button onClick={() => ctx.setShowJoinNodeModal(true)} className="btn-ghost"><strong>Create a New Node</strong></button>
+              <button onClick={() => ctx.setShowJoinNodeModal(true)} className={clsx(btnStyles.button, btnStyles.secondary, btnStyles.compact)}><strong>Create a New Node</strong></button>
             </div>
           </div>
         </div>
@@ -81,12 +85,12 @@ export const AppModals: React.FC = () => {
 
       {/* Create Node Modal */}
       {ctx.showJoinNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)}>
             <h3>Create a Node</h3>
             <p>Start a new community and invite others. A #general channel will be created automatically.</p>
             <div className="form-group">
-              <label className="form-label">Node Name</label>
+              <label style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.02em", color: "var(--text-tertiary-muted)", display: "block", marginBottom: "6px" }}>Node Name</label>
               <input type="text" placeholder="My Community" value={ctx.newNodeName} onChange={(e) => {
                 const val = e.target.value;
                 ctx.setNewNodeName(val);
@@ -98,23 +102,23 @@ export const AppModals: React.FC = () => {
                     ctx.setShowJoinNodeModal(false);
                   }
                 }
-              }} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleCreateNode(); }} className="form-input" />
+              }} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleCreateNode(); }} style={{ width: "100%", padding: "10px 12px", fontSize: "14px", backgroundColor: "var(--background-tertiary)", border: "1px solid transparent", borderRadius: "6px", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const }} />
               {ctx.newNodeName && parseInviteLink(ctx.newNodeName) && (
                 <p style={{ color: 'var(--accent)', fontSize: '12px', marginTop: '4px' }}>
-                  💡 This looks like an invite link — <button className="btn-ghost" style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
+                  💡 This looks like an invite link — <button className={clsx(btnStyles.button, btnStyles.secondary, btnStyles.compact)} style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
                 </p>
               )}
             </div>
             <div className="form-group">
-              <label className="form-label">Description (optional)</label>
-              <input type="text" placeholder="What's this node about?" value={ctx.newNodeDescription} onChange={(e) => ctx.setNewNodeDescription(e.target.value)} className="form-input" />
+              <label style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.02em", color: "var(--text-tertiary-muted)", display: "block", marginBottom: "6px" }}>Description (optional)</label>
+              <input type="text" placeholder="What's this node about?" value={ctx.newNodeDescription} onChange={(e) => ctx.setNewNodeDescription(e.target.value)} style={{ width: "100%", padding: "10px 12px", fontSize: "14px", backgroundColor: "var(--background-tertiary)", border: "1px solid transparent", borderRadius: "6px", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const }} />
             </div>
-            <div className="modal-actions">
-              <button onClick={ctx.handleCreateNode} disabled={ctx.creatingNode || !ctx.newNodeName.trim()} className="btn btn-green">{ctx.creatingNode ? 'Creating...' : 'Create Node'}</button>
-              <button onClick={() => { ctx.setShowJoinNodeModal(false); ctx.setNewNodeName(""); ctx.setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
+            <div className={clsx(modalStyles.layout, modalStyles.footer)}>
+              <button onClick={ctx.handleCreateNode} disabled={ctx.creatingNode || !ctx.newNodeName.trim()} className={clsx(btnStyles.button, btnStyles.primary)}>{ctx.creatingNode ? 'Creating...' : 'Create Node'}</button>
+              <button onClick={() => { ctx.setShowJoinNodeModal(false); ctx.setNewNodeName(""); ctx.setNewNodeDescription(""); }} className={clsx(btnStyles.button, btnStyles.secondary)}>Cancel</button>
             </div>
             <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
-              <button onClick={() => ctx.setShowJoinNodeModal(false)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
+              <button onClick={() => ctx.setShowJoinNodeModal(false)} className={clsx(btnStyles.button, btnStyles.secondary, btnStyles.compact)}>Have an invite code? <strong>Join a Node</strong></button>
             </div>
           </div>
         </div>
@@ -122,14 +126,14 @@ export const AppModals: React.FC = () => {
 
       {/* Invite Modal */}
       {ctx.showInviteModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)}>
             <h3>Invite Link Generated</h3>
             <p>Share this link to invite others to your node. The relay address is encoded for privacy.</p>
             <div className="modal-code-block" style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.85em' }}>{ctx.generatedInvite}</div>
-            <div className="modal-actions">
-              <button onClick={() => { ctx.copyToClipboard(ctx.generatedInvite).then(() => { alert('Invite code copied to clipboard!'); }); }} className="btn btn-primary" style={{ width: 'auto' }}>Copy</button>
-              <button onClick={() => { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); }} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
+            <div className={clsx(modalStyles.layout, modalStyles.footer)}>
+              <button onClick={() => { ctx.copyToClipboard(ctx.generatedInvite).then(() => { alert('Invite code copied to clipboard!'); }); }} className={clsx(btnStyles.button, btnStyles.primary)} style={{ width: 'auto' }}>Copy</button>
+              <button onClick={() => { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); }} className={clsx(btnStyles.button, btnStyles.secondary)} style={{ width: 'auto' }}>Close</button>
             </div>
           </div>
         </div>
@@ -137,13 +141,13 @@ export const AppModals: React.FC = () => {
 
       {/* Delete Channel Confirmation */}
       {ctx.deleteChannelConfirm && (
-        <div className="modal-overlay">
-          <div className="modal-card">
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)}>
             <h3>Delete Channel</h3>
             <p>Are you sure you want to delete <strong>#{ctx.deleteChannelConfirm.name}</strong>? This action cannot be undone. All messages will be permanently lost.</p>
-            <div className="modal-actions">
-              <button onClick={() => ctx.handleDeleteChannelConfirmed(ctx.deleteChannelConfirm!.id)} className="btn btn-red">Delete Channel</button>
-              <button onClick={() => ctx.setDeleteChannelConfirm(null)} className="btn btn-outline">Cancel</button>
+            <div className={clsx(modalStyles.layout, modalStyles.footer)}>
+              <button onClick={() => ctx.handleDeleteChannelConfirmed(ctx.deleteChannelConfirm!.id)} className={clsx(btnStyles.button, btnStyles.dangerPrimary)}>Delete Channel</button>
+              <button onClick={() => ctx.setDeleteChannelConfirm(null)} className={clsx(btnStyles.button, btnStyles.secondary)}>Cancel</button>
             </div>
           </div>
         </div>
@@ -151,18 +155,18 @@ export const AppModals: React.FC = () => {
 
       {/* Discord Template Import */}
       {ctx.showTemplateImport && ctx.selectedNodeId && (
-        <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '480px' }}>
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)} style={{ maxWidth: '480px' }}>
             <h3>📥 Import Discord Template</h3>
             {!ctx.templateResult ? (
               <>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
                 <div className="form-group">
-                  <input type="text" placeholder="discord.new/CODE or template code" value={ctx.templateInput} onChange={(e) => ctx.setTemplateInput(e.target.value)} className="form-input" disabled={ctx.templateImporting} />
+                  <input type="text" placeholder="discord.new/CODE or template code" value={ctx.templateInput} onChange={(e) => ctx.setTemplateInput(e.target.value)} style={{ width: "100%", padding: "10px 12px", fontSize: "14px", backgroundColor: "var(--background-tertiary)", border: "1px solid transparent", borderRadius: "6px", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const }} disabled={ctx.templateImporting} />
                 </div>
                 {ctx.templateError && <div style={{ color: 'var(--red)', fontSize: '13px', marginBottom: '8px' }}>{ctx.templateError}</div>}
-                <div className="modal-actions">
-                  <button className="btn btn-green" disabled={ctx.templateImporting || !ctx.templateInput.trim()} onClick={async () => {
+                <div className={clsx(modalStyles.layout, modalStyles.footer)}>
+                  <button className={clsx(btnStyles.button, btnStyles.primary)} disabled={ctx.templateImporting || !ctx.templateInput.trim()} onClick={async () => {
                     ctx.setTemplateError('');
                     ctx.setTemplateImporting(true);
                     try {
@@ -180,7 +184,7 @@ export const AppModals: React.FC = () => {
                   }}>
                     {ctx.templateImporting ? '⏳ Importing...' : 'Import'}
                   </button>
-                  <button className="btn btn-outline" onClick={() => { ctx.setShowTemplateImport(false); ctx.setTemplateInput(''); ctx.setTemplateError(''); ctx.setTemplateResult(null); }}>Cancel</button>
+                  <button className={clsx(btnStyles.button, btnStyles.secondary)} onClick={() => { ctx.setShowTemplateImport(false); ctx.setTemplateInput(''); ctx.setTemplateError(''); ctx.setTemplateResult(null); }}>Cancel</button>
                 </div>
               </>
             ) : (
@@ -191,8 +195,8 @@ export const AppModals: React.FC = () => {
                   {ctx.templateResult.channels_created !== undefined && <div>Channels created: <strong>{ctx.templateResult.channels_created}</strong></div>}
                   {ctx.templateResult.categories_created !== undefined && <div>Categories created: <strong>{ctx.templateResult.categories_created}</strong></div>}
                 </div>
-                <div className="modal-actions" style={{ marginTop: '16px' }}>
-                  <button className="btn btn-green" onClick={() => {
+                <div className={clsx(modalStyles.layout, modalStyles.footer)} style={{ marginTop: '16px' }}>
+                  <button className={clsx(btnStyles.button, btnStyles.primary)} onClick={() => {
                     ctx.setShowTemplateImport(false); ctx.setTemplateInput(''); ctx.setTemplateResult(null); ctx.setTemplateError('');
                     if (ctx.selectedNodeId) { ctx.loadChannels(ctx.selectedNodeId); ctx.loadRoles(ctx.selectedNodeId); }
                   }}>Done</button>
@@ -369,8 +373,8 @@ export const AppModals: React.FC = () => {
 
       {/* DM Channel Creation */}
       {ctx.showDmChannelCreate && (
-        <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '380px' }}>
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)} style={{ maxWidth: '380px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ margin: 0 }}>Start a Direct Message</h3>
               <button onClick={() => ctx.setShowDmChannelCreate(false)} className="error-toast-close" style={{ color: 'var(--text-muted)' }}>×</button>
@@ -400,17 +404,17 @@ export const AppModals: React.FC = () => {
 
       {/* Display Name Prompt */}
       {ctx.showDisplayNamePrompt && (
-        <div className="modal-overlay">
-          <div className="modal-card">
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }}>
+          <div className={clsx(modalStyles.root, modalStyles.small)}>
             <h3>Set Your Display Name</h3>
             <p>Choose a name that others will see instead of your fingerprint.</p>
             <div className="form-group">
-              <label className="form-label">Display Name</label>
-              <input type="text" placeholder="Enter a display name..." value={ctx.displayNameInput} onChange={(e) => ctx.setDisplayNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleSaveDisplayName(); }} className="form-input" autoFocus maxLength={32} />
+              <label style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.02em", color: "var(--text-tertiary-muted)", display: "block", marginBottom: "6px" }}>Display Name</label>
+              <input type="text" placeholder="Enter a display name..." value={ctx.displayNameInput} onChange={(e) => ctx.setDisplayNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleSaveDisplayName(); }} style={{ width: "100%", padding: "10px 12px", fontSize: "14px", backgroundColor: "var(--background-tertiary)", border: "1px solid transparent", borderRadius: "6px", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const }} autoFocus maxLength={32} />
             </div>
-            <div className="modal-actions">
-              <button onClick={ctx.handleSaveDisplayName} disabled={ctx.displayNameSaving || !ctx.displayNameInput.trim()} className="btn btn-green" style={{ width: 'auto' }}>{ctx.displayNameSaving ? 'Saving...' : 'Save'}</button>
-              <button onClick={() => ctx.setShowDisplayNamePrompt(false)} className="btn btn-outline" style={{ width: 'auto' }}>Skip</button>
+            <div className={clsx(modalStyles.layout, modalStyles.footer)}>
+              <button onClick={ctx.handleSaveDisplayName} disabled={ctx.displayNameSaving || !ctx.displayNameInput.trim()} className={clsx(btnStyles.button, btnStyles.primary)} style={{ width: 'auto' }}>{ctx.displayNameSaving ? 'Saving...' : 'Save'}</button>
+              <button onClick={() => ctx.setShowDisplayNamePrompt(false)} className={clsx(btnStyles.button, btnStyles.secondary)} style={{ width: 'auto' }}>Skip</button>
             </div>
           </div>
         </div>
@@ -439,14 +443,14 @@ export const AppModals: React.FC = () => {
 
       {/* Context Menu */}
       {ctx.contextMenu && (
-        <div className="context-menu" style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }}>
-          <div className="context-menu-item context-menu-profile-header">
+        <div className={ctxStyles.contextMenu} style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }}>
+          <div className={ctxStyles.item}>
             <div style={{ fontWeight: 600, fontSize: '14px' }}>{ctx.contextMenu.displayName}</div>
             <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{ctx.fingerprint(ctx.contextMenu.publicKeyHash)}</div>
             {ctx.contextMenu.bio && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{ctx.contextMenu.bio}</div>}
           </div>
-          <div className="context-menu-separator"></div>
-          <div className="context-menu-item" onClick={() => {
+          <div className={ctxStyles.separator}></div>
+          <div className={ctxStyles.item} onClick={() => {
             const member = ctx.members.find(m => m.user_id === ctx.contextMenu!.userId);
             ctx.setProfileCardTarget({
               userId: ctx.contextMenu!.userId, x: ctx.contextMenu!.x, y: ctx.contextMenu!.y,
@@ -457,23 +461,23 @@ export const AppModals: React.FC = () => {
             ctx.setContextMenu(null);
           }}>👤 View Profile</div>
           {ctx.contextMenu.user && ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
-            <div className="context-menu-item" onClick={() => {
+            <div className={ctxStyles.item} onClick={() => {
               if (ctx.contextMenu!.user) ctx.openDmWithUser(ctx.contextMenu!.user);
               ctx.setContextMenu(null);
             }}>💬 Send DM</div>
           )}
-          <div className="context-menu-separator"></div>
-          <div className="context-menu-item" onClick={() => {
+          <div className={ctxStyles.separator}></div>
+          <div className={ctxStyles.item} onClick={() => {
             ctx.copyToClipboard(ctx.contextMenu!.publicKeyHash);
             ctx.setContextMenu(null);
           }}>📋 Copy Public Key Hash</div>
           {ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
             <>
-              <div className="context-menu-separator"></div>
+              <div className={ctxStyles.separator}></div>
               {ctx.blockedUsers.has(ctx.contextMenu.userId) ? (
-                <div className="context-menu-item" onClick={() => { ctx.handleUnblockUser(ctx.contextMenu!.userId); ctx.setContextMenu(null); }}>✅ Unblock User</div>
+                <div className={ctxStyles.item} onClick={() => { ctx.handleUnblockUser(ctx.contextMenu!.userId); ctx.setContextMenu(null); }}>✅ Unblock User</div>
               ) : (
-                <div className="context-menu-item context-menu-item-danger" onClick={() => { ctx.setShowBlockConfirm({ userId: ctx.contextMenu!.userId, displayName: ctx.contextMenu!.displayName }); ctx.setContextMenu(null); }}>🚫 Block User</div>
+                <div className={clsx(ctxStyles.item, ctxStyles.danger)} onClick={() => { ctx.setShowBlockConfirm({ userId: ctx.contextMenu!.userId, displayName: ctx.contextMenu!.displayName }); ctx.setContextMenu(null); }}>🚫 Block User</div>
               )}
             </>
           )}
@@ -482,8 +486,8 @@ export const AppModals: React.FC = () => {
 
       {/* Block Confirmation */}
       {ctx.showBlockConfirm && (
-        <div className="modal-overlay" onClick={() => ctx.setShowBlockConfirm(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }} onClick={() => ctx.setShowBlockConfirm(null)}>
+          <div className={clsx(modalStyles.root, modalStyles.small)} onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
             <h3>🚫 Block User</h3>
             <p style={{ color: 'var(--text-secondary)', margin: '12px 0' }}>
               Are you sure you want to block <strong>{ctx.showBlockConfirm.displayName}</strong>?
@@ -491,8 +495,8 @@ export const AppModals: React.FC = () => {
             <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '8px 0' }}>
               They won't be able to send you direct messages. Their messages in channels will be hidden for you.
             </p>
-            <div className="modal-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button onClick={() => ctx.setShowBlockConfirm(null)} className="btn btn-outline" style={{ width: 'auto' }}>Cancel</button>
+            <div className={clsx(modalStyles.layout, modalStyles.footer)} style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => ctx.setShowBlockConfirm(null)} className={clsx(btnStyles.button, btnStyles.secondary)} style={{ width: 'auto' }}>Cancel</button>
               <button onClick={() => ctx.handleBlockUser(ctx.showBlockConfirm!.userId)} className="btn" style={{ width: 'auto', background: 'var(--red, #ed4245)', color: 'var(--text-on-accent)' }}>Block</button>
             </div>
           </div>
@@ -501,7 +505,7 @@ export const AppModals: React.FC = () => {
 
       {/* Keyboard Shortcuts Help */}
       {ctx.showShortcutsHelp && (
-        <div className="modal-overlay" onClick={() => ctx.setShowShortcutsHelp(false)}>
+        <div className={modalStyles.layer} style={{ pointerEvents: "auto", zIndex: 1000 }} onClick={() => ctx.setShowShortcutsHelp(false)}>
           <div className="modal-card shortcuts-modal" onClick={(e) => e.stopPropagation()}>
             <h3>⌨️ Keyboard Shortcuts</h3>
             <div className="shortcuts-list">
@@ -509,8 +513,8 @@ export const AppModals: React.FC = () => {
                 <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>
               ))}
             </div>
-            <div className="modal-actions" style={{ marginTop: '16px' }}>
-              <button onClick={() => ctx.setShowShortcutsHelp(false)} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
+            <div className={clsx(modalStyles.layout, modalStyles.footer)} style={{ marginTop: '16px' }}>
+              <button onClick={() => ctx.setShowShortcutsHelp(false)} className={clsx(btnStyles.button, btnStyles.secondary)} style={{ width: 'auto' }}>Close</button>
             </div>
           </div>
         </div>

@@ -1,0 +1,24 @@
+
+.footer {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	width: 100%;
+	gap: 8px;
+}
+
+.footer > * {
+	flex: 1;
+	min-width: fit-content;
+}
+
+.messagePreview {
+	pointer-events: none;
+	position: relative;
+	overflow: hidden;
+	border-radius: 6px;
+	border: 1px solid var(--background-header-secondary);
+	background-color: var(--background-secondary);
+	padding: 8px 0;
+	font-size: 87.5%;
+}

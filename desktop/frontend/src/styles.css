@@ -1,19 +1,14 @@
 /* Accord — Design System
-   Split into modular files for maintainability.
-   Variables and reset load first, then component styles. */
+   Core tokens and reset load first, then global styles.
+   Core layout/chat components use CSS Modules (Phases A-C). */
 
 @import './styles/variables.css';
+@import './styles/fluxer-global.css';
 @import './styles/reset.css';
-@import './styles/layout.css';
+
+/* Global styles still used by components via string classNames */
 @import './styles/auth.css';
 @import './styles/setup-wizard.css';
-@import './styles/server-list.css';
-@import './styles/channel-sidebar.css';
-@import './styles/chat-area.css';
-@import './styles/messages.css';
-@import './styles/reactions.css';
-@import './styles/message-input.css';
-@import './styles/member-sidebar.css';
 @import './styles/notifications.css';
 @import './styles/shared.css';
 @import './styles/search.css';
@@ -22,7 +17,5 @@
 @import './styles/utilities.css';
 @import './styles/file-upload.css';
 @import './styles/emoji-picker.css';
-@import './styles/chat-extras.css';
-@import './styles/voice.css';
 @import './styles/extras.css';
 @import './styles/uikit.css';
