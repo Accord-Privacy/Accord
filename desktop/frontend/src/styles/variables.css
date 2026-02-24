@@ -51,12 +51,14 @@
   --font-mono: 'Consolas', 'Andale Mono WT', 'Andale Mono', 'Lucida Console', monospace;
   --font-display: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
-  /* Radii */
+  /* Radii (Fluxer-aligned) */
   --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-full: 9999px;
   --radius-round: 50%;
   --radius-pill: 9999px;
 
@@ -94,14 +96,72 @@
   --lh-normal: 1.375;
   --lh-relaxed: 1.5;
 
-  /* Specific component sizing — matched to Fluxer/Discord */
+  /* Spacing scale (Fluxer-aligned) */
+  --spacing-0: 0;
+  --spacing-1: 0.25rem;
+  --spacing-1-5: 0.375rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-5: 1.25rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+  --spacing-10: 2.5rem;
+  --spacing-12: 3rem;
+  --spacing-16: 4rem;
+  --spacing-20: 5rem;
+  --spacing-24: 6rem;
+
+  /* Layout dimensions (Fluxer-aligned) */
+  --layout-guild-list-width: 4.5rem;
+  --layout-sidebar-width: 16.875rem;
+  --layout-header-height: 3.5rem;
+  --layout-user-area-height: 72px;
+  --layout-user-area-reserved-height: 0px;
+  --user-area-content-height: 36px;
+  --user-area-padding-y: calc((var(--layout-user-area-height) - var(--user-area-content-height)) / 2);
+  --user-area-padding-x: var(--spacing-4);
+
+  /* Legacy component sizing aliases */
   --header-height: 48px;
   --server-bar-width: 72px;
   --sidebar-width: 240px;
   --member-sidebar-width: 264px;
   --user-area-height: 52px;
-  --user-area-content-height: 36px;
-  --guild-icon-size: 48px;
+  --guild-icon-size: 44px;
+  --guild-icon-gap: var(--spacing-2);
+
+  /* Input/textarea dimensions */
+  --footer-row-height: 72px;
+  --input-container-min-height: var(--footer-row-height);
+  --input-container-padding: 0.625rem;
+  --input-wrapper-padding-x: 0.5rem;
+  --input-wrapper-padding-bottom: 0.5rem;
+  --textarea-line-height: 1.375rem;
+
+  /* Z-index system */
+  --z-index-base: 0;
+  --z-index-elevated-1: 10;
+  --z-index-elevated-2: 20;
+  --z-index-elevated-3: 30;
+  --z-index-modal: 10000;
+  --z-index-popout: 15000;
+  --z-index-modal-swap: 25000;
+  --z-index-popout-above-swap: 30000;
+  --z-index-overlay: 40000;
+  --z-index-tooltip: 45000;
+  --z-index-toast: 50000;
+
+  /* Typography extras */
+  --font-size-xs: 0.75rem;
+
+  /* Layout gaps */
+  --layout-gap: var(--spacing-4);
+  --layout-gap-sm: var(--spacing-2);
+  --layout-gap-lg: var(--spacing-6);
+  --content-padding: var(--spacing-4);
+  --content-padding-sm: var(--spacing-3);
+  --content-padding-lg: var(--spacing-6);
 
   /* Fluxer-compatible aliases */
   --background-secondary: var(--bg-dark);
@@ -124,8 +184,8 @@
   --brand-primary: var(--accent);
   --status-online: var(--green);
   --status-danger: var(--red);
-  --scrollbar-thumb-bg: rgba(0, 0, 0, 0.4);
-  --scrollbar-thumb-hover-bg: rgba(0, 0, 0, 0.6);
-  --scrollbar-track-bg: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb-bg: color-mix(in srgb, var(--bg-input) 35%, var(--text-faint) 65%);
+  --scrollbar-thumb-hover-bg: color-mix(in srgb, var(--bg-input) 25%, var(--text-secondary) 75%);
+  --scrollbar-track-bg: color-mix(in srgb, var(--bg-dark) 80%, transparent);
   --chat-horizontal-padding: 16px;
 }

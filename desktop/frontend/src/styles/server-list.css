@@ -1,14 +1,18 @@
 /* =================== Server List (Guild Bar) =================== */
 /* Modeled after Fluxer GuildsLayout.module.css */
+
 .server-list {
-  width: var(--server-bar-width);
-  background: var(--bg-deepest);
+  --guild-list-item-box-size: 48px;
+  --guild-list-item-gap: 6px;
+  --guild-list-item-inset: calc((var(--guild-list-item-box-size) - var(--guild-icon-size)) / 2);
+
+  width: var(--layout-guild-list-width);
+  background: var(--background-secondary);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 4px 0 8px;
-  gap: 6px;
-  flex-shrink: 0;
+  padding: var(--spacing-1) 0 var(--spacing-2);
+  gap: var(--guild-list-item-gap);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
@@ -20,62 +24,87 @@
 
 /* Separator between home and servers */
 .server-list-separator {
-  width: 32px;
-  height: 2px;
+  width: 2rem;
+  height: 0.125rem;
   border-radius: 1px;
-  background: var(--bg-modifier-hover);
+  background: var(--background-modifier-hover);
   flex-shrink: 0;
-  margin: 6px 0;
+  margin: var(--guild-list-item-gap) 0;
 }
 
-/* Server icon — circle → 30% radius morph on hover/active (Fluxer pattern) */
+/* Server icon — Fluxer guildListItem + guildIcon pattern */
 .server-icon {
   position: relative;
-  width: var(--guild-icon-size);
-  height: var(--guild-icon-size);
-  border-radius: 50%;
-  background: var(--bg-elevated);
+  width: var(--guild-list-item-box-size);
+  height: var(--guild-list-item-box-size);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--guild-list-item-inset);
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.server-icon > img,
+.server-icon:not(.add-server) {
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition:
+    border-radius 70ms ease-out,
+    background-color 70ms ease-out,
+    color 70ms ease-out;
+}
+
+/* The actual icon circle inside the box */
+.server-icon:not(.add-server) {
+  background: var(--guild-list-foreground);
   font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);
-  cursor: pointer;
   overflow: hidden;
-  transition: border-radius 70ms ease-out, background-color 70ms ease-out, color 70ms ease-out;
-  flex-shrink: 0;
 }
 
 .server-icon img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 
-.server-icon:hover {
+.server-icon:hover:not(.add-server) {
   border-radius: 30%;
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--brand-primary);
+  color: white;
 }
 
-.server-icon.active {
+.server-icon.active:not(.add-server) {
   border-radius: 30%;
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--brand-primary);
+  color: white;
 }
 
-/* Pill indicator (left side) — Fluxer-style */
+/* Accord home icon keeps its image */
+.server-icon.accord-home {
+  background: var(--brand-primary);
+}
+
+.server-icon.accord-home:hover {
+  background: var(--brand-primary);
+}
+
+/* Pill indicator (left side) — Fluxer guildIndicatorBar pattern */
 .server-icon::before {
   content: '';
   position: absolute;
-  left: -15px;
-  width: 8px;
-  border-radius: 0 4px 4px 0;
+  left: calc(-1 * var(--guild-list-item-inset) + 1px);
+  width: 0.35rem;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
   background: var(--text-primary);
   transition: height 70ms ease-out, opacity 70ms ease-out;
   height: 0;
   opacity: 0;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .server-icon:hover::before {
@@ -93,40 +122,48 @@
   opacity: 1;
 }
 
-/* Add server button — dashed border (Fluxer pattern) */
+/* Add server button — Fluxer addGuildButtonIcon: dashed border */
 .server-icon.add-server {
   background: transparent;
-  border: 2px dashed var(--border-subtle);
-  color: var(--green);
+  border: 2px dashed var(--background-modifier-accent);
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
   font-size: 24px;
-  transition: border-radius 70ms ease-out, border-color 70ms ease-out;
+  cursor: pointer;
+  transition:
+    border-radius 70ms ease-out,
+    border-color 70ms ease-out;
 }
 
 .server-icon.add-server:hover {
-  background: var(--green);
-  color: var(--text-on-accent);
+  border-color: var(--text-primary);
   border-radius: 30%;
-  border-color: transparent;
 }
 
-/* Notification badges */
+.server-icon.add-server::before {
+  display: none;
+}
+
+/* Notification badges — Fluxer guildBadge pattern */
 .server-notification {
   position: absolute;
-  bottom: -1px;
-  right: -1px;
+  bottom: -0.25rem;
+  right: -0.25rem;
   background: var(--red);
-  border: 3px solid var(--bg-deepest);
+  border: 3px solid var(--background-secondary);
   min-width: 22px;
   height: 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 10px;
   font-weight: 700;
-  color: var(--text-on-accent);
+  color: white;
   padding: 0 4px;
   line-height: 1;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .server-notification.mention {
@@ -138,6 +175,6 @@
   height: 8px;
   min-width: 8px;
   border-radius: 50%;
-  border: 2px solid var(--bg-deepest);
+  border: 2px solid var(--background-secondary);
   padding: 0;
 }

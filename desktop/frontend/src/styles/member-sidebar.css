@@ -1,39 +1,83 @@
 /* =================== Member Sidebar =================== */
-/* Modeled after Fluxer MemberListContainer + MemberListItem */
+/* Fluxer MemberListContainer + MemberListItem patterns */
+
 .member-sidebar {
-  width: var(--member-sidebar-width);
-  background: var(--bg-content);
-  padding: 10px 8px 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  width: 240px;
+  min-width: 0;
+  overflow: hidden;
+  background-color: var(--background-secondary-lighter);
   flex-shrink: 0;
-  overflow-y: auto;
 }
 
-.member-header {
+.member-sidebar-scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background-color: var(--background-secondary-lighter);
+  padding: 10px var(--spacing-2) var(--spacing-4);
+}
+
+/* Role group headers — uppercase, small, dimmed, with count */
+.member-header,
+.role-section-header {
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--text-faint);
   padding: 16px 8px 4px 8px;
-  letter-spacing: 0.02em;
 }
 
-/* Member item — Fluxer MemberListItem: 32px grid height, 6px radius */
+/* Member item — 32px grid height, rounded hover */
 .member {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 8px;
-  margin: 1px 0;
-  border-radius: 6px;
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 0;
   cursor: pointer;
+  border-radius: 0.375rem;
+  color: var(--text-chat);
   transition: background var(--transition-fast), color var(--transition-fast);
-  min-height: 32px;
-  color: var(--text-secondary);
 }
 
 .member:hover {
-  background: var(--bg-modifier-hover);
+  background-color: var(--background-modifier-hover);
   color: var(--text-primary);
+  opacity: 1;
+}
+
+/* Offline members at 0.3 opacity */
+.member-offline {
+  opacity: 0.3;
+}
+
+.member-offline:hover {
+  opacity: 1;
+}
+
+/* Inner grid: 32px height, avatar + name + status */
+.member-grid {
+  display: grid;
+  height: 32px;
+  min-width: 0;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.25rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.member-content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.625rem;
+  font-weight: 500;
 }
 
 .member-avatar {
@@ -62,38 +106,30 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  flex: 1;
+  flex-grow: 1;
 }
 
 .member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25rem;
+  max-height: 1.25rem;
   font-size: 16px;
   font-weight: 500;
   color: inherit;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 20px;
-  max-height: 20px;
 }
 
 .member-status-text {
-  font-size: 11px;
+  max-width: 100%;
   color: var(--text-muted);
+  font-size: 0.6875rem;
+  line-height: 0.875rem;
   font-weight: 500;
   opacity: 0.85;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 14px;
-}
-
-/* Offline members — Fluxer: opacity 0.3 */
-.member-offline {
-  opacity: 0.3;
-}
-
-.member-offline:hover {
-  opacity: 1;
+  white-space: nowrap;
 }
 
 .member-role-badge {
@@ -101,16 +137,7 @@
   margin-left: 2px;
 }
 
-/* Role section headers */
-.role-section-header {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: var(--text-faint);
-  padding: 16px 8px 4px 8px;
-}
-
+/* Action buttons on hover */
 .member-action-btn {
   background: var(--accent);
   border: none;

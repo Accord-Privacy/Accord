@@ -3755,9 +3755,13 @@ function App() {
       <div className="app">
         <UpdateBanner />
         <ServerList />
-        <ChannelSidebar />
-        <ChatArea />
-        <MemberSidebar />
+        <div className="app-content">
+          <ChannelSidebar />
+          <div className="main-content">
+            <ChatArea />
+            <MemberSidebar />
+          </div>
+        </div>
         <AppModals />
       </div>
     </AppContext.Provider>

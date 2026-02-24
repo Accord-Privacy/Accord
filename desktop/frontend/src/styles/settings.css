@@ -5,10 +5,16 @@
 
 .settings-overlay {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  inset: 0;
   background: var(--bg-overlay);
   display: flex;
-  z-index: 1000;
+  z-index: var(--z-index-modal);
+  animation: settings-overlay-in 200ms ease-out;
+}
+
+@keyframes settings-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .settings-modal {
@@ -78,17 +84,17 @@
   font-size: 0.9375rem;
   font-weight: 500;
   line-height: 1.5rem;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   gap: 10px;
   user-select: none;
   -webkit-user-select: none;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 70ms ease-out ease, color  70ms ease-out;
 }
 
 .settings-nav-item:hover:not(.active) {
-  background: var(--bg-modifier-hover);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-primary);
 }
 
@@ -114,7 +120,7 @@
 .settings-content-header {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--z-index-elevated-1);
   height: 68px;
   display: flex;
   align-items: center;
@@ -130,13 +136,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: transparent;
   border: none;
   color: var(--text-muted);
   font-size: 24px;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 70ms ease-out ease, color  70ms ease-out;
 }
 
 .settings-close:hover {
@@ -192,14 +198,14 @@
 .settings-select {
   width: 100%;
   appearance: none;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--bg-input);
   color: var(--text-primary);
   padding: 10px 16px;
   font-size: 0.875rem;
   line-height: 1.25rem;
-  transition: border-color 0.15s ease;
+  transition: border-color  70ms ease-out;
 }
 
 .settings-input::placeholder,
@@ -234,11 +240,11 @@
   height: 20px;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 70ms ease-out ease, border-color  70ms ease-out;
 }
 
 .settings-checkbox input[type="checkbox"]:checked {
@@ -298,7 +304,7 @@
 .settings-info {
   background: var(--bg-dark);
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   color: var(--text-primary);
   font-size: 0.875rem;
   line-height: 1.5;
@@ -308,7 +314,7 @@
   background: var(--red);
   color: #fff;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   margin-bottom: 16px;
   font-size: 0.875rem;
 }
@@ -317,7 +323,7 @@
 .settings-subsection {
   background: var(--bg-dark);
   border: 1px solid var(--border-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   padding: 20px;
   margin-bottom: 20px;
 }
@@ -408,7 +414,7 @@
   box-shadow:
     inset 0 2px 4px 0 rgba(0,0,0,0.15),
     0 1px 0 0 rgba(255,255,255,0.1);
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  transition: background-color 70ms ease-out ease, box-shadow  70ms ease-out;
 }
 
 .settings-toggle:hover {
@@ -436,7 +442,7 @@
     inset 0 -1px 2px 0 rgba(0,0,0,0.08),
     0 1px 0 0 rgba(0,0,0,0.15),
     0 2px 4px -1px rgba(0,0,0,0.2);
-  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 70ms ease-out cubic-bezier(0.4, 0, 0.2, 1);
   will-change: transform;
 }
 
@@ -454,11 +460,11 @@
   color: var(--text-secondary);
   padding: 8px 16px;
   min-height: 36px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 600;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 70ms ease-out ease, color  70ms ease-out;
 }
 
 .settings-btn-secondary:hover {
@@ -483,11 +489,11 @@
   color: var(--text-secondary);
   padding: 10px 16px;
   min-height: 44px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 500;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 70ms ease-out ease, color  70ms ease-out;
 }
 
 .status-button:hover, .font-size-button:hover, .notification-button:hover {
@@ -514,13 +520,13 @@
   flex: 1;
   padding: 16px;
   border: 2px solid var(--border-subtle);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   background: var(--bg-dark);
   color: var(--text-primary);
   cursor: pointer;
   font-size: 1rem;
   font-weight: 500;
-  transition: border-color 0.15s ease;
+  transition: border-color  70ms ease-out;
   min-width: 100px;
 }
 
@@ -534,12 +540,12 @@
   justify-content: center;
   min-height: 36px;
   padding: 8px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   border: none;
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: background-color  70ms ease-out;
 }
 
 .test-button {
@@ -555,7 +561,7 @@
 /* Block list */
 .blocked-users {
   background: var(--bg-dark);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px 16px;
   min-height: 60px;
 }
@@ -575,11 +581,11 @@
   border: none;
   color: var(--red);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 0.75rem;
   font-weight: 600;
-  transition: background-color 0.15s ease;
+  transition: background-color  70ms ease-out;
 }
 
 .unblock-button:hover {
@@ -600,7 +606,7 @@
   width: 64px;
   height: 64px;
   background: var(--accent);
-  border-radius: 16px;
+  border-radius: var(--radius-2xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -614,7 +620,7 @@
 .about-info {
   background: var(--bg-dark);
   padding: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   margin-bottom: 24px;
 }
 
@@ -645,8 +651,8 @@
   text-decoration: none;
   font-size: 0.875rem;
   padding: 8px 12px;
-  border-radius: 8px;
-  transition: background-color 0.15s ease;
+  border-radius: var(--radius-lg);
+  transition: background-color  70ms ease-out;
 }
 .about-links a:hover {
   background: var(--bg-modifier-hover);
@@ -731,11 +737,11 @@
   border: none;
   padding: 10px 24px;
   min-height: 44px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   font-weight: 600;
   font-size: 0.875rem;
-  transition: background-color 0.15s ease;
+  transition: background-color  70ms ease-out;
 }
 
 .settings-logout-btn:hover {
@@ -754,7 +760,7 @@
   margin: 16px 0;
   padding: 16px;
   background: var(--bg-dark);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
 }
 
 .settings-build-card h4 {
@@ -770,7 +776,7 @@
   gap: 8px;
   margin-bottom: 12px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .settings-hash-code {
@@ -779,9 +785,9 @@
   cursor: pointer;
   background: var(--bg-input);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  transition: background-color 0.15s ease;
+  transition: background-color  70ms ease-out;
 }
 
 .settings-hash-code:hover { background: var(--bg-active); }
@@ -791,7 +797,7 @@
   margin-top: 12px;
   padding: 16px;
   background: var(--bg-dark);
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
 }
 
 /* Relay connect */
@@ -804,7 +810,7 @@
 /* QR modal */
 .settings-qr-modal {
   background: var(--bg-dark);
-  border-radius: 16px;
+  border-radius: var(--radius-2xl);
   padding: 24px;
   max-width: 360px;
   text-align: center;
@@ -821,7 +827,7 @@
 .settings-qr-img {
   width: 280px;
   height: 280px;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   background: #fff;
   padding: 8px;
 }
@@ -840,12 +846,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1001;
+  z-index: var(--z-index-modal);
 }
 
 .node-settings-modal {
   background: var(--bg-content);
-  border-radius: 16px;
+  border-radius: var(--radius-2xl);
   width: 90%;
   max-width: 660px;
   max-height: 80vh;
@@ -893,7 +899,7 @@
   font-size: 0.8125rem;
   font-weight: 500;
   white-space: nowrap;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  transition: color 70ms ease-out ease, border-color  70ms ease-out;
 }
 
 .node-settings-tab:hover { color: var(--text-secondary); }
@@ -966,13 +972,13 @@
 .ns-select {
   width: 100%;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--bg-input);
   color: var(--text-primary);
   font-size: 0.875rem;
   line-height: 1.25rem;
-  transition: border-color 0.15s ease;
+  transition: border-color  70ms ease-out;
 }
 
 .ns-input:focus,
@@ -998,12 +1004,12 @@
   border: none;
   padding: 10px 16px;
   min-height: 44px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.25rem;
-  transition: background-color 0.15s ease, opacity 0.15s ease;
+  transition: background-color 70ms ease-out ease, opacity  70ms ease-out;
 }
 
 .ns-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -1021,11 +1027,11 @@
 .ns-role-item {
   background: var(--bg-dark);
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   gap: 10px;
-  transition: background-color 0.15s ease;
+  transition: background-color  70ms ease-out;
 }
 
 .ns-role-item:hover { background: var(--bg-modifier-hover); }
@@ -1038,7 +1044,7 @@
 .ns-badge {
   font-size: 0.6875rem;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-active);
   color: var(--text-faint);
   font-weight: 600;
@@ -1054,7 +1060,7 @@
   cursor: pointer;
   font-size: 14px;
   padding: 2px 4px;
-  transition: color 0.15s ease;
+  transition: color  70ms ease-out;
 }
 
 .ns-arrow-btn:hover:not(:disabled) { color: var(--text-primary); }
@@ -1064,8 +1070,8 @@
 .ns-invite-card {
   background: var(--bg-dark);
   padding: 12px 16px;
-  border-radius: 8px;
-  transition: background-color 0.15s ease;
+  border-radius: var(--radius-lg);
+  transition: background-color  70ms ease-out;
 }
 
 .ns-invite-card.inactive { opacity: 0.6; border: 1px solid var(--red); }
@@ -1075,7 +1081,7 @@
 .ns-invite-code {
   background: var(--bg-input);
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 0.8125rem;
   font-family: var(--font-mono);
   color: var(--text-primary);
@@ -1087,7 +1093,7 @@
 .ns-form-card {
   background: var(--bg-dark);
   padding: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   margin-bottom: 16px;
 }
 
@@ -1109,7 +1115,7 @@
 .ns-channel-row {
   background: var(--bg-dark);
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1121,7 +1127,7 @@
 .ns-word-row {
   background: var(--bg-dark);
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1136,7 +1142,7 @@
   cursor: pointer;
   font-size: 18px;
   padding: 0 4px;
-  transition: color 0.15s ease;
+  transition: color  70ms ease-out;
 }
 
 .ns-remove-btn:hover { color: var(--red); }
@@ -1150,7 +1156,7 @@
   gap: 8px;
   padding: 8px 12px;
   background: var(--bg-dark);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 .ns-emoji-item img { width: 32px; height: 32px; object-fit: contain; }
@@ -1160,11 +1166,11 @@
 .ns-audit-entry {
   background: var(--bg-dark);
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  transition: background-color 0.15s ease;
+  transition: background-color  70ms ease-out;
 }
 
 .ns-audit-entry:hover { background: var(--bg-modifier-hover); }
@@ -1186,7 +1192,7 @@
 .ns-audit-type {
   background: var(--bg-active);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.6875rem;
   font-family: var(--font-mono);
 }
@@ -1197,11 +1203,11 @@
   top: 16px;
   right: 16px;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   font-size: 0.875rem;
   font-weight: 500;
   max-width: 300px;
-  z-index: 1002;
+  z-index: calc(var(--z-index-modal) + 1);
   color: #fff;
   box-shadow: var(--shadow-md);
   animation: ns-toast-in 0.2s ease;
@@ -1225,7 +1231,7 @@
   font-size: 0.8125rem;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: color 0.15s ease;
+  transition: color  70ms ease-out;
 }
 
 .ns-perm-item:hover { color: var(--text-primary); }
@@ -1237,7 +1243,7 @@
   cursor: pointer;
   font-size: 18px;
   padding: 0;
-  transition: color 0.15s ease;
+  transition: color  70ms ease-out;
 }
 
 .ns-back-btn:hover { color: var(--text-primary); }

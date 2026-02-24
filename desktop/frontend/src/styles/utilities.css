@@ -80,7 +80,7 @@
 /* =================== Context Menu =================== */
 .context-menu {
   position: fixed;
-  z-index: 2000;
+  z-index: var(--z-index-overlay);
   background: var(--bg-dark);
   border: 1px solid var(--bg-input);
   border-radius: var(--radius-md);
@@ -93,7 +93,7 @@
 .context-menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1999;
+  z-index: calc(var(--z-index-overlay) - 1);
 }
 
 .context-menu-icon {

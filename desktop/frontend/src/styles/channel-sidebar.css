@@ -1,16 +1,22 @@
 /* =================== Channel Sidebar =================== */
 /* Modeled after Fluxer GuildNavbar + ChannelItem + GuildHeader */
 .channel-sidebar {
-  width: var(--sidebar-width);
-  background: var(--bg-dark);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
+  width: var(--layout-sidebar-width);
+  min-width: var(--layout-sidebar-width);
+  background: var(--background-secondary);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Node header — Fluxer GuildHeader.module.css */
 .sidebar-header {
-  min-height: var(--header-height);
+  min-height: var(--layout-header-height);
+  height: var(--layout-header-height);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -18,10 +24,9 @@
   font-weight: 600;
   font-size: 15px;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--user-area-divider-color);
   cursor: pointer;
   transition: background-color var(--transition-normal);
-  flex-shrink: 0;
   overflow: hidden;
 }
 
@@ -33,7 +38,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: var(--header-height);
+  height: var(--layout-header-height);
   min-width: 0;
 }
 
@@ -141,7 +146,7 @@
 }
 
 .channel:hover {
-  background: var(--bg-modifier-hover);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
   color: var(--text-secondary);
 }
 

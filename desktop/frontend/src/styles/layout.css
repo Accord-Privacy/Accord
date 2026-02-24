@@ -1,7 +1,141 @@
 /* =================== App Layout =================== */
+
+/* Top-level app container: guilds layout grid */
 .app {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--layout-guild-list-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  min-height: 0;
+  max-height: 100%;
+  background-color: var(--background-secondary);
+}
+
+/* Guild list column (column 1) */
+.app > .server-list {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 0;
+  max-height: 100%;
+  width: var(--layout-guild-list-width);
+  background-color: var(--background-secondary);
+  position: relative;
+  z-index: var(--z-index-elevated-1, 10);
+}
+
+/* Content area (column 2): nested grid for sidebar + main */
+.app > .app-content {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: var(--layout-sidebar-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  max-height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  background-color: var(--background-secondary);
+}
+
+/* Channel sidebar (nested column 1) */
+.app > .app-content > .channel-sidebar {
+  min-height: 0;
+  max-height: 100%;
+  min-width: 0;
+}
+
+/* Main content area (nested column 2) */
+.app > .app-content > .main-content {
+  min-height: 0;
+  max-height: 100%;
+  min-width: 0;
+  display: flex;
+  background-color: var(--background-secondary);
+}
+
+/* User area wrapper: spans guild list + sidebar at bottom */
+.user-area-wrapper {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--layout-guild-list-width) + var(--layout-sidebar-width));
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  pointer-events: none;
+  z-index: var(--z-index-elevated-1, 10);
+}
+
+.user-area-wrapper > * {
+  pointer-events: auto;
+}
+
+/* =================== Scrollbar Styling =================== */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-bg);
+  border-radius: var(--radius-full, 9999px);
+  min-height: 40px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover-bg);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track-bg);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-track-bg);
+}
+
+/* =================== Guild Icon Transitions =================== */
+
+.guild-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--guild-icon-size, 44px);
+  width: var(--guild-icon-size, 44px);
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--radius-full, 9999px);
+  background-color: transparent;
+  background-size: cover;
+  background-position: center;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition:
+    border-radius 70ms ease-out,
+    background-color 70ms ease-out,
+    color 70ms ease-out;
+}
+
+.guild-icon:hover,
+.guild-icon.selected {
+  border-radius: 30%;
+}
+
+.guild-icon.no-image {
+  background-color: var(--guild-list-foreground, var(--bg-elevated));
+  transition-property: background-color, color, border-radius;
+  transition-duration: 70ms;
+  transition-timing-function: ease-out;
+}
+
+.guild-icon.no-image:hover,
+.guild-icon.no-image.selected {
+  border-radius: 30%;
+  background-color: var(--brand-primary, var(--accent));
+  color: white;
 }
