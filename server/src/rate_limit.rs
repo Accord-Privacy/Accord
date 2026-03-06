@@ -31,8 +31,8 @@ impl ActionType {
             ActionType::FileUpload => 5,
             ActionType::Reaction => 20,
             ActionType::ProfileUpdate => 5,
-            ActionType::AuthAttempt => 20, // 20 per minute per IP
-            ActionType::Registration => 3, // 3 per hour per IP
+            ActionType::AuthAttempt => 20,  // 20 per minute per IP
+            ActionType::Registration => 10, // 10 per hour per IP
         }
     }
 

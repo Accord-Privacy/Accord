@@ -2290,9 +2290,9 @@ async fn test_message_deletion() {
 async fn test_rate_limiting_registration() {
     let server = FullTestServer::new().await;
 
-    // Registration is rate-limited to 3 per hour per IP
-    // Send 4 registration requests — 4th should get 429
-    for i in 0..3 {
+    // Registration is rate-limited to 10 per hour per IP
+    // Send 11 registration requests — 11th should get 429
+    for i in 0..10 {
         let resp = server
             .client
             .post(&server.url("/register"))

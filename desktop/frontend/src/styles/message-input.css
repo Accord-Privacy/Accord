@@ -15,14 +15,15 @@
   display: flex;
   align-items: center;
   background: var(--bg-input);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 0 16px;
   min-height: 44px;
   transition: background var(--transition-fast);
 }
 
+/* Discord doesn't brighten input on focus — keep same bg */
 .message-input-wrapper:focus-within {
-  background: var(--bg-elevated);
+  background: var(--bg-input);
 }
 
 .message-input {
@@ -70,7 +71,7 @@
   display: flex;
   align-items: center;
   background: var(--bg-input);
-  border-radius: 12px 12px 0 0;
+  border-radius: 8px 8px 0 0;
   padding: 8px 12px;
   margin: 0 16px;
   border-left: 3px solid var(--accent);

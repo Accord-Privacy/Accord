@@ -5,16 +5,16 @@
 
 :root {
   /* Grey depth system — strong contrast between layers */
-  --bg-deepest: #0e0f11;      /* Server bar — near black */
-  --bg-darkest: #1a1b1e;      /* User panel, headers */
-  --bg-dark: #232428;          /* Channel sidebar */
-  --bg-content: #2e3035;       /* Main chat area */
-  --bg-input: #1e1f23;         /* Input fields — darker than content */
+  --bg-deepest: #1e1f22;      /* Server bar — Discord dark grey */
+  --bg-darkest: #232428;      /* User panel, headers */
+  --bg-dark: #2b2d31;          /* Channel sidebar */
+  --bg-content: #313338;       /* Main chat area */
+  --bg-input: #383a40;         /* Input fields — lighter than content (Discord depth model) */
   --bg-hover: rgba(79, 84, 92, 0.32);
   --bg-active: rgba(79, 84, 92, 0.52);
   --bg-overlay: rgba(0, 0, 0, 0.85);
-  --bg-elevated: #393c42;
-  --bg-floating: #232428;      /* Popups, tooltips, context menus */
+  --bg-elevated: #2b2d31;      /* Floating surfaces — matches sidebar */
+  --bg-floating: #111214;      /* Popups, tooltips, context menus */
   --bg-modifier-hover: rgba(79, 84, 92, 0.16);
   --bg-modifier-active: rgba(79, 84, 92, 0.24);
   --bg-modifier-selected: rgba(79, 84, 92, 0.32);
