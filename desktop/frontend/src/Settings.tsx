@@ -1466,7 +1466,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       <strong>Protocol:</strong> Accord Protocol v1
                     </div>
                     <div className="info-row">
-                      <strong>Platform:</strong> Desktop (Tauri + React)
+                      <strong>Platform:</strong> {window.__TAURI__ ? 'Desktop (Tauri + React)' : 'Web Browser (React)'}
                     </div>
                   </div>
 
