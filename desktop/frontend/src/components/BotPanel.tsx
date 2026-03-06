@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
+import { Icon } from './Icon';
 import type { InstalledBot, BotCommand, BotResponseContent, EmbedSection } from '../types';
 
 // ── Embed Renderer ──
@@ -141,7 +142,7 @@ export const SlashCommandAutocomplete: React.FC<{
           className="slash-command-item"
           onClick={() => onSelect(bot, command)}
         >
-          <span className="slash-command-icon">{bot.icon || '🤖'}</span>
+          <span className="slash-command-icon">{bot.icon || <Icon name="bot" size={16} />}</span>
           <span className="slash-command-name">/{command.name}</span>
           <span className="slash-command-desc">{command.description}</span>
           <span className="slash-command-bot">{bot.name}</span>
@@ -181,7 +182,7 @@ export const CommandParamForm: React.FC<{
     <div className="bot-param-form-overlay">
       <form className="bot-param-form" onSubmit={handleSubmit}>
         <div className="bot-param-form-header">
-          <span>{bot.icon || '🤖'} {bot.name} — /{command.name}</span>
+          <span>{bot.icon || <Icon name="bot" size={16} />} {bot.name} — /{command.name}</span>
           <button type="button" className="bot-param-close" onClick={onCancel}>×</button>
         </div>
         <div className="bot-param-form-desc">{command.description}</div>
@@ -333,7 +334,7 @@ export const BotPanel: React.FC<{
           {bots.length === 0 && <div className="bot-panel-empty">No bots installed</div>}
           {bots.map(bot => (
             <div key={bot.bot_id} className="bot-panel-item">
-              <span className="bot-panel-icon">{bot.icon || '🤖'}</span>
+              <span className="bot-panel-icon">{bot.icon || <Icon name="bot" size={16} />}</span>
               <div className="bot-panel-info">
                 <span className="bot-panel-name">{bot.name}</span>
                 <span className="bot-panel-cmds">{bot.commands.length} commands</span>

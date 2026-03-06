@@ -658,7 +658,7 @@ export const ChatArea: React.FC = () => {
                 background: 'var(--yellow)', color: 'var(--text-on-accent)', padding: '4px 12px', borderRadius: '4px',
                 fontSize: '12px', fontWeight: 600, zIndex: 10, whiteSpace: 'nowrap',
               }}>
-                ⏱️ Slow mode: wait {ctx.slowModeCooldown}s
+                <Icon name="clock" size={14} /> Slow mode: wait {ctx.slowModeCooldown}s
               </div>
             )}
             <textarea
