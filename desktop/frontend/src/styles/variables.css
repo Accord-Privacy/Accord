@@ -89,6 +89,12 @@
   --font-xl: 20px;
   --font-2xl: 24px;
 
+  /* Font weights (Discord reference) */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
   /* Line heights */
   --lh-tight: 1.25;
   --lh-normal: 1.375;

@@ -357,3 +357,42 @@
   color: var(--text-primary);
   text-decoration: underline;
 }
+
+/* New messages divider — Discord-style red line with "NEW" label */
+.new-messages-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  margin: 8px 0;
+}
+.new-messages-divider::before,
+.new-messages-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--red);
+}
+.new-messages-divider-label {
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--red);
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+/* Channel mention badge — red pill with count */
+.channel-mention-badge {
+  background: var(--red);
+  color: white;
+  font-size: 10px;
+  font-weight: var(--font-weight-bold, 700);
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
