@@ -22,6 +22,24 @@ export const ChatArea: React.FC = () => {
   const [pendingCommand, setPendingCommand] = useState<{ bot: InstalledBot; command: BotCommand } | null>(null);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
+  const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
+
+  const wrapSelection = useCallback((prefix: string, suffix: string) => {
+    const textarea = ctx.messageInputRef?.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = ctx.message;
+    const selected = text.substring(start, end);
+    const newText = text.substring(0, start) + prefix + selected + suffix + text.substring(end);
+    ctx.setMessage(newText);
+    // Restore cursor after the wrapped selection
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.selectionStart = start + prefix.length;
+      textarea.selectionEnd = end + prefix.length;
+    });
+  }, [ctx]);
 
   const handleSlashSelect = useCallback((bot: InstalledBot, command: BotCommand) => {
     setShowSlashMenu(false);
@@ -321,7 +339,7 @@ export const ChatArea: React.FC = () => {
               const prevMsg = i > 0 ? filteredMessages[i - 1] : null;
               const isGrouped = prevMsg
                 && prevMsg.author === msg.author
-                && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
+                && Math.abs(msg.timestamp - prevMsg.timestamp) < 7 * 60 * 1000
                 && !msg.reply_to;
 
               const msgDate = new Date(msg.timestamp);
@@ -335,7 +353,7 @@ export const ChatArea: React.FC = () => {
                       <span className="date-separator-text">{formatDateSep(msgDate)}</span>
                     </div>
                   )}
-                  <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped' : ''}`} data-message-id={msg.id} role="article" aria-label={`Message from ${msg.author}`}>
+                  <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped message-compact' : ''}`} data-message-id={msg.id} role="article" aria-label={`Message from ${msg.author}`}>
                     {/* Reply preview */}
                     {msg.replied_message && (
                       <div className="reply-preview" onClick={() => ctx.scrollToMessage(msg.reply_to!)}>
@@ -377,7 +395,7 @@ export const ChatArea: React.FC = () => {
                               ctx.handleContextMenu(e, authorMember.user_id, authorMember.public_key_hash, msg.author, authorMember.profile?.bio, authorMember.user);
                             }
                           }}>{msg.author}</span>
-                          <span className="message-time">{formatRelativeTime(msg.timestamp)}</span>
+                          <span className="message-time" title={new Date(msg.timestamp).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}>{formatRelativeTime(msg.timestamp)}</span>
                           {msg.edited_at && (
                             <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                           )}
@@ -671,6 +689,15 @@ export const ChatArea: React.FC = () => {
                 <Icon name="clock" size={14} /> Slow mode: wait {ctx.slowModeCooldown}s
               </div>
             )}
+            {showFormattingToolbar && (
+              <div className="formatting-toolbar">
+                <button type="button" className="formatting-btn" title="Bold (Ctrl+B)" onMouseDown={(e) => { e.preventDefault(); wrapSelection('**', '**'); }}><strong>B</strong></button>
+                <button type="button" className="formatting-btn" title="Italic (Ctrl+I)" onMouseDown={(e) => { e.preventDefault(); wrapSelection('*', '*'); }}><em>I</em></button>
+                <button type="button" className="formatting-btn" title="Code (Ctrl+E)" onMouseDown={(e) => { e.preventDefault(); wrapSelection('`', '`'); }}><code>&lt;/&gt;</code></button>
+                <button type="button" className="formatting-btn" title="Code Block" onMouseDown={(e) => { e.preventDefault(); wrapSelection('```\n', '\n```'); }}>{'{ }'}</button>
+                <button type="button" className="formatting-btn" title="Spoiler" onMouseDown={(e) => { e.preventDefault(); wrapSelection('||', '||'); }}>░</button>
+              </div>
+            )}
             <textarea
               ref={ctx.messageInputRef}
               className="message-input"
@@ -699,8 +726,14 @@ export const ChatArea: React.FC = () => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   ctx.handleSendMessage();
+                } else if (e.ctrlKey || e.metaKey) {
+                  if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**'); }
+                  else if (e.key === 'i') { e.preventDefault(); wrapSelection('*', '*'); }
+                  else if (e.key === 'e') { e.preventDefault(); wrapSelection('`', '`'); }
                 }
               }}
+              onFocus={() => setShowFormattingToolbar(true)}
+              onBlur={() => setTimeout(() => setShowFormattingToolbar(false), 200)}
             />
             <EmojiPickerButton
               isOpen={ctx.showInputEmojiPicker}
