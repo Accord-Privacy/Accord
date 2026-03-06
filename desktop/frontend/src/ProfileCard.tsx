@@ -163,11 +163,11 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
           )}
 
           {/* Member Since */}
-          {joinedAt && (
+          {joinedAt != null && joinedAt > 0 && (
             <div className="profile-card-section">
               <div className="profile-card-section-title">MEMBER SINCE</div>
               <div className="profile-card-member-since">
-                {new Date(joinedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                {new Date(joinedAt < 1e12 ? joinedAt * 1000 : joinedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
               </div>
             </div>
           )}
