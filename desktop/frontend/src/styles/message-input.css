@@ -22,10 +22,10 @@
   border: 1px solid transparent;
 }
 
-/* Subtle focus indicator */
+/* Subtle focus indicator — Discord keeps it subtle, just a slight border change */
 .message-input-wrapper:focus-within {
   background: var(--bg-input);
-  border-color: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.08);
 }
 
 .message-input {

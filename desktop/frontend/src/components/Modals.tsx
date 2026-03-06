@@ -8,6 +8,7 @@ import { LoadingSpinner } from "../LoadingSpinner";
 import { ProfileCard } from "../ProfileCard";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { SHORTCUTS } from "../keyboard";
+import { Icon } from "./Icon";
 // Note: WebSocket imports removed — socket management centralized in App.tsx connectSocket()
 const NodeSettings = React.lazy(() => import("../NodeSettings").then(m => ({ default: m.NodeSettings })));
 const NotificationSettings = React.lazy(() => import("../NotificationSettings").then(m => ({ default: m.NotificationSettings })));
@@ -435,45 +436,48 @@ export const AppModals: React.FC = () => {
 
       {/* Context Menu */}
       {ctx.contextMenu && (
-        <div className="context-menu" style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }}>
-          <div className="context-menu-item context-menu-profile-header">
-            <div className="context-menu-display-name">{ctx.contextMenu.displayName}</div>
-            <div className="context-menu-fingerprint">{ctx.fingerprint(ctx.contextMenu.publicKeyHash)}</div>
-            {ctx.contextMenu.bio && <div className="context-menu-bio">{ctx.contextMenu.bio}</div>}
-          </div>
-          <div className="context-menu-separator"></div>
-          <div className="context-menu-item" onClick={() => {
-            const member = ctx.members.find(m => m.user_id === ctx.contextMenu!.userId);
-            ctx.setProfileCardTarget({
-              userId: ctx.contextMenu!.userId, x: ctx.contextMenu!.x, y: ctx.contextMenu!.y,
-              user: ctx.contextMenu!.user, profile: member?.profile,
-              roles: ctx.memberRolesMap[ctx.contextMenu!.userId],
-              joinedAt: member?.joined_at, roleColor: ctx.getMemberRoleColor(ctx.contextMenu!.userId),
-            });
-            ctx.setContextMenu(null);
-          }}>View Profile</div>
-          {ctx.contextMenu.user && ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
+        <>
+          <div className="context-menu-backdrop" onClick={() => ctx.setContextMenu(null)} />
+          <div className="context-menu" style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }}>
+            <div className="context-menu-item context-menu-profile-header">
+              <div className="context-menu-display-name">{ctx.contextMenu.displayName}</div>
+              <div className="context-menu-fingerprint">{ctx.fingerprint(ctx.contextMenu.publicKeyHash)}</div>
+              {ctx.contextMenu.bio && <div className="context-menu-bio">{ctx.contextMenu.bio}</div>}
+            </div>
+            <div className="context-menu-separator"></div>
             <div className="context-menu-item" onClick={() => {
-              if (ctx.contextMenu!.user) ctx.openDmWithUser(ctx.contextMenu!.user);
+              const member = ctx.members.find(m => m.user_id === ctx.contextMenu!.userId);
+              ctx.setProfileCardTarget({
+                userId: ctx.contextMenu!.userId, x: ctx.contextMenu!.x, y: ctx.contextMenu!.y,
+                user: ctx.contextMenu!.user, profile: member?.profile,
+                roles: ctx.memberRolesMap[ctx.contextMenu!.userId],
+                joinedAt: member?.joined_at, roleColor: ctx.getMemberRoleColor(ctx.contextMenu!.userId),
+              });
               ctx.setContextMenu(null);
-            }}>Send DM</div>
-          )}
-          <div className="context-menu-separator"></div>
-          <div className="context-menu-item" onClick={() => {
-            ctx.copyToClipboard(ctx.contextMenu!.publicKeyHash);
-            ctx.setContextMenu(null);
-          }}>Copy Public Key Hash</div>
-          {ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
-            <>
-              <div className="context-menu-separator"></div>
-              {ctx.blockedUsers.has(ctx.contextMenu.userId) ? (
-                <div className="context-menu-item" onClick={() => { ctx.handleUnblockUser(ctx.contextMenu!.userId); ctx.setContextMenu(null); }}>✅ Unblock User</div>
-              ) : (
-                <div className="context-menu-item context-menu-item-danger" onClick={() => { ctx.setShowBlockConfirm({ userId: ctx.contextMenu!.userId, displayName: ctx.contextMenu!.displayName }); ctx.setContextMenu(null); }}>Block User</div>
-              )}
-            </>
-          )}
-        </div>
+            }}><span className="context-menu-icon"><Icon name="members" size={16} /></span>View Profile</div>
+            {ctx.contextMenu.user && ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
+              <div className="context-menu-item" onClick={() => {
+                if (ctx.contextMenu!.user) ctx.openDmWithUser(ctx.contextMenu!.user);
+                ctx.setContextMenu(null);
+              }}><span className="context-menu-icon"><Icon name="chat" size={16} /></span>Send DM</div>
+            )}
+            <div className="context-menu-separator"></div>
+            <div className="context-menu-item" onClick={() => {
+              ctx.copyToClipboard(ctx.contextMenu!.publicKeyHash);
+              ctx.setContextMenu(null);
+            }}><span className="context-menu-icon"><Icon name="key" size={16} /></span>Copy Public Key Hash</div>
+            {ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
+              <>
+                <div className="context-menu-separator"></div>
+                {ctx.blockedUsers.has(ctx.contextMenu.userId) ? (
+                  <div className="context-menu-item" onClick={() => { ctx.handleUnblockUser(ctx.contextMenu!.userId); ctx.setContextMenu(null); }}><span className="context-menu-icon"><Icon name="shield" size={16} /></span>Unblock User</div>
+                ) : (
+                  <div className="context-menu-item context-menu-item-danger" onClick={() => { ctx.setShowBlockConfirm({ userId: ctx.contextMenu!.userId, displayName: ctx.contextMenu!.displayName }); ctx.setContextMenu(null); }}><span className="context-menu-icon"><Icon name="shield" size={16} /></span>Block User</div>
+                )}
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {/* Block Confirmation */}

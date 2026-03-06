@@ -83,15 +83,16 @@
   z-index: 2000;
   background: var(--bg-floating);
   border-radius: var(--radius-sm);
-  padding: 6px 8px;
+  padding: 6px;
   min-width: 188px;
   max-width: 320px;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.08), var(--shadow-high);
-  animation: contextMenuIn 0.1s ease-out;
+  animation: contextMenuIn 0.15s cubic-bezier(0.2, 0.6, 0.35, 1);
+  transform-origin: top left;
 }
 
 @keyframes contextMenuIn {
-  from { opacity: 0; transform: scale(0.95); }
+  from { opacity: 0; transform: scale(0.92); }
   to { opacity: 1; transform: scale(1); }
 }
 
@@ -102,17 +103,27 @@
 }
 
 .context-menu-icon {
-  font-size: 16px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.context-menu-item .context-menu-icon {
+  color: inherit;
+  opacity: 0.7;
 }
 
 .context-menu-item {
   padding: 6px 8px;
   margin: 2px 0;
-  font-size: 14px;
+  font-size: var(--font-base);
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -124,9 +135,16 @@
   color: #fff;
 }
 
+.context-menu-item:hover .context-menu-icon {
+  opacity: 1;
+}
+
 .context-menu-profile-header {
   cursor: default;
   padding: 10px 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
 .context-menu-profile-header:hover {
@@ -134,18 +152,32 @@
   color: var(--text-secondary);
 }
 
-.context-menu-item.danger {
+.context-menu-item-danger,
+.context-menu-item.danger,
+.context-menu-danger {
   color: var(--red);
 }
 
-.context-menu-item.danger:hover {
+.context-menu-item-danger:hover,
+.context-menu-item.danger:hover,
+.context-menu-danger:hover {
   background: var(--red);
   color: #fff;
+}
+
+.context-menu-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.context-menu-disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 .context-menu-separator {
   height: 1px;
   background: var(--border-subtle);
-  margin: 4px 0;
+  margin: 4px 6px;
 }
 

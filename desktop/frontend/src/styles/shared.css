@@ -186,11 +186,11 @@ button {
 }
 
 .modal-overlay {
-  animation: fadeIn 0.15s ease-out;
+  animation: fadeIn 0.2s cubic-bezier(0.2, 0.6, 0.35, 1);
 }
 
 .modal-card,
 .auth-card,
 .settings-overlay .settings-container {
-  animation: scaleIn 0.15s ease-out;
+  animation: scaleIn 0.2s cubic-bezier(0.2, 0.6, 0.35, 1);
 }
