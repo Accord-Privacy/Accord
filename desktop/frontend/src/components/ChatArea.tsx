@@ -536,15 +536,22 @@ export const ChatArea: React.FC = () => {
                           <div className="message-reactions">
                             {msg.reactions.map((reaction) => {
                               const userReacted = ctx.appState.user && reaction.users.includes(ctx.appState.user.id);
+                              const reactorNames = reaction.users.map((uid) => {
+                                const member = ctx.members.find((m) => m.user.id === uid);
+                                return member ? ctx.displayName(member.user) : uid.substring(0, 8);
+                              });
+                              const tooltipText = reactorNames.length <= 5
+                                ? reactorNames.join(', ')
+                                : `${reactorNames.slice(0, 5).join(', ')} and ${reactorNames.length - 5} more`;
                               return (
                                 <button
                                   key={reaction.emoji}
                                   className={`reaction ${userReacted ? 'reaction-user-reacted' : ''}`}
                                   onClick={() => ctx.handleToggleReaction(msg.id, reaction.emoji)}
-                                  title={`${reaction.users.length} reactions`}
+                                  title={tooltipText}
                                 >
                                   <span className="reaction-emoji">{reaction.emoji}</span>
-                                  <span className="reaction-count">{reaction.count}</span>
+                                  <span className="reaction-count reaction-count-bump">{reaction.count}</span>
                                 </button>
                               );
                             })}
