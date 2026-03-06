@@ -392,6 +392,62 @@
   text-align: center;
 }
 
+/* DM unread state */
+.dm-item.dm-unread .dm-name {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.dm-name-unread {
+  color: var(--text-primary) !important;
+  font-weight: 700 !important;
+}
+
+.dm-unread-badge {
+  font-size: 11px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* DM close/hide button */
+.dm-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.dm-item:hover .dm-close-btn {
+  opacity: 1;
+}
+
+.dm-close-btn:hover {
+  color: var(--text-primary);
+}
+
+/* DM avatar image */
+.dm-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 /* =================== User Panel — Fluxer UserArea.module.css =================== */
 .user-panel {
   background: var(--bg-deepest);

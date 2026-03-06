@@ -56,6 +56,78 @@ const NodeSettings = React.lazy(() => import("../NodeSettings").then(m => ({ def
 const NotificationSettings = React.lazy(() => import("../NotificationSettings").then(m => ({ default: m.NotificationSettings })));
 const Settings = React.lazy(() => import("../Settings").then(m => ({ default: m.Settings })));
 
+import { avatarColor } from "../avatarColor";
+
+const DmCreateModal: React.FC<{ onClose: () => void; trapRef: React.Ref<HTMLDivElement>; handleKeyDown: (e: React.KeyboardEvent) => void }> = ({ onClose, trapRef, handleKeyDown }) => {
+  const ctx = useAppContext();
+  const [search, setSearch] = React.useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Auto-focus the search input
+    inputRef.current?.focus();
+  }, []);
+
+  const filteredMembers = React.useMemo(() => {
+    const currentUserId = localStorage.getItem('accord_user_id');
+    return ctx.members
+      .filter(member => member.user_id !== currentUserId)
+      .filter(member => {
+        if (!search.trim()) return true;
+        const name = ctx.displayName(member.user).toLowerCase();
+        return name.includes(search.toLowerCase().trim());
+      });
+  }, [ctx.members, ctx, search]);
+
+  return (
+    <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') onClose(); handleKeyDown(e); }}>
+      <div className="modal-card modal-card-narrow" ref={trapRef} role="dialog" aria-modal="true" aria-labelledby="dm-create-title">
+        <div className="dm-create-header">
+          <h3 id="dm-create-title">New Direct Message</h3>
+          <button onClick={onClose} className="error-toast-close" aria-label="Close">×</button>
+        </div>
+        <div className="dm-search-wrapper">
+          <input
+            ref={inputRef}
+            type="text"
+            className="dm-search-input"
+            placeholder="Search members..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="dm-create-list">
+          {filteredMembers.map((member) => (
+            <div
+              key={member.user_id}
+              className="dm-create-item"
+              onClick={() => { ctx.openDmWithUser(member.user); onClose(); }}
+            >
+              <div className="dm-avatar dm-avatar-sm" style={{ background: avatarColor(member.user_id) }}>
+                {member.user_id ? (
+                  <img
+                    src={`${api.getUserAvatarUrl(member.user_id)}`}
+                    alt={ctx.displayName(member.user)[0]}
+                    onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = ctx.displayName(member.user)[0].toUpperCase(); }}
+                  />
+                ) : ctx.displayName(member.user)[0].toUpperCase()}
+                <span className={`presence-dot presence-${ctx.getPresenceStatus(member.user_id)}`} />
+              </div>
+              <div>
+                <div className="dm-create-user-name">{ctx.displayName(member.user)}</div>
+                <div className="dm-create-user-role">{ctx.getRoleBadge(member.role)} {member.role}</div>
+              </div>
+            </div>
+          ))}
+          {filteredMembers.length === 0 && (
+            <div className="members-empty">{search ? 'No members match your search' : 'No other members available'}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const AppModals: React.FC = () => {
   const ctx = useAppContext();
 
@@ -497,33 +569,7 @@ export const AppModals: React.FC = () => {
 
       {/* DM Channel Creation */}
       {ctx.showDmChannelCreate && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowDmChannelCreate(false); dmCreateTrap.handleKeyDown(e); }}>
-          <div className="modal-card modal-card-narrow" ref={dmCreateTrap.ref} role="dialog" aria-modal="true" aria-labelledby="dm-create-title">
-            <div className="dm-create-header">
-              <h3 id="dm-create-title">Start a Direct Message</h3>
-              <button onClick={() => ctx.setShowDmChannelCreate(false)} className="error-toast-close" aria-label="Close">×</button>
-            </div>
-            <p>Select a user to start a direct message:</p>
-            <div className="dm-create-list">
-              {ctx.members
-                .filter(member => member.user_id !== localStorage.getItem('accord_user_id'))
-                .map((member) => (
-                  <div key={member.user_id} className="member" onClick={() => { ctx.openDmWithUser(member.user); ctx.setShowDmChannelCreate(false); }}>
-                    <div className="dm-avatar dm-avatar-sm">
-                      {ctx.displayName(member.user)[0].toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="dm-create-user-name">{ctx.displayName(member.user)}</div>
-                      <div className="dm-create-user-role">{ctx.getRoleBadge(member.role)} {member.role}</div>
-                    </div>
-                  </div>
-                ))}
-              {ctx.members.filter(member => member.user_id !== localStorage.getItem('accord_user_id')).length === 0 && (
-                <div className="members-empty">No other members available</div>
-              )}
-            </div>
-          </div>
-        </div>
+        <DmCreateModal onClose={() => ctx.setShowDmChannelCreate(false)} trapRef={dmCreateTrap.ref} handleKeyDown={dmCreateTrap.handleKeyDown} />
       )}
 
       {/* Display Name Prompt */}

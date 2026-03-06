@@ -480,31 +480,65 @@ const StatusEmojiPicker: React.FC<{ onSelect: (emoji: string) => void }> = ({ on
 
 const DMSection: React.FC = () => {
   const ctx = useAppContext();
+  const [hiddenDms, setHiddenDms] = React.useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('accord_hidden_dms');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  });
+
+  const hideDm = React.useCallback((e: React.MouseEvent, dmId: string) => {
+    e.stopPropagation();
+    setHiddenDms(prev => {
+      const next = new Set(prev);
+      next.add(dmId);
+      localStorage.setItem('accord_hidden_dms', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
+  // Sort DMs by last message time (most recent first), then by created_at
+  const sortedDms = React.useMemo(() => {
+    return [...ctx.dmChannels]
+      .filter(dm => !hiddenDms.has(dm.id))
+      .sort((a, b) => {
+        const aTime = a.last_message?.timestamp ?? a.created_at;
+        const bTime = b.last_message?.timestamp ?? b.created_at;
+        return bTime - aTime;
+      });
+  }, [ctx.dmChannels, hiddenDms]);
 
   return (
     <div className="dm-section">
       <div className="dm-header">
         Direct Messages
-        <button onClick={() => ctx.setShowDmChannelCreate(!ctx.showDmChannelCreate)} className="dm-header-add-btn" title="Create DM" aria-label="Create direct message">+</button>
+        <button onClick={() => ctx.setShowDmChannelCreate(!ctx.showDmChannelCreate)} className="dm-header-add-btn" title="New Direct Message" aria-label="Create direct message">+</button>
       </div>
       
       <div className="dm-list">
-        {ctx.dmChannels.map((dmChannel) => {
+        {sortedDms.map((dmChannel) => {
           const isActive = ctx.selectedDmChannel?.id === dmChannel.id;
           const dmUnreads = notificationManager.getChannelUnreads(`dm-${dmChannel.id}`, dmChannel.id);
+          const hasUnread = dmUnreads.count > 0 || dmUnreads.mentions > 0;
           
           return (
             <div
               key={dmChannel.id}
-              className={`dm-item ${isActive ? 'active' : ''}`}
+              className={`dm-item ${isActive ? 'active' : ''} ${hasUnread && !isActive ? 'dm-unread' : ''}`}
               onClick={() => ctx.handleDmChannelSelect(dmChannel)}
             >
-              <div className="dm-avatar">
-                {(dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+              <div className="dm-avatar" style={{ background: avatarColor(dmChannel.other_user?.id || '') }}>
+                {dmChannel.other_user?.id ? (
+                  <img
+                    src={`${api.getUserAvatarUrl(dmChannel.other_user.id)}`}
+                    alt={(dmChannel.other_user_profile?.display_name || "?")[0]}
+                    onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = (dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase(); }}
+                  />
+                ) : (dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
                 <span className={`presence-dot presence-${ctx.getPresenceStatus(dmChannel.other_user?.id || '')}`} />
               </div>
               <div className="dm-item-info">
-                <div className="dm-name">{dmChannel.other_user_profile.display_name}</div>
+                <div className={`dm-name ${hasUnread && !isActive ? 'dm-name-unread' : ''}`}>{dmChannel.other_user_profile.display_name}</div>
                 {dmChannel.last_message && (
                   <div className="dm-last-message">{dmChannel.last_message.content.substring(0, 30)}</div>
                 )}
@@ -517,14 +551,22 @@ const DMSection: React.FC = () => {
                   </div>
                 )}
                 {dmUnreads.mentions === 0 && dmUnreads.count > 0 && (
-                  <div className="notification-dot" />
+                  <div className="unread-badge dm-unread-badge">
+                    {dmUnreads.count > 99 ? '99+' : dmUnreads.count}
+                  </div>
                 )}
+                <button
+                  className="dm-close-btn"
+                  onClick={(e) => hideDm(e, dmChannel.id)}
+                  title="Hide conversation"
+                  aria-label="Hide DM conversation"
+                >×</button>
               </div>
             </div>
           );
         })}
         
-        {ctx.dmChannels.length === 0 && (
+        {sortedDms.length === 0 && (
           <div className="dm-empty">No direct messages yet</div>
         )}
       </div>

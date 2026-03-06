@@ -240,8 +240,15 @@ export const ChatArea: React.FC = () => {
               {ctx.selectedDmChannel ? (
                 <>
                   <div className="chat-header-dm">
-                    <div className="dm-avatar dm-avatar-sm">
-                      {(ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+                    <div className="dm-avatar dm-avatar-sm" style={{ background: avatarColor(ctx.selectedDmChannel.other_user?.id || '') }}>
+                      {ctx.selectedDmChannel.other_user?.id ? (
+                        <img
+                          src={`${api.getUserAvatarUrl(ctx.selectedDmChannel.other_user.id)}`}
+                          alt={(ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0]}
+                          onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = (ctx.selectedDmChannel!.other_user_profile?.display_name || "?")[0].toUpperCase(); }}
+                        />
+                      ) : (ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+                      <span className={`presence-dot presence-${ctx.getPresenceStatus(ctx.selectedDmChannel.other_user?.id || '')}`} />
                     </div>
                     <span className="chat-channel-name">{ctx.selectedDmChannel.other_user_profile.display_name}</span>
                   </div>
@@ -327,17 +334,49 @@ export const ChatArea: React.FC = () => {
               <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
             )}
             {!ctx.hasMoreMessages && ctx.appState.messages.length > 0 && (
-              <div className="messages-beginning">
-                <div className="messages-beginning-title">Welcome to {ctx.activeChannel || '# general'}!</div>
-                <div className="messages-beginning-subtitle">This is the start of the <strong>{ctx.activeChannel || '# general'}</strong> channel.</div>
-              </div>
+              ctx.selectedDmChannel ? (
+                <div className="messages-beginning dm-beginning">
+                  <div className="dm-beginning-avatar" style={{ background: avatarColor(ctx.selectedDmChannel.other_user?.id || '') }}>
+                    {ctx.selectedDmChannel.other_user?.id ? (
+                      <img
+                        src={`${api.getUserAvatarUrl(ctx.selectedDmChannel.other_user.id)}`}
+                        alt={(ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0]}
+                        onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = (ctx.selectedDmChannel!.other_user_profile?.display_name || "?")[0].toUpperCase(); }}
+                      />
+                    ) : (ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+                  </div>
+                  <div className="messages-beginning-title">{ctx.selectedDmChannel.other_user_profile.display_name}</div>
+                  <div className="messages-beginning-subtitle">This is the beginning of your direct message history with <strong>{ctx.selectedDmChannel.other_user_profile.display_name}</strong>.</div>
+                </div>
+              ) : (
+                <div className="messages-beginning">
+                  <div className="messages-beginning-title">Welcome to {ctx.activeChannel || '# general'}!</div>
+                  <div className="messages-beginning-subtitle">This is the start of the <strong>{ctx.activeChannel || '# general'}</strong> channel.</div>
+                </div>
+              )
             )}
-            {!ctx.isLoadingOlderMessages && ctx.appState.messages.length === 0 && ctx.selectedChannelId && (
-              <div className="empty-state">
-                <div className="empty-state-icon"><Icon name="chat-filled" size={48} /></div>
-                <div className="empty-state-title">No messages yet</div>
-                <div className="empty-state-text">Be the first to send a message in this channel!</div>
-              </div>
+            {!ctx.isLoadingOlderMessages && ctx.appState.messages.length === 0 && (ctx.selectedChannelId || ctx.selectedDmChannel) && (
+              ctx.selectedDmChannel ? (
+                <div className="empty-state dm-empty-state">
+                  <div className="dm-beginning-avatar" style={{ background: avatarColor(ctx.selectedDmChannel.other_user?.id || '') }}>
+                    {ctx.selectedDmChannel.other_user?.id ? (
+                      <img
+                        src={`${api.getUserAvatarUrl(ctx.selectedDmChannel.other_user.id)}`}
+                        alt={(ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0]}
+                        onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = (ctx.selectedDmChannel!.other_user_profile?.display_name || "?")[0].toUpperCase(); }}
+                      />
+                    ) : (ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
+                  </div>
+                  <div className="empty-state-title">{ctx.selectedDmChannel.other_user_profile.display_name}</div>
+                  <div className="empty-state-text">This is the beginning of your direct message history with <strong>{ctx.selectedDmChannel.other_user_profile.display_name}</strong>.</div>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <div className="empty-state-icon"><Icon name="chat-filled" size={48} /></div>
+                  <div className="empty-state-title">No messages yet</div>
+                  <div className="empty-state-text">Be the first to send a message in this channel!</div>
+                </div>
+              )
             )}
             {!ctx.selectedChannelId && !ctx.selectedDmChannel && ctx.channels.length === 0 && ctx.nodes.length > 0 && (
               <div className="empty-state">
