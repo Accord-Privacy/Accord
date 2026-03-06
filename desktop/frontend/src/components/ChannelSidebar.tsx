@@ -536,7 +536,7 @@ const UserPanel: React.FC = () => {
         </div>
       )}
       <div className="user-panel">
-        <div className="user-avatar">
+        <div className="user-avatar" style={{ background: (() => { const COLORS = ['#5865f2', '#57f287', '#fee75c', '#eb459e', '#ed4245']; const id = ctx.appState.user?.id || ''; let h = 0; for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0; return COLORS[Math.abs(h) % COLORS.length]; })() }}>
           {ctx.appState.user?.id ? (
             <img
               src={`${api.getUserAvatarUrl(ctx.appState.user.id)}`}
