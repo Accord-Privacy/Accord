@@ -6,7 +6,7 @@ import { notificationManager } from "../notifications";
 import { avatarColor } from "../avatarColor";
 import { Channel } from "../types";
 // buildHash imports moved to MemberSidebar for trust indicator
-import { BotPanel } from "./BotPanel";
+const BotPanel = React.lazy(() => import("./BotPanel").then(m => ({ default: m.BotPanel })));
 
 // Voice Connection Panel (kept for potential reuse; controls now merged into UserPanel)
 export const VoiceConnectionPanel: React.FC<{
@@ -403,10 +403,12 @@ export const ChannelSidebar: React.FC = () => {
 
       {/* Bot Panel */}
       {ctx.selectedNodeId && (
-        <BotPanel
-          nodeId={ctx.selectedNodeId}
-          isAdmin={ctx.selectedNodeId ? ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') : false}
-        />
+        <React.Suspense fallback={null}>
+          <BotPanel
+            nodeId={ctx.selectedNodeId}
+            isAdmin={ctx.selectedNodeId ? ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') : false}
+          />
+        </React.Suspense>
       )}
 
       {/* Direct Messages Section */}

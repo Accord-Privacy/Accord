@@ -1,6 +1,6 @@
 import React from "react";
 import { useAppContext } from "./AppContext";
-import { SetupWizard, SetupResult } from "../SetupWizard";
+import type { SetupResult } from "../SetupWizard";
 
 // Mnemonic backup modal (shown after registration)
 export const MnemonicModal: React.FC = () => {
@@ -475,6 +475,5 @@ export const LoginScreen: React.FC = () => {
   );
 };
 
-// Re-export SetupWizard wrapper
-export { SetupWizard };
+// SetupWizard is now lazy-loaded directly in App.tsx
 export type { SetupResult };

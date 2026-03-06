@@ -31,7 +31,8 @@ async function storeToken(token: string, lifetimeMs?: number): Promise<void> {
 import { getRelayManager, RelayManager } from "./RelayManager";
 import { StagedFile } from "./FileManager";
 import { notificationManager, NotificationPreferences } from "./notifications";
-import { SetupWizard, SetupResult } from "./SetupWizard";
+import type { SetupResult } from "./SetupWizard";
+const SetupWizard = React.lazy(() => import("./SetupWizard").then(m => ({ default: m.SetupWizard })));
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
@@ -3601,9 +3602,11 @@ function App() {
     };
 
     return (
-      <SetupWizard
-        onComplete={handleSetupComplete}
-      />
+      <React.Suspense fallback={<div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text)' }}>Loading...</div>}>
+        <SetupWizard
+          onComplete={handleSetupComplete}
+        />
+      </React.Suspense>
     );
   }
 

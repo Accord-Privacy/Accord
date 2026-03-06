@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useCallback, useEffect } from "react";
+import React, { Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
 import { avatarColor } from "../avatarColor";
@@ -58,12 +58,12 @@ export const ChatArea: React.FC = () => {
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
-  const filteredMessages = ctx.appState.messages.filter(msg => {
-    const currentCh = ctx.selectedDmChannel?.id || ctx.selectedChannelId;
+  const currentCh = ctx.selectedDmChannel?.id || ctx.selectedChannelId;
+  const filteredMessages = useMemo(() => ctx.appState.messages.filter(msg => {
     if (currentCh && msg.channel_id && msg.channel_id !== currentCh) return false;
     if (msg.sender_id && ctx.blockedUsers.has(msg.sender_id)) return false;
     return true;
-  });
+  }), [ctx.appState.messages, currentCh, ctx.blockedUsers]);
 
   // Invite preview state
   const [invitePreview, setInvitePreview] = useState<{

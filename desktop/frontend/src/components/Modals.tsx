@@ -3,7 +3,7 @@ import { useAppContext } from "./AppContext";
 import { api, parseInviteLink } from "../api";
 import { renderMessageMarkdown } from "../markdown";
 import { notificationManager } from "../notifications";
-import { SearchOverlay } from "../SearchOverlay";
+const SearchOverlay = React.lazy(() => import("../SearchOverlay").then(m => ({ default: m.SearchOverlay })));
 import { LoadingSpinner } from "../LoadingSpinner";
 import { ProfileCard } from "../ProfileCard";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
@@ -283,18 +283,22 @@ export const AppModals: React.FC = () => {
       })()}
 
       {/* Search Overlay */}
-      <SearchOverlay
-        isVisible={ctx.showSearchOverlay}
-        onClose={() => ctx.setShowSearchOverlay(false)}
-        nodeId={ctx.selectedNodeId}
-        channels={ctx.channels}
-        token={ctx.appState.token || null}
-        onNavigateToMessage={ctx.handleNavigateToMessage}
-        keyPair={ctx.keyPair}
-        encryptionEnabled={ctx.encryptionEnabled}
-        currentMessages={ctx.appState.messages}
-        currentChannelId={ctx.selectedChannelId || undefined}
-      />
+      {ctx.showSearchOverlay && (
+        <Suspense fallback={<LoadingSpinner />}>
+          <SearchOverlay
+            isVisible={ctx.showSearchOverlay}
+            onClose={() => ctx.setShowSearchOverlay(false)}
+            nodeId={ctx.selectedNodeId}
+            channels={ctx.channels}
+            token={ctx.appState.token || null}
+            onNavigateToMessage={ctx.handleNavigateToMessage}
+            keyPair={ctx.keyPair}
+            encryptionEnabled={ctx.encryptionEnabled}
+            currentMessages={ctx.appState.messages}
+            currentChannelId={ctx.selectedChannelId || undefined}
+          />
+        </Suspense>
+      )}
 
       {/* Notification Settings */}
       <Suspense fallback={<LoadingSpinner />}>
