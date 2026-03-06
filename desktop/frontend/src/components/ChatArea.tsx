@@ -222,6 +222,7 @@ export const ChatArea: React.FC = () => {
                 </>
               ) : (
                 <>
+                  <span className="chat-channel-icon"><Icon name="hash" size={20} /></span>
                   <span className="chat-channel-name">{ctx.activeChannel}</span>
                   <span className="chat-topic">
                     {(() => {

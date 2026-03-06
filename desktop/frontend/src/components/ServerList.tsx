@@ -19,7 +19,7 @@ export const ServerList: React.FC = () => {
         return (
           <div
             key={nodeId || s}
-            className={`server-icon ${i === ctx.activeServer ? "active" : ""}`}
+            className={`server-icon ${i === ctx.activeServer ? "active" : ""}${nodeUnreads.totalUnreads > 0 && i !== ctx.activeServer ? " has-unread" : ""}`}
             onClick={() => {
               if (nodeId) {
                 ctx.handleNodeSelect(nodeId, i);

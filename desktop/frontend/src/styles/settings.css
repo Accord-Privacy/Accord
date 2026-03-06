@@ -95,6 +95,19 @@
 .settings-nav-item.active {
   background: var(--bg-modifier-selected);
   color: var(--text-primary);
+  position: relative;
+}
+
+.settings-nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 60%;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
 }
 
 .settings-nav-item.danger { color: var(--red); }
@@ -391,8 +404,8 @@
 }
 
 .settings-toggle-desc {
-  color: var(--text-muted);
-  font-size: 0.875rem;
+  color: var(--text-faint);
+  font-size: 0.8125rem;
   line-height: 1.25rem;
 }
 
@@ -719,7 +732,17 @@
 .settings-logout-section {
   margin-top: 24px;
   padding-top: 20px;
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid rgba(218, 55, 60, 0.3);
+}
+
+.settings-logout-section h4,
+.settings-danger-title {
+  color: var(--red);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin: 0 0 12px;
 }
 
 .settings-logout-btn {

@@ -144,3 +144,21 @@
   border: 2px solid var(--bg-deepest);
   padding: 0;
 }
+
+/* Home / Accord logo button */
+.server-icon.accord-home {
+  background: var(--bg-elevated);
+  transition: border-radius 120ms ease, background-color 120ms ease;
+}
+
+.server-icon.accord-home:hover,
+.server-icon.accord-home.active {
+  background: var(--accent);
+  border-radius: 30%;
+}
+
+.server-icon.accord-home img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
