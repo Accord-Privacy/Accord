@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust 1.86+](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](https://www.rust-lang.org/)
 
-[Website](https://accord.chat) · [Quick Start](#quick-start) · [Self-Hosting](docs/SELF-HOSTING.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Roadmap](ROADMAP.md)
+[Website](https://accord.chat) · [Quick Start](#quick-start) · [Self-Hosting](docs/SELF-HOSTING.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Security Audit](SECURITY-AUDIT.md) · [Roadmap](ROADMAP.md)
 
 </div>
 
@@ -27,7 +27,7 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 
 ### 🔐 End-to-End Encryption
 - **Double Ratchet + X3DH** for DMs (Signal protocol foundations)
-- **AES-256-GCM** channel encryption for all group messages and files
+- **AES-256-GCM** channel encryption for all group messages and files (Sender Keys upgrade planned)
 - **Forward secrecy** — keys rotate per message
 - **SRTP voice encryption** with periodic key rotation
 - **Encrypted file sharing** — relay stores only opaque blobs
@@ -139,7 +139,7 @@ Accord's security is built on a zero-knowledge architecture:
 7. **Per-Node profiles** ensure the relay can't correlate your identity across communities
 8. **Push notification payloads are encrypted** with 3 privacy levels (full, sender-only, minimal)
 
-For full details, see **[SECURITY.md](SECURITY.md)** and **[docs/metadata-privacy.md](docs/metadata-privacy.md)**.
+For full details, see **[SECURITY.md](SECURITY.md)**, **[SECURITY-AUDIT.md](SECURITY-AUDIT.md)**, and **[docs/metadata-privacy.md](docs/metadata-privacy.md)**.
 
 ---
 
@@ -204,7 +204,7 @@ cd desktop/frontend && npm install && npx vite build
 ./accord-server --port 8443 --frontend desktop/frontend/dist
 ```
 
-Visit your relay URL in any browser. The web client auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience. All E2EE operations happen client-side — your keys never leave the browser.
+Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side — your keys never leave the browser.
 
 ---
 
@@ -247,6 +247,7 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 - **[Bot API](docs/bot-api.md)** — building integrations
 - **[Self-Hosting](docs/SELF-HOSTING.md)** — deployment guide
 - **[Reproducible Builds](REPRODUCIBLE-BUILDS.md)** — build verification
+- **[Security Audit](SECURITY-AUDIT.md)** — latest audit findings and status
 
 ---
 
@@ -256,7 +257,7 @@ We welcome contributions! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup i
 
 ## Security
 
-For security design details and vulnerability reporting, see **[SECURITY.md](SECURITY.md)**.
+For security design details and vulnerability reporting, see **[SECURITY.md](SECURITY.md)**. For the latest audit results, see **[SECURITY-AUDIT.md](SECURITY-AUDIT.md)**.
 
 **Never** open a public issue for security vulnerabilities — use [GitHub Security Advisories](https://github.com/Accord-Privacy/Accord/security/advisories).
 
