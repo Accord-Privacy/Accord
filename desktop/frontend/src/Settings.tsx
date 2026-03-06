@@ -826,7 +826,7 @@ export const Settings: React.FC<SettingsProps> = ({
                     className="settings-logout-btn"
                     onClick={() => { onClose(); if (onLogout) setTimeout(onLogout, 100); }}
                   >
-                    🚪 Log Out
+                    Log Out
                   </button>
                   <p className="settings-logout-hint">
                     Your identity keys are saved locally. You can log back in with your password.
@@ -1133,7 +1133,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
                 {/* Voice Activity Detection */}
                 <div className="settings-subsection">
-                  <h4 className="settings-subsection-title">🗣️ Input Sensitivity</h4>
+                  <h4 className="settings-subsection-title">Input Sensitivity</h4>
                   <p className="settings-subsection-desc">Controls how loud you need to be before your mic activates. Higher values require louder audio.</p>
                   <div className="settings-group">
                     <label className="settings-label">
@@ -1198,7 +1198,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 {/* Refresh Devices */}
                 <div className="settings-group" style={{ paddingTop: '8px' }}>
                   <button className="settings-btn-secondary" onClick={loadMediaDevices}>
-                    🔄 Refresh Devices
+                    Refresh Devices
                   </button>
                 </div>
               </div>
@@ -1314,16 +1314,16 @@ export const Settings: React.FC<SettingsProps> = ({
                   <label className="settings-label">Identity Key Management</label>
                   <div className="test-buttons" style={{ flexWrap: 'wrap' }}>
                     <button className="test-button" onClick={handleExportIdentity}>
-                      📤 Export Identity
+                      Export Identity
                     </button>
                     <button className="test-button" onClick={handleShowQrCode}>
-                      📱 Show QR Code
+                      Show QR Code
                     </button>
                     <button className="test-button" onClick={() => importFileRef.current?.click()}>
-                      📥 Import Identity
+                      Import Identity
                     </button>
                     <button className="test-button" onClick={handleScanQrCode}>
-                      📷 Scan QR Code
+                      Scan QR Code
                     </button>
                     <input
                       ref={importFileRef}
@@ -1369,7 +1369,7 @@ export const Settings: React.FC<SettingsProps> = ({
                   <label className="settings-label">Clear Local Data</label>
                   {!clearConfirm ? (
                     <button className="clear-button" onClick={handleClearLocalData}>
-                      🗑️ Clear Local Data
+                      Clear Local Data
                     </button>
                   ) : (
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1396,7 +1396,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 <div className="settings-group">
                   <label className="settings-label">Connection Status</label>
                   <div className="settings-info">
-                    {serverInfo?.isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                    {serverInfo?.isConnected ? 'Connected' : 'Disconnected'}
                   </div>
                 </div>
 
@@ -1416,7 +1416,7 @@ export const Settings: React.FC<SettingsProps> = ({
                       title="Click to copy"
                       onClick={() => { navigator.clipboard?.writeText(serverInfo.buildHash); }}
                     >
-                      {serverInfo.buildHash} 📋
+                      {serverInfo.buildHash}
                     </div>
                   </div>
                 )}
@@ -1527,13 +1527,13 @@ export const Settings: React.FC<SettingsProps> = ({
 
                   <div className="about-links">
                     <a href="https://github.com/nicholasgasior/accord" target="_blank" rel="noopener noreferrer">
-                      📖 Source Code on GitHub
+                      Source Code on GitHub
                     </a>
                     <a href="https://github.com/nicholasgasior/accord/issues" target="_blank" rel="noopener noreferrer">
-                      🐛 Report a Bug
+                      Report a Bug
                     </a>
                     <a href="https://github.com/nicholasgasior/accord/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
-                      📄 License (MIT)
+                      License (MIT)
                     </a>
                   </div>
 
