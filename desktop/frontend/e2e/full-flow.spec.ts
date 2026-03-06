@@ -23,6 +23,8 @@ test.describe.serial("Accord Full Flow", () => {
 
   test("1 - Identity creation", async () => {
     await page.goto("/");
+    // Skip onboarding tour in tests
+    await page.evaluate(() => localStorage.setItem("accord-onboarding-complete", "true"));
 
     // Should see the SetupWizard with "Create Identity" button
     await expect(page.locator(".brand-accent")).toBeVisible({ timeout: 10_000 });

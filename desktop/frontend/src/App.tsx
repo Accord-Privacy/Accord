@@ -47,6 +47,7 @@ import {
   ServerList, ChannelSidebar, ChatArea, MemberSidebar, AppModals,
   ChatErrorBoundary, ModalErrorBoundary,
 } from "./components";
+import { OnboardingTour } from "./components/OnboardingTour";
 import { useVoice } from "./hooks/useVoice";
 import { usePresence } from "./hooks/usePresence";
 import { useTyping } from "./hooks/useTyping";
@@ -3745,6 +3746,7 @@ function App() {
         <ModalErrorBoundary>
           <AppModals />
         </ModalErrorBoundary>
+        <OnboardingTour />
       </div>
     </AppContext.Provider>
   );
