@@ -3,6 +3,7 @@ import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
 import { api } from "../api";
 import { notificationManager } from "../notifications";
+import { avatarColor } from "../avatarColor";
 import { Channel } from "../types";
 // buildHash imports moved to MemberSidebar for trust indicator
 import { BotPanel } from "./BotPanel";
@@ -536,7 +537,7 @@ const UserPanel: React.FC = () => {
         </div>
       )}
       <div className="user-panel">
-        <div className="user-avatar" style={{ background: (() => { const COLORS = ['#5865f2', '#57f287', '#fee75c', '#eb459e', '#ed4245']; const id = ctx.appState.user?.id || ''; let h = 0; for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0; return COLORS[Math.abs(h) % COLORS.length]; })() }}>
+        <div className="user-avatar" style={{ background: avatarColor(ctx.appState.user?.id || '') }}>
           {ctx.appState.user?.id ? (
             <img
               src={`${api.getUserAvatarUrl(ctx.appState.user.id)}`}

@@ -1,14 +1,7 @@
 import React, { Suspense, useState, useCallback, useEffect } from "react";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
-
-const AVATAR_COLORS = ['#5865f2', '#57f287', '#fee75c', '#eb459e', '#ed4245'];
-function avatarColor(id: string): string {
-  if (!id) return AVATAR_COLORS[0];
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+import { avatarColor } from "../avatarColor";
 import { api, parseInviteLink } from "../api";
 import { verifyBuildHash, getTrustIndicator } from "../buildHash";
 import { notificationManager } from "../notifications";

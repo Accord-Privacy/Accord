@@ -3,14 +3,7 @@ import { useAppContext } from "./AppContext";
 import { api } from "../api";
 import { NodeMember, User } from "../types";
 import { getCombinedTrust, getTrustIndicator, CLIENT_BUILD_HASH } from "../buildHash";
-
-const AVATAR_COLORS = ['#5865f2', '#57f287', '#fee75c', '#eb459e', '#ed4245'];
-function avatarColor(id: string): string {
-  if (!id) return AVATAR_COLORS[0];
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = ((hash << 5) - hash + id.charCodeAt(i)) | 0;
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+import { avatarColor } from "../avatarColor";
 
 export const MemberSidebar: React.FC = () => {
   const ctx = useAppContext();
