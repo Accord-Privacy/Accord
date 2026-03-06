@@ -95,6 +95,30 @@
   background: var(--bg-modifier-hover);
 }
 
+/* Grouped message hover timestamp — Discord shows time in the left gutter */
+.message-avatar-spacer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 72px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-hover-time {
+  font-size: var(--font-xs);
+  color: var(--text-faint);
+  opacity: 0;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.message:hover .message-hover-time {
+  opacity: 1;
+}
+
 /* Avatar */
 .message-avatar {
   width: 40px;
@@ -177,11 +201,12 @@
 
 /* Content */
 .message-content {
-  color: var(--text-secondary);
-  font-size: var(--font-lg);
-  line-height: var(--lh-normal);
+  color: var(--text-chat);
+  font-size: 16px;
+  line-height: 1.375rem;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
 }
 
 .message-content p {
@@ -194,16 +219,15 @@
   position: absolute;
   top: -16px;
   right: 14px;
-  background: var(--bg-floating);
-  border: 1px solid var(--border);
+  background: var(--bg-darkest);
   border-radius: var(--radius-sm);
-  padding: 0 2px;
+  padding: 0 4px;
   gap: 0;
-  box-shadow: var(--shadow-elevation-high);
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.15), var(--shadow-elevation-low);
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.1s ease;
+  transition: opacity 0.08s ease;
 }
 
 .message:hover .message-actions {

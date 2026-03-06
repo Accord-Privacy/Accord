@@ -81,13 +81,18 @@
 .context-menu {
   position: fixed;
   z-index: 2000;
-  background: var(--bg-dark);
-  border: 1px solid var(--bg-input);
-  border-radius: var(--radius-md);
-  padding: 6px 0;
-  min-width: 200px;
-  max-width: 280px;
-  box-shadow: var(--shadow-high);
+  background: var(--bg-floating);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  min-width: 188px;
+  max-width: 320px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08), var(--shadow-high);
+  animation: contextMenuIn 0.1s ease-out;
+}
+
+@keyframes contextMenuIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .context-menu-backdrop {
@@ -102,16 +107,21 @@
 }
 
 .context-menu-item {
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: 6px 8px;
+  margin: 2px 0;
+  font-size: 14px;
   color: var(--text-secondary);
   cursor: pointer;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .context-menu-item:hover {
   background: var(--accent);
-  color: var(--text-primary);
+  color: #fff;
 }
 
 .context-menu-profile-header {
@@ -124,9 +134,18 @@
   color: var(--text-secondary);
 }
 
+.context-menu-item.danger {
+  color: var(--red);
+}
+
+.context-menu-item.danger:hover {
+  background: var(--red);
+  color: #fff;
+}
+
 .context-menu-separator {
   height: 1px;
   background: var(--border-subtle);
-  margin: 4px 8px;
+  margin: 4px 0;
 }
 
