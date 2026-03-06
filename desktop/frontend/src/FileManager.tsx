@@ -376,7 +376,8 @@ export const FileAttachment: React.FC<FileAttachmentProps> = ({
   encryptionEnabled,
 }) => {
   const [decryptedName, setDecryptedName] = useState<string>(file.encrypted_filename);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'audio' | 'video' | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
@@ -393,8 +394,14 @@ export const FileAttachment: React.FC<FileAttachmentProps> = ({
       }
       if (!cancelled) {
         setDecryptedName(filename);
-        // Check if image
-        if (isImageFile(filename)) {
+        const detectedType = isImageFile(filename) ? 'image' as const
+          : isAudioFile(filename) ? 'audio' as const
+          : isVideoFile(filename) ? 'video' as const
+          : null;
+        setMediaType(detectedType);
+
+        // Load media blob for inline preview/playback
+        if (detectedType) {
           try {
             const buffer = await api.downloadFile(file.id, token);
             let finalBuffer = buffer;
@@ -405,8 +412,11 @@ export const FileAttachment: React.FC<FileAttachmentProps> = ({
               } catch { /* use raw */ }
             }
             if (!cancelled) {
-              const blob = new Blob([finalBuffer]);
-              setImageUrl(URL.createObjectURL(blob));
+              const mimeType = detectedType === 'image' ? getMimeType(filename, 'image')
+                : detectedType === 'audio' ? getMimeType(filename, 'audio')
+                : getMimeType(filename, 'video');
+              const blob = new Blob([finalBuffer], { type: mimeType });
+              setMediaUrl(URL.createObjectURL(blob));
             }
           } catch {
             // no preview
@@ -421,9 +431,9 @@ export const FileAttachment: React.FC<FileAttachmentProps> = ({
   // Cleanup blob URL
   useEffect(() => {
     return () => {
-      if (imageUrl) URL.revokeObjectURL(imageUrl);
+      if (mediaUrl) URL.revokeObjectURL(mediaUrl);
     };
-  }, [imageUrl]);
+  }, [mediaUrl]);
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -463,15 +473,29 @@ export const FileAttachment: React.FC<FileAttachmentProps> = ({
 
   return (
     <div className="file-attachment">
-      {imageUrl && (
+      {mediaUrl && mediaType === 'image' && (
         <div className="file-attachment-image-preview">
-          <img src={imageUrl} alt={decryptedName} onClick={handleDownload} />
+          <img src={mediaUrl} alt={decryptedName} />
+        </div>
+      )}
+      {mediaUrl && mediaType === 'audio' && (
+        <div className="file-attachment-audio-preview">
+          <audio controls preload="metadata" src={mediaUrl}>
+            Your browser does not support the audio element.
+          </audio>
+        </div>
+      )}
+      {mediaUrl && mediaType === 'video' && (
+        <div className="file-attachment-video-preview">
+          <video controls preload="metadata" src={mediaUrl}>
+            Your browser does not support the video element.
+          </video>
         </div>
       )}
       <div className="file-attachment-info">
         <span className="file-attachment-icon">{icon}</span>
         <div className="file-attachment-details">
-          <span className="file-attachment-name" title={decryptedName}>{decryptedName}</span>
+          <span className="file-attachment-name" title={decryptedName} onClick={handleDownload}>{decryptedName}</span>
           <span className="file-attachment-size">{formatFileSize(file.file_size_bytes)}</span>
         </div>
         <button
@@ -480,7 +504,11 @@ export const FileAttachment: React.FC<FileAttachmentProps> = ({
           disabled={downloading}
           title="Download"
         >
-          {downloading ? '⏳' : '⬇️'}
+          {downloading ? (
+            <Icon name="clock" size={16} />
+          ) : (
+            <Icon name="download" size={16} />
+          )}
         </button>
       </div>
     </div>
@@ -629,6 +657,29 @@ function formatFileSize(bytes: number): string {
 function isImageFile(filename: string): boolean {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
   return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext);
+}
+
+function isAudioFile(filename: string): boolean {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return ['mp3', 'wav', 'ogg', 'flac', 'aac', 'webm'].includes(ext);
+}
+
+function isVideoFile(filename: string): boolean {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+}
+
+function getMimeType(filename: string, category: 'image' | 'audio' | 'video'): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const mimeMap: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+    webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp',
+    mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac',
+    aac: 'audio/aac',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', avi: 'video/x-msvideo',
+    mkv: 'video/x-matroska',
+  };
+  return mimeMap[ext] || `${category}/*`;
 }
 
 function getFileTypeIcon(filename: string): string {
