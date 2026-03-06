@@ -225,7 +225,7 @@ export function NodeDiscoveryMenu({ isOpen, onClose, onJoinNode, onCreateNode, a
           className="context-menu-item"
           onClick={() => { onJoinNode(); onClose(); }}
         >
-          <span className="context-menu-icon" style={{ color: 'var(--accent)' }}>🔗</span>
+          <span className="context-menu-icon" style={{ color: 'var(--accent)' }}></span>
           Join a Node
         </div>
         <div

@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAppContext } from './components/AppContext';
+import { Icon } from './components/Icon';
 import { AccordWebSocket } from './ws';
 import { VoiceConnection } from './voice/webrtc';
 import { RelayVoiceConnection } from './voice/relay';
@@ -320,7 +321,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             }}
             title={isMuted ? 'Unmute' : 'Mute'}
           >
-            {isMuted ? '🔇' : '🎤'}
+            <Icon name={isMuted ? 'mic-off' : 'mic'} size={16} />
           </button>
 
           <button
@@ -333,7 +334,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             }}
             title={isDeafened ? 'Undeafen' : 'Deafen'}
           >
-            {isDeafened ? 'Muted' : 'Audio'}
+            <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={16} />
           </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '120px' }}>
@@ -378,7 +379,7 @@ const UserAvatar: React.FC<{
       {label[0]?.toUpperCase()}
     </div>
     <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{label}</span>
-    {isMuted && <span style={{ fontSize: '10px', color: 'var(--red)' }}>🔇</span>}
+    {isMuted && <span style={{ color: 'var(--red)', display: 'flex' }}><Icon name="mic-off" size={12} /></span>}
     {isConnecting && <span style={{ fontSize: '10px', color: 'var(--yellow)' }}>⋯</span>}
   </div>
 );

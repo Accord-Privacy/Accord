@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Icon } from './components/Icon';
 import { api } from './api';
 import { FileMetadata, UploadProgress } from './types';
 import { 
@@ -138,7 +139,7 @@ export const FileUploadButton: React.FC<FileUploadButtonProps> = ({
         className="file-upload-btn"
         title="Attach file"
       >
-        📎
+        <Icon name="plus" size={20} />
       </button>
 
       {uploadState.isUploading && uploadState.progress && (
