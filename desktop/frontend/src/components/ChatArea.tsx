@@ -13,6 +13,7 @@ import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
+import { ImageLightbox } from "./ImageLightbox";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
 
@@ -24,6 +25,7 @@ export const ChatArea: React.FC = () => {
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   const wrapSelection = useCallback((prefix: string, suffix: string) => {
     const textarea = ctx.messageInputRef?.current;
@@ -310,6 +312,13 @@ export const ChatArea: React.FC = () => {
             role="log"
             aria-label="Messages"
             aria-live="polite"
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.tagName === 'IMG' && (target.closest('.message-content') || target.closest('.file-attachment-image-preview'))) {
+                e.stopPropagation();
+                setLightboxSrc((target as HTMLImageElement).src);
+              }
+            }}
           >
             {ctx.isLoadingOlderMessages && (
               <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
@@ -763,6 +772,10 @@ export const ChatArea: React.FC = () => {
       </div>
 
       {/* Voice Chat Component moved inline above message input */}
+
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      )}
     </>
   );
 };
