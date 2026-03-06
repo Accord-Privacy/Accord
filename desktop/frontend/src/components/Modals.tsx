@@ -507,7 +507,7 @@ export const AppModals: React.FC = () => {
       {ctx.showShortcutsHelp && (
         <div className="modal-overlay" onClick={() => ctx.setShowShortcutsHelp(false)}>
           <div className="modal-card shortcuts-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>⌨️ Keyboard Shortcuts</h3>
+            <h3>Keyboard Shortcuts</h3>
             <div className="shortcuts-list">
               {SHORTCUTS.map((s, i) => (
                 <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>

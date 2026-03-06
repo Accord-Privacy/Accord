@@ -55,6 +55,8 @@
   font-size: 48px;
   margin-bottom: 16px;
   opacity: 0.4;
+  color: var(--text-muted);
+  line-height: 1;
 }
 
 .empty-state-title {

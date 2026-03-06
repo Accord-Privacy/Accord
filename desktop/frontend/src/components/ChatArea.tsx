@@ -236,7 +236,7 @@ export const ChatArea: React.FC = () => {
                   <span className="chat-topic">
                     {(() => {
                       const ch = ctx.channels.find(c => c.id === ctx.selectedChannelId);
-                      if (ch?.channel_type === 'voice') return `🔊 Voice channel — ${ch.name}`;
+                      if (ch?.channel_type === 'voice') return `Voice channel — ${ch.name}`;
                       if (ch?.topic) return ch.topic;
                       return '';
                     })()}
@@ -289,7 +289,7 @@ export const ChatArea: React.FC = () => {
             )}
             {!ctx.isLoadingOlderMessages && ctx.appState.messages.length === 0 && ctx.selectedChannelId && (
               <div className="empty-state">
-                <div className="empty-state-icon">💬</div>
+                <div className="empty-state-icon"><Icon name="chat-filled" size={48} /></div>
                 <div className="empty-state-title">No messages yet</div>
                 <div className="empty-state-text">Be the first to send a message in this channel!</div>
               </div>
@@ -303,7 +303,7 @@ export const ChatArea: React.FC = () => {
             )}
             {ctx.nodes.length === 0 && !ctx.selectedDmChannel && (
               <div className="empty-state">
-                <div className="empty-state-icon">⚡</div>
+                <div className="empty-state-icon"><Icon name="bolt" size={48} /></div>
                 <div className="empty-state-title">Welcome to Accord</div>
                 <div className="empty-state-text">Join a node via invite or create your own to get started.</div>
               </div>
@@ -439,7 +439,7 @@ export const ChatArea: React.FC = () => {
                         />
                       )}
                       {(msg as any)._botResponse && (
-                        <div className="bot-sent-disclosure">📋 Sent to bot</div>
+                        <div className="bot-sent-disclosure"><Icon name="clipboard" size={14} /> Sent to bot</div>
                       )}
 
                       {/* Link Preview — disabled for now */}
@@ -447,7 +447,7 @@ export const ChatArea: React.FC = () => {
                       {/* Thread reply count */}
                       {msg.reply_count != null && msg.reply_count > 0 && (
                         <div className="thread-indicator">
-                          <span className="thread-icon">💬</span>
+                          <span className="thread-icon"><Icon name="thread" size={14} /></span>
                           <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
                         </div>
                       )}
