@@ -296,7 +296,7 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
       {isDragging && (
         <div className="file-drop-overlay">
           <div className="file-drop-overlay-content">
-            <span className="file-drop-icon">📁</span>
+            <span className="file-drop-icon"><Icon name="folder" size={48} /></span>
             <span>Drop files to upload</span>
           </div>
         </div>
@@ -577,7 +577,7 @@ export const FileList: React.FC<FileManagerProps> = ({
         className="file-list-toggle-btn"
         title="Show files"
       >
-        📁
+        <Icon name="folder" size={18} />
       </button>
 
       {isVisible && (
@@ -604,7 +604,7 @@ export const FileList: React.FC<FileManagerProps> = ({
                   </div>
                   <div className="file-list-item-actions">
                     <button onClick={() => handleDownload(file)} className="file-list-item-download" title="Download">⬇</button>
-                    <button onClick={() => handleDelete(file)} className="file-list-item-delete" title="Delete">🗑</button>
+                    <button onClick={() => handleDelete(file)} className="file-list-item-delete" title="Delete"><Icon name="delete" size={16} /></button>
                   </div>
                 </div>
               ))}
