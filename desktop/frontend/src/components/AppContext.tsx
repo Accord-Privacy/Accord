@@ -149,6 +149,16 @@ export interface AppContextType {
   showPinnedPanel: boolean;
   setShowPinnedPanel: React.Dispatch<React.SetStateAction<boolean>>;
   pinnedMessages: Message[];
+  showPinConfirm: string | null;
+  setShowPinConfirm: React.Dispatch<React.SetStateAction<string | null>>;
+
+  // Thread
+  threadParentMessage: Message | null;
+  setThreadParentMessage: React.Dispatch<React.SetStateAction<Message | null>>;
+  threadMessages: Message[];
+  threadLoading: boolean;
+  openThread: (msg: Message) => void;
+  closeThread: () => void;
 
   // Reactions
   showEmojiPicker: string | null;

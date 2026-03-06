@@ -241,7 +241,10 @@ export const ChatArea: React.FC = () => {
               )}
             </div>
             <div className="chat-header-right">
-              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Pinned Messages" aria-label="Pinned Messages" aria-pressed={ctx.showPinnedPanel}><Icon name="pin" size={20} /></button>
+              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Pinned Messages" aria-label="Pinned Messages" aria-pressed={ctx.showPinnedPanel}>
+                <Icon name="pin" size={20} />
+                {ctx.pinnedMessages.length > 0 && ctx.showPinnedPanel && <span className="pin-count-badge">{ctx.pinnedMessages.length}</span>}
+              </button>
               {ctx.encryptionEnabled && ctx.keyPair && (
                 <span className="e2ee-indicator" title="End-to-end encrypted"><Icon name="lock" size={14} /> E2EE</span>
               )}
@@ -398,7 +401,7 @@ export const ChatArea: React.FC = () => {
                                 <button onClick={() => ctx.setShowDeleteConfirm(msg.id)} className="message-action-btn" title="Delete" aria-label="Delete message"><Icon name="delete" size={18} /></button>
                               )}
                               {ctx.canDeleteMessage(msg) && (
-                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.handlePinMessage(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin" : "Pin"} aria-label={msg.pinned_at ? "Unpin message" : "Pin message"}><Icon name="pin" size={18} /></button>
+                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.setShowPinConfirm(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin" : "Pin"} aria-label={msg.pinned_at ? "Unpin message" : "Pin message"}><Icon name="pin" size={18} /></button>
                               )}
                             </div>
                           )}
@@ -453,7 +456,7 @@ export const ChatArea: React.FC = () => {
 
                       {/* Thread reply count */}
                       {msg.reply_count != null && msg.reply_count > 0 && (
-                        <div className="thread-indicator">
+                        <div className="thread-indicator" onClick={() => ctx.openThread(msg)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') ctx.openThread(msg); }}>
                           <span className="thread-icon"><Icon name="thread" size={14} /></span>
                           <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
                         </div>
@@ -530,6 +533,20 @@ export const ChatArea: React.FC = () => {
                             <div className="delete-confirm-actions">
                               <button onClick={() => ctx.handleDeleteMessage(msg.id)} className="delete-confirm-btn">Delete</button>
                               <button onClick={() => ctx.setShowDeleteConfirm(null)} className="delete-cancel-btn">Cancel</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Pin Confirmation */}
+                      {ctx.showPinConfirm === msg.id && (
+                        <div className="delete-confirm-overlay">
+                          <div className="delete-confirm-dialog">
+                            <p>Pin this message to <strong>#{ctx.activeChannel}</strong>?</p>
+                            <p className="pin-confirm-preview">{msg.content.substring(0, 100)}{msg.content.length > 100 ? '...' : ''}</p>
+                            <div className="delete-confirm-actions">
+                              <button onClick={() => { ctx.handlePinMessage(msg.id); ctx.setShowPinConfirm(null); }} className="delete-confirm-btn" style={{ backgroundColor: 'var(--accent)' }}>Pin</button>
+                              <button onClick={() => ctx.setShowPinConfirm(null)} className="delete-cancel-btn">Cancel</button>
                             </div>
                           </div>
                         </div>

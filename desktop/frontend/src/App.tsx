@@ -224,6 +224,10 @@ function App() {
     statusInput, setStatusInput,
     showPinnedPanel, setShowPinnedPanel,
     pinnedMessages, setPinnedMessages,
+    showPinConfirm, setShowPinConfirm,
+    threadParentMessage, setThreadParentMessage,
+    threadMessages, setThreadMessages,
+    threadLoading, setThreadLoading,
     showEmojiPicker, setShowEmojiPicker,
     hoveredMessageId, setHoveredMessageId,
     showNotificationSettings, setShowNotificationSettings,
@@ -2958,6 +2962,31 @@ function App() {
     }
   };
 
+  // Open thread panel for a message
+  const openThread = async (msg: Message) => {
+    setThreadParentMessage(msg);
+    setThreadMessages([]);
+    setThreadLoading(true);
+    try {
+      const response = await api.getMessageThread(msg.id, appState.token || '');
+      setThreadMessages(response.messages.map((m: any) => ({
+        ...m,
+        time: new Date((m.created_at || m.timestamp) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: (m.created_at || m.timestamp) * 1000,
+        author: m.author || m.display_name || m.sender_id?.substring(0, 8) || 'Unknown',
+      })));
+    } catch (error) {
+      console.error('Failed to load thread:', error);
+    } finally {
+      setThreadLoading(false);
+    }
+  };
+
+  const closeThread = () => {
+    setThreadParentMessage(null);
+    setThreadMessages([]);
+  };
+
   // Toggle pinned messages panel
   const togglePinnedPanel = () => {
     setShowPinnedPanel(prev => {
@@ -3282,7 +3311,8 @@ function App() {
     statusInput, setStatusInput,
 
     // Pinned
-    showPinnedPanel, setShowPinnedPanel, pinnedMessages,
+    showPinnedPanel, setShowPinnedPanel, pinnedMessages, showPinConfirm, setShowPinConfirm,
+    threadParentMessage, setThreadParentMessage, threadMessages, threadLoading, openThread, closeThread,
 
     // Reactions
     showEmojiPicker, setShowEmojiPicker,

@@ -440,6 +440,61 @@ export const AppModals: React.FC = () => {
         </div>
       )}
 
+      {/* Thread Panel */}
+      {ctx.threadParentMessage && (
+        <div className="pinned-panel" role="complementary" aria-label="Thread" onKeyDown={(e) => { if (e.key === 'Escape') ctx.closeThread(); }}>
+          <div className="pinned-panel-header">
+            <h3 className="pinned-panel-title">Thread</h3>
+            <button onClick={ctx.closeThread} className="pinned-panel-close" aria-label="Close thread">✕</button>
+          </div>
+          <div className="pinned-panel-body">
+            {/* Parent message */}
+            <div className="pinned-message-card thread-parent-card">
+              <div className="pinned-message-header">
+                <div className="pinned-message-avatar">
+                  {(ctx.threadParentMessage.author || "?")[0]}
+                </div>
+                <span className="pinned-message-author">{ctx.threadParentMessage.author}</span>
+                <span className="pinned-message-time">{new Date(ctx.threadParentMessage.timestamp).toLocaleDateString()} at {ctx.threadParentMessage.time}</span>
+              </div>
+              <div className="message-content pinned-message-content"
+                dangerouslySetInnerHTML={{ __html: renderMessageMarkdown(ctx.threadParentMessage.content, notificationManager.currentUsername) }} />
+            </div>
+
+            <div className="thread-replies-divider">
+              <span>{ctx.threadParentMessage.reply_count || 0} {ctx.threadParentMessage.reply_count === 1 ? 'reply' : 'replies'}</span>
+            </div>
+
+            {/* Thread replies */}
+            {ctx.threadLoading ? (
+              <div className="pinned-panel-empty">
+                <LoadingSpinner />
+              </div>
+            ) : ctx.threadMessages.length === 0 ? (
+              <div className="pinned-panel-empty">
+                <div className="pinned-panel-empty-title">No replies yet</div>
+              </div>
+            ) : (
+              <div>
+                {ctx.threadMessages.map((msg, i) => (
+                  <div key={msg.id || i} className="pinned-message-card">
+                    <div className="pinned-message-header">
+                      <div className="pinned-message-avatar">
+                        {(msg.author || "?")[0]}
+                      </div>
+                      <span className="pinned-message-author">{msg.author}</span>
+                      <span className="pinned-message-time">{new Date(msg.timestamp).toLocaleDateString()} at {msg.time}</span>
+                    </div>
+                    <div className="message-content pinned-message-content"
+                      dangerouslySetInnerHTML={{ __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) }} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* DM Channel Creation */}
       {ctx.showDmChannelCreate && (
         <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowDmChannelCreate(false); dmCreateTrap.handleKeyDown(e); }}>

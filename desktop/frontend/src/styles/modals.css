@@ -366,3 +366,42 @@
 .shortcuts-modal-actions {
   margin-top: var(--space-lg);
 }
+
+/* ── Pin Count Badge ── */
+.pin-count-badge {
+  font-size: 10px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 0 5px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  font-weight: 600;
+}
+
+/* ── Pin Confirmation ── */
+.pin-confirm-preview {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+/* ── Thread Panel ── */
+.thread-parent-card {
+  border-left: 3px solid var(--accent);
+}
+
+.thread-replies-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}

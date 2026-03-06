@@ -11,6 +11,12 @@ export function useUIState() {
   // Pinned messages
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+  const [showPinConfirm, setShowPinConfirm] = useState<string | null>(null);
+
+  // Thread
+  const [threadParentMessage, setThreadParentMessage] = useState<Message | null>(null);
+  const [threadMessages, setThreadMessages] = useState<Message[]>([]);
+  const [threadLoading, setThreadLoading] = useState(false);
 
   // Reaction emoji picker
   const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
@@ -113,6 +119,10 @@ export function useUIState() {
     statusInput, setStatusInput,
     showPinnedPanel, setShowPinnedPanel,
     pinnedMessages, setPinnedMessages,
+    showPinConfirm, setShowPinConfirm,
+    threadParentMessage, setThreadParentMessage,
+    threadMessages, setThreadMessages,
+    threadLoading, setThreadLoading,
     showEmojiPicker, setShowEmojiPicker,
     hoveredMessageId, setHoveredMessageId,
     showNotificationSettings, setShowNotificationSettings,
