@@ -353,6 +353,7 @@ function App() {
   const selectedChannelIdRef = useRef(selectedChannelId);
   const selectedDmChannelRef = useRef(selectedDmChannel);
   const serverUrlRef = useRef(serverUrl);
+  const keyPairRef = useRef(keyPair);
 
   // E2EE manager for 1:1 DM Double Ratchet encryption
   const e2eeManagerRef = useRef<E2EEManager | null>(null);
@@ -670,6 +671,7 @@ function App() {
   useEffect(() => { selectedChannelIdRef.current = selectedChannelId; }, [selectedChannelId]);
   useEffect(() => { selectedDmChannelRef.current = selectedDmChannel; }, [selectedDmChannel]);
   useEffect(() => { serverUrlRef.current = serverUrl; }, [serverUrl]);
+  useEffect(() => { keyPairRef.current = keyPair; }, [keyPair]);
 
   // WebSocket event handlers
   const setupWebSocketHandlers = useCallback((socket: AccordWebSocket) => {
@@ -748,9 +750,9 @@ function App() {
         } catch (error) {
           console.warn('E2EE decrypt failed, trying symmetric fallback:', error);
           // Fallback to symmetric
-          if (encryptionEnabled && keyPair && data.channel_id) {
+          if (encryptionEnabled && keyPairRef.current && data.channel_id) {
             try {
-              const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+              const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
               content = await decryptMessage(channelKey, data.encrypted_data);
               isEncrypted = true;
               e2eeType = 'symmetric';
@@ -759,7 +761,7 @@ function App() {
             }
           }
         }
-      } else if (encryptionEnabled && keyPair && data.channel_id) {
+      } else if (encryptionEnabled && keyPairRef.current && data.channel_id) {
         // Channel: try sender keys first, fall back to symmetric
         if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
           try {
@@ -770,7 +772,7 @@ function App() {
           } catch (skError) {
             console.warn('Sender key decrypt failed, trying symmetric fallback:', skError);
             try {
-              const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+              const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
               content = await decryptMessage(channelKey, data.encrypted_data);
               isEncrypted = true;
               e2eeType = 'symmetric';
@@ -780,7 +782,7 @@ function App() {
           }
         } else {
           try {
-            const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+            const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
             content = await decryptMessage(channelKey, data.encrypted_data);
             isEncrypted = true;
             e2eeType = 'symmetric';
@@ -918,17 +920,17 @@ function App() {
       try {
         // Try to decrypt the new content if we have encryption enabled
         let content = data.encrypted_data;
-        if (encryptionEnabled && keyPair) {
+        if (encryptionEnabled && keyPairRef.current) {
           if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
             try {
               content = decryptChannelMessage(
                 senderKeyStoreRef.current, data.channel_id, data.from, data.encrypted_data);
             } catch {
-              const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+              const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
               content = await decryptMessage(channelKey, data.encrypted_data);
             }
           } else {
-            const channelKey = await getChannelKey(keyPair.privateKey, data.channel_id);
+            const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
             content = await decryptMessage(channelKey, data.encrypted_data);
           }
         }
@@ -1216,7 +1218,7 @@ function App() {
       }
     });
 
-  }, [encryptionEnabled, keyPair]);
+  }, [encryptionEnabled]);
 
   // Centralized WebSocket connection — disconnects any existing socket before creating a new one.
   // ALL code paths that need a WebSocket MUST use this instead of `new AccordWebSocket` directly.
@@ -2115,6 +2117,7 @@ function App() {
       const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
       // Close modal immediately on success
       setShowCreateNodeModal(false);
+      setShowJoinNodeModal(false);
       setNewNodeName("");
       setNewNodeDescription("");
       // Only create #general if the server didn't already create default channels
@@ -3658,8 +3661,8 @@ function App() {
           setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
         } else {
           // Identity-only creation: no explicit relay URL provided
-          // But if we detected a same-origin relay, auto-register with it
-          const detectedRelay = localStorage.getItem('accord_server_url');
+          // But if we detected a same-origin relay or have a configured server, auto-register with it
+          const detectedRelay = localStorage.getItem('accord_server_url') || api.getBaseUrl();
           if (detectedRelay) {
             api.setBaseUrl(detectedRelay);
           }
