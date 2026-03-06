@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   generateIdentityKeyPair,
   generateSignedPreKey,
@@ -12,8 +12,6 @@ import { DoubleRatchetSession } from '../e2ee/ratchet';
 import {
   saveIdentityKeys,
   loadIdentityKeys,
-  saveSenderKeyStore,
-  loadSenderKeyStore,
 } from '../e2ee/persistence';
 import { hasStoredKeyPair } from '../crypto';
 
