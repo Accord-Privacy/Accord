@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api } from './api';
 import { Icon } from './components/Icon';
-import { Node, AuditLogEntry, Role, CustomEmoji } from './types';
+import { Node, AuditLogEntry, Role, CustomEmoji, BatchMemberEntry } from './types';
 
 interface Invite {
   code: string;
@@ -34,7 +34,7 @@ export function NodeSettings({
   onShowTemplateImport,
   resolveUserName,
 }: NodeSettingsProps) {
-  const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit' | 'moderation' | 'emojis'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'members' | 'invites' | 'roles' | 'audit' | 'moderation' | 'emojis'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [error, setError] = useState('');
@@ -88,6 +88,13 @@ export function NodeSettings({
   const [newEmojiName, setNewEmojiName] = useState('');
   const [newEmojiFile, setNewEmojiFile] = useState<File | null>(null);
   const [uploadingEmoji, setUploadingEmoji] = useState(false);
+
+  // Members state
+  const [members, setMembers] = useState<BatchMemberEntry[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [kickConfirmUserId, setKickConfirmUserId] = useState<string | null>(null);
+  const [assignRoleUserId, setAssignRoleUserId] = useState<string | null>(null);
+  const [memberRolesMap, setMemberRolesMap] = useState<Record<string, string[]>>({});
 
   const isAdmin = userRole === 'admin';
   const canManageInvites = userRole === 'admin' || userRole === 'moderator';
@@ -194,6 +201,61 @@ export function NodeSettings({
       setError(err instanceof Error ? err.message : 'Failed to reorder roles');
     }
   }, [node.id, token, roles, loadRoles]);
+
+  const loadMembers = useCallback(async () => {
+    setLoadingMembers(true);
+    try {
+      const result = await api.getMembersBatch(node.id);
+      setMembers(result.members || []);
+      // Build role map
+      const rmap: Record<string, string[]> = {};
+      for (const m of (result.members || [])) {
+        rmap[m.user_id] = (m.roles || []).map((r: { id: string }) => r.id);
+      }
+      setMemberRolesMap(rmap);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load members');
+    } finally {
+      setLoadingMembers(false);
+    }
+  }, [node.id, token]);
+
+  const handleKickMember = useCallback(async (userId: string) => {
+    try {
+      await api.kickMember(node.id, userId, token);
+      setSuccess('Member kicked!');
+      setKickConfirmUserId(null);
+      await loadMembers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to kick member');
+    }
+  }, [node.id, token, loadMembers]);
+
+  const handleAssignRole = useCallback(async (userId: string, roleId: string) => {
+    try {
+      await api.assignMemberRole(node.id, userId, roleId, token);
+      setSuccess('Role assigned!');
+      setMemberRolesMap(prev => ({
+        ...prev,
+        [userId]: [...(prev[userId] || []), roleId],
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign role');
+    }
+  }, [node.id, token]);
+
+  const handleRemoveRole = useCallback(async (userId: string, roleId: string) => {
+    try {
+      await api.removeMemberRole(node.id, userId, roleId, token);
+      setSuccess('Role removed!');
+      setMemberRolesMap(prev => ({
+        ...prev,
+        [userId]: (prev[userId] || []).filter(r => r !== roleId),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove role');
+    }
+  }, [node.id, token]);
 
   const startEditRole = useCallback((role: Role) => {
     setEditingRole(role);
@@ -376,6 +438,7 @@ export function NodeSettings({
     setIsUpdating(true);
     setError('');
     try {
+      await api.updateNode(node.id, { name: nodeName, description: nodeDescription }, token);
       setSuccess('Node settings saved!');
       if (onNodeUpdated) {
         onNodeUpdated({ ...node, name: nodeName, description: nodeDescription });
@@ -385,7 +448,7 @@ export function NodeSettings({
     } finally {
       setIsUpdating(false);
     }
-  }, [isAdmin, nodeName, nodeDescription, node, onNodeUpdated]);
+  }, [isAdmin, nodeName, nodeDescription, node, token, onNodeUpdated]);
 
   const handleLeaveNode = useCallback(async () => {
     const confirmMessage = isAdmin 
@@ -442,6 +505,13 @@ export function NodeSettings({
   }, [isOpen, activeTab, isAdmin, loadAutoModWords, loadNodeChannelsForMod]);
 
   useEffect(() => {
+    if (isOpen && activeTab === 'members' && isAdmin) {
+      loadMembers();
+      if (roles.length === 0) loadRoles();
+    }
+  }, [isOpen, activeTab, isAdmin, loadMembers, loadRoles, roles.length]);
+
+  useEffect(() => {
     if (isOpen && activeTab === 'roles' && canManageRoles) loadRoles();
   }, [isOpen, activeTab, canManageRoles, loadRoles]);
 
@@ -465,6 +535,7 @@ export function NodeSettings({
 
   const tabs: Array<{ key: typeof activeTab; label: string; visible: boolean }> = [
     { key: 'general', label: 'General', visible: true },
+    { key: 'members', label: 'Members', visible: isAdmin },
     { key: 'roles', label: 'Roles', visible: canManageRoles },
     { key: 'invites', label: 'Invites', visible: canManageInvites },
     { key: 'moderation', label: 'Moderation', visible: isAdmin },
@@ -777,6 +848,104 @@ export function NodeSettings({
                             </span>
                           )}
                           {maxedOut && <span style={{ color: 'var(--red)' }}>Max uses reached</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =================== MEMBERS =================== */}
+          {activeTab === 'members' && isAdmin && (
+            <div>
+              <h4 className="ns-section-title">Members ({members.length})</h4>
+              {loadingMembers ? (
+                <div className="ns-loading">Loading members...</div>
+              ) : members.length === 0 ? (
+                <div className="ns-empty">No members found</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {members.map(member => {
+                    const memberRoles = (memberRolesMap[member.user_id] || [])
+                      .map(rid => roles.find(r => r.id === rid))
+                      .filter(Boolean) as Role[];
+                    const isOwner = member.node_role === 'admin';
+                    return (
+                      <div key={member.user_id} className="ns-member-card">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                          <div className="ns-member-avatar">
+                            {member.avatar_url ? (
+                              <img src={member.avatar_url} alt="" style={{ width: 32, height: 32, borderRadius: '50%' }} />
+                            ) : (
+                              <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'var(--text-secondary)' }}>
+                                {(member.display_name || '?')[0]}
+                              </div>
+                            )}
+                            <span className={`ns-status-dot ${member.online ? 'online' : 'offline'}`} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {member.display_name || member.user_id.slice(0, 8)}
+                              {isOwner && <span className="ns-badge" style={{ marginLeft: 8 }}>Owner</span>}
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                              {memberRoles.map(r => (
+                                <span key={r.id} className="ns-role-tag" style={{ borderColor: r.color || '#99aab5', color: r.color || 'var(--text-secondary)' }}>
+                                  {r.name}
+                                  {!isOwner && (
+                                    <button className="ns-role-tag-remove" onClick={() => handleRemoveRole(member.user_id, r.id)} title="Remove role">×</button>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          {!isOwner && (
+                            <>
+                              {assignRoleUserId === member.user_id ? (
+                                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                                  <select
+                                    className="ns-select"
+                                    style={{ width: 'auto', fontSize: 'var(--font-sm)' }}
+                                    defaultValue=""
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        handleAssignRole(member.user_id, e.target.value);
+                                        setAssignRoleUserId(null);
+                                      }
+                                    }}
+                                  >
+                                    <option value="" disabled>Select role...</option>
+                                    {roles.filter(r => !(memberRolesMap[member.user_id] || []).includes(r.id)).map(r => (
+                                      <option key={r.id} value={r.id}>{r.name}</option>
+                                    ))}
+                                  </select>
+                                  <button className="ns-btn ns-btn-ghost" style={{ padding: '2px 6px' }} onClick={() => setAssignRoleUserId(null)}>×</button>
+                                </div>
+                              ) : (
+                                <button className="ns-btn ns-btn-ghost" style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }} onClick={() => setAssignRoleUserId(member.user_id)}>
+                                  + Role
+                                </button>
+                              )}
+                              {kickConfirmUserId === member.user_id ? (
+                                <div style={{ display: 'flex', gap: 4 }}>
+                                  <button className="ns-btn ns-btn-danger" style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }} onClick={() => handleKickMember(member.user_id)}>
+                                    Confirm Kick
+                                  </button>
+                                  <button className="ns-btn ns-btn-ghost" style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }} onClick={() => setKickConfirmUserId(null)}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button className="ns-btn ns-btn-danger" style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }} onClick={() => setKickConfirmUserId(member.user_id)}>
+                                  Kick
+                                </button>
+                              )}
+                            </>
+                          )}
                         </div>
                       </div>
                     );

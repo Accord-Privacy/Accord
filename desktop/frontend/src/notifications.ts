@@ -7,6 +7,8 @@ export interface NotificationPreferences {
   enabled: boolean;
   mode: 'all' | 'mentions' | 'dms' | 'none';
   sounds: boolean;
+  flashTaskbar: boolean;
+  showPreview: boolean;
 }
 
 export interface UnreadState {
@@ -52,7 +54,9 @@ export class NotificationManager {
     return {
       enabled: true,
       mode: 'all',
-      sounds: true
+      sounds: true,
+      flashTaskbar: true,
+      showPreview: true,
     };
   }
 
@@ -288,7 +292,7 @@ export class NotificationManager {
       }
 
       // Update title badge when window is not focused
-      if (!this.windowFocused) {
+      if (!this.windowFocused && this.preferences.flashTaskbar) {
         this.updateTitleBadge();
       }
     }
@@ -297,9 +301,9 @@ export class NotificationManager {
   private showDesktopNotification(message: Message, channelId: string, isMention: boolean, isDm: boolean = false): void {
     if ('Notification' in window && Notification.permission === 'granted') {
       const title = isMention ? `${message.author} mentioned you` : isDm ? `DM from ${message.author}` : `${message.author}`;
-      const body = message.content.length > 100 ? 
-        message.content.substring(0, 100) + '...' : 
-        message.content;
+      const body = this.preferences.showPreview
+        ? (message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content)
+        : 'New message received';
 
       const notification = new Notification(title, {
         body,

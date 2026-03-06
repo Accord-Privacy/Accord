@@ -698,6 +698,14 @@ export class AccordApi {
     });
   }
 
+  // Update node settings (PATCH /nodes/:id)
+  async updateNode(nodeId: string, data: { name?: string; description?: string }, _token: string): Promise<any> {
+    return this.request<any>(`/nodes/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Upload node icon
   async uploadNodeIcon(nodeId: string, file: File, token: string): Promise<{ status: string; icon_hash: string }> {
     const formData = new FormData();

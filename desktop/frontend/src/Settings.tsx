@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { notificationManager, NotificationPreferences } from './notifications';
+import { getVolume, setVolume as setNotifVolume } from './utils/sounds';
 import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
@@ -137,6 +138,7 @@ export const Settings: React.FC<SettingsProps> = ({
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(
     notificationManager.getPreferences()
   );
+  const [notificationVolume, setNotificationVolume] = useState<number>(() => Math.round(getVolume() * 100));
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(defaultVoiceSettings);
   const [privacySettings, setPrivacySettings] = useState<PrivacySettings>(defaultPrivacySettings);
   
@@ -201,6 +203,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
         // Load notification preferences (handled by notification manager)
         setNotificationPreferences(notificationManager.getPreferences());
+        setNotificationVolume(Math.round(getVolume() * 100));
       } catch (error) {
         console.error('Error loading settings:', error);
       }
@@ -1066,59 +1069,109 @@ export const Settings: React.FC<SettingsProps> = ({
             {activeTab === 'notifications' && (
               <div className="settings-section">
                 <h3>Notification Settings</h3>
-                
-                <div className="settings-group">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={notificationPreferences.enabled}
-                      onChange={(e) => saveNotificationPreferences({
-                        ...notificationPreferences,
-                        enabled: e.target.checked
-                      })}
-                    />
-                    <span className="checkmark"></span>
-                    Enable Desktop Notifications
+
+                {/* Desktop Notifications toggle */}
+                <div className="settings-toggle-group">
+                  <label className="settings-toggle-row">
+                    <div className="settings-toggle-info">
+                      <span className="settings-toggle-label">Enable Desktop Notifications</span>
+                      <span className="settings-toggle-desc">Show system notifications for new messages</span>
+                    </div>
+                    <div className={`settings-toggle ${notificationPreferences.enabled ? 'active' : ''}`}
+                      onClick={() => saveNotificationPreferences({ ...notificationPreferences, enabled: !notificationPreferences.enabled })}>
+                      <div className="settings-toggle-knob" />
+                    </div>
+                  </label>
+
+                  {/* Sound toggle */}
+                  <label className="settings-toggle-row">
+                    <div className="settings-toggle-info">
+                      <span className="settings-toggle-label">Enable Notification Sounds</span>
+                      <span className="settings-toggle-desc">Play a sound when you receive a message</span>
+                    </div>
+                    <div className={`settings-toggle ${notificationPreferences.sounds ? 'active' : ''}`}
+                      onClick={() => saveNotificationPreferences({ ...notificationPreferences, sounds: !notificationPreferences.sounds })}>
+                      <div className="settings-toggle-knob" />
+                    </div>
+                  </label>
+
+                  {/* Flash taskbar toggle */}
+                  <label className="settings-toggle-row">
+                    <div className="settings-toggle-info">
+                      <span className="settings-toggle-label">Flash Taskbar on New Messages</span>
+                      <span className="settings-toggle-desc">Flash the title bar when you receive messages while the window is unfocused</span>
+                    </div>
+                    <div className={`settings-toggle ${notificationPreferences.flashTaskbar ? 'active' : ''}`}
+                      onClick={() => saveNotificationPreferences({ ...notificationPreferences, flashTaskbar: !notificationPreferences.flashTaskbar })}>
+                      <div className="settings-toggle-knob" />
+                    </div>
+                  </label>
+
+                  {/* Show message preview toggle */}
+                  <label className="settings-toggle-row">
+                    <div className="settings-toggle-info">
+                      <span className="settings-toggle-label">Show Message Preview in Notification</span>
+                      <span className="settings-toggle-desc">Display message content in desktop notifications. Disable for privacy.</span>
+                    </div>
+                    <div className={`settings-toggle ${notificationPreferences.showPreview ? 'active' : ''}`}
+                      onClick={() => saveNotificationPreferences({ ...notificationPreferences, showPreview: !notificationPreferences.showPreview })}>
+                      <div className="settings-toggle-knob" />
+                    </div>
                   </label>
                 </div>
 
-                <div className="settings-group">
-                  <label className="settings-label">Notification Mode</label>
-                  <div className="notification-mode-buttons">
-                    {(['all', 'mentions', 'dms', 'none'] as const).map(mode => (
-                      <button
-                        key={mode}
-                        className={`notification-button ${notificationPreferences.mode === mode ? 'active' : ''}`}
-                        onClick={() => saveNotificationPreferences({
-                          ...notificationPreferences,
-                          mode
-                        })}
-                      >
-                        {mode === 'all' ? 'All Messages' : 
-                         mode === 'mentions' ? 'Mentions Only' :
-                         mode === 'dms' ? 'DMs & Mentions' :
-                         'None'}
-                      </button>
-                    ))}
+                {/* Volume slider */}
+                <div className="settings-group" style={{ marginTop: '16px' }}>
+                  <label className="settings-label">
+                    Notification Sound Volume
+                    <span className="settings-label-value">{notificationVolume}%</span>
+                  </label>
+                  <input
+                    type="range"
+                    className="settings-slider"
+                    min="0"
+                    max="100"
+                    value={notificationVolume}
+                    disabled={!notificationPreferences.sounds}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value);
+                      setNotificationVolume(v);
+                      setNotifVolume(v / 100);
+                    }}
+                  />
+                  <div className="settings-help" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>0%</span><span>100%</span>
                   </div>
                 </div>
 
+                {/* Notification mode dropdown */}
                 <div className="settings-group">
-                  <label className="settings-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={notificationPreferences.sounds}
-                      onChange={(e) => saveNotificationPreferences({
-                        ...notificationPreferences,
-                        sounds: e.target.checked
-                      })}
-                    />
-                    <span className="checkmark"></span>
-                    Sound Notifications
-                  </label>
+                  <label className="settings-label">Notify For</label>
+                  <select
+                    className="settings-select"
+                    value={notificationPreferences.mode}
+                    onChange={(e) => saveNotificationPreferences({
+                      ...notificationPreferences,
+                      mode: e.target.value as NotificationPreferences['mode']
+                    })}
+                  >
+                    <option value="all">All messages</option>
+                    <option value="mentions">Only mentions</option>
+                    <option value="dms">DMs &amp; mentions</option>
+                    <option value="none">Nothing</option>
+                  </select>
                 </div>
 
+                {/* Per-channel overrides placeholder */}
                 <div className="settings-group">
+                  <label className="settings-label">Per-Channel Overrides</label>
+                  <div className="settings-help" style={{ padding: '12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)', color: 'var(--text-faint)' }}>
+                    🔔 Per-channel notification overrides coming soon
+                  </div>
+                </div>
+
+                {/* Test & utility buttons */}
+                <div className="settings-group" style={{ marginTop: '16px' }}>
                   <div className="test-buttons">
                     <button
                       className="test-button"
@@ -1144,7 +1197,7 @@ export const Settings: React.FC<SettingsProps> = ({
                     </button>
                     <button
                       className="test-button"
-                      onClick={() => (notificationManager as any).playNotificationSound?.()}
+                      onClick={() => notificationManager.playTestSound()}
                     >
                       Test Sound
                     </button>
