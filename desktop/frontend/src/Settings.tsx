@@ -633,57 +633,57 @@ export const Settings: React.FC<SettingsProps> = ({
               className={`settings-nav-item ${activeTab === 'account' ? 'active' : ''}`}
               onClick={() => setActiveTab('account')}
             >
-              👤 Profile
+              Profile
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'appearance' ? 'active' : ''}`}
               onClick={() => setActiveTab('appearance')}
             >
-              🎨 Appearance
+              Appearance
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'notifications' ? 'active' : ''}`}
               onClick={() => setActiveTab('notifications')}
             >
-              🔔 Notifications
+              Notifications
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'voice' ? 'active' : ''}`}
               onClick={() => setActiveTab('voice')}
             >
-              🎤 Voice & Audio
+              Voice & Audio
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'privacy' ? 'active' : ''}`}
               onClick={() => setActiveTab('privacy')}
             >
-              🔒 Privacy
+              Privacy
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'advanced' ? 'active' : ''}`}
               onClick={() => setActiveTab('advanced')}
             >
-              ⚙️ Advanced
+              Advanced
             </button>
             <button
               className={`settings-nav-item ${activeTab === 'server' ? 'active' : ''}`}
               onClick={() => setActiveTab('server')}
             >
-              🖥️ Server Info
+              Server Info
             </button>
             {onShowShortcuts && (
               <button
                 className="settings-nav-item"
                 onClick={() => { onClose(); onShowShortcuts(); }}
               >
-                ⌨️ Keyboard Shortcuts
+                Keyboard Shortcuts
               </button>
             )}
             <button
               className={`settings-nav-item ${activeTab === 'about' ? 'active' : ''}`}
               onClick={() => setActiveTab('about')}
             >
-              ℹ️ About
+              About
             </button>
           </nav>
         </div>
@@ -1047,7 +1047,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
                 {/* Input Device */}
                 <div className="settings-subsection">
-                  <h4 className="settings-subsection-title">🎤 Input Device</h4>
+                  <h4 className="settings-subsection-title">Input Device</h4>
                   <div className="settings-group">
                     <label className="settings-label">Microphone</label>
                     <select
@@ -1090,7 +1090,7 @@ export const Settings: React.FC<SettingsProps> = ({
 
                 {/* Output Device */}
                 <div className="settings-subsection">
-                  <h4 className="settings-subsection-title">🔊 Output Device</h4>
+                  <h4 className="settings-subsection-title">Output Device</h4>
                   <div className="settings-group">
                     <label className="settings-label">Speakers</label>
                     <select

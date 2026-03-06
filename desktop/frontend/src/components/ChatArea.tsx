@@ -355,7 +355,7 @@ export const ChatArea: React.FC = () => {
                       {!isGrouped && (
                         <div className="message-header">
                           {(msg as any)._botResponse && (
-                            <span className="message-bot-badge">🤖 BOT</span>
+                            <span className="message-bot-badge">BOT</span>
                           )}
                           <span className="message-author" style={{ cursor: 'pointer', color: (() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); return am ? ctx.getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
                           onClick={(e) => {
