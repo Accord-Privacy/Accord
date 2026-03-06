@@ -1,0 +1,51 @@
+/* Connection status banner */
+.connection-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  z-index: 10;
+  flex-shrink: 0;
+  transition: opacity 0.3s ease, max-height 0.3s ease;
+  max-height: 40px;
+  opacity: 1;
+  overflow: hidden;
+}
+
+.connection-banner--hidden {
+  max-height: 0;
+  opacity: 0;
+  padding: 0 12px;
+}
+
+.connection-banner--reconnecting {
+  background: var(--banner-warn-bg, #92400e);
+  color: var(--banner-warn-fg, #fef3c7);
+}
+
+.connection-banner--failed {
+  background: var(--banner-error-bg, #991b1b);
+  color: var(--banner-error-fg, #fecaca);
+  cursor: pointer;
+}
+
+.connection-banner--failed:hover {
+  background: var(--banner-error-bg-hover, #7f1d1d);
+}
+
+.connection-banner .connection-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: connection-spin 0.8s linear infinite;
+}
+
+@keyframes connection-spin {
+  to { transform: rotate(360deg); }
+}

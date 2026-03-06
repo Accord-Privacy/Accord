@@ -11,6 +11,7 @@ import { EmojiPickerButton } from "../EmojiPicker";
 import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
+import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
@@ -294,6 +295,12 @@ export const ChatArea: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Connection status banner */}
+          <ConnectionBanner
+            connectionInfo={ctx.connectionInfo}
+            onRetry={() => ctx.ws?.retry()}
+          />
 
           {/* Messages */}
           <div 
