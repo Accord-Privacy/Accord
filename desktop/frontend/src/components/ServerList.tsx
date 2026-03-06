@@ -48,7 +48,7 @@ export const ServerList: React.FC = () => {
       <div 
         className="server-icon add-server" 
         title="Join or Create Node"
-        onClick={() => ctx.setShowCreateNodeModal(true)}
+        onClick={() => ctx.setShowJoinNodeModal(true)}
       >
         +
       </div>

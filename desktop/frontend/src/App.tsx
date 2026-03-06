@@ -256,8 +256,8 @@ function App() {
   const [showDmChannelCreate, setShowDmChannelCreate] = useState(false);
 
   // Node creation state
-  const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
   const [showJoinNodeModal, setShowJoinNodeModal] = useState(false);
+  const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [joiningNode, setJoiningNode] = useState(false);
   const [joinError, setJoinError] = useState("");
@@ -2109,8 +2109,8 @@ function App() {
         await api.joinNodeByInvite(code, token);
       }
 
-      setShowJoinNodeModal(false);
       setShowCreateNodeModal(false);
+      setShowJoinNodeModal(false);
       setJoinInviteCode("");
       // Reload nodes to show the new one
       await loadNodes();
@@ -2129,8 +2129,8 @@ function App() {
     try {
       const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
       // Close modal immediately on success
-      setShowCreateNodeModal(false);
       setShowJoinNodeModal(false);
+      setShowCreateNodeModal(false);
       setNewNodeName("");
       setNewNodeDescription("");
       // Only create #general if the server didn't already create default channels
@@ -3247,7 +3247,7 @@ function App() {
         if (showNodeSettings) { setShowNodeSettings(false); return; }
         if (deleteChannelConfirm) { setDeleteChannelConfirm(null); return; }
         if (showNotificationSettings) { setShowNotificationSettings(false); return; }
-        if (showCreateNodeModal) { setShowCreateNodeModal(false); return; }
+        if (showJoinNodeModal) { setShowJoinNodeModal(false); return; }
         if (showInviteModal) { setShowInviteModal(false); return; }
         if (showDisplayNamePrompt) { setShowDisplayNamePrompt(false); return; }
         if (showInputEmojiPicker) { setShowInputEmojiPicker(false); return; }
@@ -3281,7 +3281,7 @@ function App() {
         btn?.click();
       },
     });
-  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showCreateNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect]);
+  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect]);
 
   // Apply font-size and density from localStorage on mount
   useEffect(() => {
@@ -3467,8 +3467,8 @@ function App() {
     showDmChannelCreate, setShowDmChannelCreate,
 
     // Node creation
-    showCreateNodeModal, setShowCreateNodeModal,
     showJoinNodeModal, setShowJoinNodeModal,
+    showCreateNodeModal, setShowCreateNodeModal,
     joinInviteCode, setJoinInviteCode,
     joiningNode, joinError, setJoinError,
     newNodeName, setNewNodeName,

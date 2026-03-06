@@ -56,7 +56,7 @@ export const AppModals: React.FC = () => {
       )}
 
       {/* Join/Create Node Modal */}
-      {ctx.showCreateNodeModal && !ctx.showJoinNodeModal && (
+      {ctx.showJoinNodeModal && !ctx.showCreateNodeModal && (
         <div className="modal-overlay">
           <div className="modal-card">
             <h3>Join a Node</h3>
@@ -68,18 +68,18 @@ export const AppModals: React.FC = () => {
             {ctx.joinError && <div className="auth-error">{ctx.joinError}</div>}
             <div className="modal-actions">
               <button onClick={ctx.handleJoinNode} disabled={ctx.joiningNode || !ctx.joinInviteCode.trim()} className="btn btn-primary">{ctx.joiningNode ? 'Joining...' : 'Join Node'}</button>
-              <button onClick={() => { ctx.setShowCreateNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); }} className="btn btn-outline">Cancel</button>
+              <button onClick={() => { ctx.setShowJoinNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); }} className="btn btn-outline">Cancel</button>
             </div>
             <div className="modal-divider">
               <p className="modal-divider-text">Or create your own community</p>
-              <button onClick={() => ctx.setShowJoinNodeModal(true)} className="btn-ghost"><strong>Create a New Node</strong></button>
+              <button onClick={() => ctx.setShowCreateNodeModal(true)} className="btn-ghost"><strong>Create a New Node</strong></button>
             </div>
           </div>
         </div>
       )}
 
       {/* Create Node Modal */}
-      {ctx.showJoinNodeModal && (
+      {ctx.showCreateNodeModal && (
         <div className="modal-overlay">
           <div className="modal-card">
             <h3>Create a Node</h3>
@@ -94,13 +94,13 @@ export const AppModals: React.FC = () => {
                   if (parsed) {
                     ctx.setNewNodeName("");
                     ctx.setJoinInviteCode(val);
-                    ctx.setShowJoinNodeModal(false);
+                    ctx.setShowCreateNodeModal(false);
                   }
                 }
               }} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleCreateNode(); }} className="form-input" />
               {ctx.newNodeName && parseInviteLink(ctx.newNodeName) && (
                 <p className="invite-link-hint">
-                  This looks like an invite link — <button className="btn-ghost" onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
+                  This looks like an invite link — <button className="btn-ghost" onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowCreateNodeModal(false); }}>switch to Join?</button>
                 </p>
               )}
             </div>
@@ -110,10 +110,10 @@ export const AppModals: React.FC = () => {
             </div>
             <div className="modal-actions">
               <button onClick={ctx.handleCreateNode} disabled={ctx.creatingNode || !ctx.newNodeName.trim()} className="btn btn-green">{ctx.creatingNode ? 'Creating...' : 'Create Node'}</button>
-              <button onClick={() => { ctx.setShowJoinNodeModal(false); ctx.setNewNodeName(""); ctx.setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
+              <button onClick={() => { ctx.setShowCreateNodeModal(false); ctx.setNewNodeName(""); ctx.setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
             </div>
             <div className="modal-divider">
-              <button onClick={() => ctx.setShowJoinNodeModal(false)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
+              <button onClick={() => ctx.setShowCreateNodeModal(false)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
             </div>
           </div>
         </div>

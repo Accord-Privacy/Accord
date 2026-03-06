@@ -173,10 +173,10 @@ export interface AppContextType {
   setShowDmChannelCreate: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Node creation
-  showCreateNodeModal: boolean;
-  setShowCreateNodeModal: React.Dispatch<React.SetStateAction<boolean>>;
   showJoinNodeModal: boolean;
   setShowJoinNodeModal: React.Dispatch<React.SetStateAction<boolean>>;
+  showCreateNodeModal: boolean;
+  setShowCreateNodeModal: React.Dispatch<React.SetStateAction<boolean>>;
   joinInviteCode: string;
   setJoinInviteCode: React.Dispatch<React.SetStateAction<string>>;
   joiningNode: boolean;
