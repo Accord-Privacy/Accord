@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api } from './api';
+import { Icon } from './components/Icon';
 import { Node, AuditLogEntry, Role, CustomEmoji } from './types';
 
 interface Invite {
@@ -277,18 +278,18 @@ export function NodeSettings({
 
   const getActionIcon = (action: string) => {
     switch (action) {
-      case 'channel_create': return '📝';
-      case 'channel_delete': return '🗑️';
-      case 'member_kick': return '👢';
-      case 'member_ban': return '🔨';
-      case 'role_change': return '👑';
-      case 'invite_create': return '📬';
-      case 'invite_revoke': return '🚫';
-      case 'message_pin': return '📌';
-      case 'message_unpin': return '📌';
-      case 'message_delete': return '❌';
-      case 'node_settings_update': return '⚙️';
-      default: return '📄';
+      case 'channel_create': return <Icon name="plus" size={14} />;
+      case 'channel_delete': return <Icon name="delete" size={14} />;
+      case 'member_kick': return <Icon name="close" size={14} />;
+      case 'member_ban': return <Icon name="shield" size={14} />;
+      case 'role_change': return <Icon name="star" size={14} />;
+      case 'invite_create': return <Icon name="link" size={14} />;
+      case 'invite_revoke': return <Icon name="close" size={14} />;
+      case 'message_pin': return <Icon name="pin" size={14} />;
+      case 'message_unpin': return <Icon name="pin" size={14} />;
+      case 'message_delete': return <Icon name="delete" size={14} />;
+      case 'node_settings_update': return <Icon name="settings" size={14} />;
+      default: return <Icon name="chat" size={14} />;
     }
   };
 
@@ -703,7 +704,7 @@ export function NodeSettings({
                   <h4 className="ns-section-title" style={{ fontSize: 14 }}>Import Discord Template</h4>
                   <p className="ns-section-desc">Import channels, roles, and categories from a Discord server template.</p>
                   <button className="ns-btn ns-btn-ghost" onClick={() => { onClose(); if (onShowTemplateImport) setTimeout(onShowTemplateImport, 100); }}>
-                    📥 Import Template
+                    <Icon name="download" size={16} /> Import Template
                   </button>
                 </div>
               )}
