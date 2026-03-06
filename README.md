@@ -192,6 +192,20 @@ The relay is lightweight — it never decrypts anything, so resource usage stays
 
 📖 **[Full self-hosting guide →](docs/SELF-HOSTING.md)**
 
+### 🌐 Web Client
+
+Accord works directly in the browser — no desktop app required. Serve the frontend from your relay:
+
+```bash
+# Build the frontend
+cd desktop/frontend && npm install && npx vite build
+
+# Run server with web client
+./accord-server --port 8443 --frontend desktop/frontend/dist
+```
+
+Visit your relay URL in any browser. The web client auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience. All E2EE operations happen client-side — your keys never leave the browser.
+
 ---
 
 ## Mobile Apps
