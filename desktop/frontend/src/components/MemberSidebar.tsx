@@ -69,7 +69,7 @@ export const MemberSidebar: React.FC = () => {
     const online = membersWithUser.filter(m => ctx.getPresenceStatus(m.user_id) !== 'offline');
     const offline = membersWithUser.filter(m => ctx.getPresenceStatus(m.user_id) === 'offline');
     return (
-      <div className="member-sidebar">
+      <div className="member-sidebar" role="complementary" aria-label="Members">
         <div className="member-header">MEMBERS – {ctx.members.filter(m => m.user).length}</div>
         {online.length > 0 && (
           <>
@@ -106,7 +106,7 @@ export const MemberSidebar: React.FC = () => {
   const offline = unassigned.filter(m => ctx.getPresenceStatus(m.user_id) === 'offline');
 
   return (
-    <div className="member-sidebar">
+    <div className="member-sidebar" role="complementary" aria-label="Members">
       <div className="member-header">MEMBERS – {ctx.members.filter(m => m.user).length}</div>
       {sections.filter(s => s.members.length > 0).map(s => (
         <React.Fragment key={s.name}>

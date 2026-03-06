@@ -7,8 +7,8 @@ export const ServerList: React.FC = () => {
   const ctx = useAppContext();
 
   return (
-    <div className="server-list" key={ctx.forceUpdate}>
-      <div className="server-icon accord-home active" title="Home">
+    <div className="server-list" role="navigation" aria-label="Servers" key={ctx.forceUpdate}>
+      <div className="server-icon accord-home active" title="Home" role="button" aria-label="Home" tabIndex={0}>
         <img src="/logo.png?v=2" alt="A" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
       </div>
       <div className="server-list-separator" />
@@ -20,11 +20,16 @@ export const ServerList: React.FC = () => {
           <div
             key={nodeId || s}
             className={`server-icon ${i === ctx.activeServer ? "active" : ""}${nodeUnreads.totalUnreads > 0 && i !== ctx.activeServer ? " has-unread" : ""}`}
+            role="button"
+            tabIndex={0}
+            aria-label={s}
+            aria-current={i === ctx.activeServer ? 'true' : undefined}
             onClick={() => {
               if (nodeId) {
                 ctx.handleNodeSelect(nodeId, i);
               }
             }}
+            onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && nodeId) { e.preventDefault(); ctx.handleNodeSelect(nodeId, i); } }}
             title={s}
           >
             {ctx.nodes[i]?.icon_hash ? (
@@ -48,7 +53,11 @@ export const ServerList: React.FC = () => {
       <div 
         className="server-icon add-server" 
         title="Join or Create Node"
+        aria-label="Join or Create Node"
+        role="button"
+        tabIndex={0}
         onClick={() => ctx.setShowJoinNodeModal(true)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ctx.setShowJoinNodeModal(true); } }}
       >
         +
       </div>

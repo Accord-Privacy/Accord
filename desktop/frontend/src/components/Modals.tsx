@@ -1,4 +1,4 @@
-import React, { Suspense } from "react";
+import React, { Suspense, useEffect, useRef, useCallback } from "react";
 import { useAppContext } from "./AppContext";
 import { api, parseInviteLink } from "../api";
 import { renderMessageMarkdown } from "../markdown";
@@ -9,6 +9,48 @@ import { ProfileCard } from "../ProfileCard";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { SHORTCUTS } from "../keyboard";
 import { Icon } from "./Icon";
+
+/** Hook: trap focus inside a modal and restore focus on close */
+function useFocusTrap(isOpen: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      triggerRef.current = document.activeElement as HTMLElement;
+      // Defer focus to after render
+      const id = requestAnimationFrame(() => {
+        const el = ref.current;
+        if (!el) return;
+        const focusable = el.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length > 0) focusable[0].focus();
+      });
+      return () => cancelAnimationFrame(id);
+    } else if (triggerRef.current) {
+      triggerRef.current.focus();
+      triggerRef.current = null;
+    }
+  }, [isOpen]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !ref.current) return;
+    const focusable = ref.current.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }, []);
+
+  return { ref, handleKeyDown };
+}
 // Note: WebSocket imports removed — socket management centralized in App.tsx connectSocket()
 const NodeSettings = React.lazy(() => import("../NodeSettings").then(m => ({ default: m.NodeSettings })));
 const NotificationSettings = React.lazy(() => import("../NotificationSettings").then(m => ({ default: m.NotificationSettings })));
@@ -17,13 +59,27 @@ const Settings = React.lazy(() => import("../Settings").then(m => ({ default: m.
 export const AppModals: React.FC = () => {
   const ctx = useAppContext();
 
+  const joinNodeTrap = useFocusTrap(!!ctx.showJoinNodeModal && !ctx.showCreateNodeModal);
+  const createNodeTrap = useFocusTrap(!!ctx.showCreateNodeModal);
+  const inviteTrap = useFocusTrap(!!ctx.showInviteModal);
+  const deleteChannelTrap = useFocusTrap(!!ctx.deleteChannelConfirm);
+  const templateTrap = useFocusTrap(!!ctx.showTemplateImport);
+  const dmCreateTrap = useFocusTrap(!!ctx.showDmChannelCreate);
+  const displayNameTrap = useFocusTrap(!!ctx.showDisplayNamePrompt);
+  const blockTrap = useFocusTrap(!!ctx.showBlockConfirm);
+  const shortcutsTrap = useFocusTrap(!!ctx.showShortcutsHelp);
+  const connectionInfoTrap = useFocusTrap(!!ctx.showConnectionInfo);
+
   return (
     <>
       {/* Role Assignment Popup */}
       {ctx.showRolePopup && (
-        <div className="role-popup-overlay" onClick={() => ctx.setShowRolePopup(null)}>
+        <div className="role-popup-overlay" onClick={() => ctx.setShowRolePopup(null)} onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowRolePopup(null); }}>
           <div
             className="role-popup"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Assign Roles"
             style={{
               top: Math.min(ctx.showRolePopup.y, window.innerHeight - 300),
               left: Math.min(ctx.showRolePopup.x, window.innerWidth - 220),
@@ -57,9 +113,9 @@ export const AppModals: React.FC = () => {
 
       {/* Join/Create Node Modal */}
       {ctx.showJoinNodeModal && !ctx.showCreateNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Join a Node</h3>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowJoinNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); } joinNodeTrap.handleKeyDown(e); }}>
+          <div className="modal-card" ref={joinNodeTrap.ref} role="dialog" aria-modal="true" aria-labelledby="join-node-title">
+            <h3 id="join-node-title">Join a Node</h3>
             <p>Enter an invite link to join an existing community.</p>
             <div className="form-group">
               <label className="form-label">Invite Code or Link</label>
@@ -80,9 +136,9 @@ export const AppModals: React.FC = () => {
 
       {/* Create Node Modal */}
       {ctx.showCreateNodeModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Create a Node</h3>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowCreateNodeModal(false); ctx.setNewNodeName(""); ctx.setNewNodeDescription(""); } createNodeTrap.handleKeyDown(e); }}>
+          <div className="modal-card" ref={createNodeTrap.ref} role="dialog" aria-modal="true" aria-labelledby="create-node-title">
+            <h3 id="create-node-title">Create a Node</h3>
             <p>Start a new community and invite others. A #general channel will be created automatically.</p>
             <div className="form-group">
               <label className="form-label">Node Name</label>
@@ -121,9 +177,9 @@ export const AppModals: React.FC = () => {
 
       {/* Invite Modal */}
       {ctx.showInviteModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Invite Link Generated</h3>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); } inviteTrap.handleKeyDown(e); }}>
+          <div className="modal-card" ref={inviteTrap.ref} role="dialog" aria-modal="true" aria-labelledby="invite-modal-title">
+            <h3 id="invite-modal-title">Invite Link Generated</h3>
             <p>Share this link to invite others to your node. The relay address is encoded for privacy.</p>
             <div className="modal-code-block modal-code-block-mono">{ctx.generatedInvite}</div>
             <div className="modal-actions">
@@ -136,9 +192,9 @@ export const AppModals: React.FC = () => {
 
       {/* Delete Channel Confirmation */}
       {ctx.deleteChannelConfirm && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Delete Channel</h3>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setDeleteChannelConfirm(null); deleteChannelTrap.handleKeyDown(e); }}>
+          <div className="modal-card" ref={deleteChannelTrap.ref} role="alertdialog" aria-modal="true" aria-labelledby="delete-channel-title">
+            <h3 id="delete-channel-title">Delete Channel</h3>
             <p>Are you sure you want to delete <strong>#{ctx.deleteChannelConfirm.name}</strong>? This action cannot be undone. All messages will be permanently lost.</p>
             <div className="modal-actions">
               <button onClick={() => ctx.handleDeleteChannelConfirmed(ctx.deleteChannelConfirm!.id)} className="btn btn-red">Delete Channel</button>
@@ -150,9 +206,9 @@ export const AppModals: React.FC = () => {
 
       {/* Discord Template Import */}
       {ctx.showTemplateImport && ctx.selectedNodeId && (
-        <div className="modal-overlay">
-          <div className="modal-card modal-card-wide">
-            <h3>Import Discord Template</h3>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowTemplateImport(false); ctx.setTemplateInput(''); ctx.setTemplateError(''); ctx.setTemplateResult(null); } templateTrap.handleKeyDown(e); }}>
+          <div className="modal-card modal-card-wide" ref={templateTrap.ref} role="dialog" aria-modal="true" aria-labelledby="template-import-title">
+            <h3 id="template-import-title">Import Discord Template</h3>
             {!ctx.templateResult ? (
               <>
                 <p className="template-description">Paste a discord.new link, discord.com/template link, or raw template code.</p>
@@ -283,10 +339,10 @@ export const AppModals: React.FC = () => {
 
       {/* Connection Info Modal */}
       {ctx.showConnectionInfo && (
-        <div className="settings-overlay" onClick={() => ctx.setShowConnectionInfo(false)}>
-          <div className="connection-info-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-overlay" onClick={() => ctx.setShowConnectionInfo(false)} onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowConnectionInfo(false); connectionInfoTrap.handleKeyDown(e); }}>
+          <div className="connection-info-modal" ref={connectionInfoTrap.ref} role="dialog" aria-modal="true" aria-labelledby="connection-info-title" onClick={(e) => e.stopPropagation()}>
             <div className="connection-info-header">
-              <h3>Connection Info</h3>
+              <h3 id="connection-info-title">Connection Info</h3>
               <button className="settings-close" onClick={() => ctx.setShowConnectionInfo(false)}>×</button>
             </div>
             <div className="connection-info-body">
@@ -325,10 +381,10 @@ export const AppModals: React.FC = () => {
 
       {/* Pinned Messages Panel */}
       {ctx.showPinnedPanel && (
-        <div className="pinned-panel">
+        <div className="pinned-panel" role="complementary" aria-label="Pinned Messages" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowPinnedPanel(false); }}>
           <div className="pinned-panel-header">
             <h3 className="pinned-panel-title">Pinned Messages</h3>
-            <button onClick={() => ctx.setShowPinnedPanel(false)} className="pinned-panel-close">✕</button>
+            <button onClick={() => ctx.setShowPinnedPanel(false)} className="pinned-panel-close" aria-label="Close pinned messages">✕</button>
           </div>
           <div className="pinned-panel-body">
             {ctx.pinnedMessages.length === 0 ? (
@@ -358,6 +414,7 @@ export const AppModals: React.FC = () => {
                       <button
                         className="pinned-message-unpin"
                         title="Unpin message"
+                        aria-label="Unpin message"
                         onClick={async (e) => {
                           e.stopPropagation();
                           if (!ctx.appState.token) return;
@@ -381,11 +438,11 @@ export const AppModals: React.FC = () => {
 
       {/* DM Channel Creation */}
       {ctx.showDmChannelCreate && (
-        <div className="modal-overlay">
-          <div className="modal-card modal-card-narrow">
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowDmChannelCreate(false); dmCreateTrap.handleKeyDown(e); }}>
+          <div className="modal-card modal-card-narrow" ref={dmCreateTrap.ref} role="dialog" aria-modal="true" aria-labelledby="dm-create-title">
             <div className="dm-create-header">
-              <h3>Start a Direct Message</h3>
-              <button onClick={() => ctx.setShowDmChannelCreate(false)} className="error-toast-close">×</button>
+              <h3 id="dm-create-title">Start a Direct Message</h3>
+              <button onClick={() => ctx.setShowDmChannelCreate(false)} className="error-toast-close" aria-label="Close">×</button>
             </div>
             <p>Select a user to start a direct message:</p>
             <div className="dm-create-list">
@@ -412,9 +469,9 @@ export const AppModals: React.FC = () => {
 
       {/* Display Name Prompt */}
       {ctx.showDisplayNamePrompt && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <h3>Set Your Display Name</h3>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowDisplayNamePrompt(false); displayNameTrap.handleKeyDown(e); }}>
+          <div className="modal-card" ref={displayNameTrap.ref} role="dialog" aria-modal="true" aria-labelledby="display-name-title">
+            <h3 id="display-name-title">Set Your Display Name</h3>
             <p>Choose a name that others will see instead of your fingerprint.</p>
             <div className="form-group">
               <label className="form-label">Display Name</label>
@@ -453,7 +510,7 @@ export const AppModals: React.FC = () => {
       {ctx.contextMenu && (
         <>
           <div className="context-menu-backdrop" onClick={() => ctx.setContextMenu(null)} />
-          <div className="context-menu" style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }}>
+          <div className="context-menu" role="menu" aria-label="User actions" style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }} onKeyDown={(e) => { if (e.key === 'Escape') ctx.setContextMenu(null); }}>
             <div className="context-menu-item context-menu-profile-header">
               <div className="context-menu-display-name">{ctx.contextMenu.displayName}</div>
               <div className="context-menu-fingerprint">{ctx.fingerprint(ctx.contextMenu.publicKeyHash)}</div>
@@ -497,9 +554,9 @@ export const AppModals: React.FC = () => {
 
       {/* Block Confirmation */}
       {ctx.showBlockConfirm && (
-        <div className="modal-overlay" onClick={() => ctx.setShowBlockConfirm(null)}>
-          <div className="modal-card modal-card-narrow" onClick={(e) => e.stopPropagation()}>
-            <h3>Block User</h3>
+        <div className="modal-overlay" onClick={() => ctx.setShowBlockConfirm(null)} onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowBlockConfirm(null); blockTrap.handleKeyDown(e); }}>
+          <div className="modal-card modal-card-narrow" ref={blockTrap.ref} role="alertdialog" aria-modal="true" aria-labelledby="block-user-title" onClick={(e) => e.stopPropagation()}>
+            <h3 id="block-user-title">Block User</h3>
             <p className="block-confirm-text">
               Are you sure you want to block <strong>{ctx.showBlockConfirm.displayName}</strong>?
             </p>
@@ -516,9 +573,9 @@ export const AppModals: React.FC = () => {
 
       {/* Keyboard Shortcuts Help */}
       {ctx.showShortcutsHelp && (
-        <div className="modal-overlay" onClick={() => ctx.setShowShortcutsHelp(false)}>
-          <div className="modal-card shortcuts-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Keyboard Shortcuts</h3>
+        <div className="modal-overlay" onClick={() => ctx.setShowShortcutsHelp(false)} onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowShortcutsHelp(false); shortcutsTrap.handleKeyDown(e); }}>
+          <div className="modal-card shortcuts-modal" ref={shortcutsTrap.ref} role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onClick={(e) => e.stopPropagation()}>
+            <h3 id="shortcuts-title">Keyboard Shortcuts</h3>
             <div className="shortcuts-list">
               {SHORTCUTS.map((s, i) => (
                 <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>

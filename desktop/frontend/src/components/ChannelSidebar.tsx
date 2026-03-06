@@ -248,6 +248,10 @@ export const ChannelSidebar: React.FC = () => {
         key={channel.id}
         className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
         title={channel.topic || undefined}
+        role="option"
+        aria-selected={isActive}
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const isVoice = ctx.getChannelTypeNum(channel) === 2; if (isVoice) { if (ctx.voiceChannelId !== channel.id) { ctx.setVoiceChannelId(channel.id); ctx.setVoiceChannelName(channel.name); ctx.setVoiceConnectedAt(Date.now()); } } else { ctx.handleChannelSelect(channel.id, `# ${channel.name}`); } } }}
         draggable={canManageChannels}
         onDragStart={(e) => handleDragStart(e, { type: 'channel', id: channel.id, categoryId: channel.parent_id || null })}
         onDragEnd={handleDragEnd}
@@ -306,7 +310,7 @@ export const ChannelSidebar: React.FC = () => {
   };
 
   return (
-    <div className="channel-sidebar">
+    <div className="channel-sidebar" role="navigation" aria-label="Channel sidebar">
       <div className="sidebar-header">
         <div className="sidebar-header-row">
           <div className="sidebar-header-name">
@@ -332,7 +336,7 @@ export const ChannelSidebar: React.FC = () => {
               <button onClick={ctx.handleGenerateInvite} className="sidebar-admin-btn invite-btn" title="Generate Invite">Invite</button>
             )}
             {ctx.selectedNodeId && (
-              <button onClick={() => ctx.setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings"><Icon name="settings" size={16} /></button>
+              <button onClick={() => ctx.setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings" aria-label="Node Settings"><Icon name="settings" size={16} /></button>
             )}
           </div>
         </div>
@@ -344,7 +348,7 @@ export const ChannelSidebar: React.FC = () => {
         )}
       </div>
       
-      <div className="channel-list">
+      <div className="channel-list" role="listbox" aria-label="Channels">
         {/* Uncategorized channels */}
         {ctx.uncategorizedChannels.map(ch => renderChannel(ch))}
         
@@ -377,7 +381,7 @@ export const ChannelSidebar: React.FC = () => {
         {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'CreateChannel') && (
           <div className="create-channel-wrapper">
             {!ctx.showCreateChannelForm ? (
-              <button onClick={() => ctx.setShowCreateChannelForm(true)} className="create-channel-btn" title="Create Channel">
+              <button onClick={() => ctx.setShowCreateChannelForm(true)} className="create-channel-btn" title="Create Channel" aria-label="Create Channel">
                 +
               </button>
             ) : (
@@ -412,10 +416,10 @@ export const ChannelSidebar: React.FC = () => {
 
       {/* Custom Status Popover */}
       {ctx.showStatusPopover && (
-        <div className="status-popover">
+        <div className="status-popover" role="dialog" aria-label="Set Custom Status" onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowStatusPopover(false); }}>
           <div className="status-popover-header">
             <span>Set Custom Status</span>
-            <button onClick={() => ctx.setShowStatusPopover(false)} className="status-popover-close">×</button>
+            <button onClick={() => ctx.setShowStatusPopover(false)} className="status-popover-close" aria-label="Close">×</button>
           </div>
           <input
             type="text"
@@ -449,7 +453,7 @@ const DMSection: React.FC = () => {
     <div className="dm-section">
       <div className="dm-header">
         Direct Messages
-        <button onClick={() => ctx.setShowDmChannelCreate(!ctx.showDmChannelCreate)} className="dm-header-add-btn" title="Create DM">+</button>
+        <button onClick={() => ctx.setShowDmChannelCreate(!ctx.showDmChannelCreate)} className="dm-header-add-btn" title="Create DM" aria-label="Create direct message">+</button>
       </div>
       
       <div className="dm-list">
@@ -554,13 +558,13 @@ const UserPanel: React.FC = () => {
           </div>
         </div>
         <div className="user-panel-controls">
-          <button className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`} onClick={() => setIsMuted(!isMuted)} title={isMuted ? 'Unmute' : 'Mute'}>
+          <button className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`} onClick={() => setIsMuted(!isMuted)} title={isMuted ? 'Unmute' : 'Mute'} aria-label={isMuted ? 'Unmute' : 'Mute'} role="switch" aria-checked={isMuted}>
             <Icon name={isMuted ? 'mic-off' : 'mic'} size={18} />
           </button>
-          <button className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`} onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }} title={isDeafened ? 'Undeafen' : 'Deafen'}>
+          <button className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`} onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }} title={isDeafened ? 'Undeafen' : 'Deafen'} aria-label={isDeafened ? 'Undeafen' : 'Deafen'} role="switch" aria-checked={isDeafened}>
             <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={18} />
           </button>
-          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn" title="Settings (Ctrl+,)"><Icon name="settings" size={18} /></button>
+          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn" title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" size={18} /></button>
         </div>
       </div>
     </>

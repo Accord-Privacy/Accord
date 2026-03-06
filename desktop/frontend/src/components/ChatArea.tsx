@@ -236,7 +236,7 @@ export const ChatArea: React.FC = () => {
               )}
             </div>
             <div className="chat-header-right">
-              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Pinned Messages"><Icon name="pin" size={20} /></button>
+              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Pinned Messages" aria-label="Pinned Messages" aria-pressed={ctx.showPinnedPanel}><Icon name="pin" size={20} /></button>
               {ctx.encryptionEnabled && ctx.keyPair && (
                 <span className="e2ee-indicator" title="End-to-end encrypted"><Icon name="lock" size={14} /> E2EE</span>
               )}
@@ -253,6 +253,7 @@ export const ChatArea: React.FC = () => {
                 className="chat-header-btn"
                 onClick={() => ctx.setShowSearchOverlay(true)}
                 title="Search (Ctrl+K)"
+                aria-label="Search messages"
               >
                 <Icon name="search" size={20} />
               </button>
@@ -260,6 +261,8 @@ export const ChatArea: React.FC = () => {
                 onClick={() => ctx.setShowMemberSidebar(prev => !prev)}
                 className={`chat-header-btn ${ctx.showMemberSidebar ? 'active' : ''}`}
                 title="Member List"
+                aria-label="Toggle member list"
+                aria-pressed={ctx.showMemberSidebar}
               >
                 <Icon name="members" size={20} />
               </button>
@@ -271,6 +274,9 @@ export const ChatArea: React.FC = () => {
             className={`messages ${ctx.voiceChannelId ? 'with-voice' : ''} density-${ctx.messageDensity}`}
             ref={ctx.messagesContainerRef}
             onScroll={ctx.handleScroll}
+            role="log"
+            aria-label="Messages"
+            aria-live="polite"
           >
             {ctx.isLoadingOlderMessages && (
               <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
@@ -321,7 +327,7 @@ export const ChatArea: React.FC = () => {
                       <span className="date-separator-text">{formatDateSep(msgDate)}</span>
                     </div>
                   )}
-                  <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped' : ''}`} data-message-id={msg.id}>
+                  <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped' : ''}`} data-message-id={msg.id} role="article" aria-label={`Message from ${msg.author}`}>
                     {/* Reply preview */}
                     {msg.replied_message && (
                       <div className="reply-preview" onClick={() => ctx.scrollToMessage(msg.reply_to!)}>
@@ -379,15 +385,15 @@ export const ChatArea: React.FC = () => {
                           )}
                           {ctx.appState.user && (
                             <div className="message-actions">
-                              <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply"><Icon name="reply" size={18} /></button>
+                              <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply" aria-label="Reply"><Icon name="reply" size={18} /></button>
                               {msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) && (
-                                <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit"><Icon name="edit" size={18} /></button>
+                                <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit" aria-label="Edit message"><Icon name="edit" size={18} /></button>
                               )}
                               {(msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) || ctx.canDeleteMessage(msg)) && (
-                                <button onClick={() => ctx.setShowDeleteConfirm(msg.id)} className="message-action-btn" title="Delete"><Icon name="delete" size={18} /></button>
+                                <button onClick={() => ctx.setShowDeleteConfirm(msg.id)} className="message-action-btn" title="Delete" aria-label="Delete message"><Icon name="delete" size={18} /></button>
                               )}
                               {ctx.canDeleteMessage(msg) && (
-                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.handlePinMessage(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin" : "Pin"}><Icon name="pin" size={18} /></button>
+                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.handlePinMessage(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin" : "Pin"} aria-label={msg.pinned_at ? "Unpin message" : "Pin message"}><Icon name="pin" size={18} /></button>
                               )}
                             </div>
                           )}
@@ -553,7 +559,7 @@ export const ChatArea: React.FC = () => {
 
             {/* Scroll to bottom button */}
             {ctx.showScrollToBottom && (
-              <button className="scroll-to-bottom-btn" onClick={ctx.scrollToBottom}>
+              <button className="scroll-to-bottom-btn" onClick={ctx.scrollToBottom} aria-label="Scroll to latest messages">
                 ↓ {ctx.newMessageCount > 0 && <span className="scroll-to-bottom-count">{ctx.newMessageCount}</span>}
               </button>
             )}
@@ -620,7 +626,7 @@ export const ChatArea: React.FC = () => {
                   <span className="reply-input-text">
                     Replying to <strong>{ctx.replyingTo.author}</strong>: {ctx.replyingTo.content.substring(0, 100)}{ctx.replyingTo.content.length > 100 ? '...' : ''}
                   </span>
-                  <button className="reply-cancel-btn" onClick={ctx.handleCancelReply} title="Cancel reply">×</button>
+                  <button className="reply-cancel-btn" onClick={ctx.handleCancelReply} title="Cancel reply" aria-label="Cancel reply">×</button>
                 </div>
               </div>
             )}
@@ -646,6 +652,7 @@ export const ChatArea: React.FC = () => {
             <textarea
               ref={ctx.messageInputRef}
               className="message-input"
+              aria-label={`Message ${ctx.activeChannel}`}
               placeholder={ctx.slowModeCooldown > 0 ? `Slow mode — wait ${ctx.slowModeCooldown}s` : `Message ${ctx.activeChannel}`}
               value={ctx.message}
               rows={1}
