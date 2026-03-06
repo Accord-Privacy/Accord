@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
+import path from "path";
+
+const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 
 // Generate a build hash from git commit + timestamp + random salt
 function generateBuildHash(): string {
@@ -21,6 +24,13 @@ function generateBuildHash(): string {
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  resolve: {
+    alias: isTauri ? {} : {
+      '@tauri-apps/plugin-store': path.resolve(__dirname, 'src/tauri-stubs/plugin-store.ts'),
+      '@tauri-apps/plugin-updater': path.resolve(__dirname, 'src/tauri-stubs/plugin-updater.ts'),
+      '@tauri-apps/plugin-process': path.resolve(__dirname, 'src/tauri-stubs/plugin-process.ts'),
+    },
+  },
   define: {
     // Inject build hash at compile time
     "import.meta.env.VITE_BUILD_HASH": JSON.stringify(generateBuildHash()),
@@ -33,7 +43,6 @@ export default defineConfig({
     outDir: "dist",
     chunkSizeWarningLimit: 600,
     rollupOptions: {
-      external: ['@tauri-apps/plugin-store'],
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom'],
