@@ -11,6 +11,7 @@
 @import './styles/channel-sidebar.css';
 @import './styles/chat-area.css';
 @import './styles/messages.css';
+@import './styles/media-embeds.css';
 @import './styles/reactions.css';
 @import './styles/message-input.css';
 @import './styles/member-sidebar.css';

@@ -14,6 +14,7 @@ import { LoadingSpinner } from "../LoadingSpinner";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
 import { ImageLightbox } from "./ImageLightbox";
+import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
@@ -477,6 +478,11 @@ export const ChatArea: React.FC = () => {
                             __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) 
                           }}
                         />
+                      )}
+
+                      {/* Media Embeds (GIF, video, YouTube) */}
+                      {msg.content && (
+                        <MediaEmbeds content={msg.content} onImageClick={setLightboxSrc} />
                       )}
 
                       {/* Bot Response Embed */}
