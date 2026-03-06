@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Icon } from './components/Icon';
 
 // Types for the updater API
 interface UpdateInfo {
@@ -128,7 +129,7 @@ export const UpdateBanner: React.FC = () => {
         zIndex: 9999,
         flexShrink: 0,
       }}>
-        <span>🎉 Accord {updateInfo.version} is available!</span>
+        <span><Icon name="star" size={14} /> Accord {updateInfo.version} is available!</span>
         <button
           onClick={installUpdate}
           style={{
@@ -220,7 +221,7 @@ export const UpdateSection: React.FC = () => {
 
       {status === 'idle' && (
         <button className="test-button" onClick={checkForUpdate}>
-          🔄 Check for updates
+          <Icon name="refresh" size={14} /> Check for updates
         </button>
       )}
 
@@ -244,7 +245,7 @@ export const UpdateSection: React.FC = () => {
       {status === 'available' && updateInfo && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ color: 'var(--text-primary)', fontSize: '14px' }}>
-            🎉 Version <strong>{updateInfo.version}</strong> is available
+            <Icon name="star" size={14} /> Version <strong>{updateInfo.version}</strong> is available
           </div>
           {updateInfo.body && (
             <div style={{ color: 'var(--text-secondary)', fontSize: '13px', maxHeight: '80px', overflow: 'auto' }}>
