@@ -45,7 +45,9 @@ function storageKeys(pkHash?: string) {
 }
 
 // Active identity hash — set after login/registration
-let activeIdentityHash: string | undefined;
+let activeIdentityHash: string | undefined = (() => {
+  try { return localStorage.getItem('accord_active_identity') || undefined; } catch { return undefined; }
+})();
 
 export function setActiveIdentity(pkHash: string) {
   activeIdentityHash = pkHash;
@@ -737,7 +739,20 @@ export async function loadKeyWithPassword(password: string, pkHash?: string): Pr
  */
 export function hasStoredKeyPair(pkHash?: string): boolean {
   const keys = STORAGE_KEYS_FOR(pkHash);
-  return !!localStorage.getItem(keys.PUBLIC_KEY) || !!localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY);
+  if (localStorage.getItem(keys.PUBLIC_KEY)) return true;
+  // Check legacy non-namespaced key
+  if (localStorage.getItem(STORAGE_KEYS.PUBLIC_KEY)) return true;
+  // Check password-encrypted slots (_pwd variants)
+  const hash = pkHash || activeIdentityHash || localStorage.getItem('accord_active_identity') || undefined;
+  if (hash) {
+    const suffix = `_${hash.slice(0, 16)}`;
+    if (localStorage.getItem(`accord_public_key_pwd${suffix}`)) return true;
+    const namespacedKeys = storageKeys(hash);
+    if (localStorage.getItem(namespacedKeys.PUBLIC_KEY)) return true;
+  }
+  // Check legacy pwd slot
+  if (localStorage.getItem('accord_public_key_pwd')) return true;
+  return false;
 }
 
 /**
