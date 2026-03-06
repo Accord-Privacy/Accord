@@ -16,6 +16,10 @@ pub enum ActionType {
     FileUpload,
     Reaction,
     ProfileUpdate,
+    /// Invite creation
+    InviteCreate,
+    /// Node creation
+    NodeCreate,
     /// Auth attempts per IP (brute-force protection)
     AuthAttempt,
     /// Registration attempts per IP
@@ -28,9 +32,11 @@ impl ActionType {
         match self {
             ActionType::Message => 30,
             ActionType::DirectMessage => 30,
-            ActionType::FileUpload => 5,
+            ActionType::FileUpload => 10,
             ActionType::Reaction => 20,
             ActionType::ProfileUpdate => 5,
+            ActionType::InviteCreate => 10, // 10 per hour
+            ActionType::NodeCreate => 5,    // 5 per hour
             ActionType::AuthAttempt => 20,  // 20 per minute per IP
             ActionType::Registration => 20, // 20 per hour per IP
         }
@@ -40,6 +46,8 @@ impl ActionType {
     pub fn window_duration(&self) -> Duration {
         match self {
             ActionType::Registration => Duration::from_secs(3600), // 1 hour
+            ActionType::InviteCreate => Duration::from_secs(3600), // 1 hour
+            ActionType::NodeCreate => Duration::from_secs(3600),   // 1 hour
             _ => Duration::from_secs(60),                          // 1 minute for all other actions
         }
     }
@@ -226,7 +234,7 @@ mod tests {
     async fn test_action_type_defaults() {
         assert_eq!(ActionType::Message.default_limit(), 30);
         assert_eq!(ActionType::DirectMessage.default_limit(), 30);
-        assert_eq!(ActionType::FileUpload.default_limit(), 5);
+        assert_eq!(ActionType::FileUpload.default_limit(), 10);
         assert_eq!(ActionType::Reaction.default_limit(), 20);
         assert_eq!(ActionType::ProfileUpdate.default_limit(), 5);
     }
@@ -289,7 +297,7 @@ mod tests {
         let user2 = Uuid::new_v4();
 
         // Fill up user1's limit
-        for _ in 0..5 {
+        for _ in 0..10 {
             limiter
                 .check(user1, ActionType::FileUpload)
                 .await
@@ -308,10 +316,10 @@ mod tests {
         let limiter = RateLimiter::new();
         let user_id = Uuid::new_v4();
 
-        // Initial status should be (0, 5) for FileUpload
+        // Initial status should be (0, 10) for FileUpload
         let (current, remaining) = limiter.get_status(user_id, ActionType::FileUpload).await;
         assert_eq!(current, 0);
-        assert_eq!(remaining, 5);
+        assert_eq!(remaining, 10);
 
         // After one upload
         limiter
@@ -321,7 +329,7 @@ mod tests {
 
         let (current, remaining) = limiter.get_status(user_id, ActionType::FileUpload).await;
         assert_eq!(current, 1);
-        assert_eq!(remaining, 4);
+        assert_eq!(remaining, 9);
     }
 
     #[tokio::test]
@@ -330,7 +338,7 @@ mod tests {
         let user_id = Uuid::new_v4();
 
         // Add some actions
-        for _ in 0..5 {
+        for _ in 0..10 {
             limiter
                 .check(user_id, ActionType::FileUpload)
                 .await
@@ -339,14 +347,14 @@ mod tests {
 
         // Should be at limit
         let (current, remaining) = limiter.get_status(user_id, ActionType::FileUpload).await;
-        assert_eq!(current, 5);
+        assert_eq!(current, 10);
         assert_eq!(remaining, 0);
 
         // Clear and check again
         limiter.clear().await;
         let (current, remaining) = limiter.get_status(user_id, ActionType::FileUpload).await;
         assert_eq!(current, 0);
-        assert_eq!(remaining, 5);
+        assert_eq!(remaining, 10);
     }
 
     #[tokio::test]

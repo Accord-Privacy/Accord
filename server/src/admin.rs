@@ -17,6 +17,7 @@ use axum::{
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 
 /// In-memory broadcast channel for log lines.
@@ -38,7 +39,7 @@ fn validate_admin_token(headers: &HeaderMap, _params: &HashMap<String, String>) 
     // Only accept token via header — never query params (which leak in logs/history/referers)
     if let Some(hdr) = headers.get("x-admin-token") {
         if let Ok(val) = hdr.to_str() {
-            if val == expected {
+            if val.as_bytes().ct_eq(expected.as_bytes()).into() {
                 return true;
             }
         }
@@ -60,7 +61,7 @@ fn validate_admin_token_ws(headers: &HeaderMap, params: &HashMap<String, String>
         _ => return false,
     };
     if let Some(val) = params.get("admin_token") {
-        if *val == expected {
+        if val.as_bytes().ct_eq(expected.as_bytes()).into() {
             return true;
         }
     }
@@ -260,9 +261,10 @@ pub async fn admin_build_allowlist_set_handler(
         .set_relay_build_hash_allowlist(&entries)
         .await
         .map_err(|e| {
+            tracing::error!("Failed to set allowlist: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Failed to set allowlist: {}", e)})),
+                Json(json!({"error": "Internal server error"})),
             )
         })?;
     Ok(Json(json!({
@@ -286,9 +288,10 @@ pub async fn admin_build_allowlist_add_handler(
         .add_relay_build_hash(&input.build_hash, input.label.as_deref())
         .await
         .map_err(|e| {
+            tracing::error!("Failed to add build hash: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("Failed to add hash: {}", e)})),
+                Json(json!({"error": "Internal server error"})),
             )
         })?;
     Ok(Json(json!({
@@ -308,9 +311,10 @@ pub async fn admin_build_allowlist_remove_handler(
         return Err(unauthorized());
     }
     let removed = state.db.remove_relay_build_hash(&hash).await.map_err(|e| {
+        tracing::error!("Failed to remove build hash: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to remove hash: {}", e)})),
+            Json(json!({"error": "Internal server error"})),
         )
     })?;
     if removed {
@@ -370,10 +374,13 @@ pub async fn admin_audit_log_handler(
                 "total_pages": total_pages,
             })))
         }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Failed to query audit log: {}", e)})),
-        )),
+        Err(e) => {
+            tracing::error!("Failed to query audit log: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Internal server error"})),
+            ))
+        }
     }
 }
 

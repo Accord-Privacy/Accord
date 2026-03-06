@@ -65,7 +65,10 @@ pub async fn get_node_presence_handler(
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get presence: {}", err),
+                error: {
+                    tracing::error!("Failed to get presence: {}", err);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -386,7 +389,10 @@ pub async fn list_user_nodes_handler(
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to list nodes: {}", e),
+                error: {
+                    tracing::error!("Failed to list nodes: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -443,7 +449,10 @@ pub async fn create_channel_handler(
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to create channel: {}", e),
+                error: {
+                    tracing::error!("Failed to create channel: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -486,7 +495,10 @@ pub async fn list_node_channels_handler(
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to list channels: {}", e),
+                error: {
+                    tracing::error!("Failed to list channels: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -1171,7 +1183,10 @@ pub async fn ban_user_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to ban user: {}", e),
+                    error: {
+                        tracing::error!("Failed to ban user: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1267,7 +1282,10 @@ pub async fn unban_user_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to unban user: {}", e),
+                    error: {
+                        tracing::error!("Failed to unban user: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1399,7 +1417,10 @@ pub async fn list_bans_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get bans: {}", e),
+                error: {
+                    tracing::error!("Failed to get bans: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -1460,7 +1481,10 @@ pub async fn get_build_allowlist_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get build allowlist: {}", e),
+                    error: {
+                        tracing::error!("Failed to get build allowlist: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1519,7 +1543,10 @@ pub async fn set_build_allowlist_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to set build allowlist: {}", e),
+                    error: {
+                        tracing::error!("Failed to set build allowlist: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1593,7 +1620,10 @@ pub async fn add_build_allowlist_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to add build hash: {}", e),
+                    error: {
+                        tracing::error!("Failed to add build hash: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1665,7 +1695,10 @@ pub async fn remove_build_allowlist_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to remove build hash: {}", e),
+                    error: {
+                        tracing::error!("Failed to remove build hash: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1735,7 +1768,10 @@ pub async fn set_node_user_profile_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to set node profile: {}", e),
+                    error: {
+                        tracing::error!("Failed to set node profile: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1780,7 +1816,10 @@ pub async fn get_node_user_profiles_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get node profiles: {}", e),
+                    error: {
+                        tracing::error!("Failed to get node profiles: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1823,7 +1862,10 @@ pub async fn create_channel_category_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to check permissions: {}", e),
+                    error: {
+                        tracing::error!("Failed to check permissions: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1880,7 +1922,10 @@ pub async fn update_channel_category_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get category: {}", e),
+                error: {
+                    tracing::error!("Failed to get category: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -1904,7 +1949,10 @@ pub async fn update_channel_category_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to check permissions: {}", e),
+                    error: {
+                        tracing::error!("Failed to check permissions: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1957,7 +2005,10 @@ pub async fn delete_channel_category_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get category: {}", e),
+                error: {
+                    tracing::error!("Failed to get category: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -1981,7 +2032,10 @@ pub async fn delete_channel_category_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to check permissions: {}", e),
+                    error: {
+                        tracing::error!("Failed to check permissions: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2032,7 +2086,10 @@ pub async fn update_channel_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get channel: {}", e),
+                error: {
+                    tracing::error!("Failed to get channel: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -2056,7 +2113,10 @@ pub async fn update_channel_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to check permissions: {}", e),
+                    error: {
+                        tracing::error!("Failed to check permissions: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2197,7 +2257,10 @@ pub async fn get_channel_messages_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Access check failed: {}", e),
+                    error: {
+                        tracing::error!("Access check failed: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2237,7 +2300,10 @@ pub async fn get_channel_messages_handler(
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(ErrorResponse {
-                                    error: format!("Failed to check for more messages: {}", e),
+                                    error: {
+                                        tracing::error!("Failed to check for more messages: {}", e);
+                                        "Internal server error".to_string()
+                                    },
                                     code: 500,
                                 }),
                             )
@@ -2265,7 +2331,10 @@ pub async fn get_channel_messages_handler(
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get messages: {}", err),
+                error: {
+                    tracing::error!("Failed to get messages: {}", err);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -2290,7 +2359,10 @@ pub async fn mark_channel_read_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Access check failed: {}", e),
+                    error: {
+                        tracing::error!("Access check failed: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2316,7 +2388,10 @@ pub async fn mark_channel_read_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to mark channel as read: {}", e),
+                    error: {
+                        tracing::error!("Failed to mark channel as read: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2357,7 +2432,10 @@ pub async fn search_messages_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Membership check failed: {}", e),
+                error: {
+                    tracing::error!("Membership check failed: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -2415,7 +2493,7 @@ pub async fn search_messages_handler(
             }))
         }
         Err(err) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-            error: format!("Search failed: {}", err),
+            error: { tracing::error!("Search failed: {}", err); "Internal server error".to_string() },
             code: 500
         }))),
     }
@@ -2816,7 +2894,10 @@ pub async fn upload_node_icon_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to create upload dir: {}", e),
+                error: {
+                    tracing::error!("Failed to create upload dir: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -2827,7 +2908,10 @@ pub async fn upload_node_icon_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to write icon: {}", e),
+                    error: {
+                        tracing::error!("Failed to write icon: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2842,7 +2926,10 @@ pub async fn upload_node_icon_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to update icon hash: {}", e),
+                    error: {
+                        tracing::error!("Failed to update icon hash: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -2862,7 +2949,10 @@ pub async fn get_node_icon_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("{}", e),
+                error: {
+                    tracing::error!("Internal error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -2903,7 +2993,10 @@ pub async fn get_node_icon_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to read icon: {}", e),
+                error: {
+                    tracing::error!("Failed to read icon: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -2985,7 +3078,10 @@ pub async fn upload_user_avatar_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to create upload dir: {}", e),
+                error: {
+                    tracing::error!("Failed to create upload dir: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -2996,7 +3092,10 @@ pub async fn upload_user_avatar_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to write avatar: {}", e),
+                    error: {
+                        tracing::error!("Failed to write avatar: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3010,7 +3109,10 @@ pub async fn upload_user_avatar_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to update avatar hash: {}", e),
+                    error: {
+                        tracing::error!("Failed to update avatar hash: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3030,7 +3132,10 @@ pub async fn get_user_avatar_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("{}", e),
+                error: {
+                    tracing::error!("Internal error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -3070,7 +3175,10 @@ pub async fn get_user_avatar_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to read avatar: {}", e),
+                error: {
+                    tracing::error!("Failed to read avatar: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -3154,7 +3262,10 @@ pub async fn publish_key_bundle_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to publish key bundle: {}", e),
+                    error: {
+                        tracing::error!("Failed to publish key bundle: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3196,7 +3307,10 @@ pub async fn fetch_key_bundle_handler(
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to fetch key bundle: {}", e),
+                error: {
+                    tracing::error!("Failed to fetch key bundle: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -3232,7 +3346,10 @@ pub async fn store_prekey_message_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to store prekey message: {}", e),
+                    error: {
+                        tracing::error!("Failed to store prekey message: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3255,7 +3372,10 @@ pub async fn get_prekey_messages_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get prekey messages: {}", e),
+                error: {
+                    tracing::error!("Failed to get prekey messages: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -3361,7 +3481,10 @@ pub async fn store_sender_key_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to store sender key: {}", e),
+                    error: {
+                        tracing::error!("Failed to store sender key: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3398,7 +3521,10 @@ pub async fn get_pending_sender_keys_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get pending sender keys: {}", e),
+                    error: {
+                        tracing::error!("Failed to get pending sender keys: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3427,7 +3553,10 @@ pub async fn ack_sender_keys_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to ack sender keys: {}", e),
+                    error: {
+                        tracing::error!("Failed to ack sender keys: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3504,7 +3633,10 @@ pub async fn set_slow_mode_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to set slow mode: {}", e),
+                    error: {
+                        tracing::error!("Failed to set slow mode: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3536,7 +3668,10 @@ pub async fn get_slow_mode_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get slow mode: {}", e),
+                    error: {
+                        tracing::error!("Failed to get slow mode: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3608,7 +3743,10 @@ pub async fn add_auto_mod_word_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to add word: {}", e),
+                    error: {
+                        tracing::error!("Failed to add word: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3662,7 +3800,10 @@ pub async fn remove_auto_mod_word_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to remove word: {}", e),
+                    error: {
+                        tracing::error!("Failed to remove word: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -3711,7 +3852,10 @@ pub async fn list_auto_mod_words_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to list words: {}", e),
+                error: {
+                    tracing::error!("Failed to list words: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -4312,7 +4456,10 @@ async fn handle_ws_message(
                 .db
                 .store_message(channel_id, sender_user_id, &encrypted_payload, reply_to)
                 .await
-                .map_err(|e| format!("Failed to store message: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to store message: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             // Record slow mode cooldown timestamp
             {
@@ -4471,7 +4618,10 @@ async fn handle_ws_message(
                 .db
                 .publish_key_bundle(sender_user_id, &ik, &spk, &opks)
                 .await
-                .map_err(|e| format!("Failed to publish key bundle: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to publish key bundle: {}", e);
+                    "Internal server error".to_string()
+                })?;
             let resp = serde_json::json!({ "type": "key_bundle_published" });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
@@ -4496,7 +4646,10 @@ async fn handle_ws_message(
                     state.send_to_user(sender_user_id, resp.to_string()).await?;
                 }
                 Err(e) => {
-                    return Err(format!("Failed to fetch key bundle: {}", e));
+                    return Err({
+                        tracing::error!("Failed to fetch key bundle: {}", e);
+                        "Internal server error".to_string()
+                    });
                 }
             }
         }
@@ -4512,7 +4665,10 @@ async fn handle_ws_message(
                 .db
                 .store_prekey_message(recipient_id, sender_user_id, &data)
                 .await
-                .map_err(|e| format!("Failed to store prekey message: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to store prekey message: {}", e);
+                    "Internal server error".to_string()
+                })?;
             let resp = serde_json::json!({ "type": "prekey_message_stored", "message_id": msg_id });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
@@ -4522,7 +4678,10 @@ async fn handle_ws_message(
                 .db
                 .get_prekey_messages(sender_user_id)
                 .await
-                .map_err(|e| format!("Failed to get prekey messages: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get prekey messages: {}", e);
+                    "Internal server error".to_string()
+                })?;
             let msgs: Vec<serde_json::Value> = messages
                 .into_iter()
                 .map(|(id, sid, data, ts)| {
@@ -4577,7 +4736,10 @@ async fn handle_ws_message(
                     &encrypted_payload,
                 )
                 .await
-                .map_err(|e| format!("Failed to store sender key: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to store sender key: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             // Notify recipient in real-time
             let notification = serde_json::json!({
@@ -4600,7 +4762,10 @@ async fn handle_ws_message(
                 .db
                 .get_pending_sender_key_distributions(sender_user_id)
                 .await
-                .map_err(|e| format!("Failed to get pending sender keys: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get pending sender keys: {}", e);
+                    "Internal server error".to_string()
+                })?;
             let resp = serde_json::json!({
                 "type": "pending_sender_keys",
                 "distributions": distributions,
@@ -4613,7 +4778,10 @@ async fn handle_ws_message(
                 .db
                 .ack_sender_key_distributions(sender_user_id, &ids)
                 .await
-                .map_err(|e| format!("Failed to ack sender keys: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to ack sender keys: {}", e);
+                    "Internal server error".to_string()
+                })?;
             let resp = serde_json::json!({ "type": "sender_keys_acked", "acknowledged": acked });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
@@ -4634,7 +4802,10 @@ async fn handle_ws_message(
                 .db
                 .get_message_details(message_id)
                 .await
-                .map_err(|e| format!("Failed to get message details: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get message details: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
                 Some(details) => details,
@@ -4646,7 +4817,10 @@ async fn handle_ws_message(
                 .db
                 .get_channel_members(channel_id)
                 .await
-                .map_err(|e| format!("Failed to get channel members: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get channel members: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             if !channel_members.contains(&sender_user_id) {
                 return Err("You must be a member of this channel to add reactions".into());
@@ -4657,14 +4831,20 @@ async fn handle_ws_message(
                 .db
                 .add_reaction(message_id, sender_user_id, &emoji)
                 .await
-                .map_err(|e| format!("Failed to add reaction: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to add reaction: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             // Get updated reactions for broadcasting
             let reactions = state
                 .db
                 .get_message_reactions(message_id)
                 .await
-                .map_err(|e| format!("Failed to get reactions: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get reactions: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             // Broadcast reaction_add event to channel
             let reaction_event = serde_json::json!({
@@ -4691,7 +4871,10 @@ async fn handle_ws_message(
                 .db
                 .get_message_details(message_id)
                 .await
-                .map_err(|e| format!("Failed to get message details: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get message details: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
                 Some(details) => details,
@@ -4703,7 +4886,10 @@ async fn handle_ws_message(
                 .db
                 .remove_reaction(message_id, sender_user_id, &emoji)
                 .await
-                .map_err(|e| format!("Failed to remove reaction: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to remove reaction: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             if removed {
                 // Get updated reactions for broadcasting
@@ -4711,7 +4897,10 @@ async fn handle_ws_message(
                     .db
                     .get_message_reactions(message_id)
                     .await
-                    .map_err(|e| format!("Failed to get reactions: {}", e))?;
+                    .map_err(|e| {
+                        tracing::error!("Failed to get reactions: {}", e);
+                        "Internal server error".to_string()
+                    })?;
 
                 // Broadcast reaction_remove event to channel
                 let reaction_event = serde_json::json!({
@@ -4740,7 +4929,10 @@ async fn handle_ws_message(
                 .db
                 .get_user_by_id(sender_user_id)
                 .await
-                .map_err(|e| format!("Failed to get user: {}", e))?
+                .map_err(|e| {
+                    tracing::error!("Failed to get user: {}", e);
+                    "Internal server error".to_string()
+                })?
                 .ok_or_else(|| "User not found".to_string())?;
 
             // Check if user can access the channel (via node membership + permissions)
@@ -4806,7 +4998,10 @@ async fn handle_ws_message(
                 .db
                 .get_message_details(message_id)
                 .await
-                .map_err(|e| format!("Failed to get message details: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get message details: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
                 Some(details) => details,
@@ -4814,11 +5009,10 @@ async fn handle_ws_message(
             };
 
             // Get the channel to find the node
-            let channel = state
-                .db
-                .get_channel(channel_id)
-                .await
-                .map_err(|e| format!("Failed to get channel: {}", e))?;
+            let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+                tracing::error!("Failed to get channel: {}", e);
+                "Internal server error".to_string()
+            })?;
 
             let channel = match channel {
                 Some(ch) => ch,
@@ -4830,7 +5024,10 @@ async fn handle_ws_message(
                 .db
                 .get_node_member(channel.node_id, sender_user_id)
                 .await
-                .map_err(|e| format!("Failed to get node member: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get node member: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             let member = match member {
                 Some(m) => m,
@@ -4850,7 +5047,10 @@ async fn handle_ws_message(
                 .db
                 .pin_message(message_id, sender_user_id)
                 .await
-                .map_err(|e| format!("Failed to pin message: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to pin message: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             if !success {
                 return Err("Message is already pinned".into());
@@ -4897,7 +5097,10 @@ async fn handle_ws_message(
                 .db
                 .get_message_details(message_id)
                 .await
-                .map_err(|e| format!("Failed to get message details: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get message details: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             let (channel_id, _sender_id, _created_at, _edited_at) = match message_details {
                 Some(details) => details,
@@ -4905,11 +5108,10 @@ async fn handle_ws_message(
             };
 
             // Get the channel to find the node
-            let channel = state
-                .db
-                .get_channel(channel_id)
-                .await
-                .map_err(|e| format!("Failed to get channel: {}", e))?;
+            let channel = state.db.get_channel(channel_id).await.map_err(|e| {
+                tracing::error!("Failed to get channel: {}", e);
+                "Internal server error".to_string()
+            })?;
 
             let channel = match channel {
                 Some(ch) => ch,
@@ -4921,7 +5123,10 @@ async fn handle_ws_message(
                 .db
                 .get_node_member(channel.node_id, sender_user_id)
                 .await
-                .map_err(|e| format!("Failed to get node member: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to get node member: {}", e);
+                    "Internal server error".to_string()
+                })?;
 
             let member = match member {
                 Some(m) => m,
@@ -4937,11 +5142,10 @@ async fn handle_ws_message(
             }
 
             // Unpin the message
-            let success = state
-                .db
-                .unpin_message(message_id)
-                .await
-                .map_err(|e| format!("Failed to unpin message: {}", e))?;
+            let success = state.db.unpin_message(message_id).await.map_err(|e| {
+                tracing::error!("Failed to unpin message: {}", e);
+                "Internal server error".to_string()
+            })?;
 
             if !success {
                 return Err("Message is not pinned".into());
@@ -5420,7 +5624,10 @@ pub async fn upload_file_handler(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to store file: {}", e),
+                    error: {
+                        tracing::error!("Failed to store file: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             ))
@@ -6829,7 +7036,10 @@ pub async fn send_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -6854,7 +7064,10 @@ pub async fn send_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -6878,7 +7091,10 @@ pub async fn send_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -6901,7 +7117,10 @@ pub async fn send_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -6924,7 +7143,10 @@ pub async fn send_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -6957,7 +7179,10 @@ pub async fn send_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to create friend request: {}", e),
+                    error: {
+                        tracing::error!("Failed to create friend request: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -6990,7 +7215,10 @@ pub async fn accept_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7028,7 +7256,10 @@ pub async fn accept_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to accept: {}", e),
+                    error: {
+                        tracing::error!("Failed to accept: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7069,7 +7300,10 @@ pub async fn reject_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7102,7 +7336,10 @@ pub async fn reject_friend_request_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to reject: {}", e),
+                    error: {
+                        tracing::error!("Failed to reject: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7137,7 +7374,10 @@ pub async fn list_friends_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7156,7 +7396,10 @@ pub async fn list_friends_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("DB error: {}", e),
+                error: {
+                    tracing::error!("DB error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -7177,7 +7420,10 @@ pub async fn list_friend_requests_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("DB error: {}", e),
+                error: {
+                    tracing::error!("DB error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -7203,7 +7449,10 @@ pub async fn remove_friend_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7226,7 +7475,10 @@ pub async fn remove_friend_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7249,7 +7501,10 @@ pub async fn remove_friend_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7604,7 +7859,10 @@ pub async fn register_push_token_handler(
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to register device token: {}", err),
+                error: {
+                    tracing::error!("Failed to register device token: {}", err);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -7632,7 +7890,10 @@ pub async fn deregister_push_token_handler(
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to deregister token: {}", err),
+                error: {
+                    tracing::error!("Failed to deregister token: {}", err);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -7672,7 +7933,10 @@ pub async fn update_push_preferences_handler(
         Err(err) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to update preferences: {}", err),
+                error: {
+                    tracing::error!("Failed to update preferences: {}", err);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )),
@@ -7722,7 +7986,10 @@ async fn require_node_permission(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to compute permissions: {}", e),
+                    error: {
+                        tracing::error!("Failed to compute permissions: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7757,7 +8024,10 @@ pub async fn list_roles_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get roles: {}", e),
+                error: {
+                    tracing::error!("Failed to get roles: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -7787,7 +8057,10 @@ pub async fn create_role_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("DB error: {}", e),
+                error: {
+                    tracing::error!("DB error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -7810,7 +8083,10 @@ pub async fn create_role_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to create role: {}", e),
+                    error: {
+                        tracing::error!("Failed to create role: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -7881,7 +8157,10 @@ pub async fn update_role_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to update role: {}", e),
+                    error: {
+                        tracing::error!("Failed to update role: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -8432,7 +8711,10 @@ pub async fn import_discord_template_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Permission check failed: {e}"),
+                    error: {
+                        tracing::error!("Permission check failed: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -8459,7 +8741,10 @@ pub async fn import_discord_template_handler(
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: format!("Failed to fetch template: {e}"),
+                    error: {
+                        tracing::error!("Failed to fetch template: {}", e);
+                        "Failed to fetch template".to_string()
+                    },
                     code: 502,
                 }),
             )
@@ -8481,7 +8766,10 @@ pub async fn import_discord_template_handler(
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse {
-                    error: format!("Invalid JSON from Discord: {e}"),
+                    error: {
+                        tracing::error!("Invalid JSON from Discord: {}", e);
+                        "Invalid response from Discord".to_string()
+                    },
                     code: 502,
                 }),
             )
@@ -9109,7 +9397,10 @@ pub async fn block_user_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("DB error: {}", e),
+                    error: {
+                        tracing::error!("DB error: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -9133,7 +9424,10 @@ pub async fn block_user_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to block user: {}", e),
+                    error: {
+                        tracing::error!("Failed to block user: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -9161,7 +9455,10 @@ pub async fn unblock_user_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to unblock user: {}", e),
+                    error: {
+                        tracing::error!("Failed to unblock user: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -9194,7 +9491,10 @@ pub async fn get_blocked_users_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get blocked users: {}", e),
+                error: {
+                    tracing::error!("Failed to get blocked users: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -9339,7 +9639,10 @@ pub async fn upload_custom_emoji_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to create emoji dir: {}", e),
+                error: {
+                    tracing::error!("Failed to create emoji dir: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -9350,7 +9653,10 @@ pub async fn upload_custom_emoji_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to write emoji: {}", e),
+                    error: {
+                        tracing::error!("Failed to write emoji: {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -9365,7 +9671,10 @@ pub async fn upload_custom_emoji_handler(
             (
                 StatusCode::CONFLICT,
                 Json(ErrorResponse {
-                    error: format!("Failed to create emoji (name may already exist): {}", e),
+                    error: {
+                        tracing::error!("Failed to create emoji (name may already exist): {}", e);
+                        "Internal server error".to_string()
+                    },
                     code: 409,
                 }),
             )
@@ -9399,7 +9708,10 @@ pub async fn list_custom_emojis_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to list emojis: {}", e),
+                error: {
+                    tracing::error!("Failed to list emojis: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -9422,7 +9734,10 @@ pub async fn delete_custom_emoji_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("{}", e),
+                error: {
+                    tracing::error!("Internal error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -9477,7 +9792,10 @@ pub async fn delete_custom_emoji_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("{}", e),
+                error: {
+                    tracing::error!("Internal error: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
@@ -9532,7 +9850,10 @@ pub async fn get_emoji_image_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to read emoji: {}", e),
+                error: {
+                    tracing::error!("Failed to read emoji: {}", e);
+                    "Internal server error".to_string()
+                },
                 code: 500,
             }),
         )
