@@ -5,14 +5,20 @@ import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
 import { UpdateSection } from './UpdateChecker';
 import { themes, applyTheme, getSavedTheme } from './themes';
+import { avatarColor } from './avatarColor';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
+
+const DISPLAY_NAME_MAX = 32;
+const BIO_MAX = 190;
+const AVATAR_PALETTE = ['#5865f2', '#57f287', '#fee75c', '#eb459e', '#ed4245', '#9b59b6', '#e67e22', '#1abc9c'];
 
 // Types for settings
 interface AccountSettings {
   displayName: string;
   bio: string;
   status: 'online' | 'away' | 'busy' | 'invisible';
+  customStatus: string;
 }
 
 interface AppearanceSettings {
@@ -82,7 +88,8 @@ type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'priva
 const defaultAccountSettings: AccountSettings = {
   displayName: '',
   bio: '',
-  status: 'online'
+  status: 'online',
+  customStatus: '',
 };
 
 const defaultAppearanceSettings: AppearanceSettings = {
@@ -159,7 +166,8 @@ export const Settings: React.FC<SettingsProps> = ({
           setAccountSettings({
             displayName: currentUser.displayName || currentUser.display_name || currentUser.username || currentUser.public_key_hash.slice(0, 16),
             bio: currentUser.bio || '',
-            status: (currentUser.status as AccountSettings['status']) || 'online'
+            status: (currentUser.status as AccountSettings['status']) || 'online',
+            customStatus: (currentUser as any).custom_status || '',
           });
         }
 
@@ -242,6 +250,7 @@ export const Settings: React.FC<SettingsProps> = ({
         await api.updateProfile({
           display_name: accountSettings.displayName,
           bio: accountSettings.bio,
+          custom_status: accountSettings.customStatus || undefined,
         }, token);
       }
       localStorage.setItem('accord_account_settings', JSON.stringify(accountSettings));
@@ -696,141 +705,259 @@ export const Settings: React.FC<SettingsProps> = ({
           <div className="settings-panel">
             {/* =================== PROFILE =================== */}
             {activeTab === 'account' && (
-              <div className="settings-section">
-                <h3>Profile</h3>
+              <div className="settings-section settings-profile-layout">
+                <div className="settings-profile-form">
+                  <h3>Profile</h3>
 
-                {/* Avatar Upload */}
-                <div className="settings-avatar-upload">
-                  <div 
-                    className="settings-avatar-circle"
-                    onClick={() => {
-                      const input = document.createElement('input');
-                      input.type = 'file';
-                      input.accept = 'image/png,image/jpeg,image/gif,image/webp';
-                      input.onchange = async (e) => {
-                        const file = (e.target as HTMLInputElement).files?.[0];
-                        if (!file) return;
-                        if (file.size > 256 * 1024) {
-                          setProfileSaveMsg('Avatar must be under 256KB');
-                          return;
-                        }
-                        try {
-                          const token = localStorage.getItem('accord_auth_token') || '';
-                          await api.uploadUserAvatar(file, token);
-                          setProfileSaveMsg('Avatar updated!');
-                          setProfileDirty(false);
-                        } catch (err) {
-                          setProfileSaveMsg(err instanceof Error ? err.message : 'Failed to upload avatar');
-                        }
-                      };
-                      input.click();
-                    }}
-                    title="Click to upload avatar"
-                  >
-                    {currentUser?.id ? (
-                      <img 
-                        src={`${api.getUserAvatarUrl(currentUser.id)}`}
-                        alt={(currentUser?.display_name || "U")[0]}
-                        onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (currentUser?.display_name || "U")[0]; }}
-                      />
-                    ) : (currentUser?.display_name || "U")[0]}
-                    <div className="settings-avatar-edit">EDIT</div>
-                  </div>
-                  <span className="settings-avatar-hint">
-                    Click to upload avatar (PNG, JPEG, GIF, WebP — max 256KB)
-                  </span>
-                </div>
-
-                {/* Fingerprint */}
-                {currentUser?.public_key_hash && (
-                  <div className="settings-group">
-                    <label className="settings-label">Public Key Fingerprint</label>
-                    <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: 0.5 }}>
-                      {formatFingerprint(currentUser.public_key_hash)}
+                  {/* Avatar Upload + Color Picker */}
+                  <div className="settings-avatar-upload">
+                    <div 
+                      className="settings-avatar-circle"
+                      onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+                        input.onchange = async (e) => {
+                          const file = (e.target as HTMLInputElement).files?.[0];
+                          if (!file) return;
+                          if (file.size > 256 * 1024) {
+                            setProfileSaveMsg('Avatar must be under 256KB');
+                            return;
+                          }
+                          try {
+                            const token = localStorage.getItem('accord_auth_token') || '';
+                            await api.uploadUserAvatar(file, token);
+                            setProfileSaveMsg('Avatar updated!');
+                            setProfileDirty(false);
+                          } catch (err) {
+                            setProfileSaveMsg(err instanceof Error ? err.message : 'Failed to upload avatar');
+                          }
+                        };
+                        input.click();
+                      }}
+                      title="Click to upload avatar"
+                    >
+                      {currentUser?.id ? (
+                        <img 
+                          src={`${api.getUserAvatarUrl(currentUser.id)}`}
+                          alt={(currentUser?.display_name || "U")[0]}
+                          onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (currentUser?.display_name || "U")[0]; }}
+                        />
+                      ) : (currentUser?.display_name || "U")[0]}
+                      <div className="settings-avatar-edit">EDIT</div>
+                    </div>
+                    <div className="settings-avatar-options">
+                      <span className="settings-avatar-hint">
+                        Click to upload (PNG, JPEG, GIF, WebP — max 256KB)
+                      </span>
+                      <div className="settings-avatar-palette">
+                        {AVATAR_PALETTE.map(color => (
+                          <button
+                            key={color}
+                            className="settings-avatar-color-swatch"
+                            style={{ background: color }}
+                            title={`Set avatar color ${color}`}
+                            onClick={() => {
+                              // Letter avatar with this color — store preference
+                              localStorage.setItem('accord_avatar_color', color);
+                              setProfileDirty(true);
+                              setProfileSaveMsg('');
+                            }}
+                          >
+                            {(accountSettings.displayName || 'U')[0].toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                )}
 
-                <div className="settings-group">
-                  <label className="settings-label">Display Name</label>
-                  <input
-                    type="text"
-                    className="settings-input"
-                    value={accountSettings.displayName}
-                    onChange={(e) => updateAccountLocally({
-                      ...accountSettings,
-                      displayName: e.target.value
-                    })}
-                    placeholder="Enter display name..."
-                  />
-                </div>
-
-                <div className="settings-group">
-                  <label className="settings-label">Bio</label>
-                  <textarea
-                    className="settings-textarea"
-                    value={accountSettings.bio}
-                    onChange={(e) => updateAccountLocally({
-                      ...accountSettings,
-                      bio: e.target.value
-                    })}
-                    placeholder="Tell others about yourself..."
-                    rows={3}
-                  />
-                </div>
-
-                <div className="settings-group">
-                  <label className="settings-label">Status</label>
-                  <div className="status-buttons">
-                    {(['online', 'away', 'busy', 'invisible'] as const).map(status => (
-                      <button
-                        key={status}
-                        className={`status-button ${accountSettings.status === status ? 'active' : ''}`}
-                        onClick={() => updateAccountLocally({
-                          ...accountSettings,
-                          status
-                        })}
-                      >
-                        <div className={`status-indicator ${status}`}></div>
-                        {status.charAt(0).toUpperCase() + status.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Save button */}
-                <div className="settings-group settings-action-row">
-                  <button
-                    className="btn btn-primary"
-                    style={{ width: 'auto', padding: '10px 24px' }}
-                    disabled={!profileDirty || profileSaving}
-                    onClick={saveProfileToServer}
-                  >
-                    {profileSaving ? 'Saving...' : 'Save Profile'}
-                  </button>
-                  {profileSaveMsg && (
-                    <span className="settings-help" style={{ color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)', margin: 0 }}>
-                      {profileSaveMsg}
-                    </span>
+                  {/* Fingerprint */}
+                  {currentUser?.public_key_hash && (
+                    <div className="settings-group">
+                      <label className="settings-label">Public Key Fingerprint</label>
+                      <div className="settings-info" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: 0.5 }}>
+                        {formatFingerprint(currentUser.public_key_hash)}
+                      </div>
+                    </div>
                   )}
-                </div>
 
-                <div className="settings-group">
-                  <div className="settings-info">
-                    <strong>User ID:</strong> {currentUser?.id || 'Unknown'}
+                  <div className="settings-group">
+                    <label className="settings-label">
+                      Display Name
+                      <span className={`settings-char-count ${accountSettings.displayName.length > DISPLAY_NAME_MAX ? 'over' : ''}`}>
+                        {accountSettings.displayName.length}/{DISPLAY_NAME_MAX}
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      className="settings-input"
+                      value={accountSettings.displayName}
+                      maxLength={DISPLAY_NAME_MAX}
+                      onChange={(e) => updateAccountLocally({
+                        ...accountSettings,
+                        displayName: e.target.value.slice(0, DISPLAY_NAME_MAX)
+                      })}
+                      placeholder="Enter display name..."
+                    />
+                  </div>
+
+                  <div className="settings-group">
+                    <label className="settings-label">
+                      About Me
+                      <span className={`settings-char-count ${accountSettings.bio.length > BIO_MAX ? 'over' : ''}`}>
+                        {accountSettings.bio.length}/{BIO_MAX}
+                      </span>
+                    </label>
+                    <textarea
+                      className="settings-textarea"
+                      value={accountSettings.bio}
+                      maxLength={BIO_MAX}
+                      onChange={(e) => updateAccountLocally({
+                        ...accountSettings,
+                        bio: e.target.value.slice(0, BIO_MAX)
+                      })}
+                      placeholder="Tell others about yourself..."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="settings-group">
+                    <label className="settings-label">Custom Status</label>
+                    <div className="settings-custom-status-row">
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={accountSettings.customStatus}
+                        onChange={(e) => updateAccountLocally({
+                          ...accountSettings,
+                          customStatus: e.target.value
+                        })}
+                        placeholder="😊 What's on your mind?"
+                        maxLength={128}
+                      />
+                    </div>
+                    <div className="settings-help">
+                      Set a custom status visible on your profile card. Start with an emoji!
+                    </div>
+                  </div>
+
+                  <div className="settings-group">
+                    <label className="settings-label">Status</label>
+                    <div className="status-buttons">
+                      {(['online', 'away', 'busy', 'invisible'] as const).map(status => (
+                        <button
+                          key={status}
+                          className={`status-button ${accountSettings.status === status ? 'active' : ''}`}
+                          onClick={() => updateAccountLocally({
+                            ...accountSettings,
+                            status
+                          })}
+                        >
+                          <div className={`status-indicator ${status}`}></div>
+                          {status.charAt(0).toUpperCase() + status.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Save / Cancel buttons */}
+                  <div className="settings-group settings-action-row">
+                    <button
+                      className="btn btn-primary"
+                      style={{ width: 'auto', padding: '10px 24px' }}
+                      disabled={!profileDirty || profileSaving}
+                      onClick={saveProfileToServer}
+                    >
+                      {profileSaving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    <button
+                      className="btn settings-btn-secondary"
+                      style={{ width: 'auto', padding: '10px 24px' }}
+                      disabled={!profileDirty}
+                      onClick={() => {
+                        // Reset to original values
+                        if (currentUser) {
+                          setAccountSettings({
+                            displayName: currentUser.displayName || currentUser.display_name || currentUser.username || currentUser.public_key_hash.slice(0, 16),
+                            bio: currentUser.bio || '',
+                            status: (currentUser.status as AccountSettings['status']) || 'online',
+                            customStatus: (currentUser as any).custom_status || '',
+                          });
+                        } else {
+                          setAccountSettings(defaultAccountSettings);
+                        }
+                        setProfileDirty(false);
+                        setProfileSaveMsg('');
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    {profileSaveMsg && (
+                      <span className="settings-help" style={{ color: profileSaveMsg.includes('failed') ? 'var(--yellow)' : 'var(--green)', margin: 0 }}>
+                        {profileSaveMsg}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="settings-group">
+                    <div className="settings-info">
+                      <strong>User ID:</strong> {currentUser?.id || 'Unknown'}
+                    </div>
+                  </div>
+
+                  <div className="settings-logout-section">
+                    <button
+                      className="settings-logout-btn"
+                      onClick={() => { onClose(); if (onLogout) setTimeout(onLogout, 100); }}
+                    >
+                      Log Out
+                    </button>
+                    <p className="settings-logout-hint">
+                      Your identity keys are saved locally. You can log back in with your password.
+                    </p>
                   </div>
                 </div>
 
-                <div className="settings-logout-section">
-                  <button
-                    className="settings-logout-btn"
-                    onClick={() => { onClose(); if (onLogout) setTimeout(onLogout, 100); }}
-                  >
-                    Log Out
-                  </button>
-                  <p className="settings-logout-hint">
-                    Your identity keys are saved locally. You can log back in with your password.
-                  </p>
+                {/* Live Profile Card Preview */}
+                <div className="settings-profile-preview">
+                  <h4 className="settings-preview-title">Preview</h4>
+                  <div className="settings-preview-card">
+                    <div className="profile-card-banner" style={{
+                      background: `linear-gradient(135deg, ${currentUser?.id ? avatarColor(currentUser.id) : '#5865f2'}, ${currentUser?.id ? avatarColor(currentUser.id) : '#5865f2'}88)`,
+                      height: 60, borderRadius: '8px 8px 0 0',
+                    }} />
+                    <div className="settings-preview-avatar" style={{
+                      background: currentUser?.id ? avatarColor(currentUser.id) : '#5865f2',
+                    }}>
+                      {currentUser?.id ? (
+                        <img
+                          src={api.getUserAvatarUrl(currentUser.id)}
+                          alt=""
+                          onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = (accountSettings.displayName || 'U')[0].toUpperCase(); }}
+                        />
+                      ) : (accountSettings.displayName || 'U')[0].toUpperCase()}
+                    </div>
+                    <div className="settings-preview-body">
+                      <div className="settings-preview-name">
+                        {accountSettings.displayName || 'Display Name'}
+                      </div>
+                      <div className="settings-preview-username">
+                        {currentUser?.public_key_hash ? currentUser.public_key_hash.substring(0, 16) : 'username'}
+                      </div>
+                      {accountSettings.customStatus && (
+                        <div className="settings-preview-custom-status">
+                          {accountSettings.customStatus}
+                        </div>
+                      )}
+                      <div className="profile-card-divider" style={{ margin: '8px 0' }} />
+                      {accountSettings.bio && (
+                        <div className="settings-preview-bio-section">
+                          <div className="profile-card-section-title">ABOUT ME</div>
+                          <div className="settings-preview-bio">{accountSettings.bio}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
