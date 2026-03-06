@@ -380,6 +380,75 @@ function App() {
   // Read receipts (extracted to useReadReceipts hook)
   const { readReceipts, sendReadReceipt, handleReadReceiptEvent } = useReadReceipts();
 
+  // User-chosen presence status (online/idle/dnd/invisible)
+  const [userPresenceStatus, setUserPresenceStatus] = useState<import('./types').PresenceStatus>(
+    () => (localStorage.getItem('accord_presence_status') as any) || 'online'
+  );
+  const [showStatusPicker, setShowStatusPicker] = useState(false);
+  const userPresenceStatusRef = useRef(userPresenceStatus);
+  useEffect(() => { userPresenceStatusRef.current = userPresenceStatus; }, [userPresenceStatus]);
+
+  // Idle detection: after 5 min of no mouse/keyboard activity, set status to idle
+  // (unless user explicitly chose dnd or invisible)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let idleTimer: ReturnType<typeof setTimeout>;
+    const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      // If user was auto-idled, restore their chosen status
+      const chosen = userPresenceStatusRef.current;
+      if (chosen === 'online') {
+        // Only send update if we were previously idle
+        if (presenceMap.get(localStorage.getItem('accord_user_id') || '') === ('idle' as any)) {
+          api.updateProfile({ status: 'online' as any }, appState.token || '').catch(() => {});
+        }
+      }
+      idleTimer = setTimeout(() => {
+        const chosen = userPresenceStatusRef.current;
+        if (chosen === 'online') {
+          // Auto-idle
+          api.updateProfile({ status: 'idle' as any }, appState.token || '').catch(() => {});
+        }
+      }, IDLE_TIMEOUT);
+    };
+
+    resetIdleTimer();
+    window.addEventListener('mousemove', resetIdleTimer);
+    window.addEventListener('keydown', resetIdleTimer);
+    window.addEventListener('mousedown', resetIdleTimer);
+
+    return () => {
+      clearTimeout(idleTimer);
+      window.removeEventListener('mousemove', resetIdleTimer);
+      window.removeEventListener('keydown', resetIdleTimer);
+      window.removeEventListener('mousedown', resetIdleTimer);
+    };
+  }, [isAuthenticated, appState.token]);
+
+  // When user changes their presence status, persist and send to server
+  const handleSetPresenceStatus = useCallback(async (status: import('./types').PresenceStatus) => {
+    setUserPresenceStatus(status);
+    localStorage.setItem('accord_presence_status', status);
+    setShowStatusPicker(false);
+    // Sync DND with notification manager
+    notificationManager.doNotDisturb = status === ('dnd' as any);
+    if (!appState.token) return;
+    try {
+      // For invisible, tell server we're offline
+      const serverStatus = status === ('invisible' as any) ? 'offline' : status;
+      await api.updateProfile({ status: serverStatus as any }, appState.token);
+    } catch (error) {
+      console.error('Failed to update presence status:', error);
+    }
+  }, [appState.token]);
+
+  // Sync DND on initial load
+  useEffect(() => {
+    notificationManager.doNotDisturb = userPresenceStatus === ('dnd' as any);
+  }, []);
+
   // Bot API v2 state
   const [installedBots, setInstalledBots] = useState<InstalledBot[]>([]);
   const [botResponses, setBotResponses] = useState<BotResponseMessage[]>([]);
@@ -3309,6 +3378,9 @@ function App() {
     // Custom status
     customStatus, showStatusPopover, setShowStatusPopover,
     statusInput, setStatusInput,
+
+    // Presence status picker
+    userPresenceStatus, showStatusPicker, setShowStatusPicker, handleSetPresenceStatus,
 
     // Pinned
     showPinnedPanel, setShowPinnedPanel, pinnedMessages, showPinConfirm, setShowPinConfirm,

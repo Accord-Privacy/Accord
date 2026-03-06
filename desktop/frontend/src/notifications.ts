@@ -34,6 +34,7 @@ export class NotificationManager {
   private windowFocused = true;
   private activeChannelId: string | null = null;
   private audioContext: AudioContext | null = null;
+  public doNotDisturb = false;
 
   constructor() {
     this.preferences = this.loadPreferences();
@@ -268,8 +269,8 @@ export class NotificationManager {
   }
 
   private handleMessageNotification(message: Message, channelId: string, isMention: boolean, isDm: boolean = false): void {
-    // Don't notify for the channel the user is currently viewing
-    if (!this.preferences.enabled || (this.windowFocused && this.activeChannelId === channelId)) {
+    // Don't notify for the channel the user is currently viewing, or if DND
+    if (this.doNotDisturb || !this.preferences.enabled || (this.windowFocused && this.activeChannelId === channelId)) {
       return;
     }
 

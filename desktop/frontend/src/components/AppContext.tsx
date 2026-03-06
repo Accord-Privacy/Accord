@@ -145,6 +145,12 @@ export interface AppContextType {
   statusInput: string;
   setStatusInput: React.Dispatch<React.SetStateAction<string>>;
 
+  // Presence status picker
+  userPresenceStatus: import('../types').PresenceStatus;
+  showStatusPicker: boolean;
+  setShowStatusPicker: React.Dispatch<React.SetStateAction<boolean>>;
+  handleSetPresenceStatus: (status: import('../types').PresenceStatus) => Promise<void>;
+
   // Pinned
   showPinnedPanel: boolean;
   setShowPinnedPanel: React.Dispatch<React.SetStateAction<boolean>>;

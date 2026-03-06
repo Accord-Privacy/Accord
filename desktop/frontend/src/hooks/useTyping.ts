@@ -42,6 +42,7 @@ export function useTyping(
 
     if (filtered.length === 1) return `${getName(filtered[0])} is typing`;
     if (filtered.length === 2) return `${getName(filtered[0])} and ${getName(filtered[1])} are typing`;
+    if (filtered.length === 3) return `${getName(filtered[0])}, ${getName(filtered[1])}, and ${getName(filtered[2])} are typing`;
     return 'Several people are typing';
   }, [typingUsers, members]);
 

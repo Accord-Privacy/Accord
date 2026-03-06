@@ -423,16 +423,28 @@ export const ChannelSidebar: React.FC = () => {
             <span>Set Custom Status</span>
             <button onClick={() => ctx.setShowStatusPopover(false)} className="status-popover-close" aria-label="Close">×</button>
           </div>
-          <input
-            type="text"
-            className="status-popover-input"
-            placeholder="What's on your mind?"
-            value={ctx.statusInput}
-            onChange={(e) => ctx.setStatusInput(e.target.value.slice(0, 128))}
-            onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleSaveCustomStatus(); if (e.key === 'Escape') ctx.setShowStatusPopover(false); }}
-            maxLength={128}
-            autoFocus
-          />
+          <div className="status-popover-input-row">
+            <StatusEmojiPicker
+              onSelect={(emoji) => {
+                // Prefix the status with the emoji if not already there
+                const current = ctx.statusInput;
+                // Check if already starts with an emoji-like prefix
+                const emojiRegex = /^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)\s*/u;
+                const stripped = current.replace(emojiRegex, '');
+                ctx.setStatusInput(`${emoji} ${stripped}`.slice(0, 128));
+              }}
+            />
+            <input
+              type="text"
+              className="status-popover-input"
+              placeholder="What's on your mind?"
+              value={ctx.statusInput}
+              onChange={(e) => ctx.setStatusInput(e.target.value.slice(0, 128))}
+              onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleSaveCustomStatus(); if (e.key === 'Escape') ctx.setShowStatusPopover(false); }}
+              maxLength={128}
+              autoFocus
+            />
+          </div>
           <div className="status-popover-footer">
             <span className="status-popover-count">{ctx.statusInput.length}/128</span>
             <div className="status-popover-actions">
@@ -442,6 +454,24 @@ export const ChannelSidebar: React.FC = () => {
               <button className="status-popover-save" onClick={ctx.handleSaveCustomStatus}>Save</button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const STATUS_EMOJIS = ['😀', '😊', '🎮', '🎵', '📚', '💻', '🏠', '🌙', '☕', '🔴', '🟢', '⚡', '🎯', '🤔', '✨'];
+
+const StatusEmojiPicker: React.FC<{ onSelect: (emoji: string) => void }> = ({ onSelect }) => {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="status-emoji-picker-wrapper">
+      <button className="status-emoji-btn" onClick={() => setOpen(!open)} title="Add emoji" type="button">😀</button>
+      {open && (
+        <div className="status-emoji-grid">
+          {STATUS_EMOJIS.map(e => (
+            <button key={e} className="status-emoji-option" onClick={() => { onSelect(e); setOpen(false); }}>{e}</button>
+          ))}
         </div>
       )}
     </div>
@@ -543,7 +573,7 @@ const UserPanel: React.FC = () => {
         </div>
       )}
       <div className="user-panel">
-        <div className="user-avatar" style={{ background: avatarColor(ctx.appState.user?.id || '') }}>
+        <div className="user-avatar" style={{ background: avatarColor(ctx.appState.user?.id || ''), cursor: 'pointer' }} onClick={() => ctx.setShowStatusPicker(prev => !prev)}>
           {ctx.appState.user?.id ? (
             <img
               src={`${api.getUserAvatarUrl(ctx.appState.user.id)}`}
@@ -551,12 +581,41 @@ const UserPanel: React.FC = () => {
               onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U"; }}
             />
           ) : ((ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U")}
-          <span className={`presence-dot ${ctx.appState.isConnected ? 'online' : 'offline'}`} />
+          <span className={`presence-dot presence-${ctx.userPresenceStatus === 'invisible' as any ? 'offline' : ctx.userPresenceStatus}`} />
         </div>
+        {ctx.showStatusPicker && (
+          <div className="status-picker" role="menu" aria-label="Set status">
+            <div className="status-picker-item" role="menuitem" onClick={() => ctx.handleSetPresenceStatus('online' as any)}>
+              <span className="presence-dot presence-online" /> Online
+            </div>
+            <div className="status-picker-item" role="menuitem" onClick={() => ctx.handleSetPresenceStatus('idle' as any)}>
+              <span className="presence-dot presence-idle" /> Idle
+            </div>
+            <div className="status-picker-item" role="menuitem" onClick={() => ctx.handleSetPresenceStatus('dnd' as any)}>
+              <span className="presence-dot presence-dnd" /> Do Not Disturb
+            </div>
+            <div className="status-picker-item" role="menuitem" onClick={() => ctx.handleSetPresenceStatus('invisible' as any)}>
+              <span className="presence-dot presence-offline" /> Invisible
+            </div>
+            <div className="status-picker-divider" />
+            <div className="status-picker-item" role="menuitem" onClick={() => { ctx.setShowStatusPicker(false); ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }}>
+              ✏️ Set Custom Status
+            </div>
+          </div>
+        )}
         <div className="user-info user-info-clickable" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }}>
           <div className="username">{ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || '') || "You"}</div>
           <div className="user-status">
-            {ctx.customStatus || (ctx.appState.isConnected ? "Online" : (ctx.nodes.length === 0 ? "Ready" : "Offline"))}
+            {ctx.customStatus || (() => {
+              if (!ctx.appState.isConnected && ctx.nodes.length > 0) return 'Offline';
+              if (!ctx.appState.isConnected) return 'Ready';
+              switch (ctx.userPresenceStatus) {
+                case 'dnd' as any: return 'Do Not Disturb';
+                case 'idle' as any: return 'Idle';
+                case 'invisible' as any: return 'Invisible';
+                default: return 'Online';
+              }
+            })()}
           </div>
         </div>
         <div className="user-panel-controls">
