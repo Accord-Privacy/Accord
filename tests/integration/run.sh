@@ -15,6 +15,8 @@ SERVER_PID=""
 PASS=0
 FAIL=0
 TOTAL=0
+COUNTER_FILE="${TMPDIR}/counters"
+echo "0 0 0" > "${COUNTER_FILE}"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 cleanup() {
@@ -27,8 +29,19 @@ cleanup() {
 trap cleanup EXIT
 
 log()  { echo -e "\033[1;34m[INFO]\033[0m $*"; }
-pass() { echo -e "\033[1;32m[PASS]\033[0m $1"; PASS=$((PASS+1)); TOTAL=$((TOTAL+1)); }
-fail() { echo -e "\033[1;31m[FAIL]\033[0m $1: $2"; FAIL=$((FAIL+1)); TOTAL=$((TOTAL+1)); }
+pass() {
+    echo -e "\033[1;32m[PASS]\033[0m $1"
+    PASS=$((PASS+1)); TOTAL=$((TOTAL+1))
+    echo "$PASS $FAIL $TOTAL" > "${COUNTER_FILE}"
+}
+fail() {
+    echo -e "\033[1;31m[FAIL]\033[0m $1: $2"
+    FAIL=$((FAIL+1)); TOTAL=$((TOTAL+1))
+    echo "$PASS $FAIL $TOTAL" > "${COUNTER_FILE}"
+}
+sync_counters() {
+    read PASS FAIL TOTAL < "${COUNTER_FILE}"
+}
 
 # assert_json_field RESPONSE FIELD DESCRIPTION
 # Extracts .FIELD from JSON, fails if empty/null
@@ -40,7 +53,7 @@ assert_json_field() {
         echo ""
         return 1
     fi
-    pass "$3"
+    pass "$3" >&2
     echo "$val"
 }
 
@@ -52,7 +65,7 @@ assert_json_eq() {
         fail "$4" "expected .$2='$3', got '$val'"
         return 1
     fi
-    pass "$4"
+    pass "$4" >&2
 }
 
 # POST/GET/PUT/PATCH/DELETE helpers
@@ -68,8 +81,8 @@ cargo build -p accord-server --quiet 2>&1
 
 # ─── Start Server ────────────────────────────────────────────────────────────
 log "Starting server on port ${PORT} with DB ${DB}..."
-cargo run -p accord-server --quiet -- serve \
-    -p "$PORT" -d "$DB" --database-encryption false \
+cargo run -p accord-server --quiet -- \
+    -p "$PORT" -d "$DB" --no-tls serve \
     > "${TMPDIR}/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -152,7 +165,7 @@ assert_json_eq "$RESP" "status" "joined" "User B joins via invite → status=joi
 
 # Verify B is a member
 RESP=$(get "${BASE}/nodes/${NODE_ID}/members?token=${TOKEN_A}")
-MEMBER_COUNT=$(echo "$RESP" | jq 'length' 2>/dev/null || echo "0")
+MEMBER_COUNT=$(echo "$RESP" | jq '.members | length' 2>/dev/null || echo "0")
 if [[ "$MEMBER_COUNT" -ge 2 ]]; then
     pass "User B visible in node members (count=$MEMBER_COUNT)"
 else
@@ -298,6 +311,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 # SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
+sync_counters
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "  Tests: ${TOTAL}  |  \033[1;32mPass: ${PASS}\033[0m  |  \033[1;31mFail: ${FAIL}\033[0m"
