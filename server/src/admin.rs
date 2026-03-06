@@ -1,6 +1,6 @@
 //! Admin dashboard routes for the Accord relay server.
 //!
-//! Auth-gated via `X-Admin-Token` header (or `?admin_token=` query param)
+//! Auth-gated via `X-Admin-Token` header only (query param auth removed for security)
 //! matching the `ACCORD_ADMIN_TOKEN` environment variable.
 
 use crate::state::SharedState;
@@ -30,11 +30,12 @@ pub fn new_log_broadcast() -> LogBroadcast {
 
 // ── Auth helper ──
 
-fn validate_admin_token(headers: &HeaderMap, params: &HashMap<String, String>) -> bool {
+fn validate_admin_token(headers: &HeaderMap, _params: &HashMap<String, String>) -> bool {
     let expected = match std::env::var("ACCORD_ADMIN_TOKEN") {
         Ok(t) if !t.is_empty() => t,
         _ => return false, // No token configured → admin disabled
     };
+    // Only accept token via header — never query params (which leak in logs/history/referers)
     if let Some(hdr) = headers.get("x-admin-token") {
         if let Ok(val) = hdr.to_str() {
             if val == expected {
@@ -42,6 +43,22 @@ fn validate_admin_token(headers: &HeaderMap, params: &HashMap<String, String>) -
             }
         }
     }
+    false
+}
+
+/// WebSocket connections can't set custom headers from browsers, so we allow
+/// query param auth ONLY for the admin WebSocket endpoint. This is acceptable
+/// because WS upgrade URLs aren't stored in browser history or sent as referers.
+fn validate_admin_token_ws(headers: &HeaderMap, params: &HashMap<String, String>) -> bool {
+    // Try header first
+    if validate_admin_token(headers, params) {
+        return true;
+    }
+    // Fall back to query param for WebSocket only
+    let expected = match std::env::var("ACCORD_ADMIN_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return false,
+    };
     if let Some(val) = params.get("admin_token") {
         if *val == expected {
             return true;
@@ -131,7 +148,7 @@ pub async fn admin_logs_ws_handler(
     Query(params): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    if !validate_admin_token(&headers, &params) {
+    if !validate_admin_token_ws(&headers, &params) {
         return Err(unauthorized());
     }
     let rx = log_tx.subscribe();
