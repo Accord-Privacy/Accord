@@ -418,7 +418,7 @@ function App() {
   const getRoleBadge = (role: 'admin' | 'moderator' | 'member') => {
     switch (role) {
       case 'admin': return '★';
-      case 'moderator': return '🛡️';
+      case 'moderator': return '◆';
       default: return '';
     }
   };
