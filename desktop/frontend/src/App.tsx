@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingUser, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceipt, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -45,6 +45,12 @@ import {
   MnemonicModal, RecoverModal, KeyBackupScreen,
   ServerList, ChannelSidebar, ChatArea, MemberSidebar, AppModals,
 } from "./components";
+import { useVoice } from "./hooks/useVoice";
+import { usePresence } from "./hooks/usePresence";
+import { useTyping } from "./hooks/useTyping";
+import { useUIState } from "./hooks/useUIState";
+import { useReadReceipts } from "./hooks/useReadReceipts";
+import { useBlocking } from "./hooks/useBlocking";
 
 // Utility: robust clipboard copy that works in non-secure contexts
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -179,9 +185,6 @@ function App() {
   const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo>({ status: 'disconnected', reconnectAttempt: 0, maxReconnectAttempts: 20 });
   const [lastConnectionError, setLastConnectionError] = useState<string>("");
 
-  // Reply state
-  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
-
   // Real data state
   const [nodes, setNodes] = useState<Node[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -195,11 +198,6 @@ function App() {
   const [oldestMessageCursor, setOldestMessageCursor] = useState<string | undefined>(undefined);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  // Message editing state
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [editingContent, setEditingContent] = useState("");
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
-
   const handleStartEdit = (messageId: string, content: string) => {
     setEditingMessageId(messageId);
     setEditingContent(content);
@@ -207,35 +205,74 @@ function App() {
 
   // Role-based permission state
   const [userRoles, setUserRoles] = useState<Record<string, 'admin' | 'moderator' | 'member'>>({});
-  const [showCreateChannelForm, setShowCreateChannelForm] = useState(false);
-  const [newChannelName, setNewChannelName] = useState("");
-  const [newChannelType, setNewChannelType] = useState("text");
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [generatedInvite, setGeneratedInvite] = useState<string>("");
-  const [error, setError] = useState<string>("");
 
-  // Voice state
-  const [voiceChannelId, setVoiceChannelId] = useState<string | null>(null);
-  const [voiceChannelName, setVoiceChannelName] = useState<string>("");
-  const [voiceConnectedAt, setVoiceConnectedAt] = useState<number | null>(null);
-  const [voiceMuted, setVoiceMuted] = useState(false);
-  const [voiceDeafened, setVoiceDeafened] = useState(false);
+  // Voice state (extracted to useVoice hook)
+  const {
+    voiceChannelId, setVoiceChannelId,
+    voiceChannelName, setVoiceChannelName,
+    voiceConnectedAt, setVoiceConnectedAt,
+    voiceMuted, setVoiceMuted,
+    voiceDeafened, setVoiceDeafened,
+  } = useVoice();
 
-  // Custom status state
-  const [customStatus, setCustomStatus] = useState<string>("");
-  const [showStatusPopover, setShowStatusPopover] = useState(false);
-  const [statusInput, setStatusInput] = useState("");
-
-  // Pinned messages state
-  const [showPinnedPanel, setShowPinnedPanel] = useState(false);
-  const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+  // UI state (extracted to useUIState hook)
+  const ui = useUIState();
+  const {
+    customStatus, setCustomStatus,
+    showStatusPopover, setShowStatusPopover,
+    statusInput, setStatusInput,
+    showPinnedPanel, setShowPinnedPanel,
+    pinnedMessages, setPinnedMessages,
+    showEmojiPicker, setShowEmojiPicker,
+    hoveredMessageId, setHoveredMessageId,
+    showNotificationSettings, setShowNotificationSettings,
+    showSearchOverlay, setShowSearchOverlay,
+    showJoinNodeModal, setShowJoinNodeModal,
+    showCreateNodeModal, setShowCreateNodeModal,
+    joinInviteCode, setJoinInviteCode,
+    joiningNode, setJoiningNode,
+    joinError, setJoinError,
+    newNodeName, setNewNodeName,
+    newNodeDescription, setNewNodeDescription,
+    creatingNode, setCreatingNode,
+    showSettings, setShowSettings,
+    showNodeSettings, setShowNodeSettings,
+    showCreateChannelForm, setShowCreateChannelForm,
+    newChannelName, setNewChannelName,
+    newChannelType, setNewChannelType,
+    deleteChannelConfirm, setDeleteChannelConfirm,
+    showInviteModal, setShowInviteModal,
+    generatedInvite, setGeneratedInvite,
+    showDisplayNamePrompt, setShowDisplayNamePrompt,
+    displayNameInput, setDisplayNameInput,
+    displayNameSaving, setDisplayNameSaving,
+    showShortcutsHelp, setShowShortcutsHelp,
+    showMemberSidebar, setShowMemberSidebar,
+    showInputEmojiPicker, setShowInputEmojiPicker,
+    showScrollToBottom, setShowScrollToBottom,
+    newMessageCount, setNewMessageCount,
+    contextMenu, setContextMenu,
+    profileCardTarget, setProfileCardTarget,
+    showBlockConfirm, setShowBlockConfirm,
+    connectedSince, setConnectedSince,
+    showConnectionInfo, setShowConnectionInfo,
+    showTemplateImport, setShowTemplateImport,
+    templateInput, setTemplateInput,
+    templateImporting, setTemplateImporting,
+    templateResult, setTemplateResult,
+    templateError, setTemplateError,
+    collapsedCategories, setCollapsedCategories,
+    showRolePopup, setShowRolePopup,
+    showDmChannelCreate, setShowDmChannelCreate,
+    editingMessageId, setEditingMessageId,
+    editingContent, setEditingContent,
+    showDeleteConfirm, setShowDeleteConfirm,
+    replyingTo, setReplyingTo,
+    error, setError,
+  } = ui;
 
   // Node discovery state
   // Removed unused node dialog state variables
-
-  // Reaction state
-  const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
-  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
 
   // Common emojis for the picker
   const COMMON_EMOJIS = ['👍', '❤️', '😂', '🎉', '🤔', '👀', '🔥', '💯', '✅', '❌'];
@@ -244,33 +281,15 @@ function App() {
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(
     notificationManager.getPreferences()
   );
-  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [forceUpdate, setForceUpdate] = useState(0); // Used to trigger re-renders when unread counts change
-
-  // Search state
-  const [showSearchOverlay, setShowSearchOverlay] = useState(false);
 
   // Direct Messages state
   const [dmChannels, setDmChannels] = useState<DmChannelWithInfo[]>([]);
   const [selectedDmChannel, setSelectedDmChannel] = useState<DmChannelWithInfo | null>(null);
-  const [showDmChannelCreate, setShowDmChannelCreate] = useState(false);
-
-  // Node creation state
-  const [showJoinNodeModal, setShowJoinNodeModal] = useState(false);
-  const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
-  const [joinInviteCode, setJoinInviteCode] = useState("");
-  const [joiningNode, setJoiningNode] = useState(false);
-  const [joinError, setJoinError] = useState("");
-  const [newNodeName, setNewNodeName] = useState("");
-  const [newNodeDescription, setNewNodeDescription] = useState("");
-  const [creatingNode, setCreatingNode] = useState(false);
-
-  // Settings state
-  const [showSettings, setShowSettings] = useState(false);
 
   // Server hello / trust indicator state
   const [serverBuildHash, setServerBuildHash] = useState<string>("");
-  const [serverHelloVersion, setServerHelloVersion] = useState<string>("");
+  const [serverHelloVersion, setServerHelloVersion] = useState<string>("")
   const [knownHashes, setKnownHashes] = useState(getKnownHashes());
 
   // Initialize hash verifier on mount
@@ -279,30 +298,10 @@ function App() {
     return onHashListUpdate(() => setKnownHashes(getKnownHashes()));
   }, []);
 
-  const [connectedSince, setConnectedSince] = useState<number | null>(null);
-  const [showConnectionInfo, setShowConnectionInfo] = useState(false);
-
   // Node settings state
-  const [showNodeSettings, setShowNodeSettings] = useState(false);
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [nodeRoles, setNodeRoles] = useState<Role[]>([]);
   // Map of userId -> Role[] for the current node
   const [memberRolesMap, setMemberRolesMap] = useState<Record<string, Role[]>>({});
-  const [showRolePopup, setShowRolePopup] = useState<{ userId: string; x: number; y: number } | null>(null);
-  const [showTemplateImport, setShowTemplateImport] = useState(false);
-  const [templateInput, setTemplateInput] = useState('');
-  const [templateImporting, setTemplateImporting] = useState(false);
-  const [templateResult, setTemplateResult] = useState<any>(null);
-  const [templateError, setTemplateError] = useState('');
-
-  // Delete channel confirmation modal state
-  const [deleteChannelConfirm, setDeleteChannelConfirm] = useState<{ id: string; name: string } | null>(null);
-
-  // Display name prompt state
-  const [showDisplayNamePrompt, setShowDisplayNamePrompt] = useState(false);
-  const [displayNameInput, setDisplayNameInput] = useState("");
-  const [displayNameSaving, setDisplayNameSaving] = useState(false);
-
   // First-run setup wizard state
   const [showSetupWizard, setShowSetupWizard] = useState(() => {
     // Show wizard if no identity exists (first run)
@@ -333,14 +332,6 @@ function App() {
     return true;
   });
 
-  // Keyboard shortcuts help state
-  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
-
-  // Member sidebar visibility
-  const [showMemberSidebar, setShowMemberSidebar] = useState(true);
-
-  // Message input emoji picker state
-  const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
@@ -362,39 +353,30 @@ function App() {
   // Cache of fetched prekey bundles by user ID
   const prekeyBundleCacheRef = useRef<Map<string, PreKeyBundle>>(new Map());
 
-  // Scroll-to-bottom state
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const [newMessageCount, setNewMessageCount] = useState(0);
+  // Presence state (extracted to usePresence hook)
+  const {
+    presenceMap, setPresenceMap,
+    getPresenceStatus,
+    recordMessageTime,
+  } = usePresence(members);
 
-  // Presence state
-  const [presenceMap, setPresenceMap] = useState<Map<string, import('./types').PresenceStatus>>(new Map());
-  const [lastMessageTimes, setLastMessageTimes] = useState<Map<string, number>>(new Map());
+  // User blocking (extracted to useBlocking hook)
+  const { blockedUsers, handleBlockUser: blockUserRaw, handleUnblockUser: unblockUserRaw } = useBlocking(appState.token, isAuthenticated);
 
-  // Context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; userId: string; publicKeyHash: string; displayName: string; bio?: string; user?: User } | null>(null);
+  // Typing indicators (extracted to useTyping hook)
+  const {
+    typingUsers,
+    sendTypingIndicator,
+    formatTypingUsers,
+    handleTypingStart,
+  } = useTyping(ws, members);
 
-  // Profile card popup state
-  const [profileCardTarget, setProfileCardTarget] = useState<{ userId: string; x: number; y: number; user?: User; profile?: import('./types').UserProfile; roles?: Role[]; joinedAt?: number; roleColor?: string } | null>(null);
-
-  // User blocking state
-  const [blockedUsers, setBlockedUsers] = useState<Set<string>>(new Set());
-  const [showBlockConfirm, setShowBlockConfirm] = useState<{ userId: string; displayName: string } | null>(null);
-
-  // Typing indicators state
-  const [typingUsers, setTypingUsers] = useState<Map<string, TypingUser[]>>(new Map());
-  const [typingTimeouts, setTypingTimeouts] = useState<Map<string, number>>(new Map());
-  const [lastTypingSent, setLastTypingSent] = useState<number>(0);
-  const typingIndicatorsEnabled = useState(() => 
-    localStorage.getItem('accord-typing-indicators') !== 'false'
-  )[0];
-
-  // Read receipts state: channelId -> ReadReceipt[]
-  const [readReceipts, setReadReceipts] = useState<Map<string, ReadReceipt[]>>(new Map());
+  // Read receipts (extracted to useReadReceipts hook)
+  const { readReceipts, sendReadReceipt, handleReadReceiptEvent } = useReadReceipts();
 
   // Bot API v2 state
   const [installedBots, setInstalledBots] = useState<InstalledBot[]>([]);
   const [botResponses, setBotResponses] = useState<BotResponseMessage[]>([]);
-  const lastReadSent = useRef<Map<string, string>>(new Map()); // channelId -> last message_id sent
 
   // Permission checking utilities
   const getCurrentUserRole = useCallback((nodeId: string) => {
@@ -424,35 +406,25 @@ function App() {
     }
   };
 
-  // Block/unblock user handlers
+  // Block/unblock user handlers (wrap hook handlers with error UI)
   const handleBlockUser = useCallback(async (userId: string) => {
-    if (!appState.token) return;
     try {
-      await api.blockUser(userId, appState.token);
-      setBlockedUsers(prev => new Set(prev).add(userId));
+      await blockUserRaw(userId);
       setShowBlockConfirm(null);
-    } catch (err) {
-      console.error('Failed to block user:', err);
+    } catch {
       setError('Failed to block user');
       setTimeout(() => setError(''), 3000);
     }
-  }, [appState.token]);
+  }, [blockUserRaw, setShowBlockConfirm, setError]);
 
   const handleUnblockUser = useCallback(async (userId: string) => {
-    if (!appState.token) return;
     try {
-      await api.unblockUser(userId, appState.token);
-      setBlockedUsers(prev => {
-        const next = new Set(prev);
-        next.delete(userId);
-        return next;
-      });
-    } catch (err) {
-      console.error('Failed to unblock user:', err);
+      await unblockUserRaw(userId);
+    } catch {
       setError('Failed to unblock user');
       setTimeout(() => setError(''), 3000);
     }
-  }, [appState.token]);
+  }, [unblockUserRaw, setError]);
 
   const handleApiError = (error: any) => {
     if (error.message && error.message.includes('403')) {
@@ -463,51 +435,9 @@ function App() {
     setTimeout(() => setError(""), 5000); // Clear error after 5 seconds
   };
 
-  // Typing indicator functions
-  const sendTypingIndicator = useCallback((channelId: string) => {
-    if (!typingIndicatorsEnabled || !ws || !channelId) return;
-    
-    const now = Date.now();
-    const timeSinceLastTyping = now - lastTypingSent;
-    
-    // Throttle typing events to once per 3 seconds
-    if (timeSinceLastTyping >= 3000) {
-      ws.sendTypingStart(channelId);
-      setLastTypingSent(now);
-    }
-  }, [ws, typingIndicatorsEnabled, lastTypingSent]);
+  // sendTypingIndicator and formatTypingUsers provided by useTyping hook
 
-  const formatTypingUsers = useCallback((channelId: string): string => {
-    const tusers = typingUsers.get(channelId) || [];
-    // Filter out current user
-    const currentUserId = localStorage.getItem('accord_user_id');
-    const filtered = tusers.filter(u => u.user_id !== currentUserId);
-    
-    if (filtered.length === 0) return '';
-    
-    // Resolve display names from members list
-    const getName = (tu: TypingUser) => {
-      const member = members.find(m => m.user_id === tu.user_id);
-      if (member?.user?.display_name) return member.user.display_name;
-      if (member?.profile?.display_name) return member.profile.display_name;
-      return tu.displayName;
-    };
-    
-    if (filtered.length === 1) return `${getName(filtered[0])} is typing`;
-    if (filtered.length === 2) return `${getName(filtered[0])} and ${getName(filtered[1])} are typing`;
-    return 'Several people are typing';
-  }, [typingUsers, members]);
-
-  // Send read receipt to server
-  const sendReadReceipt = useCallback((channelId: string, messageId: string) => {
-    if (!appState.token || !messageId || !channelId) return;
-    // Don't re-send for the same message
-    if (lastReadSent.current.get(channelId) === messageId) return;
-    lastReadSent.current.set(channelId, messageId);
-    api.markChannelRead(channelId, messageId, appState.token).catch(() => {
-      // Silent fail — read receipts are best-effort
-    });
-  }, [appState.token]);
+  // sendReadReceipt is now provided by useReadReceipts hook
 
   // Initialize E2EE manager and publish prekey bundle to server
   const initializeE2EE = useCallback(async (token: string) => {
@@ -626,14 +556,7 @@ function App() {
     }
   }, [isAuthenticated, appState.token, initializeE2EE]);
 
-  // Fetch blocked users on login
-  useEffect(() => {
-    if (isAuthenticated && appState.token) {
-      api.getBlockedUsers(appState.token).then(resp => {
-        setBlockedUsers(new Set(resp.blocked_users.map(b => b.user_id)));
-      }).catch(err => console.warn('Failed to load blocked users:', err));
-    }
-  }, [isAuthenticated, appState.token]);
+  // Blocked users now fetched by useBlocking hook
 
   // Async identity check for Tauri keyring (supplement synchronous check)
   useEffect(() => {
@@ -821,11 +744,7 @@ function App() {
 
       // Track last message time for presence heuristic
       if (data.from) {
-        setLastMessageTimes(prev => {
-          const newMap = new Map(prev);
-          newMap.set(data.from, Date.now());
-          return newMap;
-        });
+        recordMessageTime(data.from);
       }
 
       // Check if this is a DM message
@@ -895,7 +814,7 @@ function App() {
         }, 0);
         // Send read receipt for the new message since user is at bottom
         if (data.channel_id === selectedChannelIdRef.current && newMessage.id) {
-          sendReadReceipt(data.channel_id, newMessage.id);
+          sendReadReceipt(data.channel_id, newMessage.id, appState.token);
         }
       } else {
         // User is scrolled up — increment unread count
@@ -1033,84 +952,15 @@ function App() {
       }));
     });
 
-    // Handle typing start events
+    // Handle typing start events (delegated to useTyping hook)
     socket.on('typing_start', (data: TypingStartMessage) => {
-      
-      const typingUser: TypingUser = {
-        user_id: data.user_id,
-        displayName: (data as any).sender_display_name || (data.public_key_hash ? fingerprint(data.public_key_hash) : data.user_id.substring(0, 8)),
-        startedAt: Date.now(),
-      };
-
-      // Update typing users for the channel
-      setTypingUsers(prev => {
-        const newMap = new Map(prev);
-        const channelTyping = newMap.get(data.channel_id) || [];
-        
-        // Remove any existing entry for this user
-        const filteredTyping = channelTyping.filter(user => user.user_id !== data.user_id);
-        
-        // Add the new typing user
-        newMap.set(data.channel_id, [...filteredTyping, typingUser]);
-        
-        return newMap;
-      });
-
-      // Set timeout to auto-remove this user after 5 seconds
-      const timeoutKey = `${data.channel_id}_${data.user_id}`;
-      setTypingTimeouts(prev => {
-        const newMap = new Map(prev);
-        
-        // Clear existing timeout if any
-        const existingTimeout = newMap.get(timeoutKey);
-        if (existingTimeout) {
-          clearTimeout(existingTimeout);
-        }
-        
-        // Set new timeout
-        const timeout = window.setTimeout(() => {
-          setTypingUsers(prevTyping => {
-            const newTypingMap = new Map(prevTyping);
-            const channelTyping = newTypingMap.get(data.channel_id) || [];
-            const filteredTyping = channelTyping.filter(user => user.user_id !== data.user_id);
-            
-            if (filteredTyping.length > 0) {
-              newTypingMap.set(data.channel_id, filteredTyping);
-            } else {
-              newTypingMap.delete(data.channel_id);
-            }
-            
-            return newTypingMap;
-          });
-          
-          // Clean up timeout
-          setTypingTimeouts(prevTimeouts => {
-            const newTimeoutsMap = new Map(prevTimeouts);
-            newTimeoutsMap.delete(timeoutKey);
-            return newTimeoutsMap;
-          });
-        }, 5000);
-        
-        newMap.set(timeoutKey, timeout);
-        return newMap;
-      });
+      const displayName = (data as any).sender_display_name || (data.public_key_hash ? fingerprint(data.public_key_hash) : data.user_id.substring(0, 8));
+      handleTypingStart(data.channel_id, data.user_id, displayName);
     });
 
-    // Handle read receipt events
+    // Handle read receipt events (delegated to useReadReceipts hook)
     socket.on('read_receipt', (data: ReadReceiptMessage) => {
-      setReadReceipts(prev => {
-        const newMap = new Map(prev);
-        const channelReceipts = (newMap.get(data.channel_id) || []).filter(
-          r => r.user_id !== data.user_id
-        );
-        channelReceipts.push({
-          user_id: data.user_id,
-          message_id: data.message_id,
-          timestamp: data.timestamp,
-        });
-        newMap.set(data.channel_id, channelReceipts);
-        return newMap;
-      });
+      handleReadReceiptEvent(data.channel_id, data.user_id, data.message_id, data.timestamp);
     });
 
     // Handle bot responses
@@ -1234,13 +1084,6 @@ function App() {
     socket.connect();
     return socket;
   }, [ws, setupWebSocketHandlers]);
-
-  // Cleanup typing timeouts on unmount
-  useEffect(() => {
-    return () => {
-      typingTimeouts.forEach(timeout => clearTimeout(timeout));
-    };
-  }, [typingTimeouts]);
 
   // Load user's nodes
   const loadNodes = useCallback(async () => {
@@ -1935,7 +1778,7 @@ function App() {
       setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
       // Send read receipt to server
       if (latestMessage?.id) {
-        sendReadReceipt(channelId, latestMessage.id);
+        sendReadReceipt(channelId, latestMessage.id, appState.token);
       }
     }
     
@@ -2188,9 +2031,9 @@ function App() {
       localStorage.setItem(`accord_lastread_${channelId}`, Date.now().toString());
       setForceUpdate(prev => prev + 1);
       // Send read receipt to server
-      sendReadReceipt(channelId, latestMessage.id);
+      sendReadReceipt(channelId, latestMessage.id, appState.token);
     }
-  }, [selectedNodeId, sendReadReceipt]);
+  }, [selectedNodeId, sendReadReceipt, appState.token]);
 
   // Handle invite link submission
   const handleInviteLinkSubmit = async () => {
@@ -3304,19 +3147,7 @@ function App() {
     };
   }, [ws]);
 
-  // Presence helper: determine effective status for a member
-  const getPresenceStatus = useCallback((userId: string): import('./types').PresenceStatus => {
-    const explicit = presenceMap.get(userId);
-    if (explicit) return explicit;
-    const lastMsg = lastMessageTimes.get(userId);
-    if (lastMsg && Date.now() - lastMsg < 5 * 60 * 1000) {
-      return 'online' as import('./types').PresenceStatus;
-    }
-    const member = members.find(m => m.user_id === userId);
-    if (member?.status) return member.status;
-    if (member?.profile?.status) return member.profile.status;
-    return 'offline' as import('./types').PresenceStatus;
-  }, [presenceMap, lastMessageTimes, members]);
+  // getPresenceStatus is now provided by usePresence hook
 
   // Sort members: online > idle > dnd > offline
   const sortedMembers = React.useMemo(() => {
