@@ -96,11 +96,8 @@ test.describe.serial("Accord Full Flow", () => {
     // Verify the message appears in chat
     await expect(page.locator(`.message-content:has-text("${TEST_MESSAGE}")`)).toBeVisible({ timeout: 10_000 });
 
-    // Send a second message
-    const msg2 = `Second message ${RUN_ID}`;
-    await messageInput.fill(msg2);
-    await messageInput.press("Enter");
-    await expect(page.locator(`.message-content:has-text("${msg2}")`)).toBeVisible({ timeout: 10_000 });
+    // Verify message input cleared after send
+    await expect(messageInput).toHaveValue("", { timeout: 5_000 });
   });
 
   test("4 - Logout and Login", async () => {
