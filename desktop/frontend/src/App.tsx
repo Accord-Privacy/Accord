@@ -2071,7 +2071,18 @@ function App() {
         if (!token && publicKey && passwordRef.current) {
           try {
             await api.register(publicKey, passwordRef.current);
-          } catch { /* may already be registered */ }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            // "already registered" / 409 is fine — anything else (429, 500, network) should surface
+            if (!msg.includes('already') && !msg.includes('409')) {
+              if (msg.includes('429') || msg.toLowerCase().includes('rate')) {
+                setError('Registration rate-limited by server. Please try again later.');
+              } else {
+                setError(`Registration failed: ${msg}`);
+              }
+              return;
+            }
+          }
           const response = await api.login(publicKey, passwordRef.current);
           storeToken(response.token);
           localStorage.setItem('accord_user_id', response.user_id);
@@ -3631,7 +3642,17 @@ function App() {
           // Register on the relay (may already exist from previous session)
           try {
             await api.register(result.publicKey, result.password, result.displayName);
-          } catch { /* already registered — that's fine */ }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!msg.includes('already') && !msg.includes('409')) {
+              if (msg.includes('429') || msg.toLowerCase().includes('rate')) {
+                setError('Registration rate-limited by server. Please try again later.');
+              } else {
+                setError(`Registration failed: ${msg}`);
+              }
+              return;
+            }
+          }
           const response = await api.login(result.publicKey, result.password);
           storeToken(response.token);
           localStorage.setItem('accord_user_id', response.user_id);
@@ -3703,8 +3724,14 @@ function App() {
               connectSocket(response.token, wsBaseUrl);
 
               setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
-            } catch {
-              // Registration failed — proceed without relay (user can join later via invite)
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              // Show error to user but still proceed with offline identity
+              if (msg.includes('429') || msg.toLowerCase().includes('rate')) {
+                setError('Registration rate-limited by server. Please try again later.');
+              } else if (!msg.includes('already') && !msg.includes('409')) {
+                setError(`Registration failed: ${msg}`);
+              }
               setAppState(prev => ({
                 ...prev,
                 isAuthenticated: true,
