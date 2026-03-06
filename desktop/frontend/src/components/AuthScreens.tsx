@@ -83,7 +83,7 @@ export const RecoverModal: React.FC = () => {
       <div className="auth-page">
         <div className="auth-card">
           <button onClick={() => { ctx.setShowRecoverModal(false); ctx.setRecoverError(""); ctx.setRecoverMnemonic(""); ctx.setRecoverPassword(""); }} className="auth-back-btn">← Back</button>
-          <h2 className="auth-title">🔄 Recover Identity</h2>
+          <h2 className="auth-title">Recover Identity</h2>
           <p className="auth-subtitle">Enter your 24-word recovery phrase and password to restore your identity</p>
           
           <div className="form-group">
@@ -210,7 +210,7 @@ export const WelcomeScreen: React.FC = () => {
                       I have an invite link
                     </button>
                     <button onClick={() => { ctx.setShowWelcomeScreen(false); ctx.setShowRecoverModal(true); ctx.setRecoverError(""); }} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
-                      🔄 Recover identity with recovery phrase
+                      Recover identity with recovery phrase
                     </button>
                   </>
                 ) : (
@@ -222,7 +222,7 @@ export const WelcomeScreen: React.FC = () => {
                       Set up a new relay (admin)
                     </button>
                     <button onClick={() => ctx.setWelcomeMode('recover')} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
-                      🔄 Recover identity (connect to relay first)
+                      Recover identity (connect to relay first)
                     </button>
                   </>
                 )}
@@ -479,7 +479,7 @@ export const LoginScreen: React.FC = () => {
                 className="btn btn-outline"
                 style={{ width: '100%' }}
               >
-                🔄 Recover with recovery phrase
+                Recover with recovery phrase
               </button>
             </div>
           </div>

@@ -349,7 +349,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 onClick={() => handleModeSwitch("server")}
                 title="Search via server (metadata only)"
               >
-                🔍 Server
+                Server
               </button>
             </div>
             {searchMode === "server" && (
@@ -378,7 +378,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 onChange={(e) => handleSearchInput(e.target.value)}
                 className="search-input"
               />
-              {isLoading && <div className="search-loading">🔍</div>}
+              {isLoading && <div className="search-loading">Searching...</div>}
             </div>
             {searchMode === "local" && (
               <div className="search-local-hint">
@@ -462,7 +462,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     onClick={() => handleResultClick(result.channel_id, result.message_id)}
                   >
                     <div className="search-result-header">
-                      <span className="search-result-icon" title="Searched locally (decrypted)">🔒</span>
+                      <span className="search-result-icon" title="Searched locally (decrypted)">⚿</span>
                       <span className="search-result-sender">
                         {result.display_name || result.sender_public_key_hash?.slice(0, 16) || "Unknown"}
                       </span>
@@ -497,7 +497,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                     onClick={() => handleResultClick(result.channel_id, result.message_id)}
                   >
                     <div className="search-result-header">
-                      <span className="search-result-icon" title="Server search">🔍</span>
+                      <span className="search-result-icon" title="Server search">⚿</span>
                       <span className="search-result-sender">
                         {result.sender_public_key_hash?.slice(0, 16) || "Unknown"}
                       </span>
@@ -514,7 +514,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                               : result.decrypted_content,
                             query
                           )
-                        : <em className="search-encrypted-hint">🔐 Encrypted — click to view</em>
+                        : <em className="search-encrypted-hint">Encrypted — click to view</em>
                       }
                     </div>
                   </div>

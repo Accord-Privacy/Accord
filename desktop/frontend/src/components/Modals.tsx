@@ -101,7 +101,7 @@ export const AppModals: React.FC = () => {
               }} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleCreateNode(); }} className="form-input" />
               {ctx.newNodeName && parseInviteLink(ctx.newNodeName) && (
                 <p style={{ color: 'var(--accent)', fontSize: '12px', marginTop: '4px' }}>
-                  💡 This looks like an invite link — <button className="btn-ghost" style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
+                  This looks like an invite link — <button className="btn-ghost" style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
                 </p>
               )}
             </div>
@@ -153,7 +153,7 @@ export const AppModals: React.FC = () => {
       {ctx.showTemplateImport && ctx.selectedNodeId && (
         <div className="modal-overlay">
           <div className="modal-card" style={{ maxWidth: '480px' }}>
-            <h3>📥 Import Discord Template</h3>
+            <h3>Import Discord Template</h3>
             {!ctx.templateResult ? (
               <>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
@@ -299,7 +299,7 @@ export const AppModals: React.FC = () => {
             <div className="connection-info-body">
               <div className="connection-info-row">
                 <span className="connection-info-label">Status</span>
-                <span className="connection-info-value">{ctx.appState.isConnected ? '🟢 Connected' : '🔴 Disconnected'}</span>
+                <span className="connection-info-value">{ctx.appState.isConnected ? 'Connected' : 'Disconnected'}</span>
               </div>
               {ctx.serverHelloVersion && (
                 <div className="connection-info-row">
@@ -311,7 +311,7 @@ export const AppModals: React.FC = () => {
                 <div className="connection-info-row">
                   <span className="connection-info-label">Build Hash</span>
                   <span className="connection-info-value copyable" title="Click to copy" onClick={() => { ctx.copyToClipboard(ctx.serverBuildHash); }}>
-                    <code>{ctx.serverBuildHash}</code><span className="copy-hint">📋</span>
+                    <code>{ctx.serverBuildHash}</code>
                   </span>
                 </div>
               )}
@@ -334,13 +334,13 @@ export const AppModals: React.FC = () => {
       {ctx.showPinnedPanel && (
         <div style={{ position: 'fixed', top: 0, right: 0, width: '400px', height: '100vh', background: 'var(--background)', borderLeft: '1px solid var(--border)', zIndex: 1000, display: 'flex', flexDirection: 'column', color: 'var(--text)' }}>
           <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>📌 Pinned Messages</h3>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Pinned Messages</h3>
             <button onClick={() => ctx.setShowPinnedPanel(false)} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: 'var(--text)', padding: '4px', borderRadius: '4px' }}>✕</button>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
             {ctx.pinnedMessages.length === 0 ? (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '50px' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📌</div>
+                <div style={{ fontSize: "14px", marginBottom: "16px", color: "var(--text-faint)" }}>No pinned messages</div>
                 <p>No pinned messages in this channel yet.</p>
                 <p style={{ fontSize: '14px' }}>Pin messages to keep important information easily accessible.</p>
               </div>
@@ -361,7 +361,7 @@ export const AppModals: React.FC = () => {
                       <div style={{ marginLeft: '32px' }}><LinkPreview content={msg.content} token={ctx.appState.token || ''} /></div>
                     )}
                     <div style={{ marginLeft: '32px', marginTop: '8px', fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      📌 Pinned {new Date(msg.pinned_at!).toLocaleDateString()}
+                      Pinned {new Date(msg.pinned_at!).toLocaleDateString()}
                     </div>
                   </div>
                 ))}
@@ -459,12 +459,12 @@ export const AppModals: React.FC = () => {
               joinedAt: member?.joined_at, roleColor: ctx.getMemberRoleColor(ctx.contextMenu!.userId),
             });
             ctx.setContextMenu(null);
-          }}>👤 View Profile</div>
+          }}>View Profile</div>
           {ctx.contextMenu.user && ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
             <div className="context-menu-item" onClick={() => {
               if (ctx.contextMenu!.user) ctx.openDmWithUser(ctx.contextMenu!.user);
               ctx.setContextMenu(null);
-            }}>💬 Send DM</div>
+            }}>Send DM</div>
           )}
           <div className="context-menu-separator"></div>
           <div className="context-menu-item" onClick={() => {
