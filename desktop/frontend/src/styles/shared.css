@@ -110,3 +110,57 @@
   color: var(--red);
 }
 
+
+/* SVG Icon base styles */
+.icon {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn .icon {
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+
+.icon-btn:hover .icon {
+  color: var(--text-primary);
+}
+
+/* Role badges — styled text instead of emoji */
+.role-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.role-badge.admin {
+  color: #faa61a;
+}
+.role-badge.moderator {
+  color: #57f287;
+}
+
+/* E2EE indicator — clean pill */
+.e2ee-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(87, 242, 135, 0.1);
+  color: var(--green);
+}
+.e2ee-indicator.disabled {
+  background: rgba(218, 55, 60, 0.1);
+  color: var(--red);
+}

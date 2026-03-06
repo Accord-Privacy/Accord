@@ -1,5 +1,6 @@
 import React from "react";
 import { useAppContext } from "./AppContext";
+import { Icon } from "./Icon";
 import { api } from "../api";
 import { notificationManager } from "../notifications";
 import { Channel } from "../types";
@@ -269,7 +270,7 @@ export const ChannelSidebar: React.FC = () => {
           style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
         >
           <span style={{ color: isVoiceChannel ? '#8e9297' : undefined }}>
-            {isVoiceChannel ? '🔊' : '#'} {channel.name}
+            {isVoiceChannel ? <Icon name="speaker" size={16} style={{ marginRight: 2 }} /> : <span className="channel-hash">#</span>} {channel.name}
           </span>
           {isVoiceChannel && !isConnectedToVoice && (
             <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '4px' }}>Voice Channel</span>
@@ -310,20 +311,16 @@ export const ChannelSidebar: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center' }}>
             {ctx.servers[ctx.activeServer]}
             {ctx.serverAvailable && ctx.nodes.length > 0 && (
-              <span className="connection-status">
+              <span className="connection-status" title={ctx.connectionInfo.status === 'connected' ? 'Connected' : ctx.connectionInfo.status}>
                 <span className={`connection-dot ${ctx.connectionInfo.status}`}>●</span>
-                <span className="connection-label">
-                  {ctx.connectionInfo.status === 'connected' && 'Connected'}
-                  {ctx.connectionInfo.status === 'reconnecting' && `Reconnecting... ${ctx.connectionInfo.reconnectAttempt}/${ctx.connectionInfo.maxReconnectAttempts}`}
-                  {ctx.connectionInfo.status === 'disconnected' && !ctx.appState.isConnected && 'Disconnected'}
-                </span>
+                {ctx.connectionInfo.status !== 'connected' && (
+                  <span className="connection-label">
+                    {ctx.connectionInfo.status === 'reconnecting' && `Reconnecting...`}
+                    {ctx.connectionInfo.status === 'disconnected' && !ctx.appState.isConnected && 'Offline'}
+                  </span>
+                )}
                 {ctx.connectionInfo.status === 'disconnected' && !ctx.appState.isConnected && ctx.ws && (
                   <button className="connection-retry-btn" onClick={() => { ctx.setLastConnectionError(""); ctx.ws!.retry(); }}>Retry</button>
-                )}
-                {ctx.lastConnectionError && ctx.connectionInfo.status !== 'connected' && (
-                  <span className="connection-error-detail" title={ctx.lastConnectionError} style={{ fontSize: 11, color: 'var(--error, #f04747)', display: 'block', marginTop: 2 }}>
-                    {ctx.lastConnectionError.length > 60 ? ctx.lastConnectionError.substring(0, 57) + '...' : ctx.lastConnectionError}
-                  </span>
                 )}
               </span>
             )}
@@ -331,17 +328,14 @@ export const ChannelSidebar: React.FC = () => {
           
           <div className="sidebar-admin-buttons">
             {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'ManageInvites') && (
-              <button onClick={ctx.handleGenerateInvite} className="sidebar-admin-btn" title="Generate Invite">Invite</button>
+              <button onClick={ctx.handleGenerateInvite} className="sidebar-admin-btn invite-btn" title="Generate Invite">Invite</button>
             )}
             {ctx.selectedNodeId && (
-              <button onClick={() => ctx.setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings">⚙️</button>
+              <button onClick={() => ctx.setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings"><Icon name="settings" size={16} /></button>
             )}
           </div>
         </div>
         
-        {ctx.selectedNodeId && ctx.userRoles[ctx.selectedNodeId] && (
-          <div className="sidebar-role">{ctx.getRoleBadge(ctx.userRoles[ctx.selectedNodeId])} {ctx.userRoles[ctx.selectedNodeId]}</div>
-        )}
         {ctx.selectedNodeId && ctx.nodes.find(n => n.id === ctx.selectedNodeId)?.description && (
           <div className="sidebar-description" title={ctx.nodes.find(n => n.id === ctx.selectedNodeId)?.description}>
             {ctx.nodes.find(n => n.id === ctx.selectedNodeId)?.description}
@@ -560,12 +554,12 @@ const UserPanel: React.FC = () => {
         </div>
         <div className="user-panel-controls">
           <button className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`} onClick={() => setIsMuted(!isMuted)} title={isMuted ? 'Unmute' : 'Mute'}>
-            {isMuted ? '🔇' : '🎤'}
+            <Icon name={isMuted ? 'mic-off' : 'mic'} size={18} />
           </button>
           <button className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`} onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }} title={isDeafened ? 'Undeafen' : 'Deafen'}>
-            {isDeafened ? '🔇' : '🔊'}
+            <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={18} />
           </button>
-          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn" title="Settings (Ctrl+,)">⚙️</button>
+          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn" title="Settings (Ctrl+,)"><Icon name="settings" size={18} /></button>
         </div>
       </div>
     </>

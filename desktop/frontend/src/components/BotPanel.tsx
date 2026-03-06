@@ -312,11 +312,14 @@ export const BotPanel: React.FC<{
     }
   };
 
+  // Hide empty bot panel
+  if (bots.length === 0) return null;
+
   return (
     <div className="bot-panel">
       <div className="bot-panel-header" onClick={() => setExpanded(!expanded)}>
         <span className="bot-panel-toggle">{expanded ? '▾' : '▸'}</span>
-        <span>🤖 Bots ({bots.length})</span>
+        <span>BOTS ({bots.length})</span>
         {isAdmin && (
           <button
             className="bot-panel-add"

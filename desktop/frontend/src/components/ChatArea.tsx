@@ -1,5 +1,6 @@
 import React, { Suspense, useState, useCallback, useEffect } from "react";
 import { useAppContext } from "./AppContext";
+import { Icon } from "./Icon";
 import { api, parseInviteLink } from "../api";
 import { verifyBuildHash, getTrustIndicator } from "../buildHash";
 import { notificationManager } from "../notifications";
@@ -244,32 +245,32 @@ export const ChatArea: React.FC = () => {
               )}
             </div>
             <div className="chat-header-right">
-              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Toggle pinned messages">📌</button>
+              <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Pinned Messages"><Icon name="pin" size={20} /></button>
               {ctx.encryptionEnabled && ctx.keyPair && (
-                <span className="e2ee-badge enabled" title="End-to-end encryption enabled">🔐 E2EE</span>
+                <span className="e2ee-indicator" title="End-to-end encrypted"><Icon name="lock" size={14} /> E2EE</span>
               )}
               {ctx.encryptionEnabled && !ctx.keyPair && ctx.hasExistingKey && (
-                <span className="e2ee-badge pending" title="Key stored but locked — enter password to decrypt">🔑 Key Locked</span>
+                <span className="e2ee-indicator" style={{ background: 'rgba(240,178,50,0.1)', color: 'var(--yellow)' }} title="Key stored but locked">Key Locked</span>
               )}
               {ctx.encryptionEnabled && !ctx.keyPair && !ctx.hasExistingKey && (
-                <span className="e2ee-badge warning" title="No encryption keys found">🔓 No Keys</span>
+                <span className="e2ee-indicator disabled" title="No encryption keys found">No Keys</span>
               )}
               {!ctx.encryptionEnabled && (
-                <span className="e2ee-badge disabled" title="Encryption not supported">🚫 No E2EE</span>
+                <span className="e2ee-indicator disabled" title="Encryption not supported">No E2EE</span>
               )}
               <button
-                className="search-button"
+                className="chat-header-btn"
                 onClick={() => ctx.setShowSearchOverlay(true)}
-                title="Search messages (Ctrl+K)"
+                title="Search (Ctrl+K)"
               >
-                🔍
+                <Icon name="search" size={20} />
               </button>
               <button
                 onClick={() => ctx.setShowMemberSidebar(prev => !prev)}
                 className={`chat-header-btn ${ctx.showMemberSidebar ? 'active' : ''}`}
-                title="Toggle member list"
+                title="Member List"
               >
-                👥
+                <Icon name="members" size={20} />
               </button>
             </div>
           </div>
@@ -378,22 +379,22 @@ export const ChatArea: React.FC = () => {
                               msg.e2eeType === 'double-ratchet'
                                 ? 'End-to-end encrypted (Double Ratchet)'
                                 : 'Transport encrypted (placeholder — not E2EE)'
-                            }>{msg.e2eeType === 'double-ratchet' ? '🔒' : '🔐'}</span>
+                            }><Icon name="lock" size={12} /></span>
                           )}
                           {msg.pinned_at && (
-                            <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}>📌</span>
+                            <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}><Icon name="pin" size={12} /></span>
                           )}
                           {ctx.appState.user && (
                             <div className="message-actions">
-                              <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply to message">💬</button>
+                              <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply"><Icon name="reply" size={18} /></button>
                               {msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) && (
-                                <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit message">✏️</button>
+                                <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit"><Icon name="edit" size={18} /></button>
                               )}
                               {(msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) || ctx.canDeleteMessage(msg)) && (
-                                <button onClick={() => ctx.setShowDeleteConfirm(msg.id)} className="message-action-btn" title="Delete message">🗑️</button>
+                                <button onClick={() => ctx.setShowDeleteConfirm(msg.id)} className="message-action-btn" title="Delete"><Icon name="delete" size={18} /></button>
                               )}
                               {ctx.canDeleteMessage(msg) && (
-                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.handlePinMessage(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin message" : "Pin message"}>📌</button>
+                                <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.handlePinMessage(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin" : "Pin"}><Icon name="pin" size={18} /></button>
                               )}
                             </div>
                           )}

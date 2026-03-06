@@ -10,7 +10,7 @@ export const MnemonicModal: React.FC = () => {
     <div className="app">
       <div className="auth-page">
         <div className="auth-card key-backup-card">
-          <h2 className="auth-title">🔑 Save Your Recovery Phrase</h2>
+          <h2 className="auth-title">Save Your Recovery Phrase</h2>
           <p className="auth-subtitle">
             This 24-word phrase is the <strong>only way</strong> to recover your identity if you lose access to this browser.
             <strong className="warning" style={{ color: 'var(--yellow)' }}> Write it down and store it safely. It will NOT be shown again.</strong>
@@ -133,7 +133,7 @@ export const KeyBackupScreen: React.FC = () => {
     <div className="app">
       <div className="auth-page">
         <div className="auth-card key-backup-card">
-          <h2 className="auth-title">🔑 Backup Your Key</h2>
+          <h2 className="auth-title">Backup Your Key</h2>
           <p className="auth-subtitle">
             Your identity is your keypair. If you lose it, you lose access to your account forever.
             <strong className="warning" style={{ color: 'var(--yellow)' }}> There is no recovery.</strong>
@@ -265,7 +265,7 @@ export const WelcomeScreen: React.FC = () => {
               <h2 className="auth-title">Create Your Identity</h2>
               <p className="auth-subtitle">Connected to relay — now set a password to create your identity</p>
               <div className="auth-info-box">
-                <span className="accent">🔐 A keypair will be auto-generated. No username needed.</span>
+                <span className="accent">A keypair will be auto-generated. No username needed.</span>
               </div>
 
               <div className="form-group">
@@ -424,11 +424,11 @@ export const LoginScreen: React.FC = () => {
               <label className="form-label">Key Status</label>
               <div className="auth-info-box">
                 {ctx.keyPair || ctx.publicKey || ctx.hasExistingKey ? (
-                  <span className="accent">🔑 Keypair found — enter your password to sign back in</span>
+                  <span className="accent">Keypair found — enter your password to sign back in</span>
                 ) : localStorage.getItem('accord_public_key_plain') ? (
-                  <span className="accent">🔑 Identity remembered — enter your password to log in</span>
+                  <span className="accent">Identity remembered — enter your password to log in</span>
                 ) : (
-                  <span style={{ color: 'var(--yellow)' }}>⚠️ No identity found on this device — create a new one or recover with your phrase</span>
+                  <span style={{ color: 'var(--yellow)' }}>No identity found on this device — create a new one or recover with your phrase</span>
                 )}
               </div>
             </div>
@@ -453,7 +453,7 @@ export const LoginScreen: React.FC = () => {
 
           {!ctx.isLoginMode && ctx.encryptionEnabled && (
             <div className="auth-info-box" style={{ marginBottom: '20px' }}>
-              <div className="accent">🔐 A new ECDH P-256 keypair will be generated for your identity</div>
+              <div className="accent">A new ECDH P-256 keypair will be generated for your identity</div>
               <div style={{ fontSize: '12px', marginTop: '4px' }}>No username needed — you are identified by your public key hash</div>
             </div>
           )}

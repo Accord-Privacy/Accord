@@ -97,22 +97,21 @@
   color: var(--text-primary);
 }
 
-/* E2EE badge in header */
-.e2ee-badge {
-  font-size: var(--font-sm);
+/* E2EE indicator pill */
+.e2ee-badge, .e2ee-indicator {
+  font-size: 11px;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
-  border-radius: 9999px;
-  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  line-height: 1;
 }
-
-.e2ee-badge.enabled {
+.e2ee-badge.enabled, .e2ee-indicator:not(.disabled) {
   color: var(--green);
   background: rgba(35, 165, 89, 0.1);
 }
-
-.e2ee-badge.pending { color: var(--yellow); }
-.e2ee-badge.warning { color: var(--yellow); }
-.e2ee-badge.disabled { color: var(--text-faint); }
+.e2ee-badge.pending { color: var(--yellow); background: rgba(240,178,50,0.1); }
+.e2ee-badge.warning { color: var(--yellow); background: rgba(240,178,50,0.1); }
+.e2ee-badge.disabled, .e2ee-indicator.disabled { color: var(--text-faint); background: rgba(148,155,164,0.1); }

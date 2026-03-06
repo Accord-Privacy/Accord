@@ -334,7 +334,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
       <div className="search-overlay-backdrop" onClick={onClose} />
       <div className="search-overlay-content">
         <div className="search-overlay-header">
-          <h3>{searchMode === "local" ? "🔒" : "🔍"} Search Messages</h3>
+          <h3>Search Messages</h3>
           <div className="search-header-actions">
             <div className="search-mode-tabs">
               <button
@@ -342,7 +342,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 onClick={() => handleModeSwitch("local")}
                 title="Search decrypted messages locally"
               >
-                🔒 Local
+                Local
               </button>
               <button
                 className={`search-mode-tab ${searchMode === "server" ? "active" : ""}`}

@@ -470,14 +470,14 @@ export const AppModals: React.FC = () => {
           <div className="context-menu-item" onClick={() => {
             ctx.copyToClipboard(ctx.contextMenu!.publicKeyHash);
             ctx.setContextMenu(null);
-          }}>📋 Copy Public Key Hash</div>
+          }}>Copy Public Key Hash</div>
           {ctx.contextMenu.userId !== localStorage.getItem('accord_user_id') && (
             <>
               <div className="context-menu-separator"></div>
               {ctx.blockedUsers.has(ctx.contextMenu.userId) ? (
                 <div className="context-menu-item" onClick={() => { ctx.handleUnblockUser(ctx.contextMenu!.userId); ctx.setContextMenu(null); }}>✅ Unblock User</div>
               ) : (
-                <div className="context-menu-item context-menu-item-danger" onClick={() => { ctx.setShowBlockConfirm({ userId: ctx.contextMenu!.userId, displayName: ctx.contextMenu!.displayName }); ctx.setContextMenu(null); }}>🚫 Block User</div>
+                <div className="context-menu-item context-menu-item-danger" onClick={() => { ctx.setShowBlockConfirm({ userId: ctx.contextMenu!.userId, displayName: ctx.contextMenu!.displayName }); ctx.setContextMenu(null); }}>Block User</div>
               )}
             </>
           )}
@@ -488,7 +488,7 @@ export const AppModals: React.FC = () => {
       {ctx.showBlockConfirm && (
         <div className="modal-overlay" onClick={() => ctx.setShowBlockConfirm(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-            <h3>🚫 Block User</h3>
+            <h3>Block User</h3>
             <p style={{ color: 'var(--text-secondary)', margin: '12px 0' }}>
               Are you sure you want to block <strong>{ctx.showBlockConfirm.displayName}</strong>?
             </p>

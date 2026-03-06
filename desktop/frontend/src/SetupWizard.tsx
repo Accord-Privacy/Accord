@@ -264,7 +264,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
           {mode === "choose" && (
             <>
               <div className="auth-brand" style={{ marginTop: 16 }}>
-                <h1>⚡ <span className="brand-accent">Accord</span></h1>
+                <h1><span className="brand-accent">Accord</span></h1>
               </div>
               <p className="auth-tagline">Privacy-first communications</p>
               <div style={{ margin: "24px 0", color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
@@ -274,14 +274,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
               <div className="auth-buttons-stack" style={{ marginTop: 16 }}>
                 {hasStoredKeyPair() && (
                   <button className="btn btn-primary" onClick={() => setMode("login")}>
-                    🔓 Log In
+                    Log In
                   </button>
                 )}
-                <button className="btn btn-outline" onClick={() => setMode("create")}>
-                  🔑 Create Identity
+                <button className={`btn ${hasStoredKeyPair() ? 'btn-outline' : 'btn-primary'}`} onClick={() => setMode("create")}>
+                  Create Identity
                 </button>
                 <button className="btn btn-outline" onClick={() => setMode("recover")}>
-                  🔄 Recover Identity
+                  Recover Identity
                 </button>
               </div>
             </>
@@ -296,7 +296,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
               <div className="auth-info-box" style={{ marginTop: 16, marginBottom: 12 }}>
                 {hasStoredKeyPair() ? (
-                  <span style={{ color: 'var(--green, #43b581)' }}>🔑 Identity keypair found on this device</span>
+                  <span style={{ color: 'var(--green, #43b581)' }}>Identity keypair found on this device</span>
                 ) : (
                   <span style={{ color: 'var(--yellow, #faa61a)' }}>⚠️ No identity found — try Create or Recover instead</span>
                 )}
@@ -372,7 +372,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
           {/* === CREATE IDENTITY: Mnemonic Backup === */}
           {mode === "create" && createStep === "mnemonic" && (
             <>
-              <h2 className="auth-title">🔑 Backup Your Recovery Phrase</h2>
+              <h2 className="auth-title">Backup Your Recovery Phrase</h2>
               <p className="auth-subtitle">
                 Write this down and store it safely. It's the only way to recover your identity if you lose access.
               </p>
@@ -384,7 +384,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 style={{ marginTop: 12 }}
                 onClick={handleCopyMnemonic}
               >
-                {mnemonicCopied ? "✓ Copied!" : "📋 Copy to clipboard"}
+                {mnemonicCopied ? "✓ Copied!" : "Copy to clipboard"}
               </button>
               <div className="auth-info-box" style={{ marginTop: 12 }}>
                 <span className="warning">⚠️ Never share this phrase. Anyone with it can access your identity.</span>

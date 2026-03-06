@@ -69,16 +69,16 @@ export const MemberSidebar: React.FC = () => {
     const offline = membersWithUser.filter(m => ctx.getPresenceStatus(m.user_id) === 'offline');
     return (
       <div className="member-sidebar">
-        <div className="member-header">Members — {ctx.members.filter(m => m.user).length}</div>
+        <div className="member-header">MEMBERS – {ctx.members.filter(m => m.user).length}</div>
         {online.length > 0 && (
           <>
-            <div className="role-section-header">Online — {online.length}</div>
+            <div className="role-section-header">ONLINE – {online.length}</div>
             {online.map(m => renderMember(m))}
           </>
         )}
         {offline.length > 0 && (
           <>
-            <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>Offline — {offline.length}</div>
+            <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>OFFLINE – {offline.length}</div>
             {offline.map(m => renderMember(m))}
           </>
         )}
@@ -106,7 +106,7 @@ export const MemberSidebar: React.FC = () => {
 
   return (
     <div className="member-sidebar">
-      <div className="member-header">Members — {ctx.members.filter(m => m.user).length}</div>
+      <div className="member-header">MEMBERS – {ctx.members.filter(m => m.user).length}</div>
       {sections.filter(s => s.members.length > 0).map(s => (
         <React.Fragment key={s.name}>
           <div className="role-section-header" style={{ color: s.color || undefined }}>{s.name} — {s.members.length}</div>
@@ -115,13 +115,13 @@ export const MemberSidebar: React.FC = () => {
       ))}
       {online.length > 0 && (
         <>
-          <div className="role-section-header">Online — {online.length}</div>
+          <div className="role-section-header">ONLINE – {online.length}</div>
           {online.map(m => renderMember(m))}
         </>
       )}
       {offline.length > 0 && (
         <>
-          <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>Offline — {offline.length}</div>
+          <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>OFFLINE – {offline.length}</div>
           {offline.map(m => renderMember(m))}
         </>
       )}

@@ -117,14 +117,18 @@
 .form-input {
   width: 100%;
   padding: 10px 12px;
-  background: var(--bg-input);
-  border: none;
+  background: var(--bg-darkest);
+  border: 1px solid rgba(255,255,255,0.1);
   border-radius: var(--radius-xs);
   color: var(--text-primary);
   font-size: var(--font-lg);
   outline: none;
   height: 40px;
-  transition: box-shadow var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.form-input:hover {
+  border-color: rgba(255,255,255,0.15);
 }
 
 .form-input:focus {
@@ -203,15 +207,15 @@
 }
 
 .btn-outline {
-  background: transparent;
-  color: var(--text-secondary);
-  border: 1px solid var(--bg-input);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   width: 100%;
 }
 
 .btn-outline:hover:not(:disabled) {
+  background: var(--bg-modifier-hover);
   border-color: var(--text-muted);
-  color: var(--text-primary);
 }
 
 .btn-ghost {

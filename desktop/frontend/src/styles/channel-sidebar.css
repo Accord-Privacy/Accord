@@ -101,19 +101,31 @@
 }
 
 .sidebar-admin-btn {
-  background: var(--accent);
+  background: transparent;
   border: none;
-  color: var(--text-on-accent);
-  padding: 2px 8px;
+  color: var(--text-muted);
+  padding: 4px;
   border-radius: var(--radius-xs);
   cursor: pointer;
   font-size: var(--font-xs);
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
 }
-
-.sidebar-admin-btn:hover { background: var(--accent-hover); }
-.sidebar-admin-btn.danger { background: var(--red); }
-.sidebar-admin-btn.danger:hover { background: var(--red-dark); }
+.sidebar-admin-btn:hover { color: var(--text-primary); }
+.sidebar-admin-btn.invite-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+.sidebar-admin-btn.invite-btn:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+.sidebar-admin-btn.danger { color: var(--red); }
+.sidebar-admin-btn.danger:hover { color: var(--red); background: rgba(218,55,60,0.1); }
 
 /* Channel list — Fluxer ChannelListContent.module.css */
 .channel-list {
