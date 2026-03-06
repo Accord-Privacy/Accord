@@ -5,7 +5,7 @@ import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
 import { UpdateSection } from './UpdateChecker';
-import { themes, applyTheme, getSavedTheme } from './themes';
+import { themes, applyTheme, getSavedTheme, ACCENT_PRESETS, applyAccentColor, getSavedAccentColor, clearAccentColor, FONT_SIZE_OPTIONS, applyFontSize } from './themes';
 import { avatarColor } from './avatarColor';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
@@ -146,6 +146,10 @@ export const Settings: React.FC<SettingsProps> = ({
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
   const [devicesError, setDevicesError] = useState<string>('');
+
+  // Accent color state
+  const [accentColor, setAccentColor] = useState<string | null>(() => getSavedAccentColor());
+  const [customHex, setCustomHex] = useState('');
 
   // Profile save state
   const [profileDirty, setProfileDirty] = useState(false);
@@ -973,72 +977,159 @@ export const Settings: React.FC<SettingsProps> = ({
                 <div className="settings-group">
                   <label className="settings-label">Theme</label>
                   <div className="theme-buttons" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                    {Object.values(themes).map((theme) => (
-                      <button
-                        key={theme.name}
-                        className={`theme-swatch-btn ${appearanceSettings.theme === theme.name ? 'active' : ''}`}
-                        onClick={() => {
-                          applyTheme(theme.name);
-                          saveAppearanceSettings({ ...appearanceSettings, theme: theme.name });
-                        }}
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          alignItems: 'center',
-                          gap: '8px',
-                          padding: '12px',
-                          borderRadius: 'var(--radius-md)',
-                          border: appearanceSettings.theme === theme.name
-                            ? '2px solid var(--accent)'
-                            : '2px solid var(--border-subtle)',
-                          background: 'var(--bg-input)',
-                          cursor: 'pointer',
-                          transition: 'border-color 0.15s ease',
-                          minWidth: '100px',
-                        }}
-                      >
-                        {/* Preview swatch */}
-                        <div style={{
-                          width: '80px',
-                          height: '52px',
-                          borderRadius: '6px',
-                          overflow: 'hidden',
-                          display: 'flex',
-                          boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
-                        }}>
-                          <div style={{ width: '24px', background: theme.preview.sidebar }} />
-                          <div style={{ flex: 1, background: theme.preview.bg, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '3px', padding: '4px' }}>
-                            <div style={{ width: '100%', height: '4px', borderRadius: '2px', background: theme.preview.text, opacity: 0.6 }} />
-                            <div style={{ width: '70%', height: '4px', borderRadius: '2px', background: theme.preview.text, opacity: 0.3 }} />
-                            <div style={{ width: '50%', height: '6px', borderRadius: '3px', background: theme.preview.accent, marginTop: '2px' }} />
+                    {Object.values(themes).map((theme) => {
+                      const isActive = appearanceSettings.theme === theme.name;
+                      return (
+                        <button
+                          key={theme.name}
+                          className={`theme-swatch-btn ${isActive ? 'active' : ''}`}
+                          onClick={() => {
+                            applyTheme(theme.name);
+                            saveAppearanceSettings({ ...appearanceSettings, theme: theme.name });
+                            // Re-apply custom accent if set
+                            if (accentColor) applyAccentColor(accentColor);
+                          }}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '12px',
+                            borderRadius: 'var(--radius-md)',
+                            border: isActive
+                              ? '2px solid var(--accent)'
+                              : '2px solid var(--border-subtle)',
+                            background: 'var(--bg-input)',
+                            cursor: 'pointer',
+                            transition: 'border-color 0.15s ease',
+                            minWidth: '100px',
+                            position: 'relative',
+                          }}
+                        >
+                          {isActive && (
+                            <div style={{
+                              position: 'absolute', top: 6, right: 6,
+                              width: 18, height: 18, borderRadius: '50%',
+                              background: 'var(--accent)', display: 'flex',
+                              alignItems: 'center', justifyContent: 'center',
+                              fontSize: 11, color: '#fff', fontWeight: 700,
+                            }}>✓</div>
+                          )}
+                          {/* Preview swatch */}
+                          <div style={{
+                            width: '80px',
+                            height: '52px',
+                            borderRadius: '6px',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                          }}>
+                            <div style={{ width: '24px', background: theme.preview.sidebar }} />
+                            <div style={{ flex: 1, background: theme.preview.bg, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '3px', padding: '4px' }}>
+                              <div style={{ width: '100%', height: '4px', borderRadius: '2px', background: theme.preview.text, opacity: 0.6 }} />
+                              <div style={{ width: '70%', height: '4px', borderRadius: '2px', background: theme.preview.text, opacity: 0.3 }} />
+                              <div style={{ width: '50%', height: '6px', borderRadius: '3px', background: theme.preview.accent, marginTop: '2px' }} />
+                            </div>
                           </div>
-                        </div>
-                        <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: appearanceSettings.theme === theme.name ? 600 : 400 }}>
-                          {theme.icon} {theme.label}
-                        </span>
-                      </button>
-                    ))}
+                          {/* Color swatches */}
+                          <div style={{ display: 'flex', gap: 3 }}>
+                            {[theme.preview.sidebar, theme.preview.bg, theme.preview.accent, theme.preview.text].map((c, i) => (
+                              <div key={i} style={{ width: 14, height: 14, borderRadius: 3, background: c, border: '1px solid rgba(255,255,255,0.1)' }} />
+                            ))}
+                          </div>
+                          <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: isActive ? 600 : 400 }}>
+                            {theme.icon} {theme.label}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
+                {/* Accent Color */}
                 <div className="settings-group">
-                  <label className="settings-label">
-                    Font Size: {appearanceSettings.fontSize}px
-                  </label>
-                  <input
-                    type="range"
-                    className="settings-slider"
-                    min="12"
-                    max="20"
-                    step="1"
-                    value={appearanceSettings.fontSize}
-                    onChange={(e) => saveAppearanceSettings({
-                      ...appearanceSettings,
-                      fontSize: parseInt(e.target.value)
-                    })}
-                  />
-                  <div className="settings-help" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>12px</span><span>20px</span>
+                  <label className="settings-label">Accent Color</label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {ACCENT_PRESETS.map(color => (
+                      <button
+                        key={color}
+                        onClick={() => {
+                          setAccentColor(color);
+                          applyAccentColor(color);
+                        }}
+                        style={{
+                          width: 32, height: 32, borderRadius: '50%',
+                          background: color, border: accentColor === color ? '3px solid var(--text-primary)' : '2px solid transparent',
+                          cursor: 'pointer', transition: 'border 0.15s',
+                          boxShadow: accentColor === color ? '0 0 0 2px var(--accent)' : 'none',
+                        }}
+                        title={color}
+                      />
+                    ))}
+                    <button
+                      onClick={() => {
+                        setAccentColor(null);
+                        clearAccentColor();
+                      }}
+                      style={{
+                        width: 32, height: 32, borderRadius: '50%',
+                        background: 'var(--bg-input)', border: !accentColor ? '3px solid var(--text-primary)' : '2px solid var(--border-subtle)',
+                        cursor: 'pointer', fontSize: 14, color: 'var(--text-muted)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      title="Reset to theme default"
+                    >↺</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                    <input
+                      type="text"
+                      className="settings-input"
+                      value={customHex}
+                      onChange={(e) => setCustomHex(e.target.value)}
+                      placeholder="#hex color"
+                      maxLength={7}
+                      style={{ width: 120, fontFamily: 'var(--font-mono)', fontSize: 13 }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && /^#[0-9a-fA-F]{6}$/.test(customHex)) {
+                          setAccentColor(customHex);
+                          applyAccentColor(customHex);
+                        }
+                      }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: '6px 14px', fontSize: 13 }}
+                      disabled={!/^#[0-9a-fA-F]{6}$/.test(customHex)}
+                      onClick={() => {
+                        setAccentColor(customHex);
+                        applyAccentColor(customHex);
+                      }}
+                    >Apply</button>
+                  </div>
+                  <div className="settings-help">
+                    Pick an accent color or enter a custom hex value. Reset returns to theme default.
+                  </div>
+                </div>
+
+                {/* Font Size */}
+                <div className="settings-group">
+                  <label className="settings-label">Font Size</label>
+                  <div className="font-size-buttons">
+                    {FONT_SIZE_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        className={`font-size-button ${appearanceSettings.fontSize === opt.value ? 'active' : ''}`}
+                        onClick={() => {
+                          applyFontSize(opt.value);
+                          saveAppearanceSettings({ ...appearanceSettings, fontSize: opt.value });
+                        }}
+                      >
+                        {opt.label} ({opt.value}px)
+                      </button>
+                    ))}
+                  </div>
+                  <div className="settings-help">
+                    Controls the base font size for messages and UI text.
                   </div>
                 </div>
 
