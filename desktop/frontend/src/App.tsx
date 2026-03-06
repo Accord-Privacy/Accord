@@ -1874,7 +1874,8 @@ function App() {
     setDisplayNameSaving(true);
     try {
       await api.updateProfile({ display_name: displayNameInput.trim() }, appState.token);
-      // Update local state
+      // Update local state + persist for re-login
+      localStorage.setItem('accord_display_name', displayNameInput.trim());
       setAppState(prev => ({
         ...prev,
         user: prev.user ? { ...prev.user, display_name: displayNameInput.trim() } : prev.user,
@@ -3617,6 +3618,7 @@ function App() {
         }
 
         const chosenDisplayName = result.displayName || fingerprint(result.publicKeyHash);
+        if (result.displayName) localStorage.setItem('accord_display_name', result.displayName);
 
         // If relay URL provided (backward compat or login with existing relay), connect to it
         if (result.relayUrl) {
@@ -3637,6 +3639,13 @@ function App() {
             try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
           }
 
+          // Restore display name from localStorage if login didn't provide one
+          let serverDisplayName = chosenDisplayName;
+          if (!result.displayName) {
+            const stored = localStorage.getItem('accord_display_name');
+            if (stored) serverDisplayName = stored;
+          }
+
           // Key already saved with password in SetupWizard — don't overwrite with saveKeyToStorage
           // (saveKeyToStorage uses a different passphrase and would break password-based login)
 
@@ -3644,7 +3653,7 @@ function App() {
             ...prev,
             isAuthenticated: true,
             token: response.token,
-            user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+            user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: serverDisplayName }
           }));
           setIsAuthenticated(true);
 
