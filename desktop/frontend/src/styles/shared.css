@@ -22,6 +22,10 @@
   to { transform: translateY(0); opacity: 1; }
 }
 
+.error-toast-text {
+  flex: 1;
+}
+
 .error-toast-close {
   background: none;
   border: none;

@@ -268,16 +268,16 @@ export const ChannelSidebar: React.FC = () => {
               ctx.handleChannelSelect(channel.id, `# ${channel.name}`);
             }
           }}
-          style={{ flex: 1, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+          className="channel-item-inner"
         >
-          <span style={{ color: isVoiceChannel ? '#8e9297' : undefined }}>
-            {isVoiceChannel ? <Icon name="speaker" size={16} style={{ marginRight: 2 }} /> : <span className="channel-hash">#</span>} {channel.name}
+          <span className={isVoiceChannel ? 'channel-voice-text' : ''}>
+            {isVoiceChannel ? <Icon name="speaker" size={16} /> : <span className="channel-hash">#</span>} {channel.name}
           </span>
           {isVoiceChannel && !isConnectedToVoice && (
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '4px' }}>Voice Channel</span>
+            <span className="voice-channel-label">Voice Channel</span>
           )}
           {isConnectedToVoice && (
-            <span style={{ fontSize: '10px', color: 'var(--green)' }}>●</span>
+            <span className="voice-channel-connected-dot">●</span>
           )}
         </div>
         <div className="channel-badges">
@@ -309,7 +309,7 @@ export const ChannelSidebar: React.FC = () => {
     <div className="channel-sidebar">
       <div className="sidebar-header">
         <div className="sidebar-header-row">
-          <div style={{ display: 'flex', alignItems: 'center' }}>
+          <div className="sidebar-header-name">
             {ctx.servers[ctx.activeServer]}
             {ctx.serverAvailable && ctx.nodes.length > 0 && (
               <span className="connection-status" title={ctx.connectionInfo.status === 'connected' ? 'Connected' : ctx.connectionInfo.status}>
@@ -353,7 +353,7 @@ export const ChannelSidebar: React.FC = () => {
           const children = ctx.categorizedChannels(cat.id);
           const isCollapsed = ctx.collapsedCategories.has(cat.id);
           return (
-            <div key={cat.id} className="channel-category" style={{ position: 'relative' }}>
+            <div key={cat.id} className="channel-category channel-category-relative">
               {getDropIndicatorStyle(cat.id, 'category') && <div style={getDropIndicatorStyle(cat.id, 'category')!} />}
               <div
                 className="category-header"
@@ -375,7 +375,7 @@ export const ChannelSidebar: React.FC = () => {
         
         {/* Create Channel Button for Admins */}
         {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'CreateChannel') && (
-          <div style={{ marginTop: '4px', padding: '0 8px' }}>
+          <div className="create-channel-wrapper">
             {!ctx.showCreateChannelForm ? (
               <button onClick={() => ctx.setShowCreateChannelForm(true)} className="create-channel-btn" title="Create Channel">
                 +
@@ -429,7 +429,7 @@ export const ChannelSidebar: React.FC = () => {
           />
           <div className="status-popover-footer">
             <span className="status-popover-count">{ctx.statusInput.length}/128</span>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div className="status-popover-actions">
               {ctx.customStatus && (
                 <button className="status-popover-clear" onClick={() => { ctx.setStatusInput(""); ctx.handleSaveCustomStatus(); ctx.setShowStatusPopover(false); }}>Clear</button>
               )}
@@ -467,7 +467,7 @@ const DMSection: React.FC = () => {
                 {(dmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
                 <span className={`presence-dot presence-${ctx.getPresenceStatus(dmChannel.other_user?.id || '')}`} />
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="dm-item-info">
                 <div className="dm-name">{dmChannel.other_user_profile.display_name}</div>
                 {dmChannel.last_message && (
                   <div className="dm-last-message">{dmChannel.last_message.content.substring(0, 30)}</div>
@@ -522,7 +522,7 @@ const UserPanel: React.FC = () => {
       {inVoice && (
         <div className="voice-connection-panel">
           <div className="voice-connection-info">
-            <span className="voice-connection-dot" style={{ color: 'var(--green)' }}>●</span>
+            <span className="voice-connection-dot voice-connection-dot-active">●</span>
             <div className="voice-connection-details">
               <span className="voice-connection-label">Voice Connected</span>
               <span className="voice-connection-channel">#{ctx.voiceChannelName} — {elapsed}</span>
@@ -547,7 +547,7 @@ const UserPanel: React.FC = () => {
           ) : ((ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || ''))?.[0] || "U")}
           <span className={`presence-dot ${ctx.appState.isConnected ? 'online' : 'offline'}`} />
         </div>
-        <div className="user-info" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }} style={{ cursor: 'pointer' }}>
+        <div className="user-info user-info-clickable" onClick={() => { ctx.setStatusInput(ctx.customStatus); ctx.setShowStatusPopover(true); }}>
           <div className="username">{ctx.appState.user?.display_name || ctx.fingerprint(ctx.appState.user?.public_key_hash || '') || "You"}</div>
           <div className="user-status">
             {ctx.customStatus || (ctx.appState.isConnected ? "Online" : (ctx.nodes.length === 0 ? "Ready" : "Offline"))}

@@ -313,3 +313,111 @@
   margin-top: 8px;
 }
 
+/* ── Mnemonic Display ── */
+.mnemonic-display {
+  background: var(--bg-darkest);
+  border: 2px solid var(--yellow);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 2;
+  word-spacing: 8px;
+  user-select: all;
+  cursor: text;
+  color: var(--text-primary);
+}
+
+/* ── Key Backup Actions ── */
+.key-backup-actions {
+  margin-top: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* ── Button Variants ── */
+.btn-warning {
+  background: var(--orange) !important;
+}
+
+.btn-warning:hover:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+.btn-ghost-subtle {
+  font-size: 13px;
+  margin-top: var(--space-sm);
+  opacity: 0.8;
+}
+
+.btn-ghost-subtle:hover {
+  opacity: 1;
+}
+
+/* ── Form Helpers ── */
+.form-required {
+  color: var(--accent);
+}
+
+.form-hint-error {
+  color: var(--red);
+}
+
+.form-textarea-mono {
+  font-family: var(--font-mono);
+}
+
+/* ── Auth Info Box ── */
+.auth-info-box-spaced {
+  margin-bottom: 20px;
+}
+
+.auth-info-box-detail {
+  font-size: var(--font-sm);
+  margin-top: var(--space-xs);
+}
+
+.auth-success-spaced {
+  margin-bottom: var(--space-lg);
+}
+
+/* ── Auth Submit ── */
+.auth-submit-btn {
+  margin-bottom: var(--space-lg);
+}
+
+/* ── Auth Toggle Stack ── */
+.auth-toggle-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+/* ── Auth Recover Section ── */
+.auth-recover-section {
+  border-top: 1px solid var(--border);
+  width: 100%;
+  padding-top: var(--space-md);
+  margin-top: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.auth-recover-label {
+  font-size: var(--font-sm);
+  opacity: 0.6;
+}
+
+/* ── Auth Brand Logo ── */
+.auth-brand-logo {
+  width: 48px;
+  height: 48px;
+  vertical-align: middle;
+  margin-right: var(--space-md);
+  border-radius: var(--radius-md);
+}
+

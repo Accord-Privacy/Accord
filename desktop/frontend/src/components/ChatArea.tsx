@@ -9,7 +9,7 @@ import { renderMessageMarkdown } from "../markdown";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
 import { EmojiPickerButton } from "../EmojiPicker";
 import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
-// import { LinkPreview, extractFirstUrl } from "../LinkPreview"; // disabled for now
+import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
 import type { InstalledBot, BotCommand } from "../types";
@@ -99,25 +99,18 @@ export const ChatArea: React.FC = () => {
   if (ctx.nodes.length === 0 && !ctx.selectedDmChannel) {
     return (
       <>
-        <div className="chat-area" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{
-            textAlign: 'center',
-            maxWidth: 460,
-            padding: '48px 40px',
-            background: 'var(--bg-dark)',
-            borderRadius: 8,
-            boxShadow: '0 8px 16px rgba(0,0,0,0.24)',
-          }}>
+        <div className="chat-area chat-area-centered">
+          <div className="welcome-card">
             {invitePreview ? (
               <>
-                <h2 style={{ margin: '0 0 16px', fontSize: 22, color: 'var(--text-primary)' }}>{invitePreview.node_name}</h2>
-                <div style={{ margin: '0 0 8px', fontFamily: 'monospace', fontSize: 13, color: 'var(--text-secondary)' }}>
+                <h2>{invitePreview.node_name}</h2>
+                <div className="welcome-card-id">
                   {invitePreview.node_id.substring(0, 16)}
                 </div>
-                <div style={{ margin: '0 0 8px', color: 'var(--text-secondary)', fontSize: 14 }}>
+                <div className="welcome-card-members">
                   {invitePreview.member_count} member{invitePreview.member_count !== 1 ? 's' : ''}
                 </div>
-                <div style={{ margin: '0 0 20px', fontSize: 13 }}>
+                <div className="welcome-card-trust">
                   {(() => {
                     const trust = verifyBuildHash(invitePreview.server_build_hash, ctx.knownHashes);
                     const indicator = getTrustIndicator(trust);
@@ -128,16 +121,15 @@ export const ChatArea: React.FC = () => {
                     );
                   })()}
                 </div>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <div className="welcome-card-actions">
                   <button
-                    className="btn"
+                    className="btn btn-outline btn-auto-width"
                     onClick={() => { setInvitePreview(null); setPreviewError(""); }}
-                    style={{ minWidth: 80 }}
                   >
                     Cancel
                   </button>
                   <button
-                    className="btn btn-primary"
+                    className="btn btn-primary btn-auto-width"
                     onClick={async () => {
                       setInvitePreview(null);
                       // Use handleJoinNode which handles same-relay join properly
@@ -164,7 +156,6 @@ export const ChatArea: React.FC = () => {
                         setPreviewError(e.message || "Failed to join node");
                       }
                     }}
-                    style={{ minWidth: 80 }}
                   >
                     Join
                   </button>
@@ -172,14 +163,14 @@ export const ChatArea: React.FC = () => {
               </>
             ) : (
               <>
-                <h2 style={{ margin: '0 0 8px', fontSize: 22, color: 'var(--text-primary)' }}>Welcome to Accord!</h2>
-                <p style={{ margin: '0 0 24px', color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
+                <h2 className="welcome-title">Welcome to Accord!</h2>
+                <p className="welcome-subtitle">
                   Join a Node to start chatting. Paste an invite link below.
                 </p>
                 {previewError && (
-                  <p style={{ margin: '0 0 12px', color: 'var(--red)', fontSize: 13 }}>{previewError}</p>
+                  <p className="welcome-error">{previewError}</p>
                 )}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div className="welcome-form">
                   <input
                     type="text"
                     placeholder="Paste invite link here..."
@@ -187,13 +178,11 @@ export const ChatArea: React.FC = () => {
                     onChange={(e) => ctx.setInviteLinkInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') handlePreviewInvite(); }}
                     className="form-input"
-                    style={{ width: '100%', padding: '10px 12px', fontSize: 14 }}
                   />
                   <button
                     className="btn btn-primary"
                     onClick={handlePreviewInvite}
                     disabled={!ctx.inviteLinkInput?.trim() || previewLoading}
-                    style={{ width: '100%', padding: '10px' }}
                   >
                     {previewLoading ? '...' : 'Preview →'}
                   </button>
@@ -221,8 +210,8 @@ export const ChatArea: React.FC = () => {
             <div className="chat-header-left">
               {ctx.selectedDmChannel ? (
                 <>
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '8px' }}>
+                  <div className="chat-header-dm">
+                    <div className="dm-avatar dm-avatar-sm">
                       {(ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
                     </div>
                     <span className="chat-channel-name">{ctx.selectedDmChannel.other_user_profile.display_name}</span>
@@ -251,7 +240,7 @@ export const ChatArea: React.FC = () => {
                 <span className="e2ee-indicator" title="End-to-end encrypted"><Icon name="lock" size={14} /> E2EE</span>
               )}
               {ctx.encryptionEnabled && !ctx.keyPair && ctx.hasExistingKey && (
-                <span className="e2ee-indicator" style={{ background: 'rgba(240,178,50,0.1)', color: 'var(--yellow)' }} title="Key stored but locked">Key Locked</span>
+                <span className="e2ee-indicator e2ee-indicator-warning" title="Key stored but locked">Key Locked</span>
               )}
               {ctx.encryptionEnabled && !ctx.keyPair && !ctx.hasExistingKey && (
                 <span className="e2ee-indicator disabled" title="No encryption keys found">No Keys</span>
@@ -287,8 +276,8 @@ export const ChatArea: React.FC = () => {
             )}
             {!ctx.hasMoreMessages && ctx.appState.messages.length > 0 && (
               <div className="messages-beginning">
-                <div style={{ fontSize: 32, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Welcome to {ctx.activeChannel || '# general'}!</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>This is the start of the <strong>{ctx.activeChannel || '# general'}</strong> channel.</div>
+                <div className="messages-beginning-title">Welcome to {ctx.activeChannel || '# general'}!</div>
+                <div className="messages-beginning-subtitle">This is the start of the <strong>{ctx.activeChannel || '# general'}</strong> channel.</div>
               </div>
             )}
             {!ctx.isLoadingOlderMessages && ctx.appState.messages.length === 0 && ctx.selectedChannelId && (
@@ -348,7 +337,6 @@ export const ChatArea: React.FC = () => {
                         <img 
                           src={`${api.getUserAvatarUrl(msg.sender_id)}`}
                           alt={(msg.author || "?")[0]}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
                           onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = (msg.author || "?")[0]; }}
                         />
                       ) : (msg.author || "?")[0]}
@@ -361,7 +349,7 @@ export const ChatArea: React.FC = () => {
                           {(msg as any)._botResponse && (
                             <span className="message-bot-badge">BOT</span>
                           )}
-                          <span className="message-author" style={{ cursor: 'pointer', color: (() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); return am ? ctx.getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
+                          <span className="message-author" style={{ color: (() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); return am ? ctx.getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
                           onClick={(e) => {
                             const authorMember = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author);
                             if (authorMember) {
@@ -446,7 +434,10 @@ export const ChatArea: React.FC = () => {
                         <div className="bot-sent-disclosure"><Icon name="clipboard" size={14} /> Sent to bot</div>
                       )}
 
-                      {/* Link Preview — disabled for now */}
+                      {/* Link Preview */}
+                      {msg.content && extractFirstUrl(msg.content) && (
+                        <LinkPreview content={msg.content} token={ctx.appState.token || ''} />
+                      )}
 
                       {/* Thread reply count */}
                       {msg.reply_count != null && msg.reply_count > 0 && (
@@ -540,18 +531,17 @@ export const ChatArea: React.FC = () => {
                       const readBy = receipts.filter(r => r.message_id === msg.id && r.user_id !== currentUserId);
                       if (readBy.length === 0) return null;
                       return (
-                        <div className="read-receipts" style={{ display: 'flex', gap: '2px', justifyContent: 'flex-end', padding: '2px 8px' }}>
+                        <div className="read-receipts">
                           {readBy.slice(0, 5).map(r => {
                             const member = ctx.members.find(m => m.user_id === r.user_id);
                             const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
                             return (
-                              <span key={r.user_id} className="read-receipt-avatar" title={`Read by ${name}`}
-                                style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: 'var(--accent)', color: 'var(--text-on-accent)', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
+                              <span key={r.user_id} className="read-receipt-avatar" title={`Read by ${name}`}>
                                 {name[0]?.toUpperCase()}
                               </span>
                             );
                           })}
-                          {readBy.length > 5 && <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>+{readBy.length - 5}</span>}
+                          {readBy.length > 5 && <span className="read-receipt-overflow">+{readBy.length - 5}</span>}
                         </div>
                       );
                     })()}
@@ -615,7 +605,7 @@ export const ChatArea: React.FC = () => {
           )}
 
           {/* Message Input */}
-          <div className="message-input-container" style={{ position: 'relative' }}>
+          <div className="message-input-container">
             <SlashCommandAutocomplete
               query={slashQuery}
               bots={ctx.installedBots}
@@ -643,21 +633,12 @@ export const ChatArea: React.FC = () => {
               />
             )}
             {ctx.messageError && (
-              <div style={{
-                position: 'absolute', top: '-36px', left: '50%', transform: 'translateX(-50%)',
-                background: 'var(--red)', color: 'var(--text-on-accent)', padding: '6px 14px', borderRadius: '4px',
-                fontSize: '13px', fontWeight: 500, zIndex: 11, maxWidth: '90%', textAlign: 'center',
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
+              <div className="message-error-toast">
                 {ctx.messageError}
               </div>
             )}
             {ctx.slowModeCooldown > 0 && !ctx.messageError && (
-              <div style={{
-                position: 'absolute', top: '-28px', left: '50%', transform: 'translateX(-50%)',
-                background: 'var(--yellow)', color: 'var(--text-on-accent)', padding: '4px 12px', borderRadius: '4px',
-                fontSize: '12px', fontWeight: 600, zIndex: 10, whiteSpace: 'nowrap',
-              }}>
+              <div className="slow-mode-toast">
                 <Icon name="clock" size={14} /> Slow mode: wait {ctx.slowModeCooldown}s
               </div>
             )}

@@ -20,26 +20,24 @@ export const AppModals: React.FC = () => {
     <>
       {/* Role Assignment Popup */}
       {ctx.showRolePopup && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1050 }} onClick={() => ctx.setShowRolePopup(null)}>
-          <div style={{
-            position: 'absolute',
-            top: Math.min(ctx.showRolePopup.y, window.innerHeight - 300),
-            left: Math.min(ctx.showRolePopup.x, window.innerWidth - 220),
-            background: 'var(--bg-dark)', border: '1px solid #40444b', borderRadius: '6px',
-            padding: '8px', minWidth: '200px', maxHeight: '280px', overflowY: 'auto',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, padding: '4px 8px', marginBottom: '4px' }}>ASSIGN ROLES</div>
+        <div className="role-popup-overlay" onClick={() => ctx.setShowRolePopup(null)}>
+          <div
+            className="role-popup"
+            style={{
+              top: Math.min(ctx.showRolePopup.y, window.innerHeight - 300),
+              left: Math.min(ctx.showRolePopup.x, window.innerWidth - 220),
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="role-popup-title">ASSIGN ROLES</div>
             {ctx.nodeRoles.length === 0 ? (
-              <div style={{ padding: '8px', color: 'var(--text-faint)', fontSize: '13px' }}>No roles available</div>
+              <div className="role-popup-empty">No roles available</div>
             ) : ctx.nodeRoles.sort((a, b) => b.position - a.position).map(role => {
               const userHasRole = (ctx.memberRolesMap[ctx.showRolePopup!.userId] || []).some(r => r.id === role.id);
               return (
-                <label key={role.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-secondary)' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#40444b')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                <label key={role.id} className="role-popup-label">
                   <input type="checkbox" checked={userHasRole} onChange={() => ctx.toggleMemberRole(ctx.showRolePopup!.userId, role.id, userHasRole)} />
-                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: role.color || '#99aab5', flexShrink: 0 }} />
+                  <div className="role-color-dot" style={{ background: role.color || '#99aab5' }} />
                   {role.name}
                 </label>
               );
@@ -51,7 +49,7 @@ export const AppModals: React.FC = () => {
       {/* Error Message */}
       {ctx.error && (
         <div className="error-toast">
-          <span style={{ flex: 1 }}>{ctx.error}</span>
+          <span className="error-toast-text">{ctx.error}</span>
           <button onClick={() => ctx.setError("")} className="error-toast-close">×</button>
         </div>
       )}
@@ -71,8 +69,8 @@ export const AppModals: React.FC = () => {
               <button onClick={ctx.handleJoinNode} disabled={ctx.joiningNode || !ctx.joinInviteCode.trim()} className="btn btn-primary">{ctx.joiningNode ? 'Joining...' : 'Join Node'}</button>
               <button onClick={() => { ctx.setShowCreateNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); }} className="btn btn-outline">Cancel</button>
             </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
-              <p style={{ fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>Or create your own community</p>
+            <div className="modal-divider">
+              <p className="modal-divider-text">Or create your own community</p>
               <button onClick={() => ctx.setShowJoinNodeModal(true)} className="btn-ghost"><strong>Create a New Node</strong></button>
             </div>
           </div>
@@ -100,8 +98,8 @@ export const AppModals: React.FC = () => {
                 }
               }} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleCreateNode(); }} className="form-input" />
               {ctx.newNodeName && parseInviteLink(ctx.newNodeName) && (
-                <p style={{ color: 'var(--accent)', fontSize: '12px', marginTop: '4px' }}>
-                  This looks like an invite link — <button className="btn-ghost" style={{ fontSize: '12px', textDecoration: 'underline' }} onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
+                <p className="invite-link-hint">
+                  This looks like an invite link — <button className="btn-ghost" onClick={() => { ctx.setJoinInviteCode(ctx.newNodeName); ctx.setNewNodeName(""); ctx.setShowJoinNodeModal(false); }}>switch to Join?</button>
                 </p>
               )}
             </div>
@@ -113,7 +111,7 @@ export const AppModals: React.FC = () => {
               <button onClick={ctx.handleCreateNode} disabled={ctx.creatingNode || !ctx.newNodeName.trim()} className="btn btn-green">{ctx.creatingNode ? 'Creating...' : 'Create Node'}</button>
               <button onClick={() => { ctx.setShowJoinNodeModal(false); ctx.setNewNodeName(""); ctx.setNewNodeDescription(""); }} className="btn btn-outline">Cancel</button>
             </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: '16px', paddingTop: '16px', textAlign: 'center' }}>
+            <div className="modal-divider">
               <button onClick={() => ctx.setShowJoinNodeModal(false)} className="btn-ghost">Have an invite code? <strong>Join a Node</strong></button>
             </div>
           </div>
@@ -126,10 +124,10 @@ export const AppModals: React.FC = () => {
           <div className="modal-card">
             <h3>Invite Link Generated</h3>
             <p>Share this link to invite others to your node. The relay address is encoded for privacy.</p>
-            <div className="modal-code-block" style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.85em' }}>{ctx.generatedInvite}</div>
+            <div className="modal-code-block modal-code-block-mono">{ctx.generatedInvite}</div>
             <div className="modal-actions">
-              <button onClick={() => { ctx.copyToClipboard(ctx.generatedInvite).then(() => { alert('Invite code copied to clipboard!'); }); }} className="btn btn-primary" style={{ width: 'auto' }}>Copy</button>
-              <button onClick={() => { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); }} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
+              <button onClick={() => { ctx.copyToClipboard(ctx.generatedInvite).then(() => { alert('Invite code copied to clipboard!'); }); }} className="btn btn-primary btn-auto-width">Copy</button>
+              <button onClick={() => { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); }} className="btn btn-outline btn-auto-width">Close</button>
             </div>
           </div>
         </div>
@@ -152,15 +150,15 @@ export const AppModals: React.FC = () => {
       {/* Discord Template Import */}
       {ctx.showTemplateImport && ctx.selectedNodeId && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '480px' }}>
+          <div className="modal-card modal-card-wide">
             <h3>Import Discord Template</h3>
             {!ctx.templateResult ? (
               <>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Paste a discord.new link, discord.com/template link, or raw template code.</p>
+                <p className="template-description">Paste a discord.new link, discord.com/template link, or raw template code.</p>
                 <div className="form-group">
                   <input type="text" placeholder="discord.new/CODE or template code" value={ctx.templateInput} onChange={(e) => ctx.setTemplateInput(e.target.value)} className="form-input" disabled={ctx.templateImporting} />
                 </div>
-                {ctx.templateError && <div style={{ color: 'var(--red)', fontSize: '13px', marginBottom: '8px' }}>{ctx.templateError}</div>}
+                {ctx.templateError && <div className="template-error">{ctx.templateError}</div>}
                 <div className="modal-actions">
                   <button className="btn btn-green" disabled={ctx.templateImporting || !ctx.templateInput.trim()} onClick={async () => {
                     ctx.setTemplateError('');
@@ -185,13 +183,13 @@ export const AppModals: React.FC = () => {
               </>
             ) : (
               <>
-                <div style={{ color: 'var(--green)', marginBottom: '12px', fontSize: '14px' }}>✅ Import complete!</div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.6' }}>
+                <div className="template-success">✅ Import complete!</div>
+                <div className="template-results">
                   {ctx.templateResult.roles_created !== undefined && <div>Roles created: <strong>{ctx.templateResult.roles_created}</strong></div>}
                   {ctx.templateResult.channels_created !== undefined && <div>Channels created: <strong>{ctx.templateResult.channels_created}</strong></div>}
                   {ctx.templateResult.categories_created !== undefined && <div>Categories created: <strong>{ctx.templateResult.categories_created}</strong></div>}
                 </div>
-                <div className="modal-actions" style={{ marginTop: '16px' }}>
+                <div className="modal-actions template-results-actions">
                   <button className="btn btn-green" onClick={() => {
                     ctx.setShowTemplateImport(false); ctx.setTemplateInput(''); ctx.setTemplateResult(null); ctx.setTemplateError('');
                     if (ctx.selectedNodeId) { ctx.loadChannels(ctx.selectedNodeId); ctx.loadRoles(ctx.selectedNodeId); }
@@ -215,12 +213,8 @@ export const AppModals: React.FC = () => {
               node={currentNode}
               token={ctx.appState.token || ''}
               userRole={ctx.userRoles[ctx.selectedNodeId!] || 'member'}
-              onNodeUpdated={(_updatedNode) => {
-                // This triggers a re-render through parent state
-              }}
-              onLeaveNode={() => {
-                ctx.loadNodes();
-              }}
+              onNodeUpdated={(_updatedNode) => {}}
+              onLeaveNode={() => { ctx.loadNodes(); }}
               onShowTemplateImport={() => ctx.setShowTemplateImport(true)}
               resolveUserName={(userId: string) => {
                 const member = ctx.members.find(m => m.user_id === userId);
@@ -282,8 +276,6 @@ export const AppModals: React.FC = () => {
             if (ctx.ws) { ctx.ws.disconnect(); }
             ctx.setServerUrl(newUrl);
             api.setBaseUrl(newUrl);
-            // WebSocket will reconnect automatically when server URL changes
-            // via the existing connection's reconnect logic
           }}
         />
       </Suspense>
@@ -332,35 +324,35 @@ export const AppModals: React.FC = () => {
 
       {/* Pinned Messages Panel */}
       {ctx.showPinnedPanel && (
-        <div style={{ position: 'fixed', top: 0, right: 0, width: '400px', height: '100vh', background: 'var(--background)', borderLeft: '1px solid var(--border)', zIndex: 1000, display: 'flex', flexDirection: 'column', color: 'var(--text)' }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>Pinned Messages</h3>
-            <button onClick={() => ctx.setShowPinnedPanel(false)} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: 'var(--text)', padding: '4px', borderRadius: '4px' }}>✕</button>
+        <div className="pinned-panel">
+          <div className="pinned-panel-header">
+            <h3 className="pinned-panel-title">Pinned Messages</h3>
+            <button onClick={() => ctx.setShowPinnedPanel(false)} className="pinned-panel-close">✕</button>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+          <div className="pinned-panel-body">
             {ctx.pinnedMessages.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '50px' }}>
-                <div style={{ fontSize: "14px", marginBottom: "16px", color: "var(--text-faint)" }}>No pinned messages</div>
+              <div className="pinned-panel-empty">
+                <div className="pinned-panel-empty-title">No pinned messages</div>
                 <p>No pinned messages in this channel yet.</p>
-                <p style={{ fontSize: '14px' }}>Pin messages to keep important information easily accessible.</p>
+                <p className="pinned-panel-empty-title">Pin messages to keep important information easily accessible.</p>
               </div>
             ) : (
               <div>
                 {ctx.pinnedMessages.map((msg, i) => (
-                  <div key={msg.id || i} style={{ marginBottom: '16px', padding: '12px', background: 'var(--background-modifier-accent)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', fontSize: '14px' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 600, marginRight: '8px' }}>
+                  <div key={msg.id || i} className="pinned-message-card">
+                    <div className="pinned-message-header">
+                      <div className="pinned-message-avatar">
                         {(msg.author || "?")[0]}
                       </div>
-                      <span style={{ fontWeight: 600, marginRight: '8px' }}>{msg.author}</span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{new Date(msg.timestamp).toLocaleDateString()} at {msg.time}</span>
+                      <span className="pinned-message-author">{msg.author}</span>
+                      <span className="pinned-message-time">{new Date(msg.timestamp).toLocaleDateString()} at {msg.time}</span>
                     </div>
-                    <div className="message-content" style={{ marginLeft: '32px', lineHeight: '1.4' }}
+                    <div className="message-content pinned-message-content"
                       dangerouslySetInnerHTML={{ __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) }} />
                     {msg.content && extractFirstUrl(msg.content) && (
-                      <div style={{ marginLeft: '32px' }}><LinkPreview content={msg.content} token={ctx.appState.token || ''} /></div>
+                      <div className="pinned-message-preview"><LinkPreview content={msg.content} token={ctx.appState.token || ''} /></div>
                     )}
-                    <div style={{ marginLeft: '32px', marginTop: '8px', fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <div className="pinned-message-meta">
                       Pinned {new Date(msg.pinned_at!).toLocaleDateString()}
                     </div>
                   </div>
@@ -374,23 +366,23 @@ export const AppModals: React.FC = () => {
       {/* DM Channel Creation */}
       {ctx.showDmChannelCreate && (
         <div className="modal-overlay">
-          <div className="modal-card" style={{ maxWidth: '380px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0 }}>Start a Direct Message</h3>
-              <button onClick={() => ctx.setShowDmChannelCreate(false)} className="error-toast-close" style={{ color: 'var(--text-muted)' }}>×</button>
+          <div className="modal-card modal-card-narrow">
+            <div className="dm-create-header">
+              <h3>Start a Direct Message</h3>
+              <button onClick={() => ctx.setShowDmChannelCreate(false)} className="error-toast-close">×</button>
             </div>
             <p>Select a user to start a direct message:</p>
-            <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+            <div className="dm-create-list">
               {ctx.members
                 .filter(member => member.user_id !== localStorage.getItem('accord_user_id'))
                 .map((member) => (
                   <div key={member.user_id} className="member" onClick={() => { ctx.openDmWithUser(member.user); ctx.setShowDmChannelCreate(false); }}>
-                    <div className="dm-avatar" style={{ width: '24px', height: '24px', fontSize: '12px', marginRight: '12px' }}>
+                    <div className="dm-avatar dm-avatar-sm">
                       {ctx.displayName(member.user)[0].toUpperCase()}
                     </div>
                     <div>
-                      <div style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: '500' }}>{ctx.displayName(member.user)}</div>
-                      <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{ctx.getRoleBadge(member.role)} {member.role}</div>
+                      <div className="dm-create-user-name">{ctx.displayName(member.user)}</div>
+                      <div className="dm-create-user-role">{ctx.getRoleBadge(member.role)} {member.role}</div>
                     </div>
                   </div>
                 ))}
@@ -413,8 +405,8 @@ export const AppModals: React.FC = () => {
               <input type="text" placeholder="Enter a display name..." value={ctx.displayNameInput} onChange={(e) => ctx.setDisplayNameInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleSaveDisplayName(); }} className="form-input" autoFocus maxLength={32} />
             </div>
             <div className="modal-actions">
-              <button onClick={ctx.handleSaveDisplayName} disabled={ctx.displayNameSaving || !ctx.displayNameInput.trim()} className="btn btn-green" style={{ width: 'auto' }}>{ctx.displayNameSaving ? 'Saving...' : 'Save'}</button>
-              <button onClick={() => ctx.setShowDisplayNamePrompt(false)} className="btn btn-outline" style={{ width: 'auto' }}>Skip</button>
+              <button onClick={ctx.handleSaveDisplayName} disabled={ctx.displayNameSaving || !ctx.displayNameInput.trim()} className="btn btn-green btn-auto-width">{ctx.displayNameSaving ? 'Saving...' : 'Save'}</button>
+              <button onClick={() => ctx.setShowDisplayNamePrompt(false)} className="btn btn-outline btn-auto-width">Skip</button>
             </div>
           </div>
         </div>
@@ -445,9 +437,9 @@ export const AppModals: React.FC = () => {
       {ctx.contextMenu && (
         <div className="context-menu" style={{ left: ctx.contextMenu.x, top: ctx.contextMenu.y }}>
           <div className="context-menu-item context-menu-profile-header">
-            <div style={{ fontWeight: 600, fontSize: '14px' }}>{ctx.contextMenu.displayName}</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{ctx.fingerprint(ctx.contextMenu.publicKeyHash)}</div>
-            {ctx.contextMenu.bio && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{ctx.contextMenu.bio}</div>}
+            <div className="context-menu-display-name">{ctx.contextMenu.displayName}</div>
+            <div className="context-menu-fingerprint">{ctx.fingerprint(ctx.contextMenu.publicKeyHash)}</div>
+            {ctx.contextMenu.bio && <div className="context-menu-bio">{ctx.contextMenu.bio}</div>}
           </div>
           <div className="context-menu-separator"></div>
           <div className="context-menu-item" onClick={() => {
@@ -487,17 +479,17 @@ export const AppModals: React.FC = () => {
       {/* Block Confirmation */}
       {ctx.showBlockConfirm && (
         <div className="modal-overlay" onClick={() => ctx.setShowBlockConfirm(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+          <div className="modal-card modal-card-narrow" onClick={(e) => e.stopPropagation()}>
             <h3>Block User</h3>
-            <p style={{ color: 'var(--text-secondary)', margin: '12px 0' }}>
+            <p className="block-confirm-text">
               Are you sure you want to block <strong>{ctx.showBlockConfirm.displayName}</strong>?
             </p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '8px 0' }}>
+            <p className="block-confirm-detail">
               They won't be able to send you direct messages. Their messages in channels will be hidden for you.
             </p>
-            <div className="modal-actions" style={{ marginTop: '16px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button onClick={() => ctx.setShowBlockConfirm(null)} className="btn btn-outline" style={{ width: 'auto' }}>Cancel</button>
-              <button onClick={() => ctx.handleBlockUser(ctx.showBlockConfirm!.userId)} className="btn" style={{ width: 'auto', background: 'var(--red, #ed4245)', color: 'var(--text-on-accent)' }}>Block</button>
+            <div className="block-confirm-actions">
+              <button onClick={() => ctx.setShowBlockConfirm(null)} className="btn btn-outline btn-auto-width">Cancel</button>
+              <button onClick={() => ctx.handleBlockUser(ctx.showBlockConfirm!.userId)} className="btn btn-red btn-auto-width">Block</button>
             </div>
           </div>
         </div>
@@ -513,8 +505,8 @@ export const AppModals: React.FC = () => {
                 <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>
               ))}
             </div>
-            <div className="modal-actions" style={{ marginTop: '16px' }}>
-              <button onClick={() => ctx.setShowShortcutsHelp(false)} className="btn btn-outline" style={{ width: 'auto' }}>Close</button>
+            <div className="modal-actions shortcuts-modal-actions">
+              <button onClick={() => ctx.setShowShortcutsHelp(false)} className="btn btn-outline btn-auto-width">Close</button>
             </div>
           </div>
         </div>

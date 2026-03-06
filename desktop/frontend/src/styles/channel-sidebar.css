@@ -520,3 +520,30 @@
   display: inline-block;
   flex-shrink: 0;
 }
+
+/* ── Sidebar Header Name ── */
+.sidebar-header-name {
+  display: flex;
+  align-items: center;
+}
+
+/* ── Channel Category ── */
+.channel-category-relative {
+  position: relative;
+}
+
+/* ── DM Item Info ── */
+.dm-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Voice Connection Dot Active ── */
+.voice-connection-dot-active {
+  color: var(--green);
+}
+
+/* ── User Info Clickable ── */
+.user-info-clickable {
+  cursor: pointer;
+}

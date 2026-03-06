@@ -13,26 +13,15 @@ export const MnemonicModal: React.FC = () => {
           <h2 className="auth-title">Save Your Recovery Phrase</h2>
           <p className="auth-subtitle">
             This 24-word phrase is the <strong>only way</strong> to recover your identity if you lose access to this browser.
-            <strong className="warning" style={{ color: 'var(--yellow)' }}> Write it down and store it safely. It will NOT be shown again.</strong>
+            <strong className="warning"> Write it down and store it safely. It will NOT be shown again.</strong>
           </p>
           <div className="form-group">
             <label className="form-label">Recovery Phrase (24 words)</label>
-            <div style={{
-              background: 'var(--bg-tertiary)',
-              border: '2px solid var(--yellow)',
-              borderRadius: '8px',
-              padding: '16px',
-              fontFamily: 'monospace',
-              fontSize: '15px',
-              lineHeight: '2',
-              wordSpacing: '8px',
-              userSelect: 'all',
-              cursor: 'text',
-            }}>
+            <div className="mnemonic-display">
               {ctx.mnemonicPhrase}
             </div>
           </div>
-          <div className="key-backup-actions" style={{ marginTop: '16px' }}>
+          <div className="key-backup-actions">
             <button
               onClick={() => {
                 ctx.copyToClipboard(ctx.mnemonicPhrase);
@@ -58,8 +47,7 @@ export const MnemonicModal: React.FC = () => {
                   ctx.setAuthError("");
                 }
               }}
-              className="btn btn-primary"
-              style={ctx.mnemonicConfirmStep === 1 ? { background: 'var(--orange)' } : ctx.mnemonicConfirmStep === 2 ? { background: 'var(--red)' } : {}}
+              className={`btn btn-primary ${ctx.mnemonicConfirmStep === 1 ? 'btn-warning' : ctx.mnemonicConfirmStep === 2 ? 'btn-danger' : ''}`}
             >
               {ctx.mnemonicConfirmStep === 0
                 ? (ctx.isAuthenticated ? 'I\'ve saved my phrase' : 'I\'ve saved my phrase — Continue to Login')
@@ -93,8 +81,7 @@ export const RecoverModal: React.FC = () => {
               value={ctx.recoverMnemonic}
               onChange={(e) => ctx.setRecoverMnemonic(e.target.value)}
               rows={3}
-              className="form-textarea"
-              style={{ fontFamily: 'monospace' }}
+              className="form-textarea form-textarea-mono"
             />
           </div>
 
@@ -136,7 +123,7 @@ export const KeyBackupScreen: React.FC = () => {
           <h2 className="auth-title">Backup Your Key</h2>
           <p className="auth-subtitle">
             Your identity is your keypair. If you lose it, you lose access to your account forever.
-            <strong className="warning" style={{ color: 'var(--yellow)' }}> There is no recovery.</strong>
+            <strong className="warning"> There is no recovery.</strong>
           </p>
           <div className="form-group">
             <label className="form-label">Your Public Key Fingerprint</label>
@@ -151,7 +138,7 @@ export const KeyBackupScreen: React.FC = () => {
               className="form-textarea"
             />
           </div>
-          <div className="auth-success" style={{ marginBottom: '16px' }}>
+          <div className="auth-success auth-success-spaced">
             ✅ Your keypair is saved in this browser's storage. To use Accord on another device, you'll need to export and import your key.
           </div>
           <div className="key-backup-actions">
@@ -194,7 +181,7 @@ export const WelcomeScreen: React.FC = () => {
           {ctx.welcomeMode === 'choose' && (
             <>
               <div className="auth-brand">
-                <h1><img src="/logo.png" alt="Accord" style={{width: '48px', height: '48px', verticalAlign: 'middle', marginRight: '12px', borderRadius: '8px'}} /><span className="brand-accent">Accord</span></h1>
+                <h1><img src="/logo.png" alt="Accord" className="auth-brand-logo" /><span className="brand-accent">Accord</span></h1>
               </div>
               <p className="auth-tagline">Privacy-first community communications</p>
               <div className="auth-buttons-stack">
@@ -209,7 +196,7 @@ export const WelcomeScreen: React.FC = () => {
                     <button onClick={() => ctx.setWelcomeMode('invite')} className="btn btn-outline">
                       I have an invite link
                     </button>
-                    <button onClick={() => { ctx.setShowWelcomeScreen(false); ctx.setShowRecoverModal(true); ctx.setRecoverError(""); }} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
+                    <button onClick={() => { ctx.setShowWelcomeScreen(false); ctx.setShowRecoverModal(true); ctx.setRecoverError(""); }} className="btn-ghost btn-ghost-subtle">
                       Recover identity with recovery phrase
                     </button>
                   </>
@@ -221,7 +208,7 @@ export const WelcomeScreen: React.FC = () => {
                     <button onClick={() => ctx.setWelcomeMode('admin')} className="btn btn-outline">
                       Set up a new relay (admin)
                     </button>
-                    <button onClick={() => ctx.setWelcomeMode('recover')} className="btn-ghost" style={{ fontSize: '13px', marginTop: '8px', opacity: 0.8 }}>
+                    <button onClick={() => ctx.setWelcomeMode('recover')} className="btn-ghost btn-ghost-subtle">
                       Recover identity (connect to relay first)
                     </button>
                   </>
@@ -269,7 +256,7 @@ export const WelcomeScreen: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Display Name <span style={{ color: "var(--accent)" }}>*</span></label>
+                <label className="form-label">Display Name <span className="form-required">*</span></label>
                 <input
                   type="text"
                   placeholder="How others will see you (required)"
@@ -428,7 +415,7 @@ export const LoginScreen: React.FC = () => {
                 ) : localStorage.getItem('accord_public_key_plain') ? (
                   <span className="accent">Identity remembered — enter your password to log in</span>
                 ) : (
-                  <span style={{ color: 'var(--yellow)' }}>No identity found on this device — create a new one or recover with your phrase</span>
+                  <span className="warning">No identity found on this device — create a new one or recover with your phrase</span>
                 )}
               </div>
             </div>
@@ -445,26 +432,26 @@ export const LoginScreen: React.FC = () => {
               className="form-input"
             />
             {!ctx.isLoginMode && ctx.password && ctx.password.length < 8 && (
-              <div className="form-hint" style={{ color: 'var(--red)' }}>
+              <div className="form-hint form-hint-error">
                 Password must be at least 8 characters
               </div>
             )}
           </div>
 
           {!ctx.isLoginMode && ctx.encryptionEnabled && (
-            <div className="auth-info-box" style={{ marginBottom: '20px' }}>
+            <div className="auth-info-box auth-info-box-spaced">
               <div className="accent">A new ECDH P-256 keypair will be generated for your identity</div>
-              <div style={{ fontSize: '12px', marginTop: '4px' }}>No username needed — you are identified by your public key hash</div>
+              <div className="auth-info-box-detail">No username needed — you are identified by your public key hash</div>
             </div>
           )}
 
           {ctx.authError && <div className="auth-error">{ctx.authError}</div>}
 
-          <button onClick={ctx.handleAuth} className="btn btn-primary" style={{ marginBottom: '16px' }}>
+          <button onClick={ctx.handleAuth} className="btn btn-primary auth-submit-btn">
             {ctx.isLoginMode ? 'Login' : 'Create Identity & Register'}
           </button>
 
-          <div className="auth-toggle" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
+          <div className="auth-toggle auth-toggle-stack">
             <button
               onClick={() => { ctx.setIsLoginMode(!ctx.isLoginMode); ctx.setAuthError(""); ctx.setPassword(""); }}
               className="btn-ghost"
@@ -472,12 +459,11 @@ export const LoginScreen: React.FC = () => {
               {ctx.isLoginMode ? 'Need to create an identity?' : 'Already have a keypair? Login'}
             </button>
             
-            <div style={{ borderTop: '1px solid var(--border)', width: '100%', paddingTop: '12px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center' }}>
-              <span style={{ fontSize: '12px', opacity: 0.6 }}>Lost access to your keypair?</span>
+            <div className="auth-recover-section">
+              <span className="auth-recover-label">Lost access to your keypair?</span>
               <button
                 onClick={() => { ctx.setShowRecoverModal(true); ctx.setRecoverError(""); }}
                 className="btn btn-outline"
-                style={{ width: '100%' }}
               >
                 Recover with recovery phrase
               </button>
