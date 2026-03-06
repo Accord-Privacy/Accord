@@ -15,7 +15,7 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -23,7 +23,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: var(--font-xl);
   cursor: pointer;
   padding: 0 4px;
 }
@@ -34,7 +34,7 @@
   border-radius: 4px;
   padding: 8px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-sm);
   outline: none;
   box-sizing: border-box;
 }
@@ -48,7 +48,7 @@
   margin-top: 8px;
 }
 .status-popover-count {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-faint);
 }
 .status-popover-save, .status-popover-clear {
@@ -57,7 +57,7 @@
   color: var(--text-primary);
   padding: 4px 12px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 .status-popover-save:hover { background: var(--accent-hover); }
@@ -68,7 +68,7 @@
 
 /* Member Custom Status */
 .member-custom-status {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -271,7 +271,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  font-size: var(--font-2xl);
   font-weight: 700;
   color: var(--text-primary);
   overflow: hidden;
@@ -293,21 +293,21 @@
 }
 
 .profile-card-display-name {
-  font-size: 20px;
+  font-size: var(--font-xl);
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
 }
 
 .profile-card-username {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-muted);
   margin-top: 2px;
   font-family: var(--font-mono, monospace);
 }
 
 .profile-card-status {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   margin-top: 8px;
   padding: 6px 8px;
@@ -326,7 +326,7 @@
 }
 
 .profile-card-section-title {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -335,7 +335,7 @@
 }
 
 .profile-card-bio {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   line-height: 1.4;
   white-space: pre-wrap;
@@ -355,7 +355,7 @@
   padding: 2px 8px;
   border-radius: 12px;
   border: 1px solid;
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 500;
   background: var(--bg-content);
 }
@@ -368,7 +368,7 @@
 }
 
 .profile-card-member-since {
-  font-size: 13px;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
 }
 
@@ -383,7 +383,7 @@
   padding: 8px 16px;
   border: none;
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: var(--font-base);
   font-weight: 500;
   cursor: pointer;
   transition: background var(--transition-fast), transform var(--transition-fast);
@@ -416,51 +416,51 @@
 .bot-panel { margin-top: 8px; }
 .bot-panel-header {
   display: flex; align-items: center; gap: 6px; padding: 4px 8px;
-  cursor: pointer; font-size: 12px; color: var(--text-muted); text-transform: uppercase;
+  cursor: pointer; font-size: var(--font-sm); color: var(--text-muted); text-transform: uppercase;
   font-weight: 600; letter-spacing: 0.02em; user-select: none;
 }
 .bot-panel-header:hover { color: var(--text-secondary); }
-.bot-panel-toggle { font-size: 10px; width: 12px; }
+.bot-panel-toggle { font-size: var(--font-xs); width: 12px; }
 .bot-panel-add {
   margin-left: auto; background: none; border: none; color: var(--text-muted);
-  cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
+  cursor: pointer; font-size: var(--font-lg); line-height: 1; padding: 0 4px;
 }
 .bot-panel-add:hover { color: var(--text-secondary); }
 .bot-panel-list { padding: 2px 8px; }
-.bot-panel-empty { font-size: 12px; color: var(--text-faint); padding: 4px 0; }
+.bot-panel-empty { font-size: var(--font-sm); color: var(--text-faint); padding: 4px 0; }
 .bot-panel-item {
   display: flex; align-items: center; gap: 8px; padding: 4px 6px;
-  border-radius: 4px; font-size: 13px;
+  border-radius: 4px; font-size: var(--font-sm);
 }
 .bot-panel-item:hover { background: rgba(79,84,92,0.3); }
-.bot-panel-icon { font-size: 16px; }
+.bot-panel-icon { font-size: var(--font-lg); }
 .bot-panel-info { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .bot-panel-name { color: var(--text-secondary); font-weight: 500; }
-.bot-panel-cmds { color: var(--text-faint); font-size: 11px; }
+.bot-panel-cmds { color: var(--text-faint); font-size: var(--font-xs); }
 .bot-panel-remove {
   background: none; border: none; color: var(--text-faint); cursor: pointer;
-  font-size: 14px; opacity: 0; transition: opacity 0.15s;
+  font-size: var(--font-base); opacity: 0; transition: opacity 0.15s;
 }
 .bot-panel-item:hover .bot-panel-remove { opacity: 1; }
 .bot-panel-remove:hover { color: var(--red); }
 
 /* Bot install modal */
 .bot-install-modal { max-width: 480px; }
-.bot-install-modal h3 { margin: 0 0 16px; color: var(--text-primary); font-size: 18px; }
+.bot-install-modal h3 { margin: 0 0 16px; color: var(--text-primary); font-size: var(--font-xl); }
 .bot-install-modal .form-group { margin-bottom: 12px; }
 .bot-install-modal .form-group label {
-  display: block; color: var(--text-secondary); font-size: 12px;
+  display: block; color: var(--text-secondary); font-size: var(--font-sm);
   text-transform: uppercase; font-weight: 600; margin-bottom: 4px;
 }
 .bot-install-modal .form-group input,
 .bot-install-modal .form-group textarea {
   width: 100%; background: var(--bg-darkest); border: 1px solid var(--bg-darkest);
-  color: var(--text-secondary); padding: 8px; border-radius: 4px; font-size: 14px;
+  color: var(--text-secondary); padding: 8px; border-radius: 4px; font-size: var(--font-base);
 }
-.bot-install-modal .form-error { color: var(--red); font-size: 13px; margin-bottom: 8px; }
+.bot-install-modal .form-error { color: var(--red); font-size: var(--font-sm); margin-bottom: 8px; }
 .bot-install-modal .form-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .bot-install-modal .form-actions button {
-  padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;
+  padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: var(--font-base);
 }
 .bot-install-modal .form-actions button[type="submit"] {
   background: var(--accent); color: var(--text-on-accent);
@@ -472,12 +472,12 @@
 /* Bot message styling */
 .message-bot-badge {
   display: inline-flex; align-items: center; gap: 3px;
-  background: var(--accent); color: var(--text-on-accent); font-size: 10px; font-weight: 600;
+  background: var(--accent); color: var(--text-on-accent); font-size: var(--font-xs); font-weight: 600;
   padding: 1px 5px; border-radius: 3px; margin-left: 6px;
   text-transform: uppercase; letter-spacing: 0.02em; vertical-align: middle;
 }
 .bot-sent-disclosure {
-  font-size: 11px; color: var(--text-faint); margin-top: 2px;
+  font-size: var(--font-xs); color: var(--text-faint); margin-top: 2px;
 }
 
 /* Bot embed */
@@ -485,10 +485,10 @@
   background: var(--bg-dark); border-left: 3px solid var(--accent); border-radius: 4px;
   padding: 12px; margin-top: 4px; max-width: 520px;
 }
-.bot-embed-title { color: var(--text-primary); font-weight: 600; font-size: 15px; margin-bottom: 8px; }
-.bot-embed-text { color: var(--text-secondary); font-size: 14px; margin-bottom: 6px; line-height: 1.4; }
+.bot-embed-title { color: var(--text-primary); font-weight: 600; font-size: var(--font-base); margin-bottom: 8px; }
+.bot-embed-text { color: var(--text-secondary); font-size: var(--font-base); margin-bottom: 6px; line-height: 1.4; }
 .bot-embed-grid { margin-bottom: 8px; overflow-x: auto; }
-.bot-embed-grid table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bot-embed-grid table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
 .bot-embed-grid th {
   text-align: left; color: var(--text-secondary); font-weight: 600; padding: 4px 8px;
   border-bottom: 1px solid var(--bg-active);
@@ -498,29 +498,29 @@
 .bot-embed-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .bot-action-btn {
   background: var(--bg-active); color: var(--text-on-accent); border: none; padding: 6px 12px;
-  border-radius: 3px; font-size: 13px; cursor: pointer; transition: background 0.15s;
+  border-radius: 3px; font-size: var(--font-sm); cursor: pointer; transition: background 0.15s;
 }
 .bot-action-btn:hover { background: var(--accent); }
 .bot-embed-divider { border: none; border-top: 1px solid var(--bg-active); margin: 8px 0; }
 .bot-embed-fields { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
 .bot-embed-field { min-width: 120px; }
 .bot-embed-field.inline { flex: 1; }
-.bot-field-name { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
-.bot-field-value { color: var(--text-secondary); font-size: 14px; }
+.bot-field-name { color: var(--text-secondary); font-size: var(--font-sm); font-weight: 600; }
+.bot-field-value { color: var(--text-secondary); font-size: var(--font-base); }
 .bot-embed-progress { margin-bottom: 6px; }
-.bot-progress-label { color: var(--text-secondary); font-size: 12px; margin-bottom: 2px; }
+.bot-progress-label { color: var(--text-secondary); font-size: var(--font-sm); margin-bottom: 2px; }
 .bot-progress-bar {
   background: var(--bg-darkest); border-radius: 4px; height: 8px; overflow: hidden;
 }
 .bot-progress-fill { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.3s; }
 .bot-embed-code {
-  background: var(--bg-darkest); padding: 8px; border-radius: 4px; font-size: 13px;
+  background: var(--bg-darkest); padding: 8px; border-radius: 4px; font-size: var(--font-sm);
   color: var(--text-secondary); overflow-x: auto; margin-bottom: 6px;
 }
 .bot-embed-input { margin-bottom: 6px; }
 .bot-input-field {
   background: var(--bg-darkest); border: 1px solid var(--bg-darkest); color: var(--text-secondary);
-  padding: 6px 8px; border-radius: 4px; width: 100%; font-size: 14px;
+  padding: 6px 8px; border-radius: 4px; width: 100%; font-size: var(--font-base);
 }
 
 /* Slash command autocomplete */
@@ -532,13 +532,13 @@
 }
 .slash-command-item {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-  cursor: pointer; font-size: 14px;
+  cursor: pointer; font-size: var(--font-base);
 }
 .slash-command-item:hover { background: rgba(79,84,92,0.4); }
-.slash-command-icon { font-size: 18px; width: 24px; text-align: center; }
+.slash-command-icon { font-size: var(--font-xl); width: 24px; text-align: center; }
 .slash-command-name { color: var(--text-primary); font-weight: 500; }
-.slash-command-desc { color: var(--text-muted); font-size: 12px; flex: 1; }
-.slash-command-bot { color: var(--text-faint); font-size: 11px; }
+.slash-command-desc { color: var(--text-muted); font-size: var(--font-sm); flex: 1; }
+.slash-command-bot { color: var(--text-faint); font-size: var(--font-xs); }
 
 /* Bot param form */
 .bot-param-form-overlay {
@@ -551,33 +551,33 @@
 }
 .bot-param-form-header {
   display: flex; justify-content: space-between; align-items: center;
-  color: var(--text-primary); font-size: 16px; font-weight: 600; margin-bottom: 8px;
+  color: var(--text-primary); font-size: var(--font-lg); font-weight: 600; margin-bottom: 8px;
 }
 .bot-param-close {
-  background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer;
+  background: none; border: none; color: var(--text-muted); font-size: var(--font-xl); cursor: pointer;
 }
-.bot-param-form-desc { color: var(--text-muted); font-size: 13px; margin-bottom: 16px; }
+.bot-param-form-desc { color: var(--text-muted); font-size: var(--font-sm); margin-bottom: 16px; }
 .bot-param-field { margin-bottom: 12px; }
 .bot-param-field label {
-  display: block; color: var(--text-secondary); font-size: 12px; text-transform: uppercase;
+  display: block; color: var(--text-secondary); font-size: var(--font-sm); text-transform: uppercase;
   font-weight: 600; margin-bottom: 4px;
 }
 .bot-param-field .required { color: var(--red); }
-.bot-param-field .param-desc { color: var(--text-faint); font-size: 11px; text-transform: none; font-weight: 400; margin-left: 6px; }
+.bot-param-field .param-desc { color: var(--text-faint); font-size: var(--font-xs); text-transform: none; font-weight: 400; margin-left: 6px; }
 .bot-param-field input {
   width: 100%; background: var(--bg-darkest); border: 1px solid var(--bg-darkest);
-  color: var(--text-secondary); padding: 8px; border-radius: 4px; font-size: 14px;
+  color: var(--text-secondary); padding: 8px; border-radius: 4px; font-size: var(--font-base);
 }
 .bot-param-form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .bot-param-submit {
   background: var(--accent); color: var(--text-on-accent); border: none; padding: 8px 16px;
-  border-radius: 4px; cursor: pointer; font-size: 14px;
+  border-radius: 4px; cursor: pointer; font-size: var(--font-base);
 }
 .bot-param-cancel {
   background: transparent; color: var(--text-secondary); border: none; padding: 8px 16px;
-  border-radius: 4px; cursor: pointer; font-size: 14px;
+  border-radius: 4px; cursor: pointer; font-size: var(--font-base);
 }
-.bot-response-text { color: var(--text-secondary); font-size: 14px; line-height: 1.4; }
+.bot-response-text { color: var(--text-secondary); font-size: var(--font-base); line-height: 1.4; }
 
 
 /* Custom emoji in messages */

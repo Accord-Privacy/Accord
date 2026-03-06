@@ -57,7 +57,7 @@
 }
 
 .empty-state-title {
-  font-size: 17px;
+  font-size: var(--font-xl);
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 8px;
@@ -201,7 +201,7 @@
 /* Content */
 .message-content {
   color: var(--text-chat);
-  font-size: 16px;
+  font-size: var(--font-lg);
   line-height: 1.375rem;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -238,7 +238,7 @@
   background: transparent;
   border: none;
   padding: 6px 6px;
-  font-size: 18px;
+  font-size: var(--font-xl);
   cursor: pointer;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -399,7 +399,7 @@
   background: var(--red);
 }
 .new-messages-divider-label {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: var(--font-weight-semibold, 600);
   color: var(--red);
   white-space: nowrap;
@@ -410,7 +410,7 @@
 .channel-mention-badge {
   background: var(--red);
   color: white;
-  font-size: 10px;
+  font-size: var(--font-xs);
   font-weight: var(--font-weight-bold, 700);
   min-width: 16px;
   height: 16px;

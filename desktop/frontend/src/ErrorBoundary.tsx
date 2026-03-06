@@ -26,20 +26,12 @@ class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: "2rem", textAlign: "center", color: "#ff6b6b" }}>
+        <div className="error-boundary">
           <h1>Something went wrong</h1>
           <p>{this.state.error?.message}</p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
-            style={{
-              marginTop: "1rem",
-              padding: "0.5rem 1rem",
-              cursor: "pointer",
-              background: "#5865f2",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-            }}
+            className="btn btn-primary error-boundary-btn"
           >
             Try Again
           </button>

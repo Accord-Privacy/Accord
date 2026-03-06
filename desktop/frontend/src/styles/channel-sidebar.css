@@ -18,7 +18,7 @@
   justify-content: center;
   padding: 0 16px;
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--font-base);
   color: var(--text-primary);
   border-bottom: 1px solid var(--border);
   box-shadow: 0 1px 0 rgba(0,0,0,0.2), 0 1.5px 0 rgba(0,0,0,0.05);
@@ -50,7 +50,7 @@
 }
 
 .sidebar-header .connection-dot {
-  font-size: 8px;
+  font-size: var(--font-xs);
 }
 
 .sidebar-header .connection-dot.connected { color: var(--green); }
@@ -88,7 +88,7 @@
 }
 
 .sidebar-description {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-faint);
   font-weight: 400;
   padding-bottom: 8px;
@@ -118,7 +118,7 @@
 .sidebar-admin-btn:hover { color: var(--text-primary); }
 .sidebar-admin-btn.invite-btn {
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-xs);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
 }
@@ -148,7 +148,7 @@
   border-radius: 6px;
   cursor: pointer;
   color: var(--text-faint);
-  font-size: 15px;
+  font-size: var(--font-base);
   font-weight: 500;
   transition: background var(--transition-fast), color var(--transition-fast);
   position: relative;
@@ -232,7 +232,7 @@
 
 /* Category headers — Fluxer ChannelItem category */
 .role-section-header {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -245,7 +245,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
+  font-size: var(--font-xl);
   font-weight: 600;
   width: 100%;
   padding: 4px 0;
@@ -301,7 +301,7 @@
 }
 
 .dm-header {
-  font-size: 12px;
+  font-size: var(--font-sm);
   color: var(--text-faint);
   text-transform: uppercase;
   font-weight: 600;
@@ -364,7 +364,7 @@
 }
 
 .dm-name {
-  font-size: 16px;
+  font-size: var(--font-lg);
   color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -440,7 +440,7 @@
 }
 
 .username {
-  font-size: 14px;
+  font-size: var(--font-base);
   font-weight: 500;
   color: var(--text-primary);
   line-height: 18px;
@@ -450,7 +450,7 @@
 }
 
 .user-status {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-muted);
   line-height: 16px;
   font-weight: 500;
@@ -477,7 +477,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: var(--font-lg);
   padding: 0;
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }

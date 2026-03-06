@@ -10,7 +10,7 @@
 }
 
 .member-header {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -95,7 +95,7 @@
 }
 
 .member-name {
-  font-size: 14px;
+  font-size: var(--font-base);
   font-weight: 500;
   color: inherit;
   white-space: nowrap;
@@ -106,7 +106,7 @@
 }
 
 .member-status-text {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-muted);
   font-weight: 500;
   opacity: 0.85;
@@ -126,7 +126,7 @@
 }
 
 .member-role-badge {
-  font-size: 10px;
+  font-size: var(--font-xs);
   margin-left: 2px;
   color: #faa61a;
   opacity: 0.8;
@@ -134,7 +134,7 @@
 
 /* Role section headers */
 .role-section-header {
-  font-size: 12px;
+  font-size: var(--font-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.02em;
