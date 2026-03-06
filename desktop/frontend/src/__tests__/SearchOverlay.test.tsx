@@ -54,7 +54,7 @@ describe('SearchOverlay', () => {
   it('shows filter panel when Filters button is clicked', () => {
     render(<SearchOverlay {...baseProps} />);
     // Switch to server mode first (filters only show in server mode)
-    const serverTab = screen.getByText('🔍 Server');
+    const serverTab = screen.getByText('Server');
     fireEvent.click(serverTab);
     fireEvent.click(screen.getByText(/filters/i));
     expect(screen.getByText('Channel:')).toBeInTheDocument();
@@ -63,7 +63,7 @@ describe('SearchOverlay', () => {
 
   it('renders channel options in filter dropdown', () => {
     render(<SearchOverlay {...baseProps} />);
-    const serverTab = screen.getByText('🔍 Server');
+    const serverTab = screen.getByText('Server');
     fireEvent.click(serverTab);
     fireEvent.click(screen.getByText(/filters/i));
     const select = screen.getByDisplayValue('All channels');
