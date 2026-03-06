@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { decryptMessage, getChannelKey } from "./crypto";
 import { Channel, Message } from "./types";
+import { Icon } from "./components/Icon";
 
 interface SearchResult {
   message_id: string;
@@ -368,6 +369,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
         <div className="search-overlay-body">
           <div className="search-controls">
             <div className="search-input-container">
+              <span className="search-input-icon"><Icon name="search" size={16} /></span>
               <input
                 ref={searchInputRef}
                 type="text"

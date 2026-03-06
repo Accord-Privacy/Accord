@@ -701,7 +701,7 @@ export function NodeSettings({
               {/* Import Discord Template */}
               {isAdmin && (
                 <div className="ns-divider">
-                  <h4 className="ns-section-title" style={{ fontSize: 14 }}>Import Discord Template</h4>
+                  <h4 className="ns-section-title" style={{ fontSize: 'var(--font-base)' }}>Import Discord Template</h4>
                   <p className="ns-section-desc">Import channels, roles, and categories from a Discord server template.</p>
                   <button className="ns-btn ns-btn-ghost" onClick={() => { onClose(); if (onShowTemplateImport) setTimeout(onShowTemplateImport, 100); }}>
                     <Icon name="download" size={16} /> Import Template
@@ -760,10 +760,10 @@ export function NodeSettings({
                         <div className="ns-invite-header">
                           <code className="ns-invite-code">{invite.code}</code>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button className="ns-btn ns-btn-primary" onClick={() => copyInviteCode(invite.code)} disabled={isInactive} style={{ padding: '4px 8px', fontSize: 12 }}>
+                            <button className="ns-btn ns-btn-primary" onClick={() => copyInviteCode(invite.code)} disabled={isInactive} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
                               Copy
                             </button>
-                            <button className="ns-btn ns-btn-danger" onClick={() => handleRevokeInvite(invite.code)} style={{ padding: '4px 8px', fontSize: 12 }}>
+                            <button className="ns-btn ns-btn-danger" onClick={() => handleRevokeInvite(invite.code)} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
                               Revoke
                             </button>
                           </div>
@@ -873,7 +873,7 @@ export function NodeSettings({
                     <label className="ns-label">Image (PNG/GIF/WebP, max 256KB)</label>
                     <input type="file" accept="image/png,image/gif,image/webp"
                       onChange={e => setNewEmojiFile(e.target.files?.[0] || null)}
-                      style={{ color: 'var(--text-secondary)', fontSize: 13 }}
+                      style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-sm)' }}
                     />
                   </div>
                   <button className="ns-btn ns-btn-primary"
@@ -957,7 +957,7 @@ export function NodeSettings({
                     <div key={entry.id} className="ns-audit-entry">
                       <span className="ns-audit-icon">{getActionIcon(entry.action)}</span>
                       <div className="ns-audit-content">
-                        <div style={{ marginBottom: 4, fontSize: 14 }}>
+                        <div style={{ marginBottom: 4, fontSize: 'var(--font-base)' }}>
                           <span className="ns-audit-actor">
                             {(resolveUserName ? resolveUserName(entry.actor_id) : null) || entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
                           </span>{' '}

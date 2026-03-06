@@ -147,7 +147,7 @@
   background: transparent;
   border: none;
   color: var(--text-muted);
-  font-size: 24px;
+  font-size: var(--font-2xl);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
@@ -1075,7 +1075,7 @@
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-base);
   padding: 2px 4px;
   transition: color 0.15s ease;
 }
@@ -1157,7 +1157,7 @@
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 18px;
+  font-size: var(--font-xl);
   padding: 0 4px;
   transition: color 0.15s ease;
 }
@@ -1192,7 +1192,7 @@
 
 .ns-audit-entry:hover { background: var(--bg-modifier-hover); }
 
-.ns-audit-icon { font-size: 18px; margin-top: 2px; flex-shrink: 0; }
+.ns-audit-icon { font-size: var(--font-xl); margin-top: 2px; flex-shrink: 0; color: var(--text-muted); }
 .ns-audit-content { flex: 1; }
 .ns-audit-actor { font-weight: 600; color: var(--text-primary); }
 .ns-audit-action { color: var(--text-secondary); }

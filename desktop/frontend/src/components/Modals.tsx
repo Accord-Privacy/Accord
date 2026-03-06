@@ -333,9 +333,9 @@ export const AppModals: React.FC = () => {
           <div className="pinned-panel-body">
             {ctx.pinnedMessages.length === 0 ? (
               <div className="pinned-panel-empty">
+                <div className="pinned-panel-empty-icon"><Icon name="pin" size={40} /></div>
                 <div className="pinned-panel-empty-title">No pinned messages</div>
-                <p>No pinned messages in this channel yet.</p>
-                <p className="pinned-panel-empty-title">Pin messages to keep important information easily accessible.</p>
+                <p>Pin messages to keep important information easily accessible.</p>
               </div>
             ) : (
               <div>
@@ -354,7 +354,22 @@ export const AppModals: React.FC = () => {
                       <div className="pinned-message-preview"><LinkPreview content={msg.content} token={ctx.appState.token || ''} /></div>
                     )}
                     <div className="pinned-message-meta">
-                      Pinned {new Date(msg.pinned_at!).toLocaleDateString()}
+                      <span>Pinned {new Date(msg.pinned_at!).toLocaleDateString()}</span>
+                      <button
+                        className="pinned-message-unpin"
+                        title="Unpin message"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!ctx.appState.token) return;
+                          try {
+                            await api.unpinMessage(msg.id, ctx.appState.token);
+                            // Close and reopen to refresh
+                            ctx.setShowPinnedPanel(false);
+                          } catch { /* ignore */ }
+                        }}
+                      >
+                        <Icon name="close" size={14} />
+                      </button>
                     </div>
                   </div>
                 ))}
