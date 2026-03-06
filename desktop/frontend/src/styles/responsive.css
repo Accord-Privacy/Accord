@@ -1,0 +1,118 @@
+/* =================== Responsive / Mobile Web =================== */
+
+/* Hamburger button — hidden by default (desktop) */
+.mobile-hamburger {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-primary, #fff);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 8px;
+  margin-right: 4px;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Mobile sidebar backdrop */
+.mobile-sidebar-backdrop {
+  display: none;
+}
+
+/* ── Tablet: 768–1024px ── */
+@media (max-width: 1024px) {
+  .server-list {
+    width: 56px;
+  }
+  .server-list .server-icon {
+    width: 40px;
+    height: 40px;
+  }
+  .channel-sidebar {
+    width: 200px;
+  }
+  .member-sidebar {
+    width: 200px;
+  }
+}
+
+/* ── Phone: <768px ── */
+@media (max-width: 767px) {
+  /* Show hamburger */
+  .mobile-hamburger {
+    display: flex;
+  }
+
+  /* Hide server list entirely */
+  .server-list {
+    display: none;
+  }
+
+  /* Hide member sidebar by default */
+  .member-sidebar {
+    display: none;
+  }
+
+  /* Channel sidebar: hidden by default, shown as overlay when toggled */
+  .channel-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .mobile-sidebar-open .channel-sidebar {
+    transform: translateX(0);
+  }
+
+  /* Backdrop when sidebar is open */
+  .mobile-sidebar-open .mobile-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+
+  /* Chat area takes full width */
+  .chat-area {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* Message input: stick to bottom, safe-area aware */
+  .message-input-container,
+  .message-input-wrapper {
+    position: sticky;
+    bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Touch-friendly: ensure clickable elements are at least 44x44 */
+  button,
+  a,
+  .channel-item,
+  .server-icon,
+  .dm-item,
+  .member-item,
+  [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Ensure message actions / icon buttons don't shrink below touch target */
+  .message-actions button,
+  .chat-header button,
+  .channel-sidebar button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

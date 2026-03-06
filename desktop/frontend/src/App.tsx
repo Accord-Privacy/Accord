@@ -247,6 +247,7 @@ function App() {
     displayNameInput, setDisplayNameInput,
     displayNameSaving, setDisplayNameSaving,
     showShortcutsHelp, setShowShortcutsHelp,
+    mobileSidebarOpen, setMobileSidebarOpen,
     showMemberSidebar, setShowMemberSidebar,
     showInputEmojiPicker, setShowInputEmojiPicker,
     showScrollToBottom, setShowScrollToBottom,
@@ -3338,6 +3339,9 @@ function App() {
     // Keyboard shortcuts
     showShortcutsHelp, setShowShortcutsHelp,
 
+    // Mobile sidebar
+    mobileSidebarOpen, setMobileSidebarOpen,
+
     // Member sidebar
     showMemberSidebar, setShowMemberSidebar,
 
@@ -3623,10 +3627,11 @@ function App() {
   // ---- Main authenticated app ----
   return (
     <AppContext.Provider value={contextValue}>
-      <div className="app">
+      <div className={`app${mobileSidebarOpen ? ' mobile-sidebar-open' : ''}`}>
         <UpdateBanner />
         <ServerList />
         <ChannelSidebar />
+        {mobileSidebarOpen && <div className="mobile-sidebar-backdrop" onClick={() => setMobileSidebarOpen(false)} />}
         <ChatArea />
         <MemberSidebar />
         <AppModals />

@@ -207,6 +207,11 @@ export const ChatArea: React.FC = () => {
         >
           {/* Chat Header */}
           <div className="chat-header">
+            <button
+              className="mobile-hamburger"
+              onClick={() => ctx.setMobileSidebarOpen(o => !o)}
+              aria-label="Toggle sidebar"
+            >☰</button>
             <div className="chat-header-left">
               {ctx.selectedDmChannel ? (
                 <>

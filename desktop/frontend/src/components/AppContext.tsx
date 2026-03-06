@@ -236,6 +236,10 @@ export interface AppContextType {
   showShortcutsHelp: boolean;
   setShowShortcutsHelp: React.Dispatch<React.SetStateAction<boolean>>;
 
+  // Mobile sidebar toggle
+  mobileSidebarOpen: boolean;
+  setMobileSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>;
+
   // Member sidebar
   showMemberSidebar: boolean;
   setShowMemberSidebar: React.Dispatch<React.SetStateAction<boolean>>;

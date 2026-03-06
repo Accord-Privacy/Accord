@@ -54,6 +54,9 @@ export function useUIState() {
   // Keyboard shortcuts help
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
+  // Mobile sidebar toggle
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
   // Member sidebar
   const [showMemberSidebar, setShowMemberSidebar] = useState(true);
 
@@ -134,6 +137,7 @@ export function useUIState() {
     displayNameInput, setDisplayNameInput,
     displayNameSaving, setDisplayNameSaving,
     showShortcutsHelp, setShowShortcutsHelp,
+    mobileSidebarOpen, setMobileSidebarOpen,
     showMemberSidebar, setShowMemberSidebar,
     showInputEmojiPicker, setShowInputEmojiPicker,
     showScrollToBottom, setShowScrollToBottom,
