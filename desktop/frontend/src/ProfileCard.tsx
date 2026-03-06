@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { api } from './api';
 import { UserProfile, Role, User } from './types';
+import { avatarColor } from './avatarColor';
 
 export interface ProfileCardProps {
   userId: string;
@@ -86,7 +87,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
   const isSelf = userId === currentUserId;
   const displayName = profile?.display_name || user?.display_name || 'Unknown';
   const username = user?.public_key_hash ? user.public_key_hash.substring(0, 16) : userId.substring(0, 16);
-  const bannerColor = roleColor || 'var(--accent)';
+  const bannerColor = roleColor || avatarColor(userId);
 
   const avatarUrl = api.getUserAvatarUrl(userId);
 
@@ -105,7 +106,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 
         {/* Avatar */}
         <div className="profile-card-avatar-ring">
-          <div className="profile-card-avatar">
+          <div className="profile-card-avatar" style={{ background: avatarColor(userId) }}>
             <img
               src={avatarUrl}
               alt={displayName[0]}
