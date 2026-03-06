@@ -1,6 +1,7 @@
 // Notification system for Accord
 
 import { Message } from './types';
+import { playMessageSound, playMentionSound } from './utils/sounds';
 
 export interface NotificationPreferences {
   enabled: boolean;
@@ -33,14 +34,14 @@ export class NotificationManager {
   public currentUsername = '';
   private windowFocused = true;
   private activeChannelId: string | null = null;
-  private audioContext: AudioContext | null = null;
   public doNotDisturb = false;
+  private titleFlashInterval: ReturnType<typeof setInterval> | null = null;
+  private originalTitle = 'Accord';
 
   constructor() {
     this.preferences = this.loadPreferences();
     this.setupWindowFocusHandlers();
     this.requestNotificationPermission();
-    this.initAudioContext();
   }
 
   private loadPreferences(): NotificationPreferences {
@@ -74,6 +75,7 @@ export class NotificationManager {
   private setupWindowFocusHandlers(): void {
     window.addEventListener('focus', () => {
       this.windowFocused = true;
+      this.clearTitleBadge();
     });
 
     window.addEventListener('blur', () => {
@@ -87,12 +89,6 @@ export class NotificationManager {
   private async requestNotificationPermission(): Promise<void> {
     if ('Notification' in window && Notification.permission === 'default') {
       await Notification.requestPermission();
-    }
-  }
-
-  private initAudioContext(): void {
-    if (typeof AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined') {
-      this.audioContext = new (AudioContext || (window as any).webkitAudioContext)();
     }
   }
 
@@ -282,9 +278,18 @@ export class NotificationManager {
     if (shouldNotify) {
       this.showDesktopNotification(message, channelId, isMention, isDm);
       
-      // Play sound for mentions and DMs (or all if sounds enabled)
-      if (this.preferences.sounds && (isMention || isDm)) {
-        this.playNotificationSound();
+      // Play appropriate sound
+      if (this.preferences.sounds) {
+        if (isMention) {
+          playMentionSound();
+        } else {
+          playMessageSound();
+        }
+      }
+
+      // Update title badge when window is not focused
+      if (!this.windowFocused) {
+        this.updateTitleBadge();
       }
     }
   }
@@ -315,28 +320,48 @@ export class NotificationManager {
     }
   }
 
-  private playNotificationSound(): void {
-    if (!this.audioContext) return;
-
-    try {
-      const oscillator = this.audioContext.createOscillator();
-      const gainNode = this.audioContext.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(this.audioContext.destination);
-
-      oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime);
-      oscillator.frequency.setValueAtTime(600, this.audioContext.currentTime + 0.1);
-      
-      gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.1, this.audioContext.currentTime + 0.01);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.2);
-
-      oscillator.start(this.audioContext.currentTime);
-      oscillator.stop(this.audioContext.currentTime + 0.2);
-    } catch (error) {
-      console.warn('Failed to play notification sound:', error);
+  /** Compute total unreads across all nodes and update the document title. */
+  private updateTitleBadge(): void {
+    let total = 0;
+    for (const nodeId of Object.keys(this.unreads)) {
+      total += this.unreads[nodeId].totalUnreads;
     }
+
+    if (total <= 0) {
+      this.clearTitleBadge();
+      return;
+    }
+
+    // Start flashing between "(N) Accord" and "(N) channel"
+    if (this.titleFlashInterval) clearInterval(this.titleFlashInterval);
+
+    let showChannel = false;
+    const channelName = this.activeChannelId ?? '';
+
+    const update = () => {
+      if (showChannel && channelName) {
+        document.title = `(${total}) ${channelName}`;
+      } else {
+        document.title = `(${total}) ${this.originalTitle}`;
+      }
+      showChannel = !showChannel;
+    };
+
+    update();
+    this.titleFlashInterval = setInterval(update, 1500);
+  }
+
+  private clearTitleBadge(): void {
+    if (this.titleFlashInterval) {
+      clearInterval(this.titleFlashInterval);
+      this.titleFlashInterval = null;
+    }
+    document.title = this.originalTitle;
+  }
+
+  /** Play a test notification sound (for settings UI). */
+  public playTestSound(): void {
+    playMessageSound();
   }
 
   public getAllUnreads(): NodeUnreads {

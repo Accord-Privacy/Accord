@@ -42,11 +42,14 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ items, children }) => 
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
+    const handleScroll = () => close();
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('keydown', handleEsc);
+    document.addEventListener('scroll', handleScroll, true);
     return () => {
       document.removeEventListener('mousedown', handleClick);
       document.removeEventListener('keydown', handleEsc);
+      document.removeEventListener('scroll', handleScroll, true);
     };
   }, [menu.open, close]);
 

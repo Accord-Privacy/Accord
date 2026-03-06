@@ -53,8 +53,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
 
   const testSound = () => {
     if (preferences.sounds) {
-      // Use the notification manager's sound system
-      (notificationManager as any).playNotificationSound();
+      notificationManager.playTestSound();
     }
   };
 

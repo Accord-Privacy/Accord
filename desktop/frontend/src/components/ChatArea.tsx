@@ -14,6 +14,7 @@ import { LoadingSpinner } from "../LoadingSpinner";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
 import { ImageLightbox } from "./ImageLightbox";
+import { MessageContextMenu } from "./MessageContextMenu";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
 
@@ -26,6 +27,7 @@ export const ChatArea: React.FC = () => {
   const [slashQuery, setSlashQuery] = useState('');
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [unreadMarkerId, setUnreadMarkerId] = useState<string | null>(null);
 
   const wrapSelection = useCallback((prefix: string, suffix: string) => {
     const textarea = ctx.messageInputRef?.current;
@@ -369,6 +371,12 @@ export const ChatArea: React.FC = () => {
                       <span className="date-separator-text">{formatDateSep(msgDate)}</span>
                     </div>
                   )}
+                  {unreadMarkerId === msg.id && (
+                    <div className="unread-marker">
+                      <span className="unread-marker-text">New</span>
+                    </div>
+                  )}
+                  <MessageContextMenu message={msg} onMarkUnread={setUnreadMarkerId}>
                   <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped message-compact' : ''}`} data-message-id={msg.id} role="article" aria-label={`Message from ${msg.author}`}>
                     {/* Reply preview */}
                     {msg.replied_message && (
@@ -609,6 +617,7 @@ export const ChatArea: React.FC = () => {
                       );
                     })()}
                   </div>
+                  </MessageContextMenu>
                 </React.Fragment>
               );
             })}

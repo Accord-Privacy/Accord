@@ -421,3 +421,27 @@
   justify-content: center;
   margin-left: auto;
 }
+
+/* Unread marker */
+.unread-marker {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  margin: 4px 0;
+}
+
+.unread-marker::before,
+.unread-marker::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--red);
+}
+
+.unread-marker-text {
+  color: var(--red);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0 8px;
+}
