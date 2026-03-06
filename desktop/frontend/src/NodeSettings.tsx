@@ -813,7 +813,7 @@ export function NodeSettings({
                 </div>
               )}
 
-              <h4 className="ns-section-title">🛡️ Word Filter</h4>
+              <h4 className="ns-section-title">Word Filter</h4>
               <p className="ns-section-desc">Block or warn when messages contain specific words.</p>
 
               <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>

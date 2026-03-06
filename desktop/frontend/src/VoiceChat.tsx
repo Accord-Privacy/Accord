@@ -235,7 +235,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '14px', fontWeight: 600, color: connectionError ? '#f04747' : '#43b581' }}>
-            {connectionError ? '⚠️ Voice Error' : '🔊 Voice Connected'}
+            {connectionError ? 'Voice Error' : 'Voice Connected'}
           </span>
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
             {connectionError || channelName}
@@ -257,7 +257,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
               border: `1px solid ${voiceMode === 'relay' ? '#43b581' : '#faa61a'}`,
             }}
           >
-            {voiceMode === 'relay' ? '🛡️ Relay' : '⚡ P2P'}
+            {voiceMode === 'relay' ? 'Relay' : 'P2P'}
           </span>
         </div>
         <button
@@ -333,7 +333,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             }}
             title={isDeafened ? 'Undeafen' : 'Deafen'}
           >
-            {isDeafened ? '🔇' : '🔊'}
+            {isDeafened ? 'Muted' : 'Audio'}
           </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '120px' }}>

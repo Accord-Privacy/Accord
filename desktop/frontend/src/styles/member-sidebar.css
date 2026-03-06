@@ -112,8 +112,10 @@
 }
 
 .member-role-badge {
-  font-size: var(--font-sm);
+  font-size: 10px;
   margin-left: 2px;
+  color: #faa61a;
+  opacity: 0.8;
 }
 
 /* Role section headers */
