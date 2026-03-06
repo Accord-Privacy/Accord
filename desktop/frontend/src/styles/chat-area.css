@@ -91,6 +91,7 @@
 
 .chat-header-btn:hover {
   color: var(--text-primary);
+  background: var(--bg-modifier-hover);
 }
 
 .chat-header-btn.active {
