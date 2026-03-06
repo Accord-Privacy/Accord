@@ -1,3 +1,8 @@
+/* =================== Global Button Transitions =================== */
+button {
+  transition: background-color var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
 /* =================== Error Toast =================== */
 .error-toast {
   position: fixed;

@@ -71,6 +71,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 50%;
 }
 
 .member-info {
@@ -78,6 +79,19 @@
   flex-direction: column;
   min-width: 0;
   flex: 1;
+}
+
+.member-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.member-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .member-name {
@@ -145,8 +159,18 @@
 .member-action-btn.danger { background: var(--red); }
 
 .members-empty {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
   color: var(--text-faint);
   font-size: var(--font-sm);
   text-align: center;
+  gap: 8px;
+}
+
+.members-empty .icon {
+  opacity: 0.4;
+  margin-bottom: 4px;
 }

@@ -289,7 +289,7 @@ export const ChatArea: React.FC = () => {
             )}
             {!ctx.selectedChannelId && !ctx.selectedDmChannel && ctx.channels.length === 0 && ctx.nodes.length > 0 && (
               <div className="empty-state">
-                <div className="empty-state-icon">#</div>
+                <div className="empty-state-icon"><Icon name="hash" size={48} /></div>
                 <div className="empty-state-title">No channels</div>
                 <div className="empty-state-text">Create a channel to start chatting.</div>
               </div>

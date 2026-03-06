@@ -4,6 +4,7 @@ import { api } from "../api";
 import { NodeMember, User } from "../types";
 import { getCombinedTrust, getTrustIndicator, CLIENT_BUILD_HASH } from "../buildHash";
 import { avatarColor } from "../avatarColor";
+import { Icon } from "./Icon";
 
 export const MemberSidebar: React.FC = () => {
   const ctx = useAppContext();
@@ -26,28 +27,27 @@ export const MemberSidebar: React.FC = () => {
             <img 
               src={`${api.getUserAvatarUrl(member.user_id)}`}
               alt={ctx.displayName(member.user)[0]}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
               onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = ctx.displayName(member.user)[0]; }}
             />
           </div>
           <span className={`presence-dot presence-${presence}`} title={presence}></span>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div className="member-info">
+          <div className="member-name-row">
             {isCurrentUser && (
               <span
                 className={`trust-dot trust-${getCombinedTrust(CLIENT_BUILD_HASH, ctx.serverBuildHash, ctx.knownHashes)}`}
                 title={`Trust: ${getTrustIndicator(getCombinedTrust(CLIENT_BUILD_HASH, ctx.serverBuildHash, ctx.knownHashes)).label}`}
               />
             )}
-            <span className="member-name" style={{ color: ctx.getMemberRoleColor(member.user_id) || undefined }}>{ctx.displayName(member.user)}</span>
+            <span className="member-name" style={ctx.getMemberRoleColor(member.user_id) ? { color: ctx.getMemberRoleColor(member.user_id)! } : undefined}>{ctx.displayName(member.user)}</span>
             <span className="member-role-badge" title={member.role}>{ctx.getRoleBadge(member.role)}</span>
           </div>
           {member.profile?.custom_status && (
             <span className="member-custom-status">{member.profile.custom_status}</span>
           )}
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div className="member-actions">
           {!isCurrentUser && (
             <button onClick={(e) => { e.stopPropagation(); ctx.openDmWithUser(member.user); }} className="member-action-btn" title="Send DM">DM</button>
           )}
@@ -79,7 +79,7 @@ export const MemberSidebar: React.FC = () => {
         )}
         {offline.length > 0 && (
           <>
-            <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>OFFLINE – {offline.length}</div>
+            <div className="role-section-header">OFFLINE – {offline.length}</div>
             {offline.map(m => renderMember(m))}
           </>
         )}
@@ -122,12 +122,13 @@ export const MemberSidebar: React.FC = () => {
       )}
       {offline.length > 0 && (
         <>
-          <div className="role-section-header" style={{ color: 'var(--text-faint)' }}>OFFLINE – {offline.length}</div>
+          <div className="role-section-header">OFFLINE – {offline.length}</div>
           {offline.map(m => renderMember(m))}
         </>
       )}
       {membersWithUser.length === 0 && ctx.members.length === 0 && (
         <div className="members-empty">
+          <Icon name="members" size={32} />
           {ctx.nodes.length === 0 ? 'Join or create a node to see members' : 'No members loaded'}
         </div>
       )}

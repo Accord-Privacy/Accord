@@ -31,7 +31,6 @@ export const ServerList: React.FC = () => {
               <img 
                 src={`${api.getNodeIconUrl(ctx.nodes[i].id)}?v=${ctx.nodes[i].icon_hash}`}
                 alt={s[0]}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }}
                 onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; img.removeAttribute('src'); if (img.parentElement) img.parentElement.textContent = s[0]; }}
               />
             ) : s[0]}
@@ -50,7 +49,6 @@ export const ServerList: React.FC = () => {
         className="server-icon add-server" 
         title="Join or Create Node"
         onClick={() => ctx.setShowCreateNodeModal(true)}
-        style={{ cursor: 'pointer' }}
       >
         +
       </div>
