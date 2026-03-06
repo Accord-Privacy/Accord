@@ -5,7 +5,7 @@ fn sanitize_display_name(name: &str) -> String {
     let stripped: String = name
         .chars()
         .filter(|c| *c != '<' && *c != '>' && *c != '&')
-        .take(50)
+        .take(32)
         .collect();
     stripped.trim().to_string()
 }
@@ -681,6 +681,19 @@ pub async fn update_node_handler(
         .get("max_accounts_per_device")
         .and_then(|v| v.as_i64());
 
+    // Validate node name if provided
+    if let Some(ref n) = name {
+        crate::validation::validate_node_name(n).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 400,
+                }),
+            )
+        })?;
+    }
+
     match state
         .update_node(node_id, user_id, name.clone(), description.clone())
         .await
@@ -980,6 +993,17 @@ pub async fn invite_preview_handler(
     State(state): State<SharedState>,
     Path(invite_code): Path<String>,
 ) -> Result<Json<crate::models::InvitePreviewResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Validate invite code format before DB lookup
+    crate::validation::validate_invite_code(&invite_code).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e,
+                code: 400,
+            }),
+        )
+    })?;
+
     // Look up invite
     let invite = state
         .db
@@ -1095,6 +1119,17 @@ pub async fn use_invite_handler(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<UseInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_from_token(&state, &headers, &params).await?;
+
+    // Validate invite code format before DB lookup
+    crate::validation::validate_invite_code(&invite_code).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: e,
+                code: 400,
+            }),
+        )
+    })?;
 
     match state.use_invite(&invite_code, user_id).await {
         Ok((node_id, node_name)) => {
@@ -2554,6 +2589,19 @@ pub async fn update_user_profile_handler(
     // Validate bio length if provided
     if let Some(ref bio) = request.bio {
         crate::validation::validate_bio(bio).map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: e,
+                    code: 400,
+                }),
+            )
+        })?;
+    }
+
+    // Validate custom status if provided
+    if let Some(ref custom_status) = request.custom_status {
+        crate::validation::validate_custom_status(custom_status).map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
@@ -6561,7 +6609,8 @@ pub async fn get_channel_threads_handler(
     let limit = params
         .get("limit")
         .and_then(|l| l.parse::<u32>().ok())
-        .unwrap_or(50);
+        .unwrap_or(50)
+        .min(100); // Cap at 100 threads per request
 
     let threads = state
         .db

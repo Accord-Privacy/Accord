@@ -88,27 +88,48 @@ pub fn validate_channel_name(name: &str) -> Result<(), String> {
 /// Validates bio text length
 ///
 /// Requirements:
-/// - Maximum 500 characters
+/// - Maximum 190 characters
 pub fn validate_bio(bio: &str) -> Result<(), String> {
-    if bio.chars().count() > 500 {
-        return Err("Bio must not exceed 500 characters".to_string());
+    if bio.chars().count() > 190 {
+        return Err("Bio must not exceed 190 characters".to_string());
     }
 
     Ok(())
 }
 
+/// Validates custom status text length
+///
+/// Requirements:
+/// - Maximum 128 characters
+pub fn validate_custom_status(status: &str) -> Result<(), String> {
+    if status.chars().count() > 128 {
+        return Err("Custom status must not exceed 128 characters".to_string());
+    }
+
+    Ok(())
+}
+
+/// Sanitize a text input by stripping control characters and null bytes.
+/// Preserves newlines, tabs, and normal whitespace.
+pub fn sanitize_text(input: &str) -> String {
+    input
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\r' || *c == '\t')
+        .collect()
+}
+
 /// Validates display name format
 ///
 /// Requirements:
-/// - 1-50 characters
+/// - 1-32 characters
 /// - Must not be empty
 pub fn validate_display_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("Display name cannot be empty".to_string());
     }
 
-    if name.chars().count() > 50 {
-        return Err("Display name must not exceed 50 characters".to_string());
+    if name.chars().count() > 32 {
+        return Err("Display name must not exceed 32 characters".to_string());
     }
 
     Ok(())
@@ -250,21 +271,21 @@ mod tests {
     fn test_validate_bio_valid() {
         assert!(validate_bio("").is_ok()); // empty is allowed
         assert!(validate_bio("Hello, I'm a developer").is_ok());
-        assert!(validate_bio(&"a".repeat(500)).is_ok()); // maximum length
+        assert!(validate_bio(&"a".repeat(190)).is_ok()); // maximum length
         assert!(validate_bio("Bio with emojis 🚀 and symbols @#$%").is_ok());
     }
 
     #[test]
     fn test_validate_bio_invalid() {
         // Too long
-        assert!(validate_bio(&"a".repeat(501)).is_err());
+        assert!(validate_bio(&"a".repeat(191)).is_err());
     }
 
     #[test]
     fn test_validate_display_name_valid() {
         assert!(validate_display_name("John Doe").is_ok());
         assert!(validate_display_name("A").is_ok()); // minimum length
-        assert!(validate_display_name(&"a".repeat(50)).is_ok()); // maximum length
+        assert!(validate_display_name(&"a".repeat(32)).is_ok()); // maximum length
         assert!(validate_display_name("User123").is_ok());
         assert!(validate_display_name("🎉 Cool User 🎉").is_ok());
     }
@@ -275,7 +296,31 @@ mod tests {
         assert!(validate_display_name("").is_err());
 
         // Too long
-        assert!(validate_display_name(&"a".repeat(51)).is_err());
+        assert!(validate_display_name(&"a".repeat(33)).is_err());
+    }
+
+    #[test]
+    fn test_validate_custom_status_valid() {
+        assert!(validate_custom_status("").is_ok());
+        assert!(validate_custom_status("Working on stuff").is_ok());
+        assert!(validate_custom_status(&"a".repeat(128)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_custom_status_invalid() {
+        assert!(validate_custom_status(&"a".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn test_sanitize_text() {
+        // Preserves normal text
+        assert_eq!(sanitize_text("hello world"), "hello world");
+        // Preserves newlines and tabs
+        assert_eq!(sanitize_text("hello\nworld\ttab"), "hello\nworld\ttab");
+        // Strips null bytes
+        assert_eq!(sanitize_text("hello\0world"), "helloworld");
+        // Strips other control chars
+        assert_eq!(sanitize_text("hello\x01\x02world"), "helloworld");
     }
 
     #[test]
