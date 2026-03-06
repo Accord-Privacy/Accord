@@ -1,0 +1,71 @@
+/* =================== Splash / Loading Screen =================== */
+
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-deepest, #1e1f22);
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.splash-screen.splash-fade-out {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash-logo {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: var(--text-primary, #f2f3f5);
+  letter-spacing: -0.02em;
+  margin-bottom: 1.5rem;
+  user-select: none;
+}
+
+.splash-logo .splash-accent {
+  color: var(--accent, #5865f2);
+}
+
+.splash-loader {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.splash-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #5865f2);
+  animation: splash-bounce 1.2s ease-in-out infinite;
+}
+
+.splash-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.splash-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes splash-bounce {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.splash-status {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted, #949ba4);
+}

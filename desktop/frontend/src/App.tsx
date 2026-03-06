@@ -48,6 +48,7 @@ import {
   ChatErrorBoundary, ModalErrorBoundary,
 } from "./components";
 import { OnboardingTour } from "./components/OnboardingTour";
+import { SplashScreen } from "./components/SplashScreen";
 import { useVoice } from "./hooks/useVoice";
 import { usePresence } from "./hooks/usePresence";
 import { useTyping } from "./hooks/useTyping";
@@ -3732,8 +3733,12 @@ function App() {
   }
 
   // ---- Main authenticated app ----
+  // Splash is "ready" once we're authenticated and have loaded initial data
+  const splashReady = isAuthenticated && nodes.length >= 0 && serverAvailable;
+
   return (
     <AppContext.Provider value={contextValue}>
+      <SplashScreen ready={splashReady} />
       <div className={`app${mobileSidebarOpen ? ' mobile-sidebar-open' : ''}`}>
         <UpdateBanner />
         <ServerList />
