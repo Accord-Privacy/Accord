@@ -31,11 +31,8 @@
 }
 
 .messages-beginning {
-  text-align: center;
-  padding: 16px 16px 8px;
+  padding: 16px 16px 16px;
   color: var(--text-faint);
-  font-size: var(--font-sm);
-  border-bottom: 1px solid var(--border-subtle);
   margin: 0 16px 8px;
 }
 

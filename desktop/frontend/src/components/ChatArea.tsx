@@ -293,7 +293,10 @@ export const ChatArea: React.FC = () => {
               <div className="messages-loading"><span className="spinner spinner-sm"></span> Loading older messages...</div>
             )}
             {!ctx.hasMoreMessages && ctx.appState.messages.length > 0 && (
-              <div className="messages-beginning">You've reached the beginning of this channel</div>
+              <div className="messages-beginning">
+                <div style={{ fontSize: 32, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>Welcome to {ctx.activeChannel || '# general'}!</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>This is the start of the <strong>{ctx.activeChannel || '# general'}</strong> channel.</div>
+              </div>
             )}
             {!ctx.isLoadingOlderMessages && ctx.appState.messages.length === 0 && ctx.selectedChannelId && (
               <div className="empty-state">
