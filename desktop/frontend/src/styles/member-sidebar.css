@@ -37,6 +37,21 @@
   color: var(--text-primary);
 }
 
+.member-avatar-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.member-avatar-wrapper .presence-dot {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 3px solid var(--bg-dark);
+}
+
 .member-avatar {
   width: 32px;
   height: 32px;
@@ -48,7 +63,6 @@
   font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-on-accent);
-  flex-shrink: 0;
   position: relative;
   overflow: hidden;
 }

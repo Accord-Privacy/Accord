@@ -382,8 +382,8 @@ export const ChannelSidebar: React.FC = () => {
         {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'CreateChannel') && (
           <div style={{ marginTop: '4px', padding: '0 8px' }}>
             {!ctx.showCreateChannelForm ? (
-              <button onClick={() => ctx.setShowCreateChannelForm(true)} className="btn btn-green btn-sm" style={{ width: '100%' }}>
-                + Create Channel
+              <button onClick={() => ctx.setShowCreateChannelForm(true)} className="create-channel-btn" title="Create Channel">
+                +
               </button>
             ) : (
               <div className="create-channel-form">
