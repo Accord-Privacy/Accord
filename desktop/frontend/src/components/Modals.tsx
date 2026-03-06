@@ -222,6 +222,10 @@ export const AppModals: React.FC = () => {
                 ctx.loadNodes();
               }}
               onShowTemplateImport={() => ctx.setShowTemplateImport(true)}
+              resolveUserName={(userId: string) => {
+                const member = ctx.members.find(m => m.user_id === userId);
+                return member ? ctx.displayName(member.user) : '';
+              }}
             />
           </Suspense>
         );

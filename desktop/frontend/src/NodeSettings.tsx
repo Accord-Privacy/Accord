@@ -19,6 +19,7 @@ interface NodeSettingsProps {
   onNodeUpdated?: (node: Node) => void;
   onLeaveNode?: () => void;
   onShowTemplateImport?: () => void;
+  resolveUserName?: (userId: string) => string;
 }
 
 export function NodeSettings({ 
@@ -30,6 +31,7 @@ export function NodeSettings({
   onNodeUpdated,
   onLeaveNode,
   onShowTemplateImport,
+  resolveUserName,
 }: NodeSettingsProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'invites' | 'roles' | 'members' | 'audit' | 'moderation' | 'emojis'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -956,7 +958,7 @@ export function NodeSettings({
                       <div className="ns-audit-content">
                         <div style={{ marginBottom: 4, fontSize: 14 }}>
                           <span className="ns-audit-actor">
-                            {entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
+                            {(resolveUserName ? resolveUserName(entry.actor_id) : null) || entry.actor_public_key_hash?.slice(0, 16) || 'Unknown'}
                           </span>{' '}
                           <span className="ns-audit-action">{getActionDescription(entry)}</span>
                         </div>
