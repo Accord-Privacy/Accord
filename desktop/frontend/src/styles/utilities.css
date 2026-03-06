@@ -11,14 +11,15 @@
   color: var(--bg-darkest);
   font-size: 10px;
   font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 8px;
-  min-width: 16px;
-  height: 16px;
-  display: flex;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
+  box-sizing: border-box;
 }
 
 /* =================== Keyboard Shortcuts Modal =================== */

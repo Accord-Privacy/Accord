@@ -291,37 +291,43 @@
 }
 
 .staged-file-item {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
   background: var(--bg-dark);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  max-width: 220px;
+  border-radius: var(--radius-md);
+  padding: 8px;
+  width: 120px;
+  gap: 4px;
 }
 
 .staged-file-thumb {
-  width: 40px;
-  height: 40px;
+  width: 100%;
+  height: 72px;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
 .staged-file-icon {
-  font-size: 20px;
+  font-size: 28px;
   flex-shrink: 0;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .staged-file-name {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  text-align: center;
 }
 
 .staged-file-size {
@@ -331,19 +337,28 @@
 }
 
 .staged-file-remove {
-  background: none;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  background: var(--bg-floating);
   border: none;
-  color: var(--text-faint);
+  border-radius: 50%;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
-  padding: 1px 3px;
-  border-radius: 2px;
-  flex-shrink: 0;
-  transition: color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  box-shadow: var(--shadow-low);
+  z-index: 1;
 }
 
 .staged-file-remove:hover {
-  color: var(--red);
+  background: var(--red);
+  color: white;
 }
 
 /* File List Toggle */

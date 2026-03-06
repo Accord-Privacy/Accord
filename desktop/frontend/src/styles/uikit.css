@@ -81,10 +81,10 @@
   position: absolute;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  background: var(--bg-darkest);
+  background: var(--bg-floating);
   color: var(--text-primary);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
   z-index: 1100;
@@ -97,28 +97,62 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+.tooltip::after {
+  content: '';
+  position: absolute;
+  border: 5px solid transparent;
+}
+
 .tooltip-top {
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
+}
+
+.tooltip-top::after {
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-top-color: var(--bg-floating);
 }
 
 .tooltip-bottom {
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
 }
 
+.tooltip-bottom::after {
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-bottom-color: var(--bg-floating);
+}
+
 .tooltip-left {
-  right: calc(100% + 6px);
+  right: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
 }
 
-.tooltip-right {
-  left: calc(100% + 6px);
+.tooltip-left::after {
+  left: 100%;
   top: 50%;
   transform: translateY(-50%);
+  border-left-color: var(--bg-floating);
+}
+
+.tooltip-right {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.tooltip-right::after {
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border-right-color: var(--bg-floating);
 }
 
 /* ── Toast Notifications ── */

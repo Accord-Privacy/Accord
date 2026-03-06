@@ -219,86 +219,41 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const peerList = Array.from(peers.values());
 
   return (
-    <div style={{
-      background: 'var(--bg-dark)',
-      borderTop: '1px solid #202225',
-      display: 'flex',
-      flexDirection: 'column',
-      flexShrink: 0,
-    }}>
+    <div className="voice-panel">
       {/* Header */}
-      <div style={{
-        padding: '12px 16px',
-        borderBottom: '1px solid #202225',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '14px', fontWeight: 600, color: connectionError ? '#f04747' : '#43b581' }}>
+      <div className="voice-panel-header">
+        <div className="voice-panel-status">
+          <span className={`voice-panel-status-label ${connectionError ? 'error' : 'connected'}`}>
             {connectionError ? 'Voice Error' : 'Voice Connected'}
           </span>
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+          <span className="voice-panel-channel">
             {connectionError || channelName}
           </span>
-          {/* Voice mode indicator */}
           <span
             onClick={toggleVoiceMode}
+            className={`voice-mode-badge ${voiceMode}`}
             title={voiceMode === 'relay'
               ? 'Relay mode — IP protected. Click to switch to P2P (lower latency, exposes IP).'
               : 'P2P mode — direct connection. Click to switch to Relay (IP protected).'}
-            style={{
-              fontSize: '12px',
-              padding: '2px 8px',
-              borderRadius: '10px',
-              cursor: 'pointer',
-              userSelect: 'none',
-              background: voiceMode === 'relay' ? 'rgba(67, 181, 129, 0.2)' : 'rgba(250, 166, 26, 0.2)',
-              color: voiceMode === 'relay' ? '#43b581' : '#faa61a',
-              border: `1px solid ${voiceMode === 'relay' ? '#43b581' : '#faa61a'}`,
-            }}
           >
             {voiceMode === 'relay' ? 'Relay' : 'P2P'}
           </span>
         </div>
-        <button
-          onClick={handleDisconnect}
-          style={{
-            background: 'var(--red)',
-            border: 'none',
-            color: 'var(--text-on-accent)',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '12px',
-          }}
-        >
+        <button onClick={handleDisconnect} className="voice-panel-disconnect">
           Disconnect
         </button>
       </div>
 
-      {/* Controls */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 16px',
-      }}>
+      {/* Body */}
+      <div className="voice-panel-body">
         {/* Users */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, overflow: 'auto' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginRight: '8px' }}>
+        <div className="voice-panel-users">
+          <span className="voice-panel-users-label">
             Users ({peerList.length + 1}):
           </span>
 
-          {/* Current user */}
-          <UserAvatar
-            label="You"
-            isSpeaking={isSpeaking}
-            isMuted={isMuted}
-          />
+          <UserAvatar label="You" isSpeaking={isSpeaking} isMuted={isMuted} />
 
-          {/* Remote peers */}
           {peerList.map(peer => (
             <UserAvatar
               key={peer.userId}
@@ -310,15 +265,10 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         </div>
 
         {/* Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="voice-panel-controls">
           <button
             onClick={toggleMute}
-            style={{
-              width: '36px', height: '36px', borderRadius: '50%', border: 'none',
-              background: isMuted ? '#f04747' : '#3ba55d',
-              color: 'var(--text-on-accent)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px',
-            }}
+            className={`voice-ctrl-round ${isMuted ? 'muted' : 'active'}`}
             title={isMuted ? 'Unmute' : 'Mute'}
           >
             <Icon name={isMuted ? 'mic-off' : 'mic'} size={16} />
@@ -326,28 +276,21 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
           <button
             onClick={toggleDeafen}
-            style={{
-              width: '36px', height: '36px', borderRadius: '50%', border: 'none',
-              background: isDeafened ? '#f04747' : '#4f545c',
-              color: 'var(--text-on-accent)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px',
-            }}
+            className={`voice-ctrl-round ${isDeafened ? 'muted' : 'neutral'}`}
             title={isDeafened ? 'Undeafen' : 'Deafen'}
           >
             <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={16} />
           </button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '120px' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Vol:</span>
+          <div className="voice-volume-control">
+            <span className="voice-volume-label">Vol</span>
             <input
               type="range" min="0" max="100"
               value={outputVolume}
               onChange={(e) => setOutputVolume(parseInt(e.target.value))}
-              style={{ flex: 1, height: '4px', borderRadius: '2px', background: 'var(--bg-active)', outline: 'none', cursor: 'pointer' }}
+              className="voice-volume-slider"
             />
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)', minWidth: '25px' }}>
-              {outputVolume}%
-            </span>
+            <span className="voice-volume-value">{outputVolume}%</span>
           </div>
         </div>
       </div>
@@ -355,31 +298,25 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   );
 };
 
-/** Small user avatar with speaking indicator. */
+/** Small user avatar with speaking indicator (green ring). */
 const UserAvatar: React.FC<{
   label: string;
   isSpeaking?: boolean;
   isMuted?: boolean;
   isConnecting?: boolean;
-}> = ({ label, isSpeaking, isMuted, isConnecting }) => (
-  <div style={{
-    display: 'flex', alignItems: 'center', gap: '6px',
-    padding: '4px 8px', borderRadius: '4px',
-    background: isSpeaking ? 'rgba(67, 181, 129, 0.3)' : 'transparent',
-    border: isSpeaking ? '2px solid #43b581' : '2px solid transparent',
-    transition: 'all 0.15s',
-    opacity: isConnecting ? 0.5 : 1,
-  }}>
-    <div style={{
-      width: '24px', height: '24px', borderRadius: '50%',
-      background: 'var(--accent)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: '12px', color: 'var(--text-on-accent)',
-    }}>
-      {label[0]?.toUpperCase()}
+}> = ({ label, isSpeaking, isMuted, isConnecting }) => {
+  const cls = ['voice-user-pill'];
+  if (isSpeaking) cls.push('speaking');
+  if (isConnecting) cls.push('connecting');
+
+  return (
+    <div className={cls.join(' ')}>
+      <div className="voice-user-pill-avatar">
+        {label[0]?.toUpperCase()}
+      </div>
+      <span className="voice-user-pill-name">{label}</span>
+      {isMuted && <span className="voice-user-pill-icon"><Icon name="mic-off" size={12} /></span>}
+      {isConnecting && <span className="voice-user-pill-connecting">⋯</span>}
     </div>
-    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{label}</span>
-    {isMuted && <span style={{ color: 'var(--red)', display: 'flex' }}><Icon name="mic-off" size={12} /></span>}
-    {isConnecting && <span style={{ fontSize: '10px', color: 'var(--yellow)' }}>⋯</span>}
-  </div>
-);
+  );
+};
