@@ -6,3 +6,4 @@ export { ChannelSidebar } from "./ChannelSidebar";
 export { ChatArea } from "./ChatArea";
 export { MemberSidebar } from "./MemberSidebar";
 export { AppModals } from "./Modals";
+export { ChatErrorBoundary, ModalErrorBoundary } from "./ErrorBoundary";

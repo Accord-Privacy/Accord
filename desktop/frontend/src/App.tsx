@@ -45,6 +45,7 @@ import {
   AppContext,
   MnemonicModal, RecoverModal, KeyBackupScreen,
   ServerList, ChannelSidebar, ChatArea, MemberSidebar, AppModals,
+  ChatErrorBoundary, ModalErrorBoundary,
 } from "./components";
 import { useVoice } from "./hooks/useVoice";
 import { usePresence } from "./hooks/usePresence";
@@ -3737,9 +3738,13 @@ function App() {
         <ServerList />
         <ChannelSidebar />
         {mobileSidebarOpen && <div className="mobile-sidebar-backdrop" onClick={() => setMobileSidebarOpen(false)} />}
-        <ChatArea />
+        <ChatErrorBoundary>
+          <ChatArea />
+        </ChatErrorBoundary>
         <MemberSidebar />
-        <AppModals />
+        <ModalErrorBoundary>
+          <AppModals />
+        </ModalErrorBoundary>
       </div>
     </AppContext.Provider>
   );
