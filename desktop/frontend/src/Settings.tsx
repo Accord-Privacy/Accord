@@ -21,6 +21,7 @@ interface AccountSettings {
   bio: string;
   status: 'online' | 'away' | 'busy' | 'invisible';
   customStatus: string;
+  bannerColor: string;
 }
 
 interface AppearanceSettings {
@@ -92,6 +93,7 @@ const defaultAccountSettings: AccountSettings = {
   bio: '',
   status: 'online',
   customStatus: '',
+  bannerColor: '',
 };
 
 const defaultAppearanceSettings: AppearanceSettings = {
@@ -176,6 +178,7 @@ export const Settings: React.FC<SettingsProps> = ({
             bio: currentUser.bio || '',
             status: (currentUser.status as AccountSettings['status']) || 'online',
             customStatus: (currentUser as any).custom_status || '',
+            bannerColor: (currentUser as any).banner_color || '',
           });
         }
 
@@ -260,6 +263,7 @@ export const Settings: React.FC<SettingsProps> = ({
           display_name: accountSettings.displayName,
           bio: accountSettings.bio,
           custom_status: accountSettings.customStatus || undefined,
+          banner_color: accountSettings.bannerColor || undefined,
         }, token);
       }
       localStorage.setItem('accord_account_settings', JSON.stringify(accountSettings));
@@ -858,6 +862,34 @@ export const Settings: React.FC<SettingsProps> = ({
                   </div>
 
                   <div className="settings-group">
+                    <label className="settings-label">Banner Color</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <input
+                        type="color"
+                        value={accountSettings.bannerColor || (currentUser?.id ? avatarColor(currentUser.id) : '#5865f2')}
+                        onChange={(e) => updateAccountLocally({
+                          ...accountSettings,
+                          bannerColor: e.target.value
+                        })}
+                        style={{ width: 48, height: 36, border: 'none', borderRadius: 6, cursor: 'pointer', background: 'transparent', padding: 0 }}
+                      />
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                        {accountSettings.bannerColor || 'Default'}
+                      </span>
+                      {accountSettings.bannerColor && (
+                        <button
+                          className="btn settings-btn-secondary"
+                          style={{ padding: '4px 12px', fontSize: 12 }}
+                          onClick={() => updateAccountLocally({ ...accountSettings, bannerColor: '' })}
+                        >Reset</button>
+                      )}
+                    </div>
+                    <div className="settings-help">
+                      Choose a color for your profile card banner.
+                    </div>
+                  </div>
+
+                  <div className="settings-group">
                     <label className="settings-label">Status</label>
                     <div className="status-buttons">
                       {(['online', 'away', 'busy', 'invisible'] as const).map(status => (
@@ -898,6 +930,7 @@ export const Settings: React.FC<SettingsProps> = ({
                             bio: currentUser.bio || '',
                             status: (currentUser.status as AccountSettings['status']) || 'online',
                             customStatus: (currentUser as any).custom_status || '',
+                            bannerColor: (currentUser as any).banner_color || '',
                           });
                         } else {
                           setAccountSettings(defaultAccountSettings);
@@ -939,7 +972,10 @@ export const Settings: React.FC<SettingsProps> = ({
                   <h4 className="settings-preview-title">Preview</h4>
                   <div className="settings-preview-card">
                     <div className="profile-card-banner" style={{
-                      background: `linear-gradient(135deg, ${currentUser?.id ? avatarColor(currentUser.id) : '#5865f2'}, ${currentUser?.id ? avatarColor(currentUser.id) : '#5865f2'}88)`,
+                      background: (() => {
+                        const c = accountSettings.bannerColor || (currentUser?.id ? avatarColor(currentUser.id) : '#5865f2');
+                        return `linear-gradient(135deg, ${c}, ${c}88)`;
+                      })(),
                       height: 60, borderRadius: '8px 8px 0 0',
                     }} />
                     <div className="settings-preview-avatar" style={{

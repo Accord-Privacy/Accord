@@ -107,7 +107,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
   const isSelf = userId === currentUserId;
   const displayName = profile?.display_name || user?.display_name || 'Unknown';
   const username = user?.public_key_hash ? user.public_key_hash.substring(0, 16) : userId.substring(0, 16);
-  const bannerColor = roleColor || avatarColor(userId);
+  const bannerColor = profile?.banner_color || roleColor || avatarColor(userId);
 
   const avatarUrl = api.getUserAvatarUrl(userId);
 
@@ -121,7 +121,9 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
       >
         {/* Banner */}
         <div className="profile-card-banner" style={{
-          background: `linear-gradient(135deg, ${bannerColor}, ${bannerColor}88)`,
+          background: profile?.banner_url
+            ? `url(${profile.banner_url}) center/cover no-repeat`
+            : `linear-gradient(135deg, ${bannerColor}, ${bannerColor}88)`,
         }} />
 
         {/* Avatar */}

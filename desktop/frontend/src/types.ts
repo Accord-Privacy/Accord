@@ -180,6 +180,8 @@ export interface UserProfile {
   bio?: string;
   status: PresenceStatus;
   custom_status?: string;
+  banner_color?: string;
+  banner_url?: string;
   activity?: string;
   updated_at: number;
 }
@@ -197,6 +199,8 @@ export interface UpdateProfileRequest {
   bio?: string;
   status?: PresenceStatus;
   custom_status?: string;
+  banner_color?: string;
+  banner_url?: string;
 }
 
 // Error response
