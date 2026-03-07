@@ -381,6 +381,20 @@ export class NotificationManager {
     delete this.unreads[nodeId];
     this.saveUnreads();
   }
+
+  /** Mark all channels in a node as read without deleting the node entry */
+  public markAllNodeChannelsAsRead(nodeId: string): void {
+    const nodeData = this.unreads[nodeId];
+    if (!nodeData) return;
+    for (const channelId of Object.keys(nodeData.channels)) {
+      const ch = nodeData.channels[channelId];
+      ch.count = 0;
+      ch.mentions = 0;
+    }
+    nodeData.totalUnreads = 0;
+    nodeData.totalMentions = 0;
+    this.saveUnreads();
+  }
 }
 
 // Global notification manager instance

@@ -8,6 +8,7 @@
   height: 100%;
   background: var(--bg-content);
   contain: layout style;
+  position: relative;
 }
 
 /* Chat header — Fluxer ChannelHeader: grid layout, 1fr auto */

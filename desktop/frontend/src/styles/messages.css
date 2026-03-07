@@ -546,3 +546,26 @@
 .density-compact .message-time {
   display: inline !important;
 }
+
+/* =================== Unread Messages Banner =================== */
+.unread-banner {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  background: var(--accent, #5865f2);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+  border-radius: 0 0 8px 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  transition: opacity 0.15s;
+  user-select: none;
+}
+
+.unread-banner:hover {
+  opacity: 0.9;
+}

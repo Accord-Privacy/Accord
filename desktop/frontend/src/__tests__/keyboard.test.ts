@@ -12,6 +12,7 @@ function makeActions(): KeyboardActions {
     toggleMute: vi.fn(),
     toggleDeafen: vi.fn(),
     toggleMemberSidebar: vi.fn(),
+    markAllAsRead: vi.fn(),
   };
 }
 

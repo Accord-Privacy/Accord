@@ -54,6 +54,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: 'UI',
     shortcuts: [
       { label: 'Ctrl + Shift + I', description: 'Toggle member sidebar' },
+      { label: 'Ctrl + Shift + A', description: 'Mark all as read' },
       { label: 'Escape', description: 'Close modal / Deselect' },
     ],
   },
@@ -84,6 +85,7 @@ export interface KeyboardActions {
   toggleMute: () => void;
   toggleDeafen: () => void;
   toggleMemberSidebar: () => void;
+  markAllAsRead: () => void;
 }
 
 /**
@@ -165,6 +167,13 @@ export function initKeyboardShortcuts(actions: KeyboardActions): () => void {
     if (mod && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
       e.preventDefault();
       actions.toggleMemberSidebar();
+      return;
+    }
+
+    // Ctrl+Shift+A — mark all as read
+    if (mod && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+      e.preventDefault();
+      actions.markAllAsRead();
       return;
     }
   };

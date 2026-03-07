@@ -85,6 +85,30 @@ export const ChannelSidebar: React.FC = () => {
 
   const canManageChannels = ctx.selectedNodeId ? ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') : false;
 
+  const [channelMenu, setChannelMenu] = React.useState<{ open: boolean; x: number; y: number; channelId: string } | null>(null);
+  const channelMenuRef = React.useRef<HTMLDivElement>(null);
+
+  const closeChannelMenu = React.useCallback(() => setChannelMenu(null), []);
+
+  React.useEffect(() => {
+    if (!channelMenu?.open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (channelMenuRef.current && !channelMenuRef.current.contains(e.target as Node)) closeChannelMenu();
+    };
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeChannelMenu(); };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEsc);
+    return () => { document.removeEventListener('mousedown', handleClick); document.removeEventListener('keydown', handleEsc); };
+  }, [channelMenu?.open, closeChannelMenu]);
+
+  const handleMarkChannelAsRead = React.useCallback((channelId: string) => {
+    if (ctx.selectedNodeId) {
+      notificationManager.markChannelAsRead(ctx.selectedNodeId, channelId);
+      ctx.setForceUpdate((p: number) => p + 1);
+    }
+    closeChannelMenu();
+  }, [ctx, closeChannelMenu]);
+
   const handleDragStart = (e: React.DragEvent, item: DragItem) => {
     if (!canManageChannels) { e.preventDefault(); return; }
     setDragItem(item);
@@ -258,6 +282,10 @@ export const ChannelSidebar: React.FC = () => {
         onDragEnd={handleDragEnd}
         onDragOver={(e) => handleDragOver(e, channel.id, 'channel')}
         onDrop={handleDrop}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setChannelMenu({ open: true, x: e.clientX, y: e.clientY, channelId: channel.id });
+        }}
         style={{ position: 'relative', cursor: canManageChannels ? 'grab' : undefined }}
       >
         {dropIndicator && <div style={dropIndicator} />}
@@ -432,6 +460,26 @@ export const ChannelSidebar: React.FC = () => {
       <DMSection />
 
       <UserPanel />
+
+      {/* Channel context menu */}
+      {channelMenu?.open && (
+        <>
+          <div className="context-menu-backdrop" onClick={closeChannelMenu} />
+          <div
+            ref={channelMenuRef}
+            className="context-menu"
+            style={{ left: channelMenu.x, top: channelMenu.y }}
+          >
+            <div
+              className="context-menu-item"
+              onClick={() => handleMarkChannelAsRead(channelMenu.channelId)}
+            >
+              <span className="context-menu-icon">✓</span>
+              <span>Mark as Read</span>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Custom Status Popover */}
       {ctx.showStatusPopover && (

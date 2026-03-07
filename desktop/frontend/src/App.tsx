@@ -3272,8 +3272,14 @@ function App() {
         btn?.click();
       },
       toggleMemberSidebar: () => setShowMemberSidebar(prev => !prev),
+      markAllAsRead: () => {
+        if (selectedNodeId) {
+          notificationManager.markAllNodeChannelsAsRead(selectedNodeId);
+          setForceUpdate(prev => prev + 1);
+        }
+      },
     });
-  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect]);
+  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect, selectedNodeId]);
 
   // Apply font-size and density from localStorage on mount
   useEffect(() => {
@@ -3457,7 +3463,7 @@ function App() {
 
     // Notifications
     notificationPreferences, showNotificationSettings, setShowNotificationSettings,
-    forceUpdate,
+    forceUpdate, setForceUpdate,
 
     // Search
     showSearchOverlay, setShowSearchOverlay,

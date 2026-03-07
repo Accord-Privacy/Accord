@@ -1,10 +1,38 @@
-import React from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAppContext } from "./AppContext";
 import { api } from "../api";
 import { notificationManager } from "../notifications";
 
+interface ServerContextMenuState {
+  open: boolean;
+  x: number;
+  y: number;
+  nodeId: string;
+}
+
 export const ServerList: React.FC = () => {
   const ctx = useAppContext();
+  const [serverMenu, setServerMenu] = useState<ServerContextMenuState | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const closeMenu = useCallback(() => setServerMenu(null), []);
+
+  useEffect(() => {
+    if (!serverMenu?.open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) closeMenu();
+    };
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeMenu(); };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEsc);
+    return () => { document.removeEventListener('mousedown', handleClick); document.removeEventListener('keydown', handleEsc); };
+  }, [serverMenu?.open, closeMenu]);
+
+  const handleMarkAllAsRead = useCallback((nodeId: string) => {
+    notificationManager.markAllNodeChannelsAsRead(nodeId);
+    ctx.setForceUpdate((p: number) => p + 1);
+    closeMenu();
+  }, [closeMenu, ctx]);
 
   return (
     <div className="server-list" role="navigation" aria-label="Servers" key={ctx.forceUpdate}>
@@ -27,6 +55,12 @@ export const ServerList: React.FC = () => {
             onClick={() => {
               if (nodeId) {
                 ctx.handleNodeSelect(nodeId, i);
+              }
+            }}
+            onContextMenu={(e) => {
+              if (nodeId) {
+                e.preventDefault();
+                setServerMenu({ open: true, x: e.clientX, y: e.clientY, nodeId });
               }
             }}
             onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && nodeId) { e.preventDefault(); ctx.handleNodeSelect(nodeId, i); } }}
@@ -61,6 +95,25 @@ export const ServerList: React.FC = () => {
       >
         +
       </div>
+
+      {serverMenu?.open && (
+        <>
+          <div className="context-menu-backdrop" onClick={closeMenu} />
+          <div
+            ref={menuRef}
+            className="context-menu"
+            style={{ left: serverMenu.x, top: serverMenu.y }}
+          >
+            <div
+              className="context-menu-item"
+              onClick={() => handleMarkAllAsRead(serverMenu.nodeId)}
+            >
+              <span className="context-menu-icon">✓</span>
+              <span>Mark All as Read</span>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

@@ -192,6 +192,7 @@ export interface AppContextType {
   showNotificationSettings: boolean;
   setShowNotificationSettings: React.Dispatch<React.SetStateAction<boolean>>;
   forceUpdate: number;
+  setForceUpdate: React.Dispatch<React.SetStateAction<number>>;
 
   // Search
   showSearchOverlay: boolean;
