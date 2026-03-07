@@ -994,7 +994,7 @@ async fn main() -> Result<()> {
                 axum::http::header::CONTENT_SECURITY_POLICY,
                 HeaderValue::from_static(
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                     img-src 'self' data: blob:; connect-src 'self' wss: ws:; frame-ancestors 'none'",
+                     img-src 'self' data: blob:; connect-src 'self' http: https: wss: ws:; frame-ancestors 'none'",
                 ),
             ))
             .layer(SetResponseHeaderLayer::overriding(
