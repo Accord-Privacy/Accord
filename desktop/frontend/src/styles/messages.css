@@ -261,6 +261,7 @@
 /* =================== Message Actions Toolbar =================== */
 .message-actions {
   display: flex;
+  align-items: center;
   position: absolute;
   top: -16px;
   right: 14px;
@@ -272,12 +273,34 @@
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.08s ease;
+  transition: opacity 0.15s ease 0.1s;
 }
 
 .message:hover .message-actions {
   opacity: 1;
   pointer-events: auto;
+  transition: opacity 0.1s ease;
+}
+
+.message-action-emoji {
+  font-size: 16px !important;
+  padding: 4px 5px !important;
+  line-height: 1 !important;
+}
+
+.message-actions-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-subtle);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+.message-action-emoji-picker {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
 }
 
 .message-action-btn {

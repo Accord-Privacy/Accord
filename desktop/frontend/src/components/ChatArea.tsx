@@ -688,6 +688,16 @@ export const ChatArea: React.FC = () => {
                           )}
                           {ctx.appState.user && (
                             <div className="message-actions">
+                              {['👍', '❤️', '😂'].map((emoji) => (
+                                <button key={emoji} className="message-action-btn message-action-emoji" onClick={() => ctx.handleToggleReaction(msg.id, emoji)} title={`React with ${emoji}`}>{emoji}</button>
+                              ))}
+                              <button
+                                className="message-action-btn message-action-emoji"
+                                onClick={() => ctx.setShowEmojiPicker(ctx.showEmojiPicker === msg.id ? null : msg.id)}
+                                title="Add reaction"
+                                aria-label="Add reaction"
+                              ><Icon name="plus" size={16} /></button>
+                              <span className="message-actions-divider" />
                               <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply" aria-label="Reply"><Icon name="reply" size={18} /></button>
                               {msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) && (
                                 <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit" aria-label="Edit message"><Icon name="edit" size={18} /></button>
@@ -697,6 +707,13 @@ export const ChatArea: React.FC = () => {
                               )}
                               {ctx.canDeleteMessage(msg) && (
                                 <button onClick={() => msg.pinned_at ? ctx.handleUnpinMessage(msg.id) : ctx.setShowPinConfirm(msg.id)} className="message-action-btn" title={msg.pinned_at ? "Unpin" : "Pin"} aria-label={msg.pinned_at ? "Unpin message" : "Pin message"}><Icon name="pin" size={18} /></button>
+                              )}
+                              {ctx.showEmojiPicker === msg.id && (
+                                <div className="emoji-picker message-action-emoji-picker">
+                                  {ctx.COMMON_EMOJIS.map((emoji) => (
+                                    <button key={emoji} className="emoji-option" onClick={() => ctx.handleAddReaction(msg.id, emoji)} title={`React with ${emoji}`}>{emoji}</button>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           )}
@@ -803,12 +820,8 @@ export const ChatArea: React.FC = () => {
                       )}
 
                       {/* Reactions */}
-                      <div 
-                        className="message-reactions-container"
-                        onMouseEnter={() => ctx.setHoveredMessageId(msg.id)}
-                        onMouseLeave={() => ctx.setHoveredMessageId(null)}
-                      >
-                        {msg.reactions && msg.reactions.length > 0 && (
+                      {msg.reactions && msg.reactions.length > 0 && (
+                        <div className="message-reactions-container">
                           <div className="message-reactions">
                             {msg.reactions.map((reaction) => {
                               const userReacted = ctx.appState.user && reaction.users.includes(ctx.appState.user.id);
@@ -832,29 +845,8 @@ export const ChatArea: React.FC = () => {
                               );
                             })}
                           </div>
-                        )}
-
-                        {ctx.hoveredMessageId === msg.id && ctx.appState.user && (
-                          <div className="add-reaction-container quick-react-bar">
-                            {['👍', '❤️', '😂', '🔥', '👀'].map((emoji) => (
-                              <button key={emoji} className="quick-react-btn" onClick={() => ctx.handleToggleReaction(msg.id, emoji)} title={`React with ${emoji}`}>{emoji}</button>
-                            ))}
-                            <button 
-                              className="add-reaction-btn"
-                              onClick={() => ctx.setShowEmojiPicker(ctx.showEmojiPicker === msg.id ? null : msg.id)}
-                              title="More reactions"
-                            >+</button>
-
-                            {ctx.showEmojiPicker === msg.id && (
-                              <div className="emoji-picker">
-                                {ctx.COMMON_EMOJIS.map((emoji) => (
-                                  <button key={emoji} className="emoji-option" onClick={() => ctx.handleAddReaction(msg.id, emoji)} title={`React with ${emoji}`}>{emoji}</button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                        </div>
+                      )}
 
                       {/* Delete Confirmation */}
                       {ctx.showDeleteConfirm === msg.id && (
