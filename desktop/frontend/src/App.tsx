@@ -1104,6 +1104,42 @@ function App() {
       console.error('WebSocket error:', error);
     });
 
+    // Handle member joined — update members list in real-time
+    socket.on('member_joined' as any, (data: any) => {
+      if (data.user_id && data.node_id) {
+        // Add new member to the members list if we're viewing this node
+        const currentNodeId = nodesRef.current.find(n => 
+          channelsRef.current.some(ch => ch.node_id === n.id)
+        )?.id;
+        if (currentNodeId === data.node_id || channelsRef.current.some(ch => ch.node_id === data.node_id)) {
+          setMembers(prev => {
+            // Don't add if already exists
+            if (prev.some(m => m.user_id === data.user_id)) return prev;
+            const newMember: NodeMember = {
+              user_id: data.user_id,
+              role: 'member',
+              joined_at: Date.now() / 1000,
+              public_key_hash: data.public_key_hash || '',
+              user: {
+                id: data.user_id,
+                display_name: data.display_name || 'Unknown',
+                public_key: '',
+                public_key_hash: data.public_key_hash || '',
+                created_at: Date.now() / 1000,
+              },
+            };
+            return [...prev, newMember];
+          });
+          // Also update presence to online
+          setPresenceMap(prev => {
+            const newMap = new Map(prev);
+            newMap.set(data.user_id, 'online');
+            return newMap;
+          });
+        }
+      }
+    });
+
     // ── Sender Key events ──
 
     // A peer sent us their sender key (via DR-encrypted DM, distributed by server)

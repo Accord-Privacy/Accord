@@ -682,6 +682,35 @@ impl AppState {
             );
         }
 
+        // Auto-add user to all existing channels in the node
+        if let Ok(channels) = self.db.get_node_channels(invite.node_id).await {
+            for channel in &channels {
+                let _ = self.db.add_user_to_channel(channel.id, user_id).await;
+            }
+        }
+
+        // Broadcast member_joined to all node channels so clients update their member lists
+        if let Ok(channels) = self.db.get_node_channels(invite.node_id).await {
+            // Get user display name for the broadcast
+            let display_name = self.db.get_user_profile(user_id).await
+                .ok().flatten()
+                .map(|p| p.display_name)
+                .unwrap_or_default();
+            let pk_hash = self.db.get_user_public_key_hash(user_id).await
+                .ok().flatten()
+                .unwrap_or_default();
+            for channel in &channels {
+                let event = serde_json::json!({
+                    "type": "member_joined",
+                    "node_id": invite.node_id,
+                    "user_id": user_id,
+                    "display_name": display_name,
+                    "public_key_hash": pk_hash,
+                });
+                let _ = self.send_to_channel(channel.id, event.to_string()).await;
+            }
+        }
+
         // Increment invite usage
         self.db
             .increment_invite_usage(invite_code)
