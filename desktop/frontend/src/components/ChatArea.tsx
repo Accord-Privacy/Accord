@@ -532,8 +532,8 @@ export const ChatArea: React.FC = () => {
                 </div>
               ) : (
                 <div className="messages-beginning">
-                  <div className="messages-beginning-title">Welcome to {ctx.activeChannel || '# general'}!</div>
-                  <div className="messages-beginning-subtitle">This is the start of the <strong>{ctx.activeChannel || '# general'}</strong> channel.</div>
+                  <div className="messages-beginning-title">Welcome to {(ctx.activeChannel || '# general').replace('# ', '#')}!</div>
+                  <div className="messages-beginning-subtitle">This is the start of the <strong>{(ctx.activeChannel || '# general').replace('# ', '#')}</strong> channel.</div>
                 </div>
               )
             )}
@@ -865,7 +865,7 @@ export const ChatArea: React.FC = () => {
                       {ctx.showPinConfirm === msg.id && (
                         <div className="delete-confirm-overlay">
                           <div className="delete-confirm-dialog">
-                            <p>Pin this message to <strong>#{ctx.activeChannel}</strong>?</p>
+                            <p>Pin this message to <strong>{ctx.activeChannel}</strong>?</p>
                             <p className="pin-confirm-preview">{msg.content.substring(0, 100)}{msg.content.length > 100 ? '...' : ''}</p>
                             <div className="delete-confirm-actions">
                               <button onClick={() => { ctx.handlePinMessage(msg.id); ctx.setShowPinConfirm(null); }} className="delete-confirm-btn" style={{ backgroundColor: 'var(--accent)' }}>Pin</button>
