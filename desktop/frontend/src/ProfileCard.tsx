@@ -183,6 +183,9 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
                 <button className="profile-card-btn profile-card-btn-primary" onClick={() => user && onSendDm?.(user)}>
                   Message
                 </button>
+                <button className="profile-card-btn profile-card-btn-secondary" disabled title="Coming soon">
+                  Add Friend
+                </button>
                 <button className="profile-card-btn profile-card-btn-danger" onClick={() => onBlock?.(userId, displayName)}>
                   Block
                 </button>

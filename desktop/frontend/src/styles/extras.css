@@ -402,6 +402,20 @@
   background: var(--accent-hover);
 }
 
+.profile-card-btn-secondary {
+  background: var(--bg-modifier-hover);
+  color: var(--text-secondary);
+}
+
+.profile-card-btn-secondary:hover {
+  background: var(--bg-modifier-active);
+}
+
+.profile-card-btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .profile-card-btn-danger {
   background: var(--red);
   color: var(--text-primary);
