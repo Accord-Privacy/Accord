@@ -589,8 +589,7 @@ export const ChatArea: React.FC = () => {
                       {/* Editing Interface */}
                       {ctx.editingMessageId === msg.id ? (
                         <div className="message-edit-container">
-                          <input
-                            type="text"
+                          <textarea
                             value={ctx.editingContent}
                             onChange={(e) => ctx.setEditingContent(e.target.value)}
                             onKeyDown={(e) => {
@@ -600,11 +599,20 @@ export const ChatArea: React.FC = () => {
                             className="message-edit-input"
                             placeholder="Edit your message..."
                             autoFocus
+                            rows={1}
+                            ref={(el) => {
+                              if (el) {
+                                el.style.height = 'auto';
+                                el.style.height = el.scrollHeight + 'px';
+                              }
+                            }}
+                            onInput={(e) => {
+                              const t = e.currentTarget;
+                              t.style.height = 'auto';
+                              t.style.height = t.scrollHeight + 'px';
+                            }}
                           />
-                          <div className="message-edit-actions">
-                            <button onClick={ctx.handleSaveEdit} className="edit-save-btn">Save</button>
-                            <button onClick={ctx.handleCancelEdit} className="edit-cancel-btn">Cancel</button>
-                          </div>
+                          <span className="message-edit-hint">escape to <a href="#" onClick={(e) => { e.preventDefault(); ctx.handleCancelEdit(); }}>cancel</a> • enter to <a href="#" onClick={(e) => { e.preventDefault(); ctx.handleSaveEdit(); }}>save</a></span>
                         </div>
                       ) : (
                         <div 
@@ -958,7 +966,15 @@ export const ChatArea: React.FC = () => {
                 if (mentionState.active && handleMentionKeyDown(e, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)) {
                   return;
                 }
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key === 'ArrowUp' && !ctx.message.trim()) {
+                  // Edit last own message when pressing Up on empty input
+                  const myName = ctx.appState.user?.display_name || (ctx.appState.user ? ctx.fingerprint(ctx.appState.user.public_key_hash) : '');
+                  const lastOwn = [...ctx.appState.messages].reverse().find(m => m.author === myName);
+                  if (lastOwn) {
+                    e.preventDefault();
+                    ctx.handleStartEdit(lastOwn.id, lastOwn.content);
+                  }
+                } else if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   dismissMention();
                   ctx.handleSendMessage();

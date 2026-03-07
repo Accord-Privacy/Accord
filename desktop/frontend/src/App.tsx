@@ -348,6 +348,7 @@ function App() {
   });
 
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ fileName: string; loaded: number; total: number; percentage: number; current: number; totalFiles: number } | null>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const loadNodesRef = useRef<(() => Promise<void>) | undefined>(undefined);
   const creatingNodeRef = useRef(false);

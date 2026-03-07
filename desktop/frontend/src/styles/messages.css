@@ -307,28 +307,32 @@
   font-family: inherit;
   outline: none;
   transition: border-color var(--transition-fast);
+  resize: none;
+  overflow: hidden;
+  min-height: 44px;
+  max-height: 50vh;
+  line-height: 1.375;
 }
 
 .message-edit-input:focus {
   border-color: var(--accent);
 }
 
-.message-edit-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-  font-size: var(--font-sm);
+.message-edit-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--font-xs);
+  color: var(--text-muted);
 }
 
-.edit-save-btn {
-  background: var(--accent);
-  color: var(--text-on-accent);
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 16px;
+.message-edit-hint a {
+  color: var(--accent);
+  text-decoration: none;
   cursor: pointer;
-  font-size: var(--font-sm);
-  font-weight: 500;
+}
+
+.message-edit-hint a:hover {
+  text-decoration: underline;
 }
 
 .edit-save-btn:hover { background: var(--accent-hover); }
