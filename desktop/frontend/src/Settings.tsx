@@ -741,7 +741,7 @@ export const Settings: React.FC<SettingsProps> = ({
                             return;
                           }
                           try {
-                            const token = localStorage.getItem('accord_auth_token') || '';
+                            const token = localStorage.getItem('accord_token') || '';
                             await api.uploadUserAvatar(file, token);
                             setProfileSaveMsg('Avatar updated!');
                             setProfileDirty(false);

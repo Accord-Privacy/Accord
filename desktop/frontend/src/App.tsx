@@ -324,7 +324,7 @@ function App() {
     // Show wizard if no identity exists (first run)
     if (hasStoredKeyPair()) {
       // Have keys — but do we have a valid session?
-      const token = localStorage.getItem('accord_auth_token');
+      const token = localStorage.getItem('accord_token');
       if (token) return false; // Have both keys and token, skip wizard
       // Have keys but no token — show login to get password and re-auth
       return true;
@@ -334,7 +334,7 @@ function App() {
     if (idx) {
       try {
         if (JSON.parse(idx).length > 0) {
-          const token = localStorage.getItem('accord_auth_token');
+          const token = localStorage.getItem('accord_token');
           if (token) return false;
           return true; // Have identity but no token
         }
@@ -342,7 +342,7 @@ function App() {
     }
     // Check legacy keys
     if (localStorage.getItem('accord_public_key')) {
-      const token = localStorage.getItem('accord_auth_token');
+      const token = localStorage.getItem('accord_token');
       if (token) return false;
       return true;
     }
@@ -3231,7 +3231,7 @@ function App() {
           const msg = err?.message || '';
           if (/HTTP 40[13]|unauthorized|forbidden|not found|invalid.*token/i.test(msg)) {
             console.warn('Stale session detected — clearing and showing setup wizard');
-            localStorage.removeItem('accord_auth_token');
+            localStorage.removeItem('accord_token');
             localStorage.removeItem('accord_user_id');
             localStorage.removeItem('accord_server_url');
             setShowSetupWizard(true);
