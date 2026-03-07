@@ -1770,6 +1770,7 @@ function App() {
     // Clear node/channel selection when selecting DM
     setSelectedNodeId(null);
     setSelectedChannelId(null);
+    setMobileSidebarOpen(false);
     setSelectedDmChannel(dmChannel);
     notificationManager.setActiveChannel(dmChannel.id);
     
@@ -1851,6 +1852,7 @@ function App() {
   const handleChannelSelect = useCallback((channelId: string, channelName: string) => {
     setSelectedChannelId(channelId);
     setActiveChannel(channelName);
+    setMobileSidebarOpen(false);
     setAppState(prev => ({ ...prev, activeChannel: channelId }));
     notificationManager.setActiveChannel(channelId);
     
@@ -3283,6 +3285,7 @@ function App() {
       toggleShortcutsHelp: () => setShowShortcutsHelp(prev => !prev),
       toggleEmojiPicker: () => setShowInputEmojiPicker(prev => !prev),
       closeTopModal: () => {
+        if (mobileSidebarOpen) { setMobileSidebarOpen(false); return; }
         if (showShortcutsHelp) { setShowShortcutsHelp(false); return; }
         if (showSearchOverlay) { setShowSearchOverlay(false); return; }
         if (showSettings) { setShowSettings(false); return; }

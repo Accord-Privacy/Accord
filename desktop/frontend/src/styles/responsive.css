@@ -46,9 +46,20 @@
     display: flex;
   }
 
-  /* Hide server list entirely */
+  /* Server list: hidden by default, shown as overlay when toggled */
   .server-list {
-    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 64px;
+    z-index: 1001;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .mobile-sidebar-open .server-list {
+    transform: translateX(0);
   }
 
   /* Hide member sidebar by default */
@@ -60,11 +71,11 @@
   .channel-sidebar {
     position: fixed;
     top: 0;
-    left: 0;
+    left: 64px;
     bottom: 0;
-    width: 280px;
+    width: 240px;
     z-index: 1000;
-    transform: translateX(-100%);
+    transform: translateX(calc(-100% - 64px));
     transition: transform 0.2s ease;
   }
 
@@ -79,6 +90,14 @@
     inset: 0;
     background: rgba(0, 0, 0, 0.5);
     z-index: 999;
+  }
+
+  /* Hamburger on welcome/empty screens */
+  .mobile-hamburger-welcome {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 10;
   }
 
   /* Chat area takes full width */

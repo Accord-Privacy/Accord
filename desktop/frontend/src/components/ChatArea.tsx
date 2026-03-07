@@ -246,6 +246,11 @@ export const ChatArea: React.FC = () => {
     return (
       <>
         <div className="chat-area chat-area-centered">
+          <button
+            className="mobile-hamburger mobile-hamburger-welcome"
+            onClick={() => ctx.setMobileSidebarOpen(o => !o)}
+            aria-label="Toggle sidebar"
+          >☰</button>
           <div className="welcome-card">
             {invitePreview ? (
               <>
