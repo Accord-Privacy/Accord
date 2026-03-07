@@ -73,6 +73,15 @@
   max-height: 18px;
 }
 
+.chat-topic-editable {
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.chat-topic-editable:hover {
+  color: var(--text);
+}
+
 /* Header toolbar buttons — Fluxer: 32x32 circles, transparent */
 .chat-header-btn {
   background: transparent;

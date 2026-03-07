@@ -466,46 +466,63 @@ export const AppModals: React.FC = () => {
             {ctx.pinnedMessages.length === 0 ? (
               <div className="pinned-panel-empty">
                 <div className="pinned-panel-empty-icon"><Icon name="pin" size={40} /></div>
-                <div className="pinned-panel-empty-title">No pinned messages</div>
-                <p>Pin messages to keep important information easily accessible.</p>
+                <div className="pinned-panel-empty-title">No pinned messages yet</div>
+                <p>Pin important messages so they're easy to find later.</p>
               </div>
             ) : (
               <div>
-                {ctx.pinnedMessages.map((msg, i) => (
-                  <div key={msg.id || i} className="pinned-message-card">
-                    <div className="pinned-message-header">
-                      <div className="pinned-message-avatar">
-                        {(msg.author || "?")[0]}
+                {ctx.pinnedMessages.map((msg, i) => {
+                  const canUnpin = ctx.selectedNodeId ? ctx.canDeleteMessage(msg) : false;
+                  return (
+                    <div key={msg.id || i} className="pinned-message-card">
+                      <div className="pinned-message-header">
+                        <div className="pinned-message-avatar">
+                          {(msg.author || "?")[0]}
+                        </div>
+                        <span className="pinned-message-author">{msg.author}</span>
+                        <span className="pinned-message-time">{new Date(msg.timestamp).toLocaleDateString()} at {msg.time}</span>
                       </div>
-                      <span className="pinned-message-author">{msg.author}</span>
-                      <span className="pinned-message-time">{new Date(msg.timestamp).toLocaleDateString()} at {msg.time}</span>
+                      <div className="message-content pinned-message-content"
+                        dangerouslySetInnerHTML={{ __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) }} />
+                      {msg.content && extractFirstUrl(msg.content) && (
+                        <div className="pinned-message-preview"><LinkPreview content={msg.content} token={ctx.appState.token || ''} /></div>
+                      )}
+                      <div className="pinned-message-meta">
+                        <span>Pinned {new Date(msg.pinned_at!).toLocaleDateString()}</span>
+                        <div className="pinned-message-actions">
+                          <button
+                            className="pinned-message-jump"
+                            title="Jump to message"
+                            aria-label="Jump to message"
+                            onClick={() => {
+                              ctx.setShowPinnedPanel(false);
+                              ctx.scrollToMessage(msg.id);
+                            }}
+                          >
+                            Jump to
+                          </button>
+                          {canUnpin && (
+                            <button
+                              className="pinned-message-unpin"
+                              title="Unpin message"
+                              aria-label="Unpin message"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!ctx.appState.token) return;
+                                try {
+                                  await api.unpinMessage(msg.id, ctx.appState.token);
+                                  ctx.setShowPinnedPanel(false);
+                                } catch { /* ignore */ }
+                              }}
+                            >
+                              <Icon name="close" size={14} /> Unpin
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="message-content pinned-message-content"
-                      dangerouslySetInnerHTML={{ __html: renderMessageMarkdown(msg.content, notificationManager.currentUsername) }} />
-                    {msg.content && extractFirstUrl(msg.content) && (
-                      <div className="pinned-message-preview"><LinkPreview content={msg.content} token={ctx.appState.token || ''} /></div>
-                    )}
-                    <div className="pinned-message-meta">
-                      <span>Pinned {new Date(msg.pinned_at!).toLocaleDateString()}</span>
-                      <button
-                        className="pinned-message-unpin"
-                        title="Unpin message"
-                        aria-label="Unpin message"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (!ctx.appState.token) return;
-                          try {
-                            await api.unpinMessage(msg.id, ctx.appState.token);
-                            // Close and reopen to refresh
-                            ctx.setShowPinnedPanel(false);
-                          } catch { /* ignore */ }
-                        }}
-                      >
-                        <Icon name="close" size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

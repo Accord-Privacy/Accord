@@ -282,6 +282,37 @@
 
 .create-channel-form select { cursor: pointer; }
 
+.create-channel-type-row {
+  display: flex;
+  gap: 4px;
+}
+
+.create-channel-type-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--bg-modifier-hover, #3f4147);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted, #b5bac1);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.create-channel-type-btn.active {
+  background: var(--accent, #5865f2);
+  border-color: var(--accent, #5865f2);
+  color: #fff;
+}
+
+.create-channel-type-btn:hover:not(.active) {
+  border-color: var(--text-muted, #b5bac1);
+}
+
 .create-channel-actions {
   display: flex;
   gap: 6px;

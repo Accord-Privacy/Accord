@@ -332,15 +332,25 @@ export class AccordApi {
   }
 
   // Create a new channel in a node
-  async createChannel(nodeId: string, name: string, channelType: string, _token: string): Promise<Channel> {
-    const request = {
+  async createChannel(nodeId: string, name: string, channelType: string, _token: string, topic?: string, parentId?: string): Promise<Channel> {
+    const request: Record<string, unknown> = {
       name,
       channel_type: channelType,
     };
+    if (topic) request.topic = topic;
+    if (parentId) request.parent_id = parentId;
 
     return this.request<Channel>(`/nodes/${nodeId}/channels`, {
       method: 'POST',
       body: JSON.stringify(request),
+    });
+  }
+
+  // Update a channel (topic, name, etc.)
+  async updateChannel(channelId: string, updates: { topic?: string; name?: string }, _token: string): Promise<Channel> {
+    return this.request<Channel>(`/channels/${channelId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
     });
   }
 

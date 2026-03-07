@@ -46,6 +46,8 @@ export function useUIState() {
   const [showCreateChannelForm, setShowCreateChannelForm] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelType, setNewChannelType] = useState("text");
+  const [newChannelTopic, setNewChannelTopic] = useState("");
+  const [newChannelCategoryId, setNewChannelCategoryId] = useState("");
   const [deleteChannelConfirm, setDeleteChannelConfirm] = useState<{ id: string; name: string } | null>(null);
 
   // Invite modal
@@ -140,6 +142,8 @@ export function useUIState() {
     showCreateChannelForm, setShowCreateChannelForm,
     newChannelName, setNewChannelName,
     newChannelType, setNewChannelType,
+    newChannelTopic, setNewChannelTopic,
+    newChannelCategoryId, setNewChannelCategoryId,
     deleteChannelConfirm, setDeleteChannelConfirm,
     showInviteModal, setShowInviteModal,
     generatedInvite, setGeneratedInvite,

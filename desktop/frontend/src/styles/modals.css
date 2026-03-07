@@ -246,17 +246,42 @@
   gap: var(--space-xs);
 }
 
+.pinned-message-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.pinned-message-jump {
+  background: none;
+  border: 1px solid var(--bg-modifier-hover);
+  color: var(--accent);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  transition: all var(--transition-fast);
+}
+
+.pinned-message-jump:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 .pinned-message-unpin {
   background: none;
   border: none;
   color: var(--text-faint);
   cursor: pointer;
-  padding: 4px;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
   opacity: 0;
   transition: all var(--transition-fast);
   display: flex;
   align-items: center;
+  gap: 4px;
+  font-size: 12px;
 }
 
 .pinned-message-card:hover .pinned-message-unpin {

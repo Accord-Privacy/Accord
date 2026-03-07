@@ -387,13 +387,36 @@ export const ChannelSidebar: React.FC = () => {
             ) : (
               <div className="create-channel-form">
                 <input type="text" placeholder="Channel name" value={ctx.newChannelName} onChange={(e) => ctx.setNewChannelName(e.target.value)} />
-                <select value={ctx.newChannelType} onChange={(e) => ctx.setNewChannelType(e.target.value)}>
-                  <option value="text">Text Channel</option>
-                  <option value="voice">Voice Channel</option>
-                </select>
+                <div className="create-channel-type-row">
+                  <button
+                    className={`create-channel-type-btn ${ctx.newChannelType === 'text' ? 'active' : ''}`}
+                    onClick={() => ctx.setNewChannelType('text')}
+                    title="Text Channel"
+                    type="button"
+                  >
+                    <Icon name="hash" size={14} /> Text
+                  </button>
+                  <button
+                    className={`create-channel-type-btn ${ctx.newChannelType === 'voice' ? 'active' : ''}`}
+                    onClick={() => ctx.setNewChannelType('voice')}
+                    title="Voice Channel"
+                    type="button"
+                  >
+                    <Icon name="speaker" size={14} /> Voice
+                  </button>
+                </div>
+                <input type="text" placeholder="Topic (optional)" value={ctx.newChannelTopic} onChange={(e) => ctx.setNewChannelTopic(e.target.value)} />
+                {ctx.categories.length > 0 && (
+                  <select value={ctx.newChannelCategoryId} onChange={(e) => ctx.setNewChannelCategoryId(e.target.value)}>
+                    <option value="">No category</option>
+                    {ctx.categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                )}
                 <div className="create-channel-actions">
                   <button onClick={ctx.handleCreateChannel} className="btn btn-green btn-sm">Create</button>
-                  <button onClick={() => { ctx.setShowCreateChannelForm(false); ctx.setNewChannelName(""); ctx.setNewChannelType("text"); }} className="btn btn-outline btn-sm">Cancel</button>
+                  <button onClick={() => { ctx.setShowCreateChannelForm(false); ctx.setNewChannelName(""); ctx.setNewChannelType("text"); ctx.setNewChannelTopic(""); ctx.setNewChannelCategoryId(""); }} className="btn btn-outline btn-sm">Cancel</button>
                 </div>
               </div>
             )}
