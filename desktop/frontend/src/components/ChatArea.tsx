@@ -1102,8 +1102,8 @@ export const ChatArea: React.FC = () => {
             <textarea
               ref={ctx.messageInputRef}
               className="message-input"
-              aria-label={`Message ${ctx.activeChannel}`}
-              placeholder={ctx.slowModeCooldown > 0 ? `Slow mode — wait ${ctx.slowModeCooldown}s` : `Message ${ctx.activeChannel}`}
+              aria-label={`Message ${(ctx.activeChannel || '').replace('# ', '#')}`}
+              placeholder={ctx.slowModeCooldown > 0 ? `Slow mode — wait ${ctx.slowModeCooldown}s` : `Message ${(ctx.activeChannel || '').replace('# ', '#')}`}
               value={ctx.message}
               rows={1}
               disabled={ctx.slowModeCooldown > 0}
