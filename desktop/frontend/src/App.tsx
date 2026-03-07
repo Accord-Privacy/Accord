@@ -2775,12 +2775,10 @@ function App() {
           }
         }
 
-        // Pass reply_to if we're replying to a message
-        ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id);
-
         // Add to local messages for immediate display (temp_ prefix for dedup)
+        const tempId = `temp_${Date.now()}_${Math.random()}`;
         const newMessage: Message = {
-          id: `temp_${Date.now()}_${Math.random()}`,
+          id: tempId,
           author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
           content: message, // Show original plaintext locally
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -2798,6 +2796,8 @@ function App() {
             created_at: replyingTo.timestamp,
             content: replyingTo.content,
           } : undefined,
+          _status: 'sending',
+          _retryPayload: { channelId: channelToUse, content: message, replyTo: replyingTo?.id },
         };
 
         setAppState(prev => ({
@@ -2811,6 +2811,26 @@ function App() {
           setTimeout(() => {
             container.scrollTop = container.scrollHeight;
           }, 0);
+        }
+
+        // Pass reply_to if we're replying to a message
+        try {
+          ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id);
+          // Mark as sent (delivered to server)
+          setAppState(prev => ({
+            ...prev,
+            messages: prev.messages.map(m =>
+              m.id === tempId ? { ...m, _status: 'sent' as const } : m
+            ),
+          }));
+        } catch (sendError) {
+          console.error('Failed to send message:', sendError);
+          setAppState(prev => ({
+            ...prev,
+            messages: prev.messages.map(m =>
+              m.id === tempId ? { ...m, _status: 'failed' as const } : m
+            ),
+          }));
         }
 
       } catch (error) {
@@ -2850,7 +2870,36 @@ function App() {
     }
   };
 
-  // Message editing functionality removed
+  // Retry a failed message
+  const handleRetryMessage = useCallback((messageId: string) => {
+    const msg = appState.messages.find(m => m.id === messageId);
+    if (!msg || msg._status !== 'failed' || !msg._retryPayload || !ws) return;
+
+    // Mark as sending again
+    setAppState(prev => ({
+      ...prev,
+      messages: prev.messages.map(m =>
+        m.id === messageId ? { ...m, _status: 'sending' as const } : m
+      ),
+    }));
+
+    try {
+      ws.sendChannelMessage(msg._retryPayload.channelId, msg._retryPayload.content, msg._retryPayload.replyTo);
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(m =>
+          m.id === messageId ? { ...m, _status: 'sent' as const } : m
+        ),
+      }));
+    } catch {
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(m =>
+          m.id === messageId ? { ...m, _status: 'failed' as const } : m
+        ),
+      }));
+    }
+  }, [appState.messages, ws]);
 
   // Handle saving message edit
   const handleSaveEdit = async () => {
@@ -3552,7 +3601,7 @@ function App() {
     showRolePopup, setShowRolePopup,
 
     // ---- Handlers ----
-    handleAuth, handleLogout, handleSendMessage,
+    handleAuth, handleLogout, handleSendMessage, handleRetryMessage,
     handleSaveEdit, handleCancelEdit, handleDeleteMessage,
     handleReply, handleCancelReply,
     handleAddReaction, handleRemoveReaction, handleToggleReaction,

@@ -620,6 +620,22 @@ export const ChatArea: React.FC = () => {
                             }
                           }}>{msg.author}</span>
                           <span className="message-time" title={new Date(msg.timestamp).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}>{formatRelativeTime(msg.timestamp)}</span>
+                          {msg._status && msg.sender_id === ctx.appState.user?.id && (
+                            msg._status === 'failed' ? (
+                              <span
+                                className="delivery-status delivery-failed"
+                                title="Failed to send. Click to retry."
+                                onClick={() => ctx.handleRetryMessage(msg.id)}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleRetryMessage(msg.id); }}
+                              >⚠</span>
+                            ) : msg._status === 'sending' ? (
+                              <span className="delivery-status delivery-sending" title="Sending">○</span>
+                            ) : msg._status === 'sent' ? (
+                              <span className="delivery-status delivery-sent" title="Sent">●</span>
+                            ) : null
+                          )}
                           {msg.edited_at && (
                             <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                           )}

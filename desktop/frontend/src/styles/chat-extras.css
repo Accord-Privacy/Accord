@@ -170,6 +170,39 @@
   color: var(--accent);
 }
 
+/* Inline delivery status next to timestamp */
+.delivery-status {
+  font-size: 11px;
+  margin-left: 4px;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.delivery-sending {
+  color: var(--text-faint);
+  opacity: 0.6;
+}
+
+.delivery-sent {
+  color: var(--text-muted);
+}
+
+.delivery-failed {
+  color: var(--error, #e74c3c);
+  cursor: pointer;
+  font-size: 13px;
+  animation: pulse-fail 2s infinite;
+}
+
+.delivery-failed:hover {
+  opacity: 0.8;
+}
+
+@keyframes pulse-fail {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* ── Message Error Toast ── */
 .message-error-toast {
   position: absolute;

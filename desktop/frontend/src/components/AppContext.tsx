@@ -326,6 +326,7 @@ export interface AppContextType {
   handleAuth: () => Promise<void>;
   handleLogout: () => void;
   handleSendMessage: () => Promise<void>;
+  handleRetryMessage: (messageId: string) => void;
   handleSaveEdit: () => Promise<void>;
   handleCancelEdit: () => void;
   handleDeleteMessage: (messageId: string) => Promise<void>;

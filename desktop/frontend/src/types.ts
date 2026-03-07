@@ -224,6 +224,8 @@ export interface AppState {
   isConnected: boolean;
 }
 
+export type MessageDeliveryStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+
 export interface Message {
   id: string;
   author: string;
@@ -244,6 +246,10 @@ export interface Message {
   sender_public_key_hash?: string;
   sender_id?: string;
   display_name?: string;
+  /** Delivery status for own messages (optimistic send tracking). */
+  _status?: MessageDeliveryStatus;
+  /** Original send parameters for retry on failure. */
+  _retryPayload?: { channelId: string; content: string; replyTo?: string };
 }
 
 export interface RepliedMessage {
