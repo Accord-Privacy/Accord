@@ -181,7 +181,7 @@ function App() {
   const [slowModeCooldown, setSlowModeCooldown] = useState(0); // seconds remaining
   const [slowModeSeconds, setSlowModeSeconds] = useState(0); // channel's slow mode setting
   const [messageError, setMessageError] = useState<string>(''); // auto-mod / slow mode errors
-  const [activeChannel, setActiveChannel] = useState("# general");
+  const [activeChannel, setActiveChannel] = useState("#general");
   const [activeServer, setActiveServer] = useState(0);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [ws, setWs] = useState<AccordWebSocket | null>(null);
@@ -1967,7 +1967,7 @@ function App() {
       await api.deleteChannel(channelId, appState.token);
       if (channelId === selectedChannelId) {
         setSelectedChannelId(null);
-        setActiveChannel("# general");
+        setActiveChannel("#general");
       }
       if (selectedNodeId) {
         await loadChannels(selectedNodeId);

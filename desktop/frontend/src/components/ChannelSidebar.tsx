@@ -284,7 +284,7 @@ export const ChannelSidebar: React.FC = () => {
         role="option"
         aria-selected={isActive}
         tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const isVoice = ctx.getChannelTypeNum(channel) === 2; if (isVoice) { if (ctx.voiceChannelId !== channel.id) { ctx.setVoiceChannelId(channel.id); ctx.setVoiceChannelName(channel.name); ctx.setVoiceConnectedAt(Date.now()); } } else { ctx.handleChannelSelect(channel.id, `# ${channel.name}`); } } }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const isVoice = ctx.getChannelTypeNum(channel) === 2; if (isVoice) { if (ctx.voiceChannelId !== channel.id) { ctx.setVoiceChannelId(channel.id); ctx.setVoiceChannelName(channel.name); ctx.setVoiceConnectedAt(Date.now()); } } else { ctx.handleChannelSelect(channel.id, `#${channel.name}`); } } }}
         draggable={canManageChannels}
         onDragStart={(e) => handleDragStart(e, { type: 'channel', id: channel.id, categoryId: channel.parent_id || null })}
         onDragEnd={handleDragEnd}
@@ -306,7 +306,7 @@ export const ChannelSidebar: React.FC = () => {
                 ctx.setVoiceConnectedAt(Date.now());
               }
             } else {
-              ctx.handleChannelSelect(channel.id, `# ${channel.name}`);
+              ctx.handleChannelSelect(channel.id, `#${channel.name}`);
             }
           }}
           className="channel-item-inner"

@@ -537,8 +537,8 @@ export const ChatArea: React.FC = () => {
                 </div>
               ) : (
                 <div className="messages-beginning">
-                  <div className="messages-beginning-title">Welcome to {(ctx.activeChannel || '# general').replace('# ', '#')}!</div>
-                  <div className="messages-beginning-subtitle">This is the start of the <strong>{(ctx.activeChannel || '# general').replace('# ', '#')}</strong> channel.</div>
+                  <div className="messages-beginning-title">Welcome to {ctx.activeChannel || '#general'}!</div>
+                  <div className="messages-beginning-subtitle">This is the start of the <strong>{ctx.activeChannel || '#general'}</strong> channel.</div>
                 </div>
               )
             )}
@@ -1102,8 +1102,8 @@ export const ChatArea: React.FC = () => {
             <textarea
               ref={ctx.messageInputRef}
               className="message-input"
-              aria-label={`Message ${(ctx.activeChannel || '').replace('# ', '#')}`}
-              placeholder={ctx.slowModeCooldown > 0 ? `Slow mode — wait ${ctx.slowModeCooldown}s` : `Message ${(ctx.activeChannel || '').replace('# ', '#')}`}
+              aria-label={`Message ${ctx.activeChannel || ''}`}
+              placeholder={ctx.slowModeCooldown > 0 ? `Slow mode — wait ${ctx.slowModeCooldown}s` : `Message ${ctx.activeChannel || ''}`}
               value={ctx.message}
               rows={1}
               disabled={ctx.slowModeCooldown > 0}
