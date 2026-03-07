@@ -1,8 +1,20 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { api } from './api';
 import { UserProfile, Role, User } from './types';
 import { avatarColor } from './avatarColor';
+
+type ProfileTab = 'about' | 'mutual';
+
+function getUserNote(userId: string): string {
+  try { return localStorage.getItem(`accord-note:${userId}`) || ''; } catch { return ''; }
+}
+function setUserNote(userId: string, note: string): void {
+  try {
+    if (note) localStorage.setItem(`accord-note:${userId}`, note);
+    else localStorage.removeItem(`accord-note:${userId}`);
+  } catch { /* ignore */ }
+}
 
 export interface ProfileCardProps {
   userId: string;
@@ -42,7 +54,15 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 }) => {
   const [profile, setProfile] = useState<UserProfile | null>(initialProfile || null);
   const [roles, setRoles] = useState<Role[]>(initialRoles || []);
+  const [activeTab, setActiveTab] = useState<ProfileTab>('about');
+  const [note, setNote] = useState(() => getUserNote(userId));
+  const [noteEditing, setNoteEditing] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+
+  const saveNote = useCallback((value: string) => {
+    setNote(value);
+    setUserNote(userId, value);
+  }, [userId]);
 
   // Fetch profile if not provided
   useEffect(() => {
@@ -134,40 +154,94 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 
           <div className="profile-card-divider" />
 
-          {/* About / Bio */}
-          {profile?.bio && (
-            <div className="profile-card-section">
-              <div className="profile-card-section-title">ABOUT ME</div>
-              <div className="profile-card-bio">{profile.bio}</div>
-            </div>
-          )}
+          {/* Tabs */}
+          <div className="profile-card-tabs">
+            <button
+              className={`profile-card-tab${activeTab === 'about' ? ' profile-card-tab-active' : ''}`}
+              onClick={() => setActiveTab('about')}
+            >About Me</button>
+            <button
+              className={`profile-card-tab${activeTab === 'mutual' ? ' profile-card-tab-active' : ''}`}
+              onClick={() => setActiveTab('mutual')}
+            >Mutual Nodes</button>
+          </div>
 
-          {/* Roles */}
-          {roles.length > 0 && (
-            <div className="profile-card-section">
-              <div className="profile-card-section-title">ROLES</div>
-              <div className="profile-card-roles">
-                {roles.map(role => (
-                  <span key={role.id} className="profile-card-role-pill" style={{
-                    borderColor: role.color || 'var(--text-muted)',
-                    color: role.color || 'var(--text-secondary)',
-                  }}>
-                    <span className="profile-card-role-dot" style={{
-                      backgroundColor: role.color || 'var(--text-muted)',
-                    }} />
-                    {role.name}
-                  </span>
-                ))}
+          {/* Tab Content */}
+          {activeTab === 'about' ? (
+            <div className="profile-card-tab-content">
+              {/* About / Bio */}
+              {profile?.bio && (
+                <div className="profile-card-section">
+                  <div className="profile-card-section-title">ABOUT ME</div>
+                  <div className="profile-card-bio">{profile.bio}</div>
+                </div>
+              )}
+
+              {/* Roles */}
+              {roles.length > 0 && (
+                <div className="profile-card-section">
+                  <div className="profile-card-section-title">ROLES</div>
+                  <div className="profile-card-roles">
+                    {roles.map(role => (
+                      <span key={role.id} className="profile-card-role-pill" style={{
+                        borderColor: role.color || 'var(--text-muted)',
+                        color: role.color || 'var(--text-secondary)',
+                      }}>
+                        <span className="profile-card-role-dot" style={{
+                          backgroundColor: role.color || 'var(--text-muted)',
+                        }} />
+                        {role.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Member Since */}
+              {joinedAt != null && joinedAt > 0 && (
+                <div className="profile-card-section">
+                  <div className="profile-card-section-title">MEMBER SINCE</div>
+                  <div className="profile-card-member-since">
+                    {new Date(joinedAt < 1e12 ? joinedAt * 1000 : joinedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                  </div>
+                </div>
+              )}
+
+              {/* Note */}
+              <div className="profile-card-section">
+                <div className="profile-card-section-title">NOTE</div>
+                {noteEditing ? (
+                  <textarea
+                    className="profile-card-note-input"
+                    value={note}
+                    placeholder="Click to add a note"
+                    onChange={(e) => saveNote(e.target.value)}
+                    onBlur={() => setNoteEditing(false)}
+                    autoFocus
+                    rows={3}
+                  />
+                ) : (
+                  <div
+                    className="profile-card-note-display"
+                    onClick={() => setNoteEditing(true)}
+                  >
+                    {note || 'Click to add a note'}
+                  </div>
+                )}
               </div>
             </div>
-          )}
-
-          {/* Member Since */}
-          {joinedAt != null && joinedAt > 0 && (
-            <div className="profile-card-section">
-              <div className="profile-card-section-title">MEMBER SINCE</div>
-              <div className="profile-card-member-since">
-                {new Date(joinedAt < 1e12 ? joinedAt * 1000 : joinedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+          ) : (
+            <div className="profile-card-tab-content">
+              <div className="profile-card-section">
+                <div className="profile-card-section-title">MUTUAL NODES</div>
+                {nodeId ? (
+                  <div className="profile-card-mutual-node">
+                    <span className="profile-card-mutual-node-dot" />
+                    <span>Current Node</span>
+                  </div>
+                ) : (
+                  <div className="profile-card-member-since">No mutual nodes</div>
+                )}
               </div>
             </div>
           )}

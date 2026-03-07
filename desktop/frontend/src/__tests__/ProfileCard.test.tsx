@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ProfileCard } from '../ProfileCard';
 import type { UserProfile, Role } from '../types';
 
@@ -40,7 +40,7 @@ const mockRole = (overrides: Partial<Role> = {}): Role => ({
 });
 
 describe('ProfileCard', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); });
 
   it('renders display name and bio from profile', () => {
     render(
@@ -80,5 +80,35 @@ describe('ProfileCard', () => {
     );
     expect(screen.getByText('Admin')).toBeInTheDocument();
     expect(screen.getByText('Member')).toBeInTheDocument();
+  });
+
+  it('renders About Me and Mutual Nodes tabs', () => {
+    render(
+      <ProfileCard {...baseProps} userId="user-1" currentUserId="user-2"
+        profile={mockProfile({ display_name: 'Tab User' })} />
+    );
+    expect(screen.getByText('About Me')).toBeInTheDocument();
+    expect(screen.getByText('Mutual Nodes')).toBeInTheDocument();
+  });
+
+  it('switches to Mutual Nodes tab', () => {
+    render(
+      <ProfileCard {...baseProps} userId="user-1" currentUserId="user-2"
+        profile={mockProfile({ display_name: 'Tab User' })} nodeId="node-1" />
+    );
+    fireEvent.click(screen.getByText('Mutual Nodes'));
+    expect(screen.getByText('Current Node')).toBeInTheDocument();
+  });
+
+  it('shows note placeholder and allows editing', () => {
+    render(
+      <ProfileCard {...baseProps} userId="user-1" currentUserId="user-2"
+        profile={mockProfile({ display_name: 'Note User' })} />
+    );
+    expect(screen.getByText('Click to add a note')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Click to add a note'));
+    const textarea = screen.getByPlaceholderText('Click to add a note');
+    fireEvent.change(textarea, { target: { value: 'My private note' } });
+    expect(localStorage.getItem('accord-note:user-1')).toBe('My private note');
   });
 });

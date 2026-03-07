@@ -509,6 +509,93 @@
   background: var(--red-dark);
 }
 
+/* Profile card tabs */
+.profile-card-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 12px;
+}
+
+.profile-card-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 4px;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.profile-card-tab:hover {
+  color: var(--text-secondary);
+}
+
+.profile-card-tab-active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+.profile-card-tab-content {
+  min-height: 80px;
+}
+
+/* Note section */
+.profile-card-note-input {
+  width: 100%;
+  background: var(--bg-darkest);
+  border: 1px solid var(--accent);
+  color: var(--text-secondary);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: var(--font-sm);
+  font-family: inherit;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.profile-card-note-display {
+  font-size: var(--font-sm);
+  color: var(--text-faint);
+  padding: 6px 8px;
+  background: var(--bg-content);
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 24px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  transition: background 0.15s;
+}
+
+.profile-card-note-display:hover {
+  background: var(--bg-modifier-hover);
+}
+
+/* Mutual nodes */
+.profile-card-mutual-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-content);
+  border-radius: 4px;
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.profile-card-mutual-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green, #43b581);
+  flex-shrink: 0;
+}
+
 /* ── Bot API v2 Styles ── */
 
 .bot-panel { margin-top: 8px; }
