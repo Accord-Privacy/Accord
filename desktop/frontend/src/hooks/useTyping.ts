@@ -100,10 +100,24 @@ export function useTyping(
     };
   }, [typingTimeouts]);
 
+  /** Return the filtered list of typing users for a channel (excludes self). */
+  const getTypingUsersForChannel = useCallback((channelId: string): Array<{ user_id: string; displayName: string }> => {
+    const tusers = typingUsers.get(channelId) || [];
+    const currentUserId = localStorage.getItem('accord_user_id');
+    return tusers
+      .filter(u => u.user_id !== currentUserId)
+      .map(tu => {
+        const member = members.find(m => m.user_id === tu.user_id);
+        const name = member?.user?.display_name || member?.profile?.display_name || tu.displayName;
+        return { user_id: tu.user_id, displayName: name };
+      });
+  }, [typingUsers, members]);
+
   return {
     typingUsers,
     sendTypingIndicator,
     formatTypingUsers,
+    getTypingUsersForChannel,
     handleTypingStart,
   };
 }

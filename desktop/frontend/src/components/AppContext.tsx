@@ -119,6 +119,10 @@ export interface AppContextType {
   setNewChannelName: React.Dispatch<React.SetStateAction<string>>;
   newChannelType: string;
   setNewChannelType: React.Dispatch<React.SetStateAction<string>>;
+  newChannelTopic: string;
+  setNewChannelTopic: React.Dispatch<React.SetStateAction<string>>;
+  newChannelCategoryId: string;
+  setNewChannelCategoryId: React.Dispatch<React.SetStateAction<string>>;
   showInviteModal: boolean;
   setShowInviteModal: React.Dispatch<React.SetStateAction<boolean>>;
   generatedInvite: string;
@@ -352,6 +356,7 @@ export interface AppContextType {
   toggleMemberRole: (userId: string, roleId: string, hasRole: boolean) => Promise<void>;
   sendTypingIndicator: (channelId: string) => void;
   formatTypingUsers: (channelId: string) => string;
+  getTypingUsersForChannel: (channelId: string) => Array<{ user_id: string; displayName: string }>;
   loadChannels: (nodeId: string) => Promise<void>;
   loadRoles: (nodeId: string) => Promise<void>;
   loadNodes: () => Promise<void>;

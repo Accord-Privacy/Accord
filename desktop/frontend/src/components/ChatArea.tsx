@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useCallback, useEffect, useMemo } from "react";
+import React, { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
 import { avatarColor } from "../avatarColor";
@@ -29,6 +29,10 @@ export const ChatArea: React.FC = () => {
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [unreadMarkerId, setUnreadMarkerId] = useState<string | null>(null);
+  const [showTopicEdit, setShowTopicEdit] = useState(false);
+  const [topicDraft, setTopicDraft] = useState('');
+  const [topicSaving, setTopicSaving] = useState(false);
+  const topicInputRef = useRef<HTMLTextAreaElement>(null);
 
   const wrapSelection = useCallback((prefix: string, suffix: string) => {
     const textarea = ctx.messageInputRef?.current;
@@ -260,21 +264,33 @@ export const ChatArea: React.FC = () => {
                 <>
                   <span className="chat-channel-icon"><Icon name="hash" size={20} /></span>
                   <span className="chat-channel-name">{ctx.activeChannel}</span>
-                  <span className="chat-topic">
-                    {(() => {
-                      const ch = ctx.channels.find(c => c.id === ctx.selectedChannelId);
-                      if (ch?.channel_type === 'voice') return `Voice channel — ${ch.name}`;
-                      if (ch?.topic) return ch.topic;
-                      return '';
-                    })()}
-                  </span>
+                  {(() => {
+                    const ch = ctx.channels.find(c => c.id === ctx.selectedChannelId);
+                    const topicText = ch?.channel_type === 'voice' ? `Voice channel — ${ch.name}` : (ch?.topic || '');
+                    const canEdit = ctx.selectedNodeId ? ctx.hasPermission(ctx.selectedNodeId, 'ManageNode') : false;
+                    if (!topicText && !canEdit) return null;
+                    return (
+                      <span
+                        className={`chat-topic ${canEdit ? 'chat-topic-editable' : ''}`}
+                        title={topicText || 'Click to set a topic'}
+                        onClick={() => {
+                          if (!canEdit) return;
+                          setTopicDraft(ch?.topic || '');
+                          setShowTopicEdit(true);
+                          setTimeout(() => topicInputRef.current?.focus(), 50);
+                        }}
+                      >
+                        {topicText || (canEdit ? 'Set a topic' : '')}
+                      </span>
+                    );
+                  })()}
                 </>
               )}
             </div>
             <div className="chat-header-right">
               <button onClick={ctx.togglePinnedPanel} className={`chat-header-btn ${ctx.showPinnedPanel ? 'active' : ''}`} title="Pinned Messages" aria-label="Pinned Messages" aria-pressed={ctx.showPinnedPanel}>
                 <Icon name="pin" size={20} />
-                {ctx.pinnedMessages.length > 0 && ctx.showPinnedPanel && <span className="pin-count-badge">{ctx.pinnedMessages.length}</span>}
+                {ctx.pinnedMessages.length > 0 && <span className="pin-count-badge">{ctx.pinnedMessages.length}</span>}
               </button>
               {ctx.encryptionEnabled && ctx.keyPair && (
                 <span className="e2ee-indicator" title="End-to-end encrypted"><Icon name="lock" size={14} /> E2EE</span>
@@ -647,24 +663,56 @@ export const ChatArea: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Read receipts */}
+                    {/* Read receipts & delivery status */}
                     {ctx.selectedChannelId && (() => {
                       const receipts = ctx.readReceipts.get(ctx.selectedChannelId!) || [];
                       const currentUserId = ctx.appState.user?.id;
+                      const isOwn = msg.sender_id === currentUserId;
+
+                      // For own messages: show ✓ (delivered) or ✓✓ (read)
                       const readBy = receipts.filter(r => r.message_id === msg.id && r.user_id !== currentUserId);
+                      const allReadNames = readBy.map(r => {
+                        const member = ctx.members.find(m => m.user_id === r.user_id);
+                        return member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
+                      });
+                      const tooltipText = allReadNames.length > 0
+                        ? `Read by ${allReadNames.join(', ')}`
+                        : '';
+
+                      if (isOwn && readBy.length === 0) {
+                        // Delivered but not read
+                        return (
+                          <div className="read-receipts">
+                            <span className="delivery-check delivered" title="Delivered">✓</span>
+                          </div>
+                        );
+                      }
+
                       if (readBy.length === 0) return null;
+
                       return (
-                        <div className="read-receipts">
-                          {readBy.slice(0, 5).map(r => {
-                            const member = ctx.members.find(m => m.user_id === r.user_id);
-                            const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
-                            return (
-                              <span key={r.user_id} className="read-receipt-avatar" title={`Read by ${name}`}>
-                                {name[0]?.toUpperCase()}
-                              </span>
-                            );
-                          })}
-                          {readBy.length > 5 && <span className="read-receipt-overflow">+{readBy.length - 5}</span>}
+                        <div className="read-receipts" title={tooltipText}>
+                          {isOwn && (
+                            <span className="delivery-check read" title={tooltipText}>✓✓</span>
+                          )}
+                          <div className="read-receipt-avatar-stack">
+                            {readBy.slice(0, 3).map((r, idx) => {
+                              const member = ctx.members.find(m => m.user_id === r.user_id);
+                              const name = member?.profile?.display_name || member?.user?.display_name || r.user_id.substring(0, 6);
+                              return (
+                                <span key={r.user_id} className="read-receipt-avatar" style={{ zIndex: 3 - idx, background: avatarColor(r.user_id) }} title={`Read by ${name}`}>
+                                  {r.user_id ? (
+                                    <img
+                                      src={`${api.getUserAvatarUrl(r.user_id)}`}
+                                      alt={name[0]}
+                                      onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = name[0]?.toUpperCase() || '?'; }}
+                                    />
+                                  ) : (name[0]?.toUpperCase() || '?')}
+                                </span>
+                              );
+                            })}
+                            {readBy.length > 3 && <span className="read-receipt-overflow">+{readBy.length - 3}</span>}
+                          </div>
                         </div>
                       );
                     })()}
@@ -683,14 +731,31 @@ export const ChatArea: React.FC = () => {
           </div>
 
           {/* Typing indicator */}
-          {ctx.selectedChannelId && ctx.formatTypingUsers(ctx.selectedChannelId) && (
-            <div className="typing-indicator">
-              <div className="typing-dots-animated">
-                <span></span><span></span><span></span>
+          {ctx.selectedChannelId && (() => {
+            const typers = ctx.getTypingUsersForChannel(ctx.selectedChannelId!);
+            if (typers.length === 0) return null;
+            return (
+              <div className="typing-indicator typing-indicator-animated">
+                <div className="typing-avatars">
+                  {typers.slice(0, 3).map(t => (
+                    <div key={t.user_id} className="typing-avatar" style={{ background: avatarColor(t.user_id) }} title={t.displayName}>
+                      {t.user_id ? (
+                        <img
+                          src={`${api.getUserAvatarUrl(t.user_id)}`}
+                          alt={t.displayName[0]}
+                          onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; if (img.parentElement) img.parentElement.textContent = t.displayName[0]?.toUpperCase() || '?'; }}
+                        />
+                      ) : (t.displayName[0]?.toUpperCase() || '?')}
+                    </div>
+                  ))}
+                </div>
+                <span className="typing-text">{ctx.formatTypingUsers(ctx.selectedChannelId!)}</span>
+                <div className="typing-dots-animated">
+                  <span></span><span></span><span></span>
+                </div>
               </div>
-              <span className="typing-text">{ctx.formatTypingUsers(ctx.selectedChannelId)}</span>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Staged files preview */}
           <StagedFilesPreview
@@ -837,6 +902,57 @@ export const ChatArea: React.FC = () => {
       {lightboxSrc && (
         <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
       )}
+
+      {/* Topic Edit Modal */}
+      {showTopicEdit && (
+        <div className="modal-overlay" onClick={() => setShowTopicEdit(false)} onKeyDown={(e) => { if (e.key === 'Escape') setShowTopicEdit(false); }}>
+          <div className="modal-card modal-card-narrow" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="topic-edit-title">
+            <h3 id="topic-edit-title">Edit Channel Topic</h3>
+            <p>Set a topic to let others know what this channel is about.</p>
+            <div className="form-group">
+              <label className="form-label">Topic</label>
+              <textarea
+                ref={topicInputRef}
+                className="form-input"
+                value={topicDraft}
+                onChange={(e) => setTopicDraft(e.target.value)}
+                placeholder="Enter a topic..."
+                rows={3}
+                maxLength={1024}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleTopicSave();
+                  }
+                }}
+              />
+            </div>
+            <div className="modal-actions">
+              <button
+                className="btn btn-primary btn-auto-width"
+                disabled={topicSaving}
+                onClick={handleTopicSave}
+              >{topicSaving ? 'Saving...' : 'Save'}</button>
+              <button className="btn btn-outline btn-auto-width" onClick={() => setShowTopicEdit(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
+
+  async function handleTopicSave() {
+    if (!ctx.selectedChannelId || !ctx.appState.token) return;
+    setTopicSaving(true);
+    try {
+      await api.updateChannel(ctx.selectedChannelId, { topic: topicDraft }, ctx.appState.token);
+      // Refresh channels to pick up the new topic
+      if (ctx.selectedNodeId) ctx.loadChannels(ctx.selectedNodeId);
+      setShowTopicEdit(false);
+    } catch (err: any) {
+      ctx.setError(err.message || 'Failed to update topic');
+    } finally {
+      setTopicSaving(false);
+    }
+  }
 };

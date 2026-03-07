@@ -476,3 +476,54 @@
   text-transform: uppercase;
   padding: 0 8px;
 }
+
+/* ── Date Separators ── */
+.date-separator {
+  display: flex;
+  align-items: center;
+  margin: 16px 0 8px;
+  padding: 0 16px;
+}
+
+.date-separator::before,
+.date-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.date-separator-text {
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* ── Compact / Density Modes ── */
+.density-compact .message-hover-time {
+  display: none;
+}
+
+.density-compact .message-grouped .message-avatar-spacer {
+  width: auto;
+  position: relative;
+}
+
+.density-compact .message-grouped .message-avatar-spacer .message-hover-time {
+  display: inline;
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+.density-compact .message {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.density-compact .message-time {
+  display: inline !important;
+}

@@ -248,6 +248,8 @@ function App() {
     showCreateChannelForm, setShowCreateChannelForm,
     newChannelName, setNewChannelName,
     newChannelType, setNewChannelType,
+    newChannelTopic, setNewChannelTopic,
+    newChannelCategoryId, setNewChannelCategoryId,
     deleteChannelConfirm, setDeleteChannelConfirm,
     showInviteModal, setShowInviteModal,
     generatedInvite, setGeneratedInvite,
@@ -377,6 +379,7 @@ function App() {
     typingUsers,
     sendTypingIndicator,
     formatTypingUsers,
+    getTypingUsersForChannel,
     handleTypingStart,
   } = useTyping(ws, members);
 
@@ -1879,10 +1882,12 @@ function App() {
     if (!selectedNodeId || !appState.token || !newChannelName.trim()) return;
     
     try {
-      await api.createChannel(selectedNodeId, newChannelName.trim(), newChannelType, appState.token);
+      await api.createChannel(selectedNodeId, newChannelName.trim(), newChannelType, appState.token, newChannelTopic.trim() || undefined, newChannelCategoryId || undefined);
       setShowCreateChannelForm(false);
       setNewChannelName("");
       setNewChannelType("text");
+      setNewChannelTopic("");
+      setNewChannelCategoryId("");
       // Reload channels
       await loadChannels(selectedNodeId);
     } catch (error) {
@@ -3367,6 +3372,8 @@ function App() {
     showCreateChannelForm, setShowCreateChannelForm,
     newChannelName, setNewChannelName,
     newChannelType, setNewChannelType,
+    newChannelTopic, setNewChannelTopic,
+    newChannelCategoryId, setNewChannelCategoryId,
     showInviteModal, setShowInviteModal,
     generatedInvite, setGeneratedInvite,
     error, setError,
@@ -3503,7 +3510,7 @@ function App() {
     handleScroll, scrollToBottom, scrollToMessage,
     handleFilesStaged, handleRemoveStagedFile, handleClearStagedFiles,
     handleInsertEmoji, handleContextMenu, togglePinnedPanel,
-    toggleMemberRole, sendTypingIndicator, formatTypingUsers,
+    toggleMemberRole, sendTypingIndicator, formatTypingUsers, getTypingUsersForChannel,
     loadChannels, loadRoles, loadNodes, loadDmChannels, loadBots,
 
     // Bots
