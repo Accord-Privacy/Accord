@@ -487,7 +487,16 @@ impl AppState {
         self.db
             .add_node_member(node_id, user_id, NodeRole::Member)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+
+        // Auto-add user to all existing channels in the node
+        if let Ok(channels) = self.db.get_node_channels(node_id).await {
+            for channel in channels {
+                let _ = self.db.add_user_to_channel(channel.id, user_id).await;
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn leave_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
