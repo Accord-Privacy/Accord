@@ -911,13 +911,15 @@ export const ChatArea: React.FC = () => {
               );
             })}
 
-            {/* Scroll to bottom button */}
-            {ctx.showScrollToBottom && (
-              <button className="scroll-to-bottom-btn" onClick={ctx.scrollToBottom} aria-label="Scroll to latest messages">
-                ↓ {ctx.newMessageCount > 0 && <span className="scroll-to-bottom-count">{ctx.newMessageCount}</span>}
-              </button>
-            )}
           </div>
+
+          {/* Scroll to bottom button — floating outside scroll container */}
+          {ctx.showScrollToBottom && (
+            <button className="scroll-to-bottom-fab" onClick={ctx.scrollToBottom} aria-label="Scroll to latest messages">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 14.5a.75.75 0 0 1-.53-.22l-5-5a.75.75 0 1 1 1.06-1.06L10 12.69l4.47-4.47a.75.75 0 1 1 1.06 1.06l-5 5a.75.75 0 0 1-.53.22z"/></svg>
+              {ctx.newMessageCount > 0 && <span className="scroll-to-bottom-badge">{ctx.newMessageCount > 99 ? '99+' : ctx.newMessageCount}</span>}
+            </button>
+          )}
 
           {/* Typing indicator */}
           {ctx.selectedChannelId && (() => {

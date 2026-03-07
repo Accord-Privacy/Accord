@@ -867,7 +867,7 @@ function App() {
       // Check if user is scrolled to the bottom before adding new message
       const container = messagesContainerRef.current;
       const wasAtBottom = container ? 
-        (container.scrollHeight - container.scrollTop - container.clientHeight < 50) : true;
+        (container.scrollHeight - container.scrollTop - container.clientHeight < 100) : true;
 
       const currentUserId = localStorage.getItem('accord_user_id');
       const isOwnMessage = data.from === currentUserId;

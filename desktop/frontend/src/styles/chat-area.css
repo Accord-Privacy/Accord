@@ -6,6 +6,7 @@
   flex-direction: column;
   min-width: 0;
   height: 100%;
+  position: relative;
   background: var(--bg-content);
   contain: layout style;
   position: relative;
