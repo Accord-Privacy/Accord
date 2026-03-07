@@ -30,6 +30,101 @@ export interface NodeUnreads {
   };
 }
 
+// ---- Mute Manager (localStorage-backed, singleton) ----
+
+export interface MuteEntry {
+  expiresAt: number | null;
+}
+
+export type MuteMap = Record<string, MuteEntry>;
+
+export interface MuteDuration {
+  label: string;
+  minutes: number | null;
+}
+
+export const MUTE_DURATIONS: MuteDuration[] = [
+  { label: '15 Minutes', minutes: 15 },
+  { label: '1 Hour', minutes: 60 },
+  { label: '8 Hours', minutes: 480 },
+  { label: '24 Hours', minutes: 1440 },
+  { label: 'Until I turn it back on', minutes: null },
+];
+
+function loadMuteMap(key: string): MuteMap {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMuteMap(key: string, map: MuteMap): void {
+  localStorage.setItem(key, JSON.stringify(map));
+}
+
+function isEntryActive(entry: MuteEntry | undefined): boolean {
+  if (!entry) return false;
+  if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) return false;
+  return true;
+}
+
+const MUTED_CHANNELS_KEY = 'accord_muted_channels';
+const MUTED_NODES_KEY = 'accord_muted_nodes';
+
+class MuteManager {
+  private channels: MuteMap;
+  private nodes: MuteMap;
+
+  constructor() {
+    this.channels = loadMuteMap(MUTED_CHANNELS_KEY);
+    this.nodes = loadMuteMap(MUTED_NODES_KEY);
+  }
+
+  isChannelMuted(channelId: string): boolean {
+    return isEntryActive(this.channels[channelId]);
+  }
+
+  isNodeMuted(nodeId: string): boolean {
+    return isEntryActive(this.nodes[nodeId]);
+  }
+
+  isEffectivelyMuted(channelId: string, nodeId: string | null): boolean {
+    if (this.isChannelMuted(channelId)) return true;
+    if (nodeId && this.isNodeMuted(nodeId)) return true;
+    return false;
+  }
+
+  muteChannel(channelId: string, durationMinutes: number | null): void {
+    this.channels[channelId] = {
+      expiresAt: durationMinutes != null ? Date.now() + durationMinutes * 60_000 : null,
+    };
+    saveMuteMap(MUTED_CHANNELS_KEY, this.channels);
+  }
+
+  unmuteChannel(channelId: string): void {
+    delete this.channels[channelId];
+    saveMuteMap(MUTED_CHANNELS_KEY, this.channels);
+  }
+
+  muteNode(nodeId: string, durationMinutes: number | null): void {
+    this.nodes[nodeId] = {
+      expiresAt: durationMinutes != null ? Date.now() + durationMinutes * 60_000 : null,
+    };
+    saveMuteMap(MUTED_NODES_KEY, this.nodes);
+  }
+
+  unmuteNode(nodeId: string): void {
+    delete this.nodes[nodeId];
+    saveMuteMap(MUTED_NODES_KEY, this.nodes);
+  }
+}
+
+export const muteManager = new MuteManager();
+
+// ---- Notification Manager ----
+
 export class NotificationManager {
   private preferences: NotificationPreferences;
   private unreads: NodeUnreads = {};
@@ -274,6 +369,13 @@ export class NotificationManager {
       return;
     }
 
+    // Don't notify for muted channels/nodes (check all node entries for this channel)
+    for (const nodeId of Object.keys(this.unreads)) {
+      if (this.unreads[nodeId]?.channels[channelId] && muteManager.isEffectivelyMuted(channelId, nodeId)) {
+        return;
+      }
+    }
+
     const shouldNotify = 
       this.preferences.mode === 'all' || 
       (this.preferences.mode === 'mentions' && isMention) ||
@@ -394,6 +496,16 @@ export class NotificationManager {
     nodeData.totalUnreads = 0;
     nodeData.totalMentions = 0;
     this.saveUnreads();
+  }
+
+  /** Check if a channel is muted (directly or via node mute) */
+  public isChannelMuted(nodeId: string, channelId: string): boolean {
+    return muteManager.isEffectivelyMuted(channelId, nodeId);
+  }
+
+  /** Check if a node is muted */
+  public isNodeMuted(nodeId: string): boolean {
+    return muteManager.isNodeMuted(nodeId);
   }
 }
 

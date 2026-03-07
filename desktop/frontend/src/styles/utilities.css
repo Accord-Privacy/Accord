@@ -203,3 +203,27 @@
   margin: 4px 6px;
 }
 
+/* Submenu support */
+.context-menu-has-submenu {
+  position: relative;
+}
+
+.context-menu-arrow {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.context-submenu {
+  position: absolute;
+  left: 100%;
+  top: -6px;
+  background: var(--bg-floating);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  min-width: 180px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.08), var(--shadow-high);
+  z-index: 2001;
+  animation: contextMenuIn 0.12s ease-out;
+}
+

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAppContext } from "./AppContext";
 import { api } from "../api";
-import { notificationManager } from "../notifications";
+import { notificationManager, muteManager, MUTE_DURATIONS } from "../notifications";
 
 interface ServerContextMenuState {
   open: boolean;
@@ -14,8 +14,10 @@ export const ServerList: React.FC = () => {
   const ctx = useAppContext();
   const [serverMenu, setServerMenu] = useState<ServerContextMenuState | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [showMuteSubmenu, setShowMuteSubmenu] = useState(false);
+  const [muteVersion, setMuteVersion] = useState(0);
 
-  const closeMenu = useCallback(() => setServerMenu(null), []);
+  const closeMenu = useCallback(() => { setServerMenu(null); setShowMuteSubmenu(false); }, []);
 
   useEffect(() => {
     if (!serverMenu?.open) return;
@@ -96,24 +98,69 @@ export const ServerList: React.FC = () => {
         +
       </div>
 
-      {serverMenu?.open && (
-        <>
-          <div className="context-menu-backdrop" onClick={closeMenu} />
-          <div
-            ref={menuRef}
-            className="context-menu"
-            style={{ left: serverMenu.x, top: serverMenu.y }}
-          >
+      {serverMenu?.open && (() => {
+        const nodeMuted = muteManager.isNodeMuted(serverMenu.nodeId);
+        void muteVersion;
+        return (
+          <>
+            <div className="context-menu-backdrop" onClick={closeMenu} />
             <div
-              className="context-menu-item"
-              onClick={() => handleMarkAllAsRead(serverMenu.nodeId)}
+              ref={menuRef}
+              className="context-menu"
+              style={{ left: serverMenu.x, top: serverMenu.y }}
             >
-              <span className="context-menu-icon">✓</span>
-              <span>Mark All as Read</span>
+              <div
+                className="context-menu-item"
+                onClick={() => handleMarkAllAsRead(serverMenu.nodeId)}
+              >
+                <span className="context-menu-icon">✓</span>
+                <span>Mark All as Read</span>
+              </div>
+              <div className="context-menu-separator" />
+              {nodeMuted ? (
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    muteManager.unmuteNode(serverMenu.nodeId);
+                    setMuteVersion(v => v + 1);
+                    closeMenu();
+                  }}
+                >
+                  <span className="context-menu-icon">🔔</span>
+                  <span>Unmute Server</span>
+                </div>
+              ) : (
+                <div
+                  className="context-menu-item context-menu-has-submenu"
+                  onMouseEnter={() => setShowMuteSubmenu(true)}
+                  onMouseLeave={() => setShowMuteSubmenu(false)}
+                >
+                  <span className="context-menu-icon">🔇</span>
+                  <span>Mute Server</span>
+                  <span className="context-menu-arrow">▶</span>
+                  {showMuteSubmenu && (
+                    <div className="context-submenu">
+                      {MUTE_DURATIONS.map(d => (
+                        <div
+                          key={d.label}
+                          className="context-menu-item"
+                          onClick={() => {
+                            muteManager.muteNode(serverMenu.nodeId, d.minutes);
+                            setMuteVersion(v => v + 1);
+                            closeMenu();
+                          }}
+                        >
+                          <span>{d.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
     </div>
   );
 };

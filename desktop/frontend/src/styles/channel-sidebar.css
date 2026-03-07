@@ -942,3 +942,18 @@
 .btn-danger:hover {
   background: #c03537;
 }
+
+/* =================== Muted Channel =================== */
+.channel.muted .channel-item-inner {
+  opacity: 0.45;
+}
+
+.channel.muted:hover .channel-item-inner {
+  opacity: 0.7;
+}
+
+.channel-muted-icon {
+  margin-left: 4px;
+  opacity: 0.5;
+  vertical-align: middle;
+}

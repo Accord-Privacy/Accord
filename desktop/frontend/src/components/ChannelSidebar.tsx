@@ -2,7 +2,7 @@ import React from "react";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
 import { api } from "../api";
-import { notificationManager } from "../notifications";
+import { notificationManager, muteManager, MUTE_DURATIONS } from "../notifications";
 import { avatarColor } from "../avatarColor";
 import { Channel } from "../types";
 import { ServerHeader } from "./ServerHeader";
@@ -87,8 +87,10 @@ export const ChannelSidebar: React.FC = () => {
 
   const [channelMenu, setChannelMenu] = React.useState<{ open: boolean; x: number; y: number; channelId: string } | null>(null);
   const channelMenuRef = React.useRef<HTMLDivElement>(null);
+  const [showMuteSubmenu, setShowMuteSubmenu] = React.useState(false);
+  const [muteVersion, setMuteVersion] = React.useState(0);
 
-  const closeChannelMenu = React.useCallback(() => setChannelMenu(null), []);
+  const closeChannelMenu = React.useCallback(() => { setChannelMenu(null); setShowMuteSubmenu(false); }, []);
 
   React.useEffect(() => {
     if (!channelMenu?.open) return;
@@ -264,14 +266,18 @@ export const ChannelSidebar: React.FC = () => {
       { count: 0, mentions: 0 };
     const channelUnreads = clientUnreads.count > 0 ? clientUnreads : 
       { count: (channel as any).unread_count || 0, mentions: clientUnreads.mentions };
-    const hasUnread = channelUnreads.count > 0 || channelUnreads.mentions > 0;
+    const isMuted = ctx.selectedNodeId ? muteManager.isEffectivelyMuted(channel.id, ctx.selectedNodeId) : muteManager.isChannelMuted(channel.id);
+    const hasUnread = !isMuted && (channelUnreads.count > 0 || channelUnreads.mentions > 0);
     
     const dropIndicator = getDropIndicatorStyle(channel.id, 'channel');
+    
+    // void use of muteVersion to trigger re-render on mute changes
+    void muteVersion;
     
     return (
       <div
         key={channel.id}
-        className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}`}
+        className={`channel ${isActive ? "active" : ""} ${isConnectedToVoice ? "voice-connected" : ""} ${hasUnread && !isActive ? "unread" : ""}${isMuted ? " muted" : ""}`}
         title={channel.topic || undefined}
         role="option"
         aria-selected={isActive}
@@ -305,6 +311,7 @@ export const ChannelSidebar: React.FC = () => {
         >
           <span className={isVoiceChannel ? 'channel-voice-text' : ''}>
             {isVoiceChannel ? <Icon name="speaker" size={16} /> : <span className="channel-hash">#</span>} {channel.name}
+            {isMuted && <Icon name="bell-off" size={14} className="channel-muted-icon" />}
           </span>
           {isVoiceChannel && !isConnectedToVoice && (
             <span className="voice-channel-label" title="Join Voice">Join Voice</span>
@@ -314,10 +321,10 @@ export const ChannelSidebar: React.FC = () => {
           )}
         </div>
         <div className="channel-badges">
-          {channelUnreads.mentions > 0 && (
+          {!isMuted && channelUnreads.mentions > 0 && (
             <div className="mention-badge">{channelUnreads.mentions > 9 ? '9+' : channelUnreads.mentions}</div>
           )}
-          {channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
+          {!isMuted && channelUnreads.mentions === 0 && channelUnreads.count > 0 && (
             <div className="unread-badge">{channelUnreads.count > 99 ? '99+' : channelUnreads.count}</div>
           )}
           {canDeleteChannel && (
@@ -462,24 +469,68 @@ export const ChannelSidebar: React.FC = () => {
       <UserPanel />
 
       {/* Channel context menu */}
-      {channelMenu?.open && (
-        <>
-          <div className="context-menu-backdrop" onClick={closeChannelMenu} />
-          <div
-            ref={channelMenuRef}
-            className="context-menu"
-            style={{ left: channelMenu.x, top: channelMenu.y }}
-          >
+      {channelMenu?.open && (() => {
+        const chDirectlyMuted = muteManager.isChannelMuted(channelMenu.channelId);
+        return (
+          <>
+            <div className="context-menu-backdrop" onClick={closeChannelMenu} />
             <div
-              className="context-menu-item"
-              onClick={() => handleMarkChannelAsRead(channelMenu.channelId)}
+              ref={channelMenuRef}
+              className="context-menu"
+              style={{ left: channelMenu.x, top: channelMenu.y }}
             >
-              <span className="context-menu-icon">✓</span>
-              <span>Mark as Read</span>
+              <div
+                className="context-menu-item"
+                onClick={() => handleMarkChannelAsRead(channelMenu.channelId)}
+              >
+                <span className="context-menu-icon">✓</span>
+                <span>Mark as Read</span>
+              </div>
+              <div className="context-menu-separator" />
+              {chDirectlyMuted ? (
+                <div
+                  className="context-menu-item"
+                  onClick={() => {
+                    muteManager.unmuteChannel(channelMenu.channelId);
+                    setMuteVersion(v => v + 1);
+                    closeChannelMenu();
+                  }}
+                >
+                  <span className="context-menu-icon">🔔</span>
+                  <span>Unmute Channel</span>
+                </div>
+              ) : (
+                <div
+                  className="context-menu-item context-menu-has-submenu"
+                  onMouseEnter={() => setShowMuteSubmenu(true)}
+                  onMouseLeave={() => setShowMuteSubmenu(false)}
+                >
+                  <span className="context-menu-icon">🔇</span>
+                  <span>Mute Channel</span>
+                  <span className="context-menu-arrow">▶</span>
+                  {showMuteSubmenu && (
+                    <div className="context-submenu">
+                      {MUTE_DURATIONS.map(d => (
+                        <div
+                          key={d.label}
+                          className="context-menu-item"
+                          onClick={() => {
+                            muteManager.muteChannel(channelMenu.channelId, d.minutes);
+                            setMuteVersion(v => v + 1);
+                            closeChannelMenu();
+                          }}
+                        >
+                          <span>{d.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
 
       {/* Custom Status Popover */}
       {ctx.showStatusPopover && (
