@@ -211,7 +211,18 @@
   gap: 4px;
 }
 
+.reply-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 .reply-author {
+  display: flex;
+  align-items: center;
   font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-secondary);

@@ -507,8 +507,19 @@ export const ChatArea: React.FC = () => {
                       <div className="reply-preview" onClick={() => ctx.scrollToMessage(msg.reply_to!)}>
                         <div className="reply-bar"></div>
                         <div className="reply-content">
-                          <span className="reply-author">Replying to {ctx.fingerprint(msg.replied_message.sender_public_key_hash)}</span>
-                          <span className="reply-snippet">{msg.replied_message.content || msg.replied_message.encrypted_payload.substring(0, 50) + '...'}</span>
+                          <span className="reply-author">
+                            <img
+                              className="reply-avatar"
+                              src={api.getUserAvatarUrl(msg.replied_message.sender_id)}
+                              alt=""
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                            {(() => {
+                              const member = ctx.members.find(m => m.user_id === msg.replied_message!.sender_id);
+                              return member ? ctx.displayName(member.user) : (msg.replied_message!.sender_public_key_hash ? ctx.fingerprint(msg.replied_message!.sender_public_key_hash) : msg.replied_message!.sender_id);
+                            })()}
+                          </span>
+                          <span className="reply-snippet">{msg.replied_message.content || '(encrypted message)'}</span>
                         </div>
                       </div>
                     )}

@@ -2770,7 +2770,7 @@ function App() {
           reply_to: replyingTo?.id,
           replied_message: replyingTo ? {
             id: replyingTo.id,
-            sender_id: replyingTo.author,
+            sender_id: replyingTo.sender_id || replyingTo.author,
             sender_public_key_hash: '',
             encrypted_payload: "",
             created_at: replyingTo.timestamp,
@@ -3326,6 +3326,7 @@ function App() {
       const next = new Set(prev);
       if (next.has(catId)) next.delete(catId);
       else next.add(catId);
+      try { localStorage.setItem('accord_collapsed_categories', JSON.stringify([...next])); } catch {}
       return next;
     });
   };
