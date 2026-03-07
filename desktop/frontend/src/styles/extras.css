@@ -143,6 +143,35 @@
   background: rgba(0, 0, 0, 0.15);
   max-width: 480px;
   overflow: hidden;
+  position: relative;
+}
+.link-preview:hover .link-preview-dismiss {
+  opacity: 1;
+}
+.link-preview-dismiss {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text-secondary);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+  padding: 0;
+}
+.link-preview-dismiss:hover {
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--text-primary);
 }
 .link-preview-loading {
   min-height: 60px;
@@ -208,6 +237,61 @@
   object-fit: cover;
   border-radius: 4px;
   flex-shrink: 0;
+}
+
+/* Image URL embeds */
+.link-preview-image-embed {
+  padding: 4px;
+  border-left-color: var(--accent);
+  display: block;
+}
+.link-preview-inline-image {
+  max-width: 400px;
+  max-height: 300px;
+  border-radius: 4px;
+  display: block;
+}
+
+/* YouTube embeds */
+.link-preview-youtube {
+  padding: 0;
+  border-left: none;
+  background: transparent;
+  max-width: 400px;
+  display: block;
+}
+.link-preview-youtube-link {
+  display: block;
+  text-decoration: none;
+}
+.link-preview-youtube-thumb-wrapper {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.link-preview-youtube-thumb {
+  width: 100%;
+  display: block;
+  border-radius: 8px;
+}
+.link-preview-youtube-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px;
+  height: 48px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: white;
+  transition: background 0.15s;
+}
+.link-preview-youtube-link:hover .link-preview-youtube-play {
+  background: rgba(255, 0, 0, 0.85);
 }
 
 /* ── Profile Card Popup ── */

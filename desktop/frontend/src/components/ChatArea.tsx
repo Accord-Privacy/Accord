@@ -9,7 +9,7 @@ import { renderMessageMarkdown } from "../markdown";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
 import { EmojiPickerButton } from "../EmojiPicker";
 import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
-import { LinkPreview, extractFirstUrl } from "../LinkPreview";
+import { LinkPreview, extractAllUrls } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
@@ -708,7 +708,7 @@ export const ChatArea: React.FC = () => {
                       )}
 
                       {/* Link Preview */}
-                      {msg.content && extractFirstUrl(msg.content) && (
+                      {msg.content && extractAllUrls(msg.content).length > 0 && (
                         <LinkPreview content={msg.content} token={ctx.appState.token || ''} />
                       )}
 
