@@ -36,7 +36,7 @@ export function ImageGrid({ files, token, channelId, keyPair, encryptionEnabled,
           if (encryptionEnabled && keyPair) {
             try {
               // Dynamic import to avoid circular deps
-              const { getChannelKey, decryptFile } = await import('../e2ee/e2ee');
+              const { getChannelKey, decryptFile } = await import('../crypto');
               const channelKey = await getChannelKey(keyPair.privateKey, channelId);
               finalBuffer = await decryptFile(channelKey, buffer);
             } catch { /* use raw */ }

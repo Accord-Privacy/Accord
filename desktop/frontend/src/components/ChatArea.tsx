@@ -671,18 +671,34 @@ export const ChatArea: React.FC = () => {
 
                       {/* File Attachments */}
                       {msg.files && msg.files.length > 0 && (
-                        <div className="message-attachments">
-                          {msg.files.map((file) => (
-                            <FileAttachment
-                              key={file.id}
-                              file={file}
+                        <>
+                          {/* Image grid for 2+ images */}
+                          {hasImageGrid(msg.files) && (
+                            <ImageGrid
+                              files={msg.files}
                               token={ctx.appState.token || ''}
                               channelId={msg.channel_id || ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
                               keyPair={ctx.keyPair}
                               encryptionEnabled={ctx.encryptionEnabled}
+                              onImageClick={(src) => {
+                                setAllChannelImages(collectImages());
+                                setLightboxSrc(src);
+                              }}
                             />
-                          ))}
-                        </div>
+                          )}
+                          <div className="message-attachments">
+                            {(hasImageGrid(msg.files) ? getNonImageFiles(msg.files) : msg.files).map((file) => (
+                              <FileAttachment
+                                key={file.id}
+                                file={file}
+                                token={ctx.appState.token || ''}
+                                channelId={msg.channel_id || ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
+                                keyPair={ctx.keyPair}
+                                encryptionEnabled={ctx.encryptionEnabled}
+                              />
+                            ))}
+                          </div>
+                        </>
                       )}
 
                       {/* Reactions */}
