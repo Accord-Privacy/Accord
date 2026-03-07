@@ -217,6 +217,7 @@ function App() {
     voiceConnectedAt, setVoiceConnectedAt,
     voiceMuted, setVoiceMuted,
     voiceDeafened, setVoiceDeafened,
+    voiceChannelUsers, setVoiceChannelUsers,
   } = useVoice();
 
   // UI state (extracted to useUIState hook)
@@ -3436,6 +3437,7 @@ function App() {
     voiceConnectedAt, setVoiceConnectedAt,
     voiceMuted, setVoiceMuted,
     voiceDeafened, setVoiceDeafened,
+    voiceChannelUsers, setVoiceChannelUsers,
 
     // Custom status
     customStatus, showStatusPopover, setShowStatusPopover,

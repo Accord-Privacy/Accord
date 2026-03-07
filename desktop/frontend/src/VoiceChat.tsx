@@ -218,6 +218,29 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
 
   const peerList = Array.from(peers.values());
 
+  // Sync voice channel users to app context for sidebar display
+  useEffect(() => {
+    const users: import('./hooks/useVoice').VoiceChannelUser[] = [
+      {
+        userId: currentUserId || '',
+        displayName: ctx.appState.user?.display_name || 'You',
+        isSpeaking,
+        isMuted,
+      },
+      ...peerList.map(p => ({
+        userId: p.userId,
+        displayName: p.userId.slice(0, 8),
+        isSpeaking: p.isSpeaking,
+      })),
+    ];
+    ctx.setVoiceChannelUsers(users);
+  }, [peers, isSpeaking, isMuted, currentUserId]);
+
+  // Clear users on unmount
+  useEffect(() => {
+    return () => { ctx.setVoiceChannelUsers([]); };
+  }, []);
+
   return (
     <div className="voice-panel">
       {/* Header */}

@@ -150,6 +150,8 @@ export interface AppContextType {
   setVoiceMuted: React.Dispatch<React.SetStateAction<boolean>>;
   voiceDeafened: boolean;
   setVoiceDeafened: React.Dispatch<React.SetStateAction<boolean>>;
+  voiceChannelUsers: import('../hooks/useVoice').VoiceChannelUser[];
+  setVoiceChannelUsers: React.Dispatch<React.SetStateAction<import('../hooks/useVoice').VoiceChannelUser[]>>;
 
   // Custom status
   customStatus: string;

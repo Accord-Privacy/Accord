@@ -279,7 +279,7 @@ export const ChannelSidebar: React.FC = () => {
             {isVoiceChannel ? <Icon name="speaker" size={16} /> : <span className="channel-hash">#</span>} {channel.name}
           </span>
           {isVoiceChannel && !isConnectedToVoice && (
-            <span className="voice-channel-label">Voice Channel</span>
+            <span className="voice-channel-label" title="Join Voice">Join Voice</span>
           )}
           {isConnectedToVoice && (
             <span className="voice-channel-connected-dot">●</span>
@@ -296,14 +296,17 @@ export const ChannelSidebar: React.FC = () => {
             <button onClick={(e) => { e.stopPropagation(); ctx.setDeleteChannelConfirm({ id: channel.id, name: channel.name }); }} className="channel-delete-btn" title="Delete channel">×</button>
           )}
         </div>
-        {isConnectedToVoice && ctx.voiceChannelId === channel.id && (
+        {isConnectedToVoice && ctx.voiceChannelId === channel.id && ctx.voiceChannelUsers.length > 0 && (
           <div className="voice-channel-users">
-            <div className="voice-channel-user">
-              <div className="voice-user-avatar">
-                {(ctx.appState.user?.display_name || "U")[0]}
+            {ctx.voiceChannelUsers.map(u => (
+              <div key={u.userId} className={`voice-channel-user${u.isSpeaking ? ' speaking' : ''}`}>
+                <div className={`voice-user-avatar${u.isSpeaking ? ' speaking' : ''}`}>
+                  {(u.displayName || "U")[0].toUpperCase()}
+                </div>
+                <span className="voice-user-name">{u.displayName}</span>
+                {u.isMuted && <Icon name="mic-off" size={12} />}
               </div>
-              <span className="voice-user-name">{ctx.appState.user?.display_name || "You"}</span>
-            </div>
+            ))}
           </div>
         )}
       </div>
@@ -621,6 +624,12 @@ const UserPanel: React.FC = () => {
             </div>
           </div>
           <div className="voice-connection-controls">
+            <button className={`voice-ctrl-btn${isMuted ? ' active' : ''}`} onClick={() => setIsMuted(!isMuted)} title={isMuted ? 'Unmute' : 'Mute'}>
+              <Icon name={isMuted ? 'mic-off' : 'mic'} size={18} />
+            </button>
+            <button className={`voice-ctrl-btn${isDeafened ? ' active' : ''}`} onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }} title={isDeafened ? 'Undeafen' : 'Deafen'}>
+              <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={18} />
+            </button>
             <button className="voice-ctrl-btn voice-disconnect-btn" onClick={() => {
               ctx.setVoiceChannelId(null); ctx.setVoiceChannelName(""); ctx.setVoiceConnectedAt(null);
               ctx.setVoiceMuted(false); ctx.setVoiceDeafened(false);

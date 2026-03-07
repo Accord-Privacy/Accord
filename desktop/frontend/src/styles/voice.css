@@ -93,6 +93,18 @@
   font-size: 10px;
   color: var(--text-primary);
   font-weight: 600;
+  box-shadow: 0 0 0 2px transparent;
+  transition: box-shadow 0.15s ease;
+}
+.voice-user-avatar.speaking {
+  box-shadow: 0 0 0 2px var(--green), 0 0 8px rgba(35, 165, 89, 0.5);
+}
+.voice-channel-user.speaking .voice-user-name {
+  color: var(--green);
+}
+.voice-channel-user .voice-muted-icon {
+  color: var(--red);
+  margin-left: 2px;
 }
 .voice-user-name {
   font-size: 12px;
@@ -317,6 +329,15 @@
   min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* Voice channel hover tooltip */
+.channel .voice-channel-label {
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.channel:hover .voice-channel-label {
+  color: var(--green);
 }
 
 /* Custom Status Popover */
