@@ -321,6 +321,11 @@ export const ChatArea: React.FC = () => {
                       </span>
                     );
                   })()}
+                  {ctx.slowModeSeconds > 0 && (
+                    <span className="slow-mode-indicator" title={`Slow mode: ${ctx.slowModeSeconds}s cooldown`}>
+                      <Icon name="clock" size={14} /> {ctx.slowModeSeconds}s
+                    </span>
+                  )}
                 </>
               )}
             </div>
@@ -901,7 +906,7 @@ export const ChatArea: React.FC = () => {
           )}
 
           {/* Message Input */}
-          <div className="message-input-container">
+          <div className={`message-input-container${ctx.slowModeCooldown > 0 ? ' slow-mode-active' : ''}`}>
             <MentionAutocomplete
               items={mentionState.items}
               selectedIndex={mentionState.selectedIndex}
@@ -1022,6 +1027,15 @@ export const ChatArea: React.FC = () => {
                 encryptionEnabled={ctx.encryptionEnabled}
               />
             )}
+            <button
+              className={`send-btn${ctx.slowModeCooldown > 0 ? ' send-btn-cooldown' : ''}`}
+              disabled={ctx.slowModeCooldown > 0 || !ctx.message.trim()}
+              title={ctx.slowModeCooldown > 0 ? `Wait ${ctx.slowModeCooldown}s` : 'Send message'}
+              aria-label={ctx.slowModeCooldown > 0 ? `Send disabled, ${ctx.slowModeCooldown} seconds remaining` : 'Send message'}
+              onClick={() => { if (ctx.slowModeCooldown <= 0) ctx.handleSendMessage(); }}
+            >
+              {ctx.slowModeCooldown > 0 ? `${ctx.slowModeCooldown}s` : <Icon name="send" size={18} />}
+            </button>
           </div>
         </FileDropZone>
       </div>
