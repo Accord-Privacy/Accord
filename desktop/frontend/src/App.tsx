@@ -1697,6 +1697,7 @@ function App() {
         parent_id: ch.category_id,
         position: ch.position,
         unread_count: ch.unread_count,
+        channel_type: ch.channel_type,
       }));
       setChannels(uiChannels);
       

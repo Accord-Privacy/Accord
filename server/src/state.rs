@@ -290,7 +290,7 @@ impl AppState {
                 if self.metadata_mode == MetadataMode::Minimal {
                     let _ = self
                         .db
-                        .update_user_profile(user.id, Some("[redacted]"), None, None, None)
+                        .update_user_profile(user.id, Some("[redacted]"), None, None, None, None, None)
                         .await;
                 }
                 Ok(user.id)
@@ -1124,6 +1124,8 @@ impl AppState {
         bio: Option<&str>,
         status: Option<&str>,
         custom_status: Option<&str>,
+        banner_color: Option<&str>,
+        banner_url: Option<&str>,
     ) -> Result<(), String> {
         // Strip metadata in minimal mode
         let stripped_display =
@@ -1140,6 +1142,8 @@ impl AppState {
                 // Status (online/offline/dnd/idle) is routing-relevant, always store
                 status,
                 stripped_custom.as_deref(),
+                banner_color,
+                banner_url,
             )
             .await
             .map_err(|e| e.to_string())?;

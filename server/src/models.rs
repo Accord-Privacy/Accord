@@ -810,6 +810,8 @@ pub struct UserProfile {
     pub bio: Option<String>,
     pub status: String, // online, idle, dnd, offline
     pub custom_status: Option<String>,
+    pub banner_color: Option<String>,
+    pub banner_url: Option<String>,
     pub updated_at: u64,
 }
 
@@ -820,6 +822,8 @@ pub struct UpdateProfileRequest {
     pub bio: Option<String>,
     pub status: Option<String>,
     pub custom_status: Option<String>,
+    pub banner_color: Option<String>,
+    pub banner_url: Option<String>,
 }
 
 /// User presence information for broadcasting

@@ -542,6 +542,7 @@ export interface BatchChannelEntry {
   position?: number;
   permission_overrides?: Array<{ role_id: string; allow: number; deny: number }>;
   unread_count?: number;
+  channel_type?: string;
 }
 
 export interface BatchMembersResponse {

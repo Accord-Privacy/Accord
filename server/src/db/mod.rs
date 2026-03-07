@@ -632,6 +632,16 @@ impl Database {
             .await
             .ok();
 
+        // Banner customization columns
+        sqlx::query("ALTER TABLE user_profiles ADD COLUMN banner_color TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE user_profiles ADD COLUMN banner_url TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // ── Zero-knowledge identity tables ──
 
         // Migration: add public_key_hash column to existing users table
@@ -3226,7 +3236,7 @@ impl Database {
         &self,
         user_id: Uuid,
     ) -> Result<Option<crate::models::UserProfile>> {
-        let row = sqlx::query("SELECT user_id, display_name, avatar_url, bio, status, custom_status, updated_at FROM user_profiles WHERE user_id = ?")
+        let row = sqlx::query("SELECT user_id, display_name, avatar_url, bio, status, custom_status, banner_color, banner_url, updated_at FROM user_profiles WHERE user_id = ?")
             .bind(user_id.to_string())
             .fetch_optional(&self.pool)
             .await
@@ -3242,6 +3252,8 @@ impl Database {
         bio: Option<&str>,
         status: Option<&str>,
         custom_status: Option<&str>,
+        banner_color: Option<&str>,
+        banner_url: Option<&str>,
     ) -> Result<()> {
         let updated_at = now();
 
@@ -3263,6 +3275,14 @@ impl Database {
         if let Some(custom_status) = custom_status {
             query_parts.push("custom_status = ?");
             bind_values.push(custom_status.to_string());
+        }
+        if let Some(banner_color) = banner_color {
+            query_parts.push("banner_color = ?");
+            bind_values.push(banner_color.to_string());
+        }
+        if let Some(banner_url) = banner_url {
+            query_parts.push("banner_url = ?");
+            bind_values.push(banner_url.to_string());
         }
 
         if query_parts.is_empty() {
@@ -3862,6 +3882,8 @@ impl Database {
                     .get::<Option<String>, _>("status")
                     .unwrap_or_else(|| "offline".to_string()),
                 custom_status: row.get("custom_status"),
+                banner_color: row.get("banner_color"),
+                banner_url: row.get("banner_url"),
                 updated_at: row
                     .get::<Option<i64>, _>("updated_at")
                     .map(|t| t as u64)
@@ -6094,6 +6116,8 @@ fn parse_user_profile(row: &sqlx::sqlite::SqliteRow) -> Result<crate::models::Us
         bio: row.get("bio"),
         status: row.get("status"),
         custom_status: row.get("custom_status"),
+        banner_color: row.get("banner_color"),
+        banner_url: row.get("banner_url"),
         updated_at: row.get::<i64, _>("updated_at") as u64,
     })
 }
@@ -6123,6 +6147,8 @@ fn parse_member_with_profile(
                 .get::<Option<String>, _>("status")
                 .unwrap_or_else(|| "offline".to_string()),
             custom_status: row.get("custom_status"),
+            banner_color: None,
+            banner_url: None,
             updated_at: 0, // Will be set properly when profile exists
         },
     })

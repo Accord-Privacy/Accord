@@ -189,7 +189,7 @@ pub async fn register_handler(
                 let trimmed = name.trim();
                 if !trimmed.is_empty() {
                     let _ = state
-                        .update_user_profile(user_id, Some(trimmed), None, None, None)
+                        .update_user_profile(user_id, Some(trimmed), None, None, None, None, None)
                         .await;
                 }
             }
@@ -2632,6 +2632,8 @@ pub async fn update_user_profile_handler(
             request.bio.as_deref(),
             request.status.as_deref(),
             request.custom_status.as_deref(),
+            request.banner_color.as_deref(),
+            request.banner_url.as_deref(),
         )
         .await
     {
@@ -3189,15 +3191,17 @@ pub async fn get_user_avatar_handler(
         )
     })?;
 
-    let hash = hash.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "No avatar set".into(),
-                code: 404,
-            }),
-        )
-    })?;
+    let hash = match hash {
+        Some(h) => h,
+        None => {
+            // Return 204 No Content instead of 404 to avoid console spam
+            // when users don't have avatars set
+            return Ok(Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(axum::body::Body::empty())
+                .unwrap());
+        }
+    };
 
     let dir = std::path::PathBuf::from("./data/uploads/avatars");
     let mut found_path = None;

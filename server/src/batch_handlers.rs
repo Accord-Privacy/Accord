@@ -182,6 +182,11 @@ pub async fn batch_channels_handler(
         // Get unread count for this user
         let unread_count = state.db.get_unread_count(user_id, ch.id).await.unwrap_or(0);
 
+        let channel_type_str = match ch.channel_type {
+            2 => "voice",
+            4 => "category",
+            _ => "text",
+        };
         result.push(serde_json::json!({
             "id": ch.id,
             "name": ch.name,
@@ -191,6 +196,7 @@ pub async fn batch_channels_handler(
             "position": ch.position,
             "permission_overrides": overwrites_json,
             "unread_count": unread_count,
+            "channel_type": channel_type_str,
         }));
     }
 
@@ -304,6 +310,11 @@ pub async fn node_overview_handler(
         let mut ch_result = Vec::with_capacity(channels.len());
         for ch in &channels {
             let unread_count = state.db.get_unread_count(user_id, ch.id).await.unwrap_or(0);
+            let channel_type_str = match ch.channel_type {
+                2 => "voice",
+                4 => "category",
+                _ => "text",
+            };
             ch_result.push(serde_json::json!({
                 "id": ch.id,
                 "name": ch.name,
@@ -312,6 +323,7 @@ pub async fn node_overview_handler(
                 "category_name": ch.category_name,
                 "position": ch.position,
                 "unread_count": unread_count,
+                "channel_type": channel_type_str,
             }));
         }
         ch_result
