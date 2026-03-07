@@ -14,8 +14,10 @@ import { LoadingSpinner } from "../LoadingSpinner";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
 import { MentionAutocomplete } from "./MentionAutocomplete";
+import { SlashCommandPopup } from "./SlashCommandPopup";
 import { useMentionAutocomplete } from "../hooks/useMentionAutocomplete";
 import type { AutocompleteItem } from "../hooks/useMentionAutocomplete";
+import { useSlashCommands } from "../hooks/useSlashCommands";
 import { ImageLightbox } from "./ImageLightbox";
 import { ImageGrid, getNonImageFiles, hasImageGrid } from "./ImageGrid";
 import { MediaEmbeds } from "./MediaEmbeds";
@@ -77,6 +79,35 @@ export const ChatArea: React.FC = () => {
     selectMentionItem,
     dismissMention,
   } = useMentionAutocomplete(mentionUsers, mentionChannels);
+
+  const slashCallbacks = useMemo(() => ({
+    onNick: (name: string) => {
+      if (ctx.appState.token) {
+        api.updateProfile({ display_name: name }, ctx.appState.token).catch(err =>
+          console.error('Failed to update display name:', err)
+        );
+      }
+    },
+    onStatus: (text: string) => {
+      if (ctx.appState.token) {
+        api.updateProfile({ status: text as any }, ctx.appState.token).catch(err =>
+          console.error('Failed to set status:', err)
+        );
+      }
+    },
+    onClear: () => {
+      ctx.setAppState(prev => ({ ...prev, messages: [] }));
+    },
+  }), [ctx]);
+
+  const {
+    slashState,
+    handleSlashInput,
+    handleSlashKeyDown,
+    selectSlashItem,
+    dismissSlash,
+    processSlashCommand,
+  } = useSlashCommands(slashCallbacks);
 
   const wrapSelection = useCallback((prefix: string, suffix: string) => {
     const textarea = ctx.messageInputRef?.current;
@@ -1012,11 +1043,17 @@ export const ChatArea: React.FC = () => {
               visible={mentionState.active}
               onSelect={(i) => selectMentionItem(i, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)}
             />
+            <SlashCommandPopup
+              items={slashState.items}
+              selectedIndex={slashState.selectedIndex}
+              visible={slashState.active}
+              onSelect={(i) => selectSlashItem(i, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)}
+            />
             <SlashCommandAutocomplete
               query={slashQuery}
               bots={ctx.installedBots}
               onSelect={handleSlashSelect}
-              visible={showSlashMenu}
+              visible={showSlashMenu && !slashState.active}
             />
             {ctx.replyingTo && (
               <div className="reply-input-preview">
@@ -1079,7 +1116,9 @@ export const ChatArea: React.FC = () => {
                 e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
                 // Mention autocomplete detection
                 handleMentionInput(val, e.target.selectionStart ?? val.length);
-                // Slash command detection
+                // Slash command autocomplete
+                handleSlashInput(val, e.target.selectionStart ?? val.length);
+                // Bot slash command detection
                 if (val.startsWith('/') && val.length > 1 && !val.includes(' ')) {
                   setSlashQuery(val.substring(1));
                   setShowSlashMenu(true);
@@ -1091,6 +1130,10 @@ export const ChatArea: React.FC = () => {
                 }
               }}
               onKeyDown={(e) => {
+                // Slash command autocomplete takes priority when active
+                if (slashState.active && handleSlashKeyDown(e, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)) {
+                  return;
+                }
                 // Mention autocomplete takes priority
                 if (mentionState.active && handleMentionKeyDown(e, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)) {
                   return;
@@ -1106,7 +1149,12 @@ export const ChatArea: React.FC = () => {
                 } else if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   dismissMention();
-                  ctx.handleSendMessage();
+                  dismissSlash();
+                  if (processSlashCommand(ctx.message)) {
+                    ctx.setMessage('');
+                  } else {
+                    ctx.handleSendMessage();
+                  }
                 } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
                   e.preventDefault();
                   setShowPreview(p => !p);
