@@ -279,6 +279,8 @@ export interface AppContextType {
   // Emoji picker / files
   showInputEmojiPicker: boolean;
   setShowInputEmojiPicker: React.Dispatch<React.SetStateAction<boolean>>;
+  showGifPicker: boolean;
+  setShowGifPicker: React.Dispatch<React.SetStateAction<boolean>>;
   stagedFiles: StagedFile[];
   uploadProgress: { fileName: string; loaded: number; total: number; percentage: number; current: number; totalFiles: number } | null;
   messageInputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -325,7 +327,7 @@ export interface AppContextType {
   // ---- Handlers ----
   handleAuth: () => Promise<void>;
   handleLogout: () => void;
-  handleSendMessage: () => Promise<void>;
+  handleSendMessage: (overrideText?: string) => Promise<void>;
   handleRetryMessage: (messageId: string) => void;
   handleSaveEdit: () => Promise<void>;
   handleCancelEdit: () => void;

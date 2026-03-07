@@ -74,6 +74,7 @@ export function useUIState() {
 
   // Message input emoji picker + staged files
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
 
   // Scroll-to-bottom
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -167,6 +168,7 @@ export function useUIState() {
     mobileSidebarOpen, setMobileSidebarOpen,
     showMemberSidebar, setShowMemberSidebar,
     showInputEmojiPicker, setShowInputEmojiPicker,
+    showGifPicker, setShowGifPicker,
     showScrollToBottom, setShowScrollToBottom,
     newMessageCount, setNewMessageCount,
     contextMenu, setContextMenu,

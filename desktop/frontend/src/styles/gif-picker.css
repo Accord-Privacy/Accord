@@ -1,0 +1,145 @@
+/* ======= GIF Picker (Tenor) ======= */
+.gif-picker-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.gif-picker-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.gif-picker-toggle:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.gif-picker-popup {
+  position: absolute;
+  bottom: 36px;
+  right: 0;
+  width: 400px;
+  height: 450px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-floating, #111214);
+  border: 1px solid var(--border, var(--bg-active));
+  border-radius: 8px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.gif-picker-no-key {
+  padding: 24px 16px;
+  color: var(--text-primary);
+}
+
+.gif-picker-search-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 8px 4px;
+  flex-shrink: 0;
+}
+
+.gif-picker-search {
+  flex: 1;
+  background: var(--bg-input, #383a40);
+  border: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.gif-picker-search::placeholder {
+  color: var(--text-muted);
+}
+
+.gif-picker-search:focus {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.gif-picker-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.gif-picker-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.gif-picker-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.gif-picker-scroll::-webkit-scrollbar-thumb {
+  background: var(--bg-active);
+  border-radius: 3px;
+}
+
+.gif-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.gif-picker-item {
+  background: none;
+  border: none;
+  padding: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  transition: transform 0.1s;
+}
+
+.gif-picker-item:hover {
+  transform: scale(1.03);
+}
+
+.gif-picker-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+
+.gif-picker-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 40px 16px;
+  font-size: 14px;
+}
+
+.gif-picker-loading {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 12px;
+  font-size: 13px;
+}
+
+.gif-picker-attribution {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border, rgba(79, 84, 92, 0.3));
+  flex-shrink: 0;
+  background: var(--bg-floating, #111214);
+}
+
+.gif-picker-attribution img {
+  opacity: 0.7;
+}

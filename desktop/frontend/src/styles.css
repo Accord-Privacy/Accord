@@ -23,6 +23,7 @@
 @import './styles/utilities.css';
 @import './styles/file-upload.css';
 @import './styles/emoji-picker.css';
+@import './styles/gif-picker.css';
 @import './styles/chat-extras.css';
 @import './styles/voice.css';
 @import './styles/extras.css';

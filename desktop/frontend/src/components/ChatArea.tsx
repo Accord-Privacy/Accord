@@ -8,6 +8,7 @@ import { notificationManager } from "../notifications";
 import { renderMessageMarkdown } from "../markdown";
 import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
 import { EmojiPickerButton } from "../EmojiPicker";
+import { GifPickerButton } from "../GifPicker";
 import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
 import { LinkPreview, extractAllUrls } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
@@ -1174,6 +1175,12 @@ export const ChatArea: React.FC = () => {
               onClose={() => ctx.setShowInputEmojiPicker(false)}
               customEmojis={customEmojis}
               getEmojiUrl={getCustomEmojiUrl}
+            />
+            <GifPickerButton
+              isOpen={ctx.showGifPicker}
+              onToggle={() => { ctx.setShowGifPicker(prev => !prev); ctx.setShowInputEmojiPicker(false); }}
+              onSelect={(gifUrl: string) => { void ctx.handleSendMessage(gifUrl); }}
+              onClose={() => ctx.setShowGifPicker(false)}
             />
             {ctx.serverAvailable && ctx.appState.activeChannel && (
               <FileList

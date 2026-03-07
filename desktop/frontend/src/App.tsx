@@ -265,6 +265,7 @@ function App() {
     mobileSidebarOpen, setMobileSidebarOpen,
     showMemberSidebar, setShowMemberSidebar,
     showInputEmojiPicker, setShowInputEmojiPicker,
+    showGifPicker, setShowGifPicker,
     showScrollToBottom, setShowScrollToBottom,
     newMessageCount, setNewMessageCount,
     contextMenu, setContextMenu,
@@ -2659,8 +2660,9 @@ function App() {
   };
 
   // Handle sending messages
-  const handleSendMessage = async () => {
-    if (!message.trim() && stagedFiles.length === 0) return;
+  const handleSendMessage = async (overrideText?: string) => {
+    const msgText = overrideText !== undefined ? overrideText : message;
+    if (!msgText.trim() && stagedFiles.length === 0) return;
 
     // Upload any staged files first
     const channelForUpload = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
@@ -2710,11 +2712,11 @@ function App() {
       // Clean up previews
       stagedFiles.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setStagedFiles([]);
-      if (hasError && !message.trim()) return;
+      if (hasError && !msgText.trim()) return;
     }
 
     // If only files were staged with no message text, we're done
-    if (!message.trim()) return;
+    if (!msgText.trim()) return;
 
     // Determine which channel to use - DM channel takes priority
     const channelToUse = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
@@ -2722,7 +2724,7 @@ function App() {
     if (ws && ws.isSocketConnected() && channelToUse) {
       // Send via WebSocket if connected and we have an active channel
       try {
-        let messageToSend = message;
+        let messageToSend = msgText;
         let isEncrypted = false;
         let e2eeType: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none' = 'none';
 
@@ -2733,7 +2735,7 @@ function App() {
           try {
             const recipientId = selectedDmChannel!.other_user.id;
             await ensureE2EESession(recipientId, appState.token);
-            messageToSend = e2eeManagerRef.current.encrypt(recipientId, message);
+            messageToSend = e2eeManagerRef.current.encrypt(recipientId, msgText);
             isEncrypted = true;
             e2eeType = 'double-ratchet';
           } catch (error) {
@@ -2742,7 +2744,7 @@ function App() {
             if (encryptionEnabled && keyPair) {
               try {
                 const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
-                messageToSend = await encryptMessage(channelKey, message);
+                messageToSend = await encryptMessage(channelKey, msgText);
                 isEncrypted = true;
                 e2eeType = 'symmetric';
               } catch (e2) {
@@ -2755,7 +2757,7 @@ function App() {
           if (senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
             try {
               const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, channelToUse);
-              messageToSend = encryptFn(message);
+              messageToSend = encryptFn(msgText);
               isEncrypted = true;
               e2eeType = 'sender-keys';
             } catch (skError) {
@@ -2766,7 +2768,7 @@ function App() {
             // Symmetric fallback
             try {
               const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
-              messageToSend = await encryptMessage(channelKey, message);
+              messageToSend = await encryptMessage(channelKey, msgText);
               isEncrypted = true;
               e2eeType = 'symmetric';
             } catch (error) {
@@ -2780,7 +2782,7 @@ function App() {
         const newMessage: Message = {
           id: tempId,
           author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
-          content: message, // Show original plaintext locally
+          content: msgText, // Show original plaintext locally
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           timestamp: Date.now(),
           channel_id: channelToUse,
@@ -2797,7 +2799,7 @@ function App() {
             content: replyingTo.content,
           } : undefined,
           _status: 'sending',
-          _retryPayload: { channelId: channelToUse, content: message, replyTo: replyingTo?.id },
+          _retryPayload: { channelId: channelToUse, content: msgText, replyTo: replyingTo?.id },
         };
 
         setAppState(prev => ({
@@ -2841,7 +2843,7 @@ function App() {
       const newMessage: Message = {
         id: Math.random().toString(),
         author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
-        content: message,
+        content: msgText,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: Date.now(),
         isEncrypted: false,
@@ -3291,6 +3293,7 @@ function App() {
         if (showInviteModal) { setShowInviteModal(false); return; }
         if (showDisplayNamePrompt) { setShowDisplayNamePrompt(false); return; }
         if (showInputEmojiPicker) { setShowInputEmojiPicker(false); return; }
+        if (showGifPicker) { setShowGifPicker(false); return; }
         if (editingMessageId) { handleCancelEdit(); return; }
         if (replyingTo) { handleCancelReply(); return; }
       },
@@ -3328,7 +3331,7 @@ function App() {
         }
       },
     });
-  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect, selectedNodeId]);
+  }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, showGifPicker, channels, selectedChannelId, handleChannelSelect, selectedNodeId]);
 
   // Apply font-size and density from localStorage on mount
   useEffect(() => {
@@ -3568,8 +3571,9 @@ function App() {
     // Member sidebar
     showMemberSidebar, setShowMemberSidebar,
 
-    // Emoji picker / files
+    // Emoji picker / GIF picker / files
     showInputEmojiPicker, setShowInputEmojiPicker,
+    showGifPicker, setShowGifPicker,
     stagedFiles, uploadProgress, messageInputRef,
 
     // Scroll
