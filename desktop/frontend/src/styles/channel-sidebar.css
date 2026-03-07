@@ -619,6 +619,63 @@
   position: relative;
 }
 
+.category-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 8px 4px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.category-header:hover {
+  color: var(--text-primary);
+}
+
+.category-arrow {
+  font-size: 10px;
+  width: 16px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.category-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-header:hover .category-name {
+  color: var(--text-primary);
+}
+
+.category-add-btn {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.category-header:hover .category-add-btn {
+  opacity: 1;
+}
+
+.category-add-btn:hover {
+  color: var(--text-primary);
+}
+
 /* ── DM Item Info ── */
 .dm-item-info {
   flex: 1;

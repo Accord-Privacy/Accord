@@ -100,7 +100,12 @@ export function useUIState() {
   const [templateError, setTemplateError] = useState('');
 
   // Category collapse
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('accord_collapsed_categories');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  });
 
   // Role popup
   const [showRolePopup, setShowRolePopup] = useState<{ userId: string; x: number; y: number } | null>(null);

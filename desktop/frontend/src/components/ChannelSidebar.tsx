@@ -350,7 +350,25 @@ export const ChannelSidebar: React.FC = () => {
       
       <div className="channel-list" role="listbox" aria-label="Channels">
         {/* Uncategorized channels */}
-        {ctx.uncategorizedChannels.map(ch => renderChannel(ch))}
+        {ctx.uncategorizedChannels.length > 0 && (
+          <div className="channel-category channel-category-relative">
+            <div
+              className="category-header"
+              onClick={() => ctx.toggleCategory('__uncategorized__')}
+            >
+              <span className="category-arrow">{ctx.collapsedCategories.has('__uncategorized__') ? '▶' : '▼'}</span>
+              <span className="category-name">CHANNELS</span>
+              {canManageChannels && (
+                <button
+                  className="category-add-btn"
+                  title="Create Channel"
+                  onClick={(e) => { e.stopPropagation(); ctx.setNewChannelCategoryId(''); ctx.setShowCreateChannelForm(true); }}
+                >+</button>
+              )}
+            </div>
+            {!ctx.collapsedCategories.has('__uncategorized__') && ctx.uncategorizedChannels.map(ch => renderChannel(ch))}
+          </div>
+        )}
         
         {/* Categories with their children */}
         {ctx.categories.map(cat => {
@@ -371,6 +389,13 @@ export const ChannelSidebar: React.FC = () => {
               >
                 <span className="category-arrow">{isCollapsed ? '▶' : '▼'}</span>
                 <span className="category-name">{cat.name}</span>
+                {canManageChannels && (
+                  <button
+                    className="category-add-btn"
+                    title={`Create Channel in ${cat.name}`}
+                    onClick={(e) => { e.stopPropagation(); ctx.setNewChannelCategoryId(cat.id); ctx.setShowCreateChannelForm(true); }}
+                  >+</button>
+                )}
               </div>
               {!isCollapsed && children.map(ch => renderChannel(ch))}
             </div>
