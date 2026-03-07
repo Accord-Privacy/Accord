@@ -6,6 +6,7 @@ import { notificationManager, muteManager, MUTE_DURATIONS } from "../notificatio
 import { avatarColor } from "../avatarColor";
 import { Channel } from "../types";
 import { ServerHeader } from "./ServerHeader";
+import { hasActiveThreads } from "./ThreadsPanel";
 // buildHash imports moved to MemberSidebar for trust indicator
 const BotPanel = React.lazy(() => import("./BotPanel").then(m => ({ default: m.BotPanel })));
 
@@ -312,6 +313,9 @@ export const ChannelSidebar: React.FC = () => {
           <span className={isVoiceChannel ? 'channel-voice-text' : ''}>
             {isVoiceChannel ? <Icon name="speaker" size={16} /> : <span className="channel-hash">#</span>} {channel.name}
             {isMuted && <Icon name="bell-off" size={14} className="channel-muted-icon" />}
+            {isActive && !isVoiceChannel && hasActiveThreads(ctx.appState.messages) && (
+              <Icon name="thread" size={14} className="channel-thread-indicator" />
+            )}
           </span>
           {isVoiceChannel && !isConnectedToVoice && (
             <span className="voice-channel-label" title="Join Voice">Join Voice</span>
