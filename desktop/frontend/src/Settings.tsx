@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { WhatsNewModal, hasUnseenChangelog } from './WhatsNew';
 import { notificationManager, NotificationPreferences } from './notifications';
 import { getVolume, setVolume as setNotifVolume } from './utils/sounds';
 import { api } from './api';
@@ -131,6 +132,7 @@ export const Settings: React.FC<SettingsProps> = ({
   onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
   
   // Settings state
   const [accountSettings, setAccountSettings] = useState<AccountSettings>(defaultAccountSettings);
@@ -695,6 +697,13 @@ export const Settings: React.FC<SettingsProps> = ({
                 Keyboard Shortcuts
               </button>
             )}
+            <button
+              className="settings-nav-item"
+              onClick={() => setShowWhatsNew(true)}
+            >
+              {"What's New"}
+              {hasUnseenChangelog() && <span className="settings-new-badge" style={{ position: 'relative', display: 'inline-block', width: 8, height: 8, marginLeft: 8, background: 'var(--accent, #5865f2)', borderRadius: '50%', top: -1 }} />}
+            </button>
             <button
               className={`settings-nav-item ${activeTab === 'about' ? 'active' : ''}`}
               onClick={() => setActiveTab('about')}
@@ -1857,6 +1866,7 @@ export const Settings: React.FC<SettingsProps> = ({
           </div>
         </div>
       )}
+      <WhatsNewModal isOpen={showWhatsNew} onClose={() => setShowWhatsNew(false)} />
     </div>
   );
 };

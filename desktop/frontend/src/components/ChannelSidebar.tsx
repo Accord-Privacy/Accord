@@ -1,6 +1,7 @@
 import React from "react";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
+import { hasUnseenChangelog } from "../WhatsNew";
 import { api } from "../api";
 import { notificationManager, muteManager, MUTE_DURATIONS } from "../notifications";
 import { avatarColor } from "../avatarColor";
@@ -793,7 +794,7 @@ const UserPanel: React.FC = () => {
           <button className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`} onClick={() => { setIsDeafened(!isDeafened); if (!isDeafened) setIsMuted(true); }} title={isDeafened ? 'Undeafen' : 'Deafen'} aria-label={isDeafened ? 'Undeafen' : 'Deafen'} role="switch" aria-checked={isDeafened}>
             <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={18} />
           </button>
-          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn" title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" size={18} /></button>
+          <button onClick={() => ctx.setShowSettings(true)} className="voice-ctrl-btn settings-gear-wrapper" title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" size={18} />{hasUnseenChangelog() && <span className="settings-new-badge" />}</button>
         </div>
       </div>
     </>

@@ -1,0 +1,123 @@
+.whats-new-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.whats-new-modal {
+  background: var(--bg-secondary, #2b2d31);
+  border-radius: 12px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: scaleIn 0.2s cubic-bezier(0.2, 0.6, 0.35, 1);
+}
+
+.whats-new-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.06));
+}
+
+.whats-new-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary, #f2f3f5);
+}
+
+.whats-new-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #b5bac1);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.whats-new-close:hover {
+  color: var(--text-primary, #f2f3f5);
+}
+
+.whats-new-list {
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.whats-new-entry {
+  padding: 16px;
+  background: var(--bg-tertiary, #1e1f22);
+  border-radius: 8px;
+}
+
+.whats-new-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.whats-new-icon {
+  font-size: 18px;
+}
+
+.whats-new-version {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #5865f2);
+  background: rgba(88, 101, 242, 0.15);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.whats-new-date {
+  font-size: 12px;
+  color: var(--text-muted, #949ba4);
+  margin-left: auto;
+}
+
+.whats-new-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary, #f2f3f5);
+}
+
+.whats-new-desc {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary, #b5bac1);
+  line-height: 1.5;
+}
+
+/* Badge dot on settings gear */
+.settings-gear-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.settings-new-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background: var(--accent, #5865f2);
+  border-radius: 50%;
+  border: 2px solid var(--bg-primary, #313338);
+  pointer-events: none;
+}
