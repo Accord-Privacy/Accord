@@ -128,14 +128,51 @@ button {
 .mention {
   background: rgba(88, 101, 242, 0.2);
   color: var(--accent);
-  padding: 0 2px;
-  border-radius: 2px;
-  font-weight: 500;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mention:hover {
+  background: rgba(88, 101, 242, 0.35);
+  text-decoration: underline;
+}
+
+.mention-self {
+  background: rgba(88, 101, 242, 0.35);
+  color: #fff;
+}
+
+.mention-self:hover {
+  background: rgba(88, 101, 242, 0.5);
 }
 
 .mention-everyone {
   background: rgba(218, 55, 60, 0.2);
   color: var(--red);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mention-everyone:hover {
+  background: rgba(218, 55, 60, 0.35);
+}
+
+.mention-channel {
+  background: rgba(88, 101, 242, 0.15);
+  color: var(--accent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mention-channel:hover {
+  background: rgba(88, 101, 242, 0.3);
+  text-decoration: underline;
 }
 
 

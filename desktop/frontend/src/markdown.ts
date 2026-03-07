@@ -55,10 +55,16 @@ export function renderMessageMarkdown(raw: string, currentUsername?: string): st
   clean = div.innerHTML;
 
   // Apply mention highlighting on text nodes only (preserve HTML structure)
-  if (currentUsername) {
-    const escaped = currentUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const usernameRegex = new RegExp(`(@${escaped})`, 'gi');
+  {
+    // Patterns: @username, @everyone, #channel-name
+    const mentionRegex = /@(\w[\w.]*)/g;
     const everyoneRegex = /(@everyone)/gi;
+    const channelRegex = /(#[\w-]+)/g;
+
+    const selfEscaped = currentUsername
+      ? currentUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      : null;
+    const selfRegex = selfEscaped ? new RegExp(`(@${selfEscaped})`, 'gi') : null;
 
     // Walk text nodes to apply highlighting without breaking HTML
     const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT);
@@ -71,13 +77,36 @@ export function renderMessageMarkdown(raw: string, currentUsername?: string): st
       // Skip text inside <code> and <pre>
       if (node.parentElement?.closest('code, pre')) continue;
 
-      let text = node.textContent || '';
-      if (usernameRegex.test(text) || everyoneRegex.test(text)) {
+      const text = node.textContent || '';
+      const hasAnyMention = mentionRegex.test(text) || everyoneRegex.test(text) || channelRegex.test(text);
+      // Reset lastIndex after test
+      mentionRegex.lastIndex = 0;
+      everyoneRegex.lastIndex = 0;
+      channelRegex.lastIndex = 0;
+
+      if (hasAnyMention) {
         const span = document.createElement('span');
-        span.innerHTML = text
-          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          .replace(usernameRegex, '<span class="mention">$1</span>')
-          .replace(everyoneRegex, '<span class="mention mention-everyone">$1</span>');
+        let escaped = text
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // Order matters: self mentions first (more specific), then @everyone, then generic @mentions, then #channels
+        if (selfRegex) {
+          escaped = escaped.replace(selfRegex, '<span class="mention mention-self" data-mention-user="$1">$1</span>');
+        }
+        escaped = escaped.replace(everyoneRegex, '<span class="mention mention-everyone">$1</span>');
+        // Generic @mentions (skip already-wrapped ones)
+        escaped = escaped.replace(/@(\w[\w.]*)/g, (match, name) => {
+          // Don't double-wrap if already inside a mention span
+          if (selfRegex && selfRegex.test('@' + name)) {
+            selfRegex.lastIndex = 0;
+            return match;
+          }
+          if (name.toLowerCase() === 'everyone') return match;
+          return `<span class="mention" data-mention-user="@${name}">@${name}</span>`;
+        });
+        escaped = escaped.replace(channelRegex, '<span class="mention-channel" data-mention-channel="$1">$1</span>');
+
+        span.innerHTML = escaped;
         node.replaceWith(span);
       }
     }

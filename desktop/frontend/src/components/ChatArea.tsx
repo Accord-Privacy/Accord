@@ -13,6 +13,9 @@ import { LinkPreview, extractFirstUrl } from "../LinkPreview";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { SlashCommandAutocomplete, CommandParamForm, BotResponseRenderer } from "./BotPanel";
+import { MentionAutocomplete } from "./MentionAutocomplete";
+import { useMentionAutocomplete } from "../hooks/useMentionAutocomplete";
+import type { AutocompleteItem } from "../hooks/useMentionAutocomplete";
 import { ImageLightbox } from "./ImageLightbox";
 import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
@@ -33,6 +36,40 @@ export const ChatArea: React.FC = () => {
   const [topicDraft, setTopicDraft] = useState('');
   const [topicSaving, setTopicSaving] = useState(false);
   const topicInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Build autocomplete items for @mentions and #channels
+  const mentionUsers = useMemo<AutocompleteItem[]>(() =>
+    ctx.members.map(m => ({
+      type: 'user' as const,
+      id: m.user_id,
+      label: ctx.displayName(m.user),
+      subtitle: m.role,
+      avatarUrl: m.user_id ? api.getUserAvatarUrl(m.user_id) : undefined,
+      avatarColor: avatarColor(m.user_id || ''),
+      insertText: `@${ctx.displayName(m.user)}`,
+    })),
+    [ctx.members, ctx]
+  );
+
+  const mentionChannels = useMemo<AutocompleteItem[]>(() =>
+    ctx.channels
+      .filter(c => c.channel_type !== 'category' && c.channel_type !== 'voice')
+      .map(c => ({
+        type: 'channel' as const,
+        id: c.id,
+        label: c.name,
+        insertText: `#${c.name}`,
+      })),
+    [ctx.channels]
+  );
+
+  const {
+    mentionState,
+    handleMentionInput,
+    handleMentionKeyDown,
+    selectMentionItem,
+    dismissMention,
+  } = useMentionAutocomplete(mentionUsers, mentionChannels);
 
   const wrapSelection = useCallback((prefix: string, suffix: string) => {
     const textarea = ctx.messageInputRef?.current;
@@ -343,6 +380,37 @@ export const ChatArea: React.FC = () => {
               if (target.tagName === 'IMG' && (target.closest('.message-content') || target.closest('.file-attachment-image-preview'))) {
                 e.stopPropagation();
                 setLightboxSrc((target as HTMLImageElement).src);
+              }
+              // Handle @mention clicks — open profile card
+              const mentionUser = target.closest('[data-mention-user]');
+              if (mentionUser) {
+                const mentionText = mentionUser.getAttribute('data-mention-user') || '';
+                const name = mentionText.startsWith('@') ? mentionText.substring(1) : mentionText;
+                const member = ctx.members.find(m =>
+                  ctx.displayName(m.user) === name ||
+                  ctx.fingerprint(m.public_key_hash) === name
+                );
+                if (member) {
+                  ctx.setProfileCardTarget({
+                    userId: member.user_id,
+                    x: e.clientX,
+                    y: e.clientY,
+                    user: member.user,
+                    profile: member.profile,
+                    roles: ctx.memberRolesMap[member.user_id],
+                    joinedAt: member.joined_at,
+                    roleColor: ctx.getMemberRoleColor(member.user_id),
+                  });
+                }
+              }
+              // Handle #channel clicks — switch to that channel
+              const mentionChannel = target.closest('[data-mention-channel]');
+              if (mentionChannel) {
+                const chName = (mentionChannel.getAttribute('data-mention-channel') || '').replace(/^#/, '');
+                const ch = ctx.channels.find(c => c.name === chName);
+                if (ch) {
+                  ctx.handleChannelSelect(ch.id, ch.name);
+                }
               }
             }}
           >
@@ -795,6 +863,13 @@ export const ChatArea: React.FC = () => {
 
           {/* Message Input */}
           <div className="message-input-container">
+            <MentionAutocomplete
+              items={mentionState.items}
+              selectedIndex={mentionState.selectedIndex}
+              triggerChar={mentionState.triggerChar}
+              visible={mentionState.active}
+              onSelect={(i) => selectMentionItem(i, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)}
+            />
             <SlashCommandAutocomplete
               query={slashQuery}
               bots={ctx.installedBots}
@@ -853,6 +928,8 @@ export const ChatArea: React.FC = () => {
                 ctx.setMessage(val);
                 e.target.style.height = 'auto';
                 e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+                // Mention autocomplete detection
+                handleMentionInput(val, e.target.selectionStart ?? val.length);
                 // Slash command detection
                 if (val.startsWith('/') && val.length > 1 && !val.includes(' ')) {
                   setSlashQuery(val.substring(1));
@@ -865,8 +942,13 @@ export const ChatArea: React.FC = () => {
                 }
               }}
               onKeyDown={(e) => {
+                // Mention autocomplete takes priority
+                if (mentionState.active && handleMentionKeyDown(e, ctx.message, ctx.setMessage, ctx.messageInputRef as React.RefObject<HTMLTextAreaElement | null>)) {
+                  return;
+                }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
+                  dismissMention();
                   ctx.handleSendMessage();
                 } else if (e.ctrlKey || e.metaKey) {
                   if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**'); }
