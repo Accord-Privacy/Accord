@@ -2664,10 +2664,21 @@ function App() {
     // Upload any staged files first
     const channelForUpload = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
     if (stagedFiles.length > 0 && channelForUpload && appState.token) {
-      for (const sf of stagedFiles) {
+      let hasError = false;
+      for (let i = 0; i < stagedFiles.length; i++) {
+        const sf = stagedFiles[i];
         try {
           let fileToUpload = sf.file;
           let encryptedFilename: string | undefined;
+
+          setUploadProgress({
+            fileName: sf.name,
+            loaded: 0,
+            total: sf.file.size,
+            percentage: 0,
+            current: i + 1,
+            totalFiles: stagedFiles.length,
+          });
 
           if (encryptionEnabled && keyPair) {
             try {
@@ -2682,14 +2693,23 @@ function App() {
             }
           }
 
-          await api.uploadFile(channelForUpload, fileToUpload, appState.token, encryptedFilename);
+          await api.uploadFile(channelForUpload, fileToUpload, appState.token, encryptedFilename, (loaded, total) => {
+            const percentage = Math.round((loaded / total) * 100);
+            setUploadProgress(prev => prev ? { ...prev, loaded, total, percentage } : null);
+          });
         } catch (error) {
           console.error(`Failed to upload ${sf.name}:`, error);
+          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          setMessageError(`Upload failed: ${sf.name} — ${errMsg}`);
+          setTimeout(() => setMessageError(''), 6000);
+          hasError = true;
         }
       }
+      setUploadProgress(null);
       // Clean up previews
       stagedFiles.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
       setStagedFiles([]);
+      if (hasError && !message.trim()) return;
     }
 
     // If only files were staged with no message text, we're done
@@ -3485,7 +3505,7 @@ function App() {
 
     // Emoji picker / files
     showInputEmojiPicker, setShowInputEmojiPicker,
-    stagedFiles, messageInputRef,
+    stagedFiles, uploadProgress, messageInputRef,
 
     // Scroll
     showScrollToBottom, newMessageCount,

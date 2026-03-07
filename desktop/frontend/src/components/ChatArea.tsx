@@ -845,6 +845,25 @@ export const ChatArea: React.FC = () => {
             );
           })()}
 
+          {/* Upload progress */}
+          {ctx.uploadProgress && (
+            <div className="upload-progress-bar-container">
+              <div className="upload-progress-info">
+                <span className="upload-progress-filename">
+                  Uploading {ctx.uploadProgress.fileName}
+                  {ctx.uploadProgress.totalFiles > 1 && ` (${ctx.uploadProgress.current}/${ctx.uploadProgress.totalFiles})`}
+                </span>
+                <span className="upload-progress-pct">{ctx.uploadProgress.percentage}%</span>
+              </div>
+              <div className="file-upload-progress-bar-track">
+                <div
+                  className="file-upload-progress-bar-fill"
+                  style={{ width: `${ctx.uploadProgress.percentage}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Staged files preview */}
           <StagedFilesPreview
             files={ctx.stagedFiles}

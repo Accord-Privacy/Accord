@@ -166,29 +166,41 @@
 
 .file-drop-overlay {
   position: absolute;
-  inset: 0;
-  background: rgba(88, 101, 242, 0.12);
-  border: 2px dashed var(--accent);
-  border-radius: var(--radius-md);
+  inset: 8px;
+  background: rgba(88, 101, 242, 0.15);
+  border: 3px dashed var(--accent);
+  border-radius: var(--radius-lg, 12px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 100;
   pointer-events: none;
+  animation: dropzone-fadein 0.15s ease-out;
+  backdrop-filter: blur(2px);
+}
+
+@keyframes dropzone-fadein {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .file-drop-overlay-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   color: var(--accent);
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
+  padding: 24px 32px;
+  background: var(--bg-dark);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.3));
 }
 
 .file-drop-icon {
-  font-size: 36px;
+  font-size: 48px;
+  opacity: 0.9;
 }
 
 .file-drop-upload-toast {
@@ -547,4 +559,51 @@
 
 .file-list-item-download:hover { background: var(--accent); }
 .file-list-item-delete:hover { background: var(--red); }
+
+/* Upload progress bar in message input area */
+.upload-progress-bar-container {
+  padding: 8px 16px;
+  background: var(--bg-dark);
+  border-top: 1px solid var(--bg-input);
+}
+
+.upload-progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.upload-progress-filename {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80%;
+}
+
+.upload-progress-pct {
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Upload error toast */
+.upload-error-toast {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--red, #ed4245);
+  color: #fff;
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  font-size: 13px;
+  z-index: 101;
+  box-shadow: var(--shadow-md);
+  max-width: 400px;
+  text-align: center;
+  animation: dropzone-fadein 0.15s ease-out;
+}
 

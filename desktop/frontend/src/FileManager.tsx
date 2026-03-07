@@ -27,6 +27,7 @@ interface FileUploadState {
   isUploading: boolean;
   progress: UploadProgress | null;
   fileName: string;
+  error?: string;
 }
 
 // =================== File Upload Button ===================
@@ -95,8 +96,8 @@ export const FileUploadButton: React.FC<FileUploadButtonProps> = ({
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
       console.error('File upload failed:', error);
-      alert(`File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setUploadState({ isUploading: false, progress: null, fileName: '' });
+      setUploadState({ isUploading: false, progress: null, fileName: '', error: `Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}` });
+      setTimeout(() => setUploadState(prev => ({ ...prev, error: undefined })), 6000);
     }
   }, [channelId, token, keyPair, encryptionEnabled]);
 
@@ -157,6 +158,9 @@ export const FileUploadButton: React.FC<FileUploadButtonProps> = ({
             {uploadState.progress.percentage}% ({formatFileSize(uploadState.progress.loaded)} / {formatFileSize(uploadState.progress.total)})
           </div>
         </div>
+      )}
+      {uploadState.error && (
+        <div className="upload-error-toast">{uploadState.error}</div>
       )}
     </div>
   );
@@ -278,7 +282,9 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
         await uploadSingleFile(file);
       } catch (error) {
         console.error('File upload failed:', error);
-        alert(`File upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setUploadState({ isUploading: false, progress: null, fileName: '', error: `Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}` });
+        setTimeout(() => setUploadState(prev => ({ ...prev, error: undefined })), 6000);
+        return;
       }
     }
     setUploadState({ isUploading: false, progress: null, fileName: '' });
@@ -316,6 +322,9 @@ export const FileDropZone: React.FC<DropZoneProps> = ({
             {uploadState.progress.percentage}%
           </div>
         </div>
+      )}
+      {uploadState.error && (
+        <div className="upload-error-toast">{uploadState.error}</div>
       )}
     </div>
   );

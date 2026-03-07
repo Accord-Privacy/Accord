@@ -277,6 +277,7 @@ export interface AppContextType {
   showInputEmojiPicker: boolean;
   setShowInputEmojiPicker: React.Dispatch<React.SetStateAction<boolean>>;
   stagedFiles: StagedFile[];
+  uploadProgress: { fileName: string; loaded: number; total: number; percentage: number; current: number; totalFiles: number } | null;
   messageInputRef: React.RefObject<HTMLTextAreaElement | null>;
 
   // Scroll
