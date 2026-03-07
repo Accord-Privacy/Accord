@@ -20,6 +20,8 @@ import { ImageLightbox } from "./ImageLightbox";
 import { ImageGrid, getNonImageFiles, hasImageGrid } from "./ImageGrid";
 import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
+import { SavedMessagesPanel } from "./SavedMessagesPanel";
+import { useBookmarks } from "../hooks/useBookmarks";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
 
@@ -33,6 +35,8 @@ export const ChatArea: React.FC = () => {
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [unreadMarkerId, setUnreadMarkerId] = useState<string | null>(null);
+  const [showSavedMessages, setShowSavedMessages] = useState(false);
+  const { bookmarks, addBookmark, removeBookmark, isBookmarked } = useBookmarks();
   const [showTopicEdit, setShowTopicEdit] = useState(false);
   const [topicDraft, setTopicDraft] = useState('');
   const [topicSaving, setTopicSaving] = useState(false);
@@ -105,6 +109,39 @@ export const ChatArea: React.FC = () => {
       setPendingCommand(null);
     }
   }, [pendingCommand, ctx]);
+
+  const handleToggleBookmark = useCallback((msg: import('../types').Message) => {
+    if (isBookmarked(msg.id)) {
+      removeBookmark(msg.id);
+    } else {
+      const channelId = msg.channel_id || ctx.selectedDmChannel?.id || ctx.selectedChannelId || '';
+      const channelName = ctx.selectedDmChannel
+        ? ctx.selectedDmChannel.other_user_profile.display_name
+        : ctx.activeChannel || '';
+      addBookmark({
+        id: msg.id,
+        content: msg.content,
+        channelId,
+        channelName,
+        author: msg.author,
+        timestamp: msg.timestamp,
+        savedAt: Date.now(),
+      });
+    }
+  }, [isBookmarked, removeBookmark, addBookmark, ctx]);
+
+  const handleJumpToBookmark = useCallback((channelId: string, messageId: string) => {
+    // Switch channel if needed, then scroll
+    if (channelId && channelId !== ctx.selectedChannelId && !ctx.selectedDmChannel) {
+      const ch = ctx.channels.find(c => c.id === channelId);
+      if (ch) {
+        ctx.handleChannelSelect(ch.id, ch.name);
+      }
+    }
+    setShowSavedMessages(false);
+    // Give channel switch time to load messages
+    setTimeout(() => ctx.scrollToMessage(messageId), 300);
+  }, [ctx]);
 
   const formatRelativeTime = (ts: number) => {
     const diff = Date.now() - ts;
@@ -344,6 +381,10 @@ export const ChatArea: React.FC = () => {
                 <Icon name="pin" size={20} />
                 {ctx.pinnedMessages.length > 0 && <span className="pin-count-badge">{ctx.pinnedMessages.length}</span>}
               </button>
+              <button onClick={() => setShowSavedMessages(s => !s)} className={`chat-header-btn ${showSavedMessages ? 'active' : ''}`} title="Saved Messages" aria-label="Saved Messages" aria-pressed={showSavedMessages}>
+                <Icon name="bookmark" size={20} />
+                {bookmarks.length > 0 && <span className="pin-count-badge">{bookmarks.length}</span>}
+              </button>
               {ctx.encryptionEnabled && ctx.keyPair && (
                 <span className="e2ee-indicator" title="End-to-end encrypted"><Icon name="lock" size={14} /> E2EE</span>
               )}
@@ -381,6 +422,13 @@ export const ChatArea: React.FC = () => {
             connectionInfo={ctx.connectionInfo}
             onRetry={() => ctx.ws?.retry()}
           />
+
+          {/* New messages banner */}
+          {ctx.newMessageCount > 0 && ctx.showScrollToBottom && (
+            <div className="unread-banner" onClick={ctx.scrollToBottom}>
+              {ctx.newMessageCount} new message{ctx.newMessageCount !== 1 ? 's' : ''} — Click to jump
+            </div>
+          )}
 
           {/* Messages */}
           <div 
@@ -516,7 +564,7 @@ export const ChatArea: React.FC = () => {
                       <span className="unread-marker-text">New</span>
                     </div>
                   )}
-                  <MessageContextMenu message={msg} onMarkUnread={setUnreadMarkerId}>
+                  <MessageContextMenu message={msg} onMarkUnread={setUnreadMarkerId} isBookmarked={isBookmarked(msg.id)} onToggleBookmark={handleToggleBookmark}>
                   <div className={`message ${msg.reply_to ? 'reply-message' : ''} ${isGrouped ? 'message-grouped message-compact' : ''}`} data-message-id={msg.id} role="article" aria-label={`Message from ${msg.author}`}>
                     {/* Reply preview */}
                     {msg.replied_message && (
@@ -584,6 +632,9 @@ export const ChatArea: React.FC = () => {
                           )}
                           {msg.pinned_at && (
                             <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}><Icon name="pin" size={12} /></span>
+                          )}
+                          {isBookmarked(msg.id) && (
+                            <span className="message-bookmark-badge" title="Saved message"><Icon name="bookmark" size={12} /></span>
                           )}
                           {ctx.appState.user && (
                             <div className="message-actions">
@@ -1112,6 +1163,14 @@ export const ChatArea: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {showSavedMessages && (
+        <SavedMessagesPanel
+          bookmarks={bookmarks}
+          onRemove={removeBookmark}
+          onJumpTo={handleJumpToBookmark}
+          onClose={() => setShowSavedMessages(false)}
+        />
       )}
     </>
   );

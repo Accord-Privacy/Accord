@@ -238,6 +238,12 @@
   margin-left: 2px;
 }
 
+.message-bookmark-badge {
+  font-size: var(--font-sm);
+  color: var(--accent);
+  margin-left: 2px;
+}
+
 /* Content */
 .message-content {
   color: var(--text-chat);

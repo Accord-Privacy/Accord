@@ -7,12 +7,16 @@ interface MessageContextMenuProps {
   message: Message;
   children: React.ReactNode;
   onMarkUnread?: (messageId: string) => void;
+  isBookmarked?: boolean;
+  onToggleBookmark?: (message: Message) => void;
 }
 
 export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
   message,
   children,
   onMarkUnread,
+  isBookmarked,
+  onToggleBookmark,
 }) => {
   const ctx = useAppContext();
   const currentUser = ctx.appState.user;
@@ -57,6 +61,10 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
     onMarkUnread?.(message.id);
   }, [onMarkUnread, message.id]);
 
+  const handleToggleBookmark = useCallback(() => {
+    onToggleBookmark?.(message);
+  }, [onToggleBookmark, message]);
+
   const items = useMemo((): ContextMenuItem[] => {
     const result: ContextMenuItem[] = [
       { label: 'Reply', icon: '↩', onClick: handleReply },
@@ -80,6 +88,14 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
       });
     }
 
+    if (onToggleBookmark) {
+      result.push({
+        label: isBookmarked ? 'Remove Bookmark' : 'Save Message',
+        icon: '🔖',
+        onClick: handleToggleBookmark,
+      });
+    }
+
     result.push(
       { label: 'Copy Text', icon: '📋', onClick: handleCopyText },
       { label: 'Copy Message Link', icon: '🔗', onClick: handleCopyLink },
@@ -89,9 +105,10 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
 
     return result;
   }, [
-    isOwnMessage, currentUser, message, ctx,
+    isOwnMessage, currentUser, message, ctx, isBookmarked,
     handleReply, handleEdit, handleDelete, handlePin,
-    handleCopyText, handleCopyLink, handleMarkUnread,
+    handleCopyText, handleCopyLink, handleMarkUnread, handleToggleBookmark,
+    onToggleBookmark,
   ]);
 
   return (
