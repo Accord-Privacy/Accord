@@ -64,7 +64,8 @@ export function OnboardingTour() {
       // No nodes visible — wait and re-check via interval
       const interval = setInterval(() => {
         const hasNode = document.querySelector(".server-list .server-icon:not(.add-server)");
-        if (hasNode) {
+        const hasModal = document.querySelector(".modal-overlay, .modal-backdrop, [role='dialog']:not(.onboarding-overlay)");
+        if (hasNode && !hasModal) {
           clearInterval(interval);
           setVisible(true);
         }
