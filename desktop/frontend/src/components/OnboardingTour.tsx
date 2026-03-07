@@ -59,11 +59,11 @@ export function OnboardingTour() {
     }
     // Don't show tour if user has no nodes yet (Join/Create Node modal would overlap)
     const nodesRaw = localStorage.getItem("accord-nodes") || localStorage.getItem("nodes");
-    const serverListEl = document.querySelector(".server-list .server-icon");
+    const serverListEl = document.querySelector(".server-list .server-icon:not(.add-server)");
     if (!serverListEl && !nodesRaw) {
       // No nodes visible — wait and re-check via interval
       const interval = setInterval(() => {
-        const hasNode = document.querySelector(".server-list .server-icon");
+        const hasNode = document.querySelector(".server-list .server-icon:not(.add-server)");
         if (hasNode) {
           clearInterval(interval);
           setVisible(true);
