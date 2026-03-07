@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { api } from "./api";
 import { decryptMessage, getChannelKey } from "./crypto";
 import { Channel, Message } from "./types";
 import { Icon } from "./components/Icon";
+
+const PAGE_SIZE = 25;
 
 interface SearchResult {
   message_id: string;
@@ -24,9 +26,56 @@ interface LocalSearchResult {
   created_at: number;
   decrypted_content: string;
   display_name?: string;
+  context_before?: string;
+  context_after?: string;
 }
 
 type SearchMode = "server" | "local";
+
+interface ParsedQuery {
+  text: string;
+  from?: string;
+  in?: string;
+  before?: string;
+  after?: string;
+  has?: string[];
+}
+
+/** Parse Discord-style filter syntax from a query string */
+export function parseSearchQuery(raw: string): ParsedQuery {
+  const has: string[] = [];
+  let from: string | undefined;
+  let inChannel: string | undefined;
+  let before: string | undefined;
+  let after: string | undefined;
+
+  // Match filter tokens: key:value or key:"value with spaces"
+  const filterRegex = /(?:^|\s)(from|in|before|after|has):(?:"([^"]+)"|(\S+))/gi;
+  let remaining = raw;
+  let match: RegExpExecArray | null;
+
+  while ((match = filterRegex.exec(raw)) !== null) {
+    const key = match[1].toLowerCase();
+    const value = match[2] || match[3];
+    switch (key) {
+      case "from": from = value; break;
+      case "in": inChannel = value; break;
+      case "before": before = value; break;
+      case "after": after = value; break;
+      case "has": has.push(value.toLowerCase()); break;
+    }
+    remaining = remaining.replace(match[0], " ");
+  }
+
+  return {
+    text: remaining.trim().replace(/\s+/g, " "),
+    from,
+    in: inChannel,
+    before,
+    after,
+    has: has.length > 0 ? has : undefined,
+  };
+}
 
 interface SearchOverlayProps {
   isVisible: boolean;
@@ -67,6 +116,18 @@ function clearCacheIfChannelChanged(channelId?: string) {
   }
 }
 
+/** Check if a message has a certain attachment type */
+function messageHasType(msg: Message, type: string): boolean {
+  switch (type) {
+    case "file": return !!(msg.files && msg.files.length > 0);
+    case "image": return !!(msg.files && msg.files.some(f =>
+      /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(f.encrypted_filename || "")
+    ));
+    case "link": return /https?:\/\/\S+/.test(msg.content || "");
+    default: return false;
+  }
+}
+
 export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   isVisible,
   onClose,
@@ -80,10 +141,6 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   currentChannelId,
 }) => {
   const [query, setQuery] = useState("");
-  const [selectedChannelId, setSelectedChannelId] = useState("");
-  const [authorFilter, setAuthorFilter] = useState("");
-  const [beforeDate, setBeforeDate] = useState("");
-  const [afterDate, setAfterDate] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [localResults, setLocalResults] = useState<LocalSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -91,10 +148,19 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
   const [showFilters, setShowFilters] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [searchMode, setSearchMode] = useState<SearchMode>("local");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Server-mode manual filter state (used when showFilters panel is open)
+  const [serverChannelId, setServerChannelId] = useState("");
+  const [serverAuthor, setServerAuthor] = useState("");
+  const [serverBefore, setServerBefore] = useState("");
+  const [serverAfter, setServerAfter] = useState("");
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTimeoutRef = useRef<number | undefined>(undefined);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  const parsed = useMemo(() => parseSearchQuery(query), [query]);
 
   // Clear cache when channel changes
   useEffect(() => {
@@ -124,49 +190,104 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
       setLocalResults([]);
       setError("");
       setSelectedIndex(-1);
+      setVisibleCount(PAGE_SIZE);
     }
   }, [isVisible]);
 
   // Local search through cached/loaded messages
   const performLocalSearch = useCallback((searchQuery: string) => {
-    if (!searchQuery.trim() || !currentMessages) {
+    if (!currentMessages) {
       setLocalResults([]);
       return;
     }
 
-    const searchLower = searchQuery.trim().toLowerCase();
-    const terms = searchLower.split(/\s+/).filter(Boolean);
+    const p = parseSearchQuery(searchQuery);
+
+    // If no text and no filters, clear results
+    if (!p.text && !p.from && !p.in && !p.before && !p.after && !p.has) {
+      setLocalResults([]);
+      return;
+    }
+
+    const textLower = p.text.toLowerCase();
+    const terms = textLower ? textLower.split(/\s+/).filter(Boolean) : [];
     const channelName = channels.find(c => c.id === currentChannelId)?.name || "";
 
     const matched: LocalSearchResult[] = [];
-    for (const msg of currentMessages) {
+    for (let i = 0; i < currentMessages.length; i++) {
+      const msg = currentMessages[i];
       const content = decryptedContentCache.get(msg.id) || msg.content || "";
       if (!content) continue;
 
       const contentLower = content.toLowerCase();
-      const authorLower = (msg.display_name || msg.author || "").toLowerCase();
+      const authorName = (msg.display_name || msg.author || "").toLowerCase();
+      const senderId = (msg.sender_id || "").toLowerCase();
 
-      // All terms must match in content or author
-      const allMatch = terms.every(term =>
-        contentLower.includes(term) || authorLower.includes(term)
-      );
-
-      if (allMatch) {
-        matched.push({
-          message_id: msg.id,
-          channel_id: msg.channel_id || currentChannelId || "",
-          channel_name: channelName,
-          sender_id: msg.sender_id || msg.author || "",
-          sender_public_key_hash: msg.sender_public_key_hash || msg.author || "",
-          created_at: msg.timestamp || 0,
-          decrypted_content: content,
-          display_name: msg.display_name,
-        });
+      // Text match: all terms must match in content or author
+      if (terms.length > 0) {
+        const allMatch = terms.every(term =>
+          contentLower.includes(term) || authorName.includes(term)
+        );
+        if (!allMatch) continue;
       }
+
+      // from: filter
+      if (p.from) {
+        const fromLower = p.from.toLowerCase();
+        if (!authorName.includes(fromLower) && !senderId.includes(fromLower)) continue;
+      }
+
+      // in: filter (channel name)
+      if (p.in) {
+        const inLower = p.in.toLowerCase();
+        if (!channelName.toLowerCase().includes(inLower)) continue;
+      }
+
+      // before: filter
+      if (p.before) {
+        const beforeTs = new Date(p.before).getTime();
+        if (!isNaN(beforeTs) && msg.timestamp > beforeTs) continue;
+      }
+
+      // after: filter
+      if (p.after) {
+        const afterTs = new Date(p.after).getTime();
+        if (!isNaN(afterTs) && msg.timestamp < afterTs) continue;
+      }
+
+      // has: filter
+      if (p.has) {
+        const allHas = p.has.every(h => messageHasType(msg, h));
+        if (!allHas) continue;
+      }
+
+      // Context: grab 1 message before/after
+      const prevMsg = i > 0 ? currentMessages[i - 1] : undefined;
+      const nextMsg = i < currentMessages.length - 1 ? currentMessages[i + 1] : undefined;
+      const contextBefore = prevMsg
+        ? (decryptedContentCache.get(prevMsg.id) || prevMsg.content || "")
+        : undefined;
+      const contextAfter = nextMsg
+        ? (decryptedContentCache.get(nextMsg.id) || nextMsg.content || "")
+        : undefined;
+
+      matched.push({
+        message_id: msg.id,
+        channel_id: msg.channel_id || currentChannelId || "",
+        channel_name: channelName,
+        sender_id: msg.sender_id || msg.author || "",
+        sender_public_key_hash: msg.sender_public_key_hash || msg.author || "",
+        created_at: msg.timestamp || 0,
+        decrypted_content: content,
+        display_name: msg.display_name,
+        context_before: contextBefore ? (contextBefore.length > 120 ? contextBefore.slice(0, 120) + "…" : contextBefore) : undefined,
+        context_after: contextAfter ? (contextAfter.length > 120 ? contextAfter.slice(0, 120) + "…" : contextAfter) : undefined,
+      });
     }
 
     setLocalResults(matched);
     setSelectedIndex(-1);
+    setVisibleCount(PAGE_SIZE);
   }, [currentMessages, currentChannelId, channels]);
 
   const performServerSearch = useCallback(async (
@@ -226,6 +347,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 
       setResults(filtered);
       setSelectedIndex(-1);
+      setVisibleCount(PAGE_SIZE);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
       setResults([]);
@@ -236,20 +358,28 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 
   const triggerSearch = useCallback((
     q: string = query,
-    ch: string = selectedChannelId,
-    au: string = authorFilter,
-    be: string = beforeDate,
-    af: string = afterDate,
+    ch: string = serverChannelId,
+    au: string = serverAuthor,
+    be: string = serverBefore,
+    af: string = serverAfter,
   ) => {
     if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = window.setTimeout(() => {
       if (searchMode === "local") {
         performLocalSearch(q);
       } else {
-        performServerSearch(q, ch, au, be, af);
+        // For server mode, merge parsed inline filters with panel filters
+        const p = parseSearchQuery(q);
+        performServerSearch(
+          p.text || q,
+          p.in ? channels.find(c => c.name.toLowerCase() === p.in!.toLowerCase())?.id || ch : ch,
+          p.from || au,
+          p.before || be,
+          p.after || af,
+        );
       }
     }, 300);
-  }, [query, selectedChannelId, authorFilter, beforeDate, afterDate, performServerSearch, performLocalSearch, searchMode]);
+  }, [query, serverChannelId, serverAuthor, serverBefore, serverAfter, performServerSearch, performLocalSearch, searchMode, channels]);
 
   const handleSearchInput = useCallback((value: string) => {
     setQuery(value);
@@ -261,18 +391,18 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     setResults([]);
     setLocalResults([]);
     setSelectedIndex(-1);
-    // Re-trigger search with new mode after state update
+    setVisibleCount(PAGE_SIZE);
     if (query.trim()) {
       if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current);
       searchTimeoutRef.current = window.setTimeout(() => {
         if (mode === "local") {
           performLocalSearch(query);
         } else {
-          performServerSearch(query, selectedChannelId, authorFilter, beforeDate, afterDate);
+          performServerSearch(query, serverChannelId, serverAuthor, serverBefore, serverAfter);
         }
       }, 100);
     }
-  }, [query, selectedChannelId, authorFilter, beforeDate, afterDate, performLocalSearch, performServerSearch]);
+  }, [query, serverChannelId, serverAuthor, serverBefore, serverAfter, performLocalSearch, performServerSearch]);
 
   const handleResultClick = (channelId: string, messageId: string) => {
     onNavigateToMessage(channelId, messageId);
@@ -281,24 +411,26 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
 
   // Active result list for keyboard nav
   const activeResults = searchMode === "local" ? localResults : results;
+  const paginatedResults = activeResults.slice(0, visibleCount);
+  const hasMore = activeResults.length > visibleCount;
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex(i => Math.min(i + 1, activeResults.length - 1));
+      setSelectedIndex(i => Math.min(i + 1, paginatedResults.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelectedIndex(i => Math.max(i - 1, -1));
-    } else if (e.key === "Enter" && selectedIndex >= 0 && activeResults[selectedIndex]) {
+    } else if (e.key === "Enter" && selectedIndex >= 0 && paginatedResults[selectedIndex]) {
       e.preventDefault();
-      const r = activeResults[selectedIndex];
+      const r = paginatedResults[selectedIndex];
       handleResultClick(
         "channel_id" in r ? r.channel_id : "",
         "message_id" in r ? r.message_id : "",
       );
     }
-  }, [activeResults, selectedIndex]);
+  }, [paginatedResults, selectedIndex]);
 
   // Scroll selected result into view
   useEffect(() => {
@@ -312,23 +444,51 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
     return () => { if (searchTimeoutRef.current) window.clearTimeout(searchTimeoutRef.current); };
   }, []);
 
-  const removeFilter = (type: string) => {
+  /** Remove an inline filter from the query string */
+  const removeInlineFilter = useCallback((key: string, value?: string) => {
+    let newQuery = query;
+    if (value) {
+      // Remove specific has:value
+      newQuery = newQuery.replace(new RegExp(`\\s*${key}:(?:"${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"|${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"), "");
+    } else {
+      newQuery = newQuery.replace(new RegExp(`\\s*${key}:(?:"[^"]+"|\\S+)`, "gi"), "");
+    }
+    newQuery = newQuery.trim();
+    setQuery(newQuery);
+    triggerSearch(newQuery);
+  }, [query, triggerSearch]);
+
+  const removeServerFilter = (type: string) => {
     switch (type) {
-      case "channel": setSelectedChannelId(""); triggerSearch(query, "", authorFilter, beforeDate, afterDate); break;
-      case "author": setAuthorFilter(""); triggerSearch(query, selectedChannelId, "", beforeDate, afterDate); break;
-      case "before": setBeforeDate(""); triggerSearch(query, selectedChannelId, authorFilter, "", afterDate); break;
-      case "after": setAfterDate(""); triggerSearch(query, selectedChannelId, authorFilter, beforeDate, ""); break;
+      case "channel": setServerChannelId(""); triggerSearch(query, "", serverAuthor, serverBefore, serverAfter); break;
+      case "author": setServerAuthor(""); triggerSearch(query, serverChannelId, "", serverBefore, serverAfter); break;
+      case "before": setServerBefore(""); triggerSearch(query, serverChannelId, serverAuthor, "", serverAfter); break;
+      case "after": setServerAfter(""); triggerSearch(query, serverChannelId, serverAuthor, serverBefore, ""); break;
     }
   };
 
   if (!isVisible) return null;
 
-  const activeFilters = [
-    selectedChannelId && { type: "channel", label: `In: #${channels.find(c => c.id === selectedChannelId)?.name || "..."}` },
-    authorFilter && { type: "author", label: `From: ${authorFilter.slice(0, 8)}...` },
-    beforeDate && { type: "before", label: `Before: ${beforeDate}` },
-    afterDate && { type: "after", label: `After: ${afterDate}` },
-  ].filter(Boolean) as Array<{ type: string; label: string }>;
+  // Build filter chips from parsed query (local mode) or manual filters (server mode)
+  const inlineFilterChips: Array<{ key: string; value?: string; label: string }> = [];
+  if (parsed.from) inlineFilterChips.push({ key: "from", label: `from:${parsed.from}` });
+  if (parsed.in) inlineFilterChips.push({ key: "in", label: `in:${parsed.in}` });
+  if (parsed.before) inlineFilterChips.push({ key: "before", label: `before:${parsed.before}` });
+  if (parsed.after) inlineFilterChips.push({ key: "after", label: `after:${parsed.after}` });
+  if (parsed.has) {
+    for (const h of parsed.has) {
+      inlineFilterChips.push({ key: "has", value: h, label: `has:${h}` });
+    }
+  }
+
+  const serverFilterChips = searchMode === "server" ? [
+    serverChannelId && { type: "channel", label: `In: #${channels.find(c => c.id === serverChannelId)?.name || "..."}` },
+    serverAuthor && { type: "author", label: `From: ${serverAuthor.slice(0, 8)}...` },
+    serverBefore && { type: "before", label: `Before: ${serverBefore}` },
+    serverAfter && { type: "after", label: `After: ${serverAfter}` },
+  ].filter(Boolean) as Array<{ type: string; label: string }> : [];
+
+  const searchText = parsed.text;
 
   return (
     <div className="search-overlay" onKeyDown={handleKeyDown}>
@@ -374,8 +534,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 ref={searchInputRef}
                 type="text"
                 placeholder={searchMode === "local"
-                  ? "Search loaded messages (decrypted locally)..."
-                  : "Search messages... (content is searched after decryption)"}
+                  ? "Search loaded messages... (try from:name has:link)"
+                  : "Search messages... (try from:name before:2026-01-01)"}
                 value={query}
                 onChange={(e) => handleSearchInput(e.target.value)}
                 className="search-input"
@@ -389,13 +549,25 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
             )}
           </div>
 
-          {/* Active filter chips (server mode only) */}
-          {searchMode === "server" && activeFilters.length > 0 && (
+          {/* Inline filter chips (parsed from query) */}
+          {inlineFilterChips.length > 0 && (
             <div className="search-filter-chips">
-              {activeFilters.map(f => (
+              {inlineFilterChips.map((f, i) => (
+                <span key={`${f.key}-${f.value || i}`} className="search-chip">
+                  {f.label}
+                  <button className="search-chip-remove" onClick={() => removeInlineFilter(f.key, f.value)}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Server-mode manual filter chips */}
+          {searchMode === "server" && serverFilterChips.length > 0 && (
+            <div className="search-filter-chips">
+              {serverFilterChips.map(f => (
                 <span key={f.type} className="search-chip">
                   {f.label}
-                  <button className="search-chip-remove" onClick={() => removeFilter(f.type)}>×</button>
+                  <button className="search-chip-remove" onClick={() => removeServerFilter(f.type)}>×</button>
                 </span>
               ))}
             </div>
@@ -407,8 +579,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
               <div className="search-filter-row">
                 <label>Channel:</label>
                 <select
-                  value={selectedChannelId}
-                  onChange={(e) => { setSelectedChannelId(e.target.value); triggerSearch(query, e.target.value, authorFilter, beforeDate, afterDate); }}
+                  value={serverChannelId}
+                  onChange={(e) => { setServerChannelId(e.target.value); triggerSearch(query, e.target.value, serverAuthor, serverBefore, serverAfter); }}
                   className="channel-filter-select"
                 >
                   <option value="">All channels</option>
@@ -422,8 +594,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 <input
                   type="text"
                   placeholder="User ID..."
-                  value={authorFilter}
-                  onChange={(e) => { setAuthorFilter(e.target.value); triggerSearch(query, selectedChannelId, e.target.value, beforeDate, afterDate); }}
+                  value={serverAuthor}
+                  onChange={(e) => { setServerAuthor(e.target.value); triggerSearch(query, serverChannelId, e.target.value, serverBefore, serverAfter); }}
                   className="search-filter-input"
                 />
               </div>
@@ -431,8 +603,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 <label>After:</label>
                 <input
                   type="date"
-                  value={afterDate}
-                  onChange={(e) => { setAfterDate(e.target.value); triggerSearch(query, selectedChannelId, authorFilter, beforeDate, e.target.value); }}
+                  value={serverAfter}
+                  onChange={(e) => { setServerAfter(e.target.value); triggerSearch(query, serverChannelId, serverAuthor, serverBefore, e.target.value); }}
                   className="search-filter-input"
                 />
               </div>
@@ -440,8 +612,8 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 <label>Before:</label>
                 <input
                   type="date"
-                  value={beforeDate}
-                  onChange={(e) => { setBeforeDate(e.target.value); triggerSearch(query, selectedChannelId, authorFilter, e.target.value, afterDate); }}
+                  value={serverBefore}
+                  onChange={(e) => { setServerBefore(e.target.value); triggerSearch(query, serverChannelId, serverAuthor, e.target.value, serverAfter); }}
                   className="search-filter-input"
                 />
               </div>
@@ -457,12 +629,17 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 {localResults.length === 0 && query.trim() && !isLoading && (
                   <div className="search-no-results">No messages found for &ldquo;{query}&rdquo; in loaded messages</div>
                 )}
-                {localResults.map((result, idx) => (
+                {(paginatedResults as LocalSearchResult[]).map((result, idx) => (
                   <div
                     key={result.message_id}
                     className={`search-result ${idx === selectedIndex ? "search-result-selected" : ""}`}
                     onClick={() => handleResultClick(result.channel_id, result.message_id)}
                   >
+                    {result.context_before && (
+                      <div className="search-result-context search-result-context-before">
+                        {result.context_before}
+                      </div>
+                    )}
                     <div className="search-result-header">
                       <span className="search-result-icon" title="Searched locally (decrypted)">⚿</span>
                       <span className="search-result-sender">
@@ -478,9 +655,14 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                         result.decrypted_content.length > 200
                           ? result.decrypted_content.slice(0, 200) + "…"
                           : result.decrypted_content,
-                        query
+                        searchText
                       )}
                     </div>
+                    {result.context_after && (
+                      <div className="search-result-context search-result-context-after">
+                        {result.context_after}
+                      </div>
+                    )}
                   </div>
                 ))}
               </>
@@ -492,7 +674,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                 {results.length === 0 && query.trim() && !isLoading && !error && (
                   <div className="search-no-results">No messages found for &ldquo;{query}&rdquo;</div>
                 )}
-                {results.map((result, idx) => (
+                {(paginatedResults as SearchResult[]).map((result, idx) => (
                   <div
                     key={result.message_id}
                     className={`search-result ${idx === selectedIndex ? "search-result-selected" : ""}`}
@@ -514,7 +696,7 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                             result.decrypted_content.length > 200
                               ? result.decrypted_content.slice(0, 200) + "…"
                               : result.decrypted_content,
-                            query
+                            searchText
                           )
                         : <em className="search-encrypted-hint">Encrypted — click to view</em>
                       }
@@ -522,6 +704,16 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
                   </div>
                 ))}
               </>
+            )}
+
+            {/* Load more button */}
+            {hasMore && (
+              <button
+                className="search-load-more"
+                onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
+              >
+                Load more ({activeResults.length - visibleCount} remaining)
+              </button>
             )}
           </div>
         </div>
@@ -531,7 +723,10 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
             ↑↓ Navigate · Enter to jump · Esc to close
           </span>
           {activeResults.length > 0 && (
-            <span className="search-result-count">{activeResults.length} result{activeResults.length !== 1 ? "s" : ""}</span>
+            <span className="search-result-count">
+              {activeResults.length} result{activeResults.length !== 1 ? "s" : ""}
+              {hasMore && ` (showing ${visibleCount})`}
+            </span>
           )}
         </div>
       </div>

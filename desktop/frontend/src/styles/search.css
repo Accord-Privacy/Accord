@@ -247,6 +247,39 @@ mark.search-highlight { background: rgba(255, 200, 0, 0.35); color: inherit; pad
 
 .search-encrypted-hint { color: var(--text-faint); font-style: italic; }
 
+.search-result-context {
+  font-size: var(--font-xs);
+  color: var(--text-faint);
+  padding: 2px 8px;
+  border-left: 2px solid var(--border);
+  margin-left: 4px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-result-context-before { margin-bottom: 4px; }
+.search-result-context-after { margin-top: 4px; }
+
+.search-load-more {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-top: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  text-align: center;
+  transition: all var(--transition-fast);
+}
+.search-load-more:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
 .search-overlay-footer {
   display: flex; justify-content: space-between; align-items: center; padding: 8px 16px;
   border-top: 1px solid var(--border);
