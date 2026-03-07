@@ -481,7 +481,7 @@ export const ChatArea: React.FC = () => {
               const prevMsg = i > 0 ? filteredMessages[i - 1] : null;
               const isGrouped = prevMsg
                 && prevMsg.author === msg.author
-                && Math.abs(msg.timestamp - prevMsg.timestamp) < 7 * 60 * 1000
+                && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
                 && !msg.reply_to;
 
               const msgDate = new Date(msg.timestamp);
@@ -533,7 +533,7 @@ export const ChatArea: React.FC = () => {
                         />
                       ) : (msg.author || "?")[0]}
                     </div>}
-                    {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
+                    {isGrouped && <div className="message-avatar-spacer"><span className="message-hover-time" title={new Date(msg.timestamp).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
 
                     <div className="message-body">
                       {!isGrouped && (
