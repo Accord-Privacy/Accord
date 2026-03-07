@@ -5,6 +5,7 @@ import { api } from "../api";
 import { notificationManager } from "../notifications";
 import { avatarColor } from "../avatarColor";
 import { Channel } from "../types";
+import { ServerHeader } from "./ServerHeader";
 // buildHash imports moved to MemberSidebar for trust indicator
 const BotPanel = React.lazy(() => import("./BotPanel").then(m => ({ default: m.BotPanel })));
 
@@ -311,42 +312,7 @@ export const ChannelSidebar: React.FC = () => {
 
   return (
     <div className="channel-sidebar" role="navigation" aria-label="Channel sidebar">
-      <div className="sidebar-header">
-        <div className="sidebar-header-row">
-          <div className="sidebar-header-name">
-            {ctx.servers[ctx.activeServer]}
-            {ctx.serverAvailable && ctx.nodes.length > 0 && (
-              <span className="connection-status" title={ctx.connectionInfo.status === 'connected' ? 'Connected' : ctx.connectionInfo.status}>
-                <span className={`connection-dot ${ctx.connectionInfo.status}`}>●</span>
-                {ctx.connectionInfo.status !== 'connected' && (
-                  <span className="connection-label">
-                    {ctx.connectionInfo.status === 'reconnecting' && `Reconnecting...`}
-                    {ctx.connectionInfo.status === 'disconnected' && !ctx.appState.isConnected && 'Offline'}
-                  </span>
-                )}
-                {ctx.connectionInfo.status === 'disconnected' && !ctx.appState.isConnected && ctx.ws && (
-                  <button className="connection-retry-btn" onClick={() => { ctx.setLastConnectionError(""); ctx.ws!.retry(); }}>Retry</button>
-                )}
-              </span>
-            )}
-          </div>
-          
-          <div className="sidebar-admin-buttons">
-            {ctx.selectedNodeId && ctx.hasPermission(ctx.selectedNodeId, 'ManageInvites') && (
-              <button onClick={ctx.handleGenerateInvite} className="sidebar-admin-btn invite-btn" title="Generate Invite">Invite</button>
-            )}
-            {ctx.selectedNodeId && (
-              <button onClick={() => ctx.setShowNodeSettings(true)} className="sidebar-admin-btn" title="Node Settings" aria-label="Node Settings"><Icon name="settings" size={16} /></button>
-            )}
-          </div>
-        </div>
-        
-        {ctx.selectedNodeId && ctx.nodes.find(n => n.id === ctx.selectedNodeId)?.description && (
-          <div className="sidebar-description" title={ctx.nodes.find(n => n.id === ctx.selectedNodeId)?.description}>
-            {ctx.nodes.find(n => n.id === ctx.selectedNodeId)?.description}
-          </div>
-        )}
-      </div>
+      <ServerHeader />
       
       <div className="channel-list" role="listbox" aria-label="Channels">
         {/* Uncategorized channels */}
