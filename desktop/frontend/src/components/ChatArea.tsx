@@ -21,6 +21,7 @@ import { ImageGrid, getNonImageFiles, hasImageGrid } from "./ImageGrid";
 import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { SavedMessagesPanel } from "./SavedMessagesPanel";
+import { MessagePreview } from "./MessagePreview";
 import { useBookmarks } from "../hooks/useBookmarks";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
@@ -33,6 +34,7 @@ export const ChatArea: React.FC = () => {
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [unreadMarkerId, setUnreadMarkerId] = useState<string | null>(null);
   const [showSavedMessages, setShowSavedMessages] = useState(false);
@@ -1044,6 +1046,12 @@ export const ChatArea: React.FC = () => {
                 <Icon name="clock" size={14} /> Slow mode: wait {ctx.slowModeCooldown}s
               </div>
             )}
+            <MessagePreview
+              text={ctx.message}
+              currentUsername={ctx.appState.user?.display_name}
+              visible={showPreview}
+              onClose={() => setShowPreview(false)}
+            />
             {showFormattingToolbar && (
               <div className="formatting-toolbar">
                 <button type="button" className="formatting-btn" title="Bold (Ctrl+B)" onMouseDown={(e) => { e.preventDefault(); wrapSelection('**', '**'); }}><strong>B</strong></button>
@@ -1051,6 +1059,7 @@ export const ChatArea: React.FC = () => {
                 <button type="button" className="formatting-btn" title="Code (Ctrl+E)" onMouseDown={(e) => { e.preventDefault(); wrapSelection('`', '`'); }}><code>&lt;/&gt;</code></button>
                 <button type="button" className="formatting-btn" title="Code Block" onMouseDown={(e) => { e.preventDefault(); wrapSelection('```\n', '\n```'); }}>{'{ }'}</button>
                 <button type="button" className="formatting-btn" title="Spoiler" onMouseDown={(e) => { e.preventDefault(); wrapSelection('||', '||'); }}>░</button>
+                <button type="button" className={`formatting-btn${showPreview ? ' formatting-btn-active' : ''}`} title="Preview (Ctrl+Shift+P)" onMouseDown={(e) => { e.preventDefault(); setShowPreview(p => !p); }}>👁</button>
               </div>
             )}
             <textarea
@@ -1096,6 +1105,9 @@ export const ChatArea: React.FC = () => {
                   e.preventDefault();
                   dismissMention();
                   ctx.handleSendMessage();
+                } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
+                  e.preventDefault();
+                  setShowPreview(p => !p);
                 } else if (e.ctrlKey || e.metaKey) {
                   if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**'); }
                   else if (e.key === 'i') { e.preventDefault(); wrapSelection('*', '*'); }

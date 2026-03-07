@@ -113,6 +113,9 @@ export function renderMessageMarkdown(raw: string, currentUsername?: string): st
     clean = div.innerHTML;
   }
 
+  // Replace ||spoiler|| syntax with spoiler spans
+  clean = clean.replace(/\|\|(.+?)\|\|/gs, '<span class="spoiler">$1</span>');
+
   // Replace custom emoji syntax :name: with <img> tags
   if (_customEmojiMap.size > 0) {
     clean = clean.replace(/:([a-zA-Z0-9_]{2,32}):/g, (_match, name) => {

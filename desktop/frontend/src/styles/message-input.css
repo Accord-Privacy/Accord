@@ -404,3 +404,77 @@
   margin-left: 8px;
   white-space: nowrap;
 }
+
+/* Message Preview Panel */
+.message-preview-panel {
+  order: -2;
+  width: 100%;
+  border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.message-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.message-preview-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.message-preview-close:hover {
+  color: var(--text-primary);
+}
+
+.message-preview-body {
+  padding: 6px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.formatting-btn-active {
+  color: var(--accent-color, #5865f2);
+  background: var(--bg-modifier-hover);
+}
+
+/* Spoiler text */
+.spoiler {
+  background: var(--text-primary, #fff);
+  color: transparent;
+  border-radius: 3px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+
+.spoiler.revealed,
+.spoiler:hover {
+  color: var(--text-primary);
+  background: var(--bg-modifier-hover, rgba(255,255,255,0.1));
+}
+
+/* Preview-specific: always show spoiler blacked out */
+.message-preview-body .spoiler {
+  pointer-events: none;
+}
+
+/* Syntax highlighting in preview code blocks */
+.message-preview-body pre code .keyword { color: #c678dd; }
+.message-preview-body pre code .string { color: #98c379; }
+.message-preview-body pre code .comment { color: #5c6370; font-style: italic; }
+.message-preview-body pre code .number { color: #d19a66; }
+.message-preview-body pre code .function { color: #61afef; }
