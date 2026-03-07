@@ -47,7 +47,116 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* Counter indicator */
+.lightbox-counter {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  padding: 4px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  user-select: none;
+}
+
+/* Navigation arrows */
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+  color: #fff;
+  font-size: 36px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: background 0.15s ease;
+  user-select: none;
+  z-index: 1;
+}
+
+.lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.lightbox-nav-prev {
+  left: 16px;
+}
+
+.lightbox-nav-next {
+  right: 16px;
+}
+
 .message-content img,
 .file-attachment-image-preview img {
   cursor: pointer;
+}
+
+/* Image grid for multiple images in a single message */
+.message-image-grid {
+  display: grid;
+  gap: 4px;
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 400px;
+  margin-top: 4px;
+}
+
+.message-image-grid.grid-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.message-image-grid.grid-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.message-image-grid.grid-3 .grid-image:first-child {
+  grid-row: 1 / 3;
+}
+
+.message-image-grid.grid-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.message-image-grid .grid-image {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 1;
+}
+
+.message-image-grid .grid-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.15s ease;
+}
+
+.message-image-grid .grid-image:hover img {
+  transform: scale(1.05);
+}
+
+.grid-image-more-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+  pointer-events: none;
 }

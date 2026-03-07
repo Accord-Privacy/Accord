@@ -11,6 +11,7 @@ function makeActions(): KeyboardActions {
     navigateChannel: vi.fn(),
     toggleMute: vi.fn(),
     toggleDeafen: vi.fn(),
+    toggleMemberSidebar: vi.fn(),
   };
 }
 
@@ -73,6 +74,27 @@ describe('keyboard shortcuts', () => {
     cleanup = initKeyboardShortcuts(actions);
     fireKey('ArrowDown', { altKey: true });
     expect(actions.navigateChannel).toHaveBeenCalledWith('down');
+  });
+
+  it('Ctrl+Shift+I calls toggleMemberSidebar', () => {
+    actions = makeActions();
+    cleanup = initKeyboardShortcuts(actions);
+    fireKey('I', { ctrlKey: true, shiftKey: true });
+    expect(actions.toggleMemberSidebar).toHaveBeenCalledOnce();
+  });
+
+  it('Ctrl+Shift+M calls toggleMute', () => {
+    actions = makeActions();
+    cleanup = initKeyboardShortcuts(actions);
+    fireKey('M', { ctrlKey: true, shiftKey: true });
+    expect(actions.toggleMute).toHaveBeenCalledOnce();
+  });
+
+  it('Ctrl+Shift+D calls toggleDeafen', () => {
+    actions = makeActions();
+    cleanup = initKeyboardShortcuts(actions);
+    fireKey('D', { ctrlKey: true, shiftKey: true });
+    expect(actions.toggleDeafen).toHaveBeenCalledOnce();
   });
 
   it('cleanup removes listener', () => {

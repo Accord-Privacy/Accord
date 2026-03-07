@@ -3271,6 +3271,7 @@ function App() {
         const btn = document.querySelector('.voice-connection-controls .voice-ctrl-btn:nth-child(2)') as HTMLButtonElement | null;
         btn?.click();
       },
+      toggleMemberSidebar: () => setShowMemberSidebar(prev => !prev),
     });
   }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, channels, selectedChannelId, handleChannelSelect]);
 

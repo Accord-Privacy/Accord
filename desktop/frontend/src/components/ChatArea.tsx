@@ -17,6 +17,7 @@ import { MentionAutocomplete } from "./MentionAutocomplete";
 import { useMentionAutocomplete } from "../hooks/useMentionAutocomplete";
 import type { AutocompleteItem } from "../hooks/useMentionAutocomplete";
 import { ImageLightbox } from "./ImageLightbox";
+import { ImageGrid, getNonImageFiles, hasImageGrid } from "./ImageGrid";
 import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
 import type { InstalledBot, BotCommand } from "../types";
@@ -129,6 +130,15 @@ export const ChatArea: React.FC = () => {
     if (msg.sender_id && ctx.blockedUsers.has(msg.sender_id)) return false;
     return true;
   }), [ctx.appState.messages, currentCh, ctx.blockedUsers]);
+
+  // Collect all clickable image srcs from the messages DOM for gallery navigation
+  const [allChannelImages, setAllChannelImages] = useState<string[]>([]);
+  const collectImages = useCallback(() => {
+    const container = ctx.messagesContainerRef?.current;
+    if (!container) return [];
+    const imgs = container.querySelectorAll('.message-content img, .file-attachment-image-preview img, .message-image-grid img');
+    return Array.from(imgs).map(img => (img as HTMLImageElement).src).filter(Boolean);
+  }, [ctx.messagesContainerRef]);
 
   // Invite preview state
   const [invitePreview, setInvitePreview] = useState<{
@@ -382,8 +392,9 @@ export const ChatArea: React.FC = () => {
             aria-live="polite"
             onClick={(e) => {
               const target = e.target as HTMLElement;
-              if (target.tagName === 'IMG' && (target.closest('.message-content') || target.closest('.file-attachment-image-preview'))) {
+              if (target.tagName === 'IMG' && (target.closest('.message-content') || target.closest('.file-attachment-image-preview') || target.closest('.message-image-grid'))) {
                 e.stopPropagation();
+                setAllChannelImages(collectImages());
                 setLightboxSrc((target as HTMLImageElement).src);
               }
               // Handle @mention clicks — open profile card
@@ -1043,7 +1054,12 @@ export const ChatArea: React.FC = () => {
       {/* Voice Chat Component moved inline above message input */}
 
       {lightboxSrc && (
-        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+        <ImageLightbox
+          src={lightboxSrc}
+          onClose={() => setLightboxSrc(null)}
+          allImages={allChannelImages}
+          onNavigate={setLightboxSrc}
+        />
       )}
 
       {/* Topic Edit Modal */}

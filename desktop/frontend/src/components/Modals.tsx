@@ -7,7 +7,7 @@ const SearchOverlay = React.lazy(() => import("../SearchOverlay").then(m => ({ d
 import { LoadingSpinner } from "../LoadingSpinner";
 import { ProfileCard } from "../ProfileCard";
 import { LinkPreview, extractFirstUrl } from "../LinkPreview";
-import { SHORTCUTS } from "../keyboard";
+import { SHORTCUT_GROUPS } from "../keyboard";
 import { Icon } from "./Icon";
 
 /** Hook: trap focus inside a modal and restore focus on close */
@@ -761,9 +761,14 @@ export const AppModals: React.FC = () => {
         <div className="modal-overlay" onClick={() => ctx.setShowShortcutsHelp(false)} onKeyDown={(e) => { if (e.key === 'Escape') ctx.setShowShortcutsHelp(false); shortcutsTrap.handleKeyDown(e); }}>
           <div className="modal-card shortcuts-modal" ref={shortcutsTrap.ref} role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" onClick={(e) => e.stopPropagation()}>
             <h3 id="shortcuts-title">Keyboard Shortcuts</h3>
-            <div className="shortcuts-list">
-              {SHORTCUTS.map((s, i) => (
-                <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>
+            <div className="shortcuts-grid">
+              {SHORTCUT_GROUPS.map((group) => (
+                <div className="shortcuts-group" key={group.title}>
+                  <h4 className="shortcuts-group-title">{group.title}</h4>
+                  {group.shortcuts.map((s, i) => (
+                    <div className="shortcut-row" key={i}><kbd>{s.label}</kbd><span>{s.description}</span></div>
+                  ))}
+                </div>
               ))}
             </div>
             <div className="modal-actions shortcuts-modal-actions">

@@ -14,23 +14,53 @@ export interface ShortcutDef {
   allowInInput?: boolean;
 }
 
+export interface ShortcutGroup {
+  title: string;
+  shortcuts: ShortcutDef[];
+}
+
 /**
- * All registered shortcuts for display in the help modal.
- * Order matters — it controls the help modal rendering order.
+ * All registered shortcuts grouped for the help modal.
  */
-export const SHORTCUTS: ShortcutDef[] = [
-  { label: 'Enter', description: 'Send message', allowInInput: true },
-  { label: 'Shift + Enter', description: 'New line in message', allowInInput: true },
-  { label: 'Escape', description: 'Close modal / Cancel edit / Deselect' },
-  { label: 'Ctrl + K', description: 'Open search' },
-  { label: 'Ctrl + E', description: 'Toggle emoji picker' },
-  { label: 'Ctrl + ,', description: 'Open settings' },
-  { label: 'Ctrl + /', description: 'Keyboard shortcuts help' },
-  { label: '?', description: 'Keyboard shortcuts help (when not typing)' },
-  { label: 'Alt + ↑ / ↓', description: 'Navigate channels up / down' },
-  { label: 'Ctrl + Shift + M', description: 'Toggle mute (in voice)' },
-  { label: 'Ctrl + Shift + D', description: 'Toggle deafen (in voice)' },
+export const SHORTCUT_GROUPS: ShortcutGroup[] = [
+  {
+    title: 'Navigation',
+    shortcuts: [
+      { label: 'Alt + ↑ / ↓', description: 'Navigate channels up / down' },
+      { label: 'Ctrl + K', description: 'Open search' },
+      { label: 'Ctrl + ,', description: 'Open settings' },
+      { label: 'Ctrl + /', description: 'Keyboard shortcuts help' },
+      { label: '?', description: 'Keyboard shortcuts help (when not typing)' },
+    ],
+  },
+  {
+    title: 'Messaging',
+    shortcuts: [
+      { label: 'Enter', description: 'Send message', allowInInput: true },
+      { label: 'Shift + Enter', description: 'New line in message', allowInInput: true },
+      { label: 'Ctrl + B', description: 'Toggle bold in message', allowInInput: true },
+      { label: 'Ctrl + E', description: 'Toggle emoji picker' },
+      { label: 'Escape', description: 'Cancel edit / Close modal' },
+    ],
+  },
+  {
+    title: 'Voice',
+    shortcuts: [
+      { label: 'Ctrl + Shift + M', description: 'Toggle mute' },
+      { label: 'Ctrl + Shift + D', description: 'Toggle deafen' },
+    ],
+  },
+  {
+    title: 'UI',
+    shortcuts: [
+      { label: 'Ctrl + Shift + I', description: 'Toggle member sidebar' },
+      { label: 'Escape', description: 'Close modal / Deselect' },
+    ],
+  },
 ];
+
+/** Flat list of all shortcuts (for backward compat). */
+export const SHORTCUTS: ShortcutDef[] = SHORTCUT_GROUPS.flatMap(g => g.shortcuts);
 
 /** Returns true if the active element is a text input the user is typing into. */
 export function isTypingInInput(): boolean {
@@ -53,6 +83,7 @@ export interface KeyboardActions {
   navigateChannel: (direction: 'up' | 'down') => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
+  toggleMemberSidebar: () => void;
 }
 
 /**
@@ -127,6 +158,13 @@ export function initKeyboardShortcuts(actions: KeyboardActions): () => void {
     if (mod && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
       e.preventDefault();
       actions.toggleDeafen();
+      return;
+    }
+
+    // Ctrl+Shift+I — toggle member sidebar
+    if (mod && e.shiftKey && (e.key === 'I' || e.key === 'i')) {
+      e.preventDefault();
+      actions.toggleMemberSidebar();
       return;
     }
   };
