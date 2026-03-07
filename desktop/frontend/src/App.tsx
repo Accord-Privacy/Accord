@@ -2591,6 +2591,7 @@ function App() {
         token: response.token,
         user: { id: response.user_id, public_key_hash: pkHash, public_key: pk, created_at: 0, display_name: fingerprint(pkHash) }
       }));
+      setServerAvailable(true);
       setIsAuthenticated(true);
       setShowRecoverModal(false);
       setShowWelcomeScreen(false);
