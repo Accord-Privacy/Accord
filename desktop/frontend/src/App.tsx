@@ -813,6 +813,7 @@ function App() {
       const newMessage: Message = {
         id: data.message_id || Math.random().toString(),
         author: senderName,
+        sender_id: data.from,
         content: content,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: data.timestamp * 1000,

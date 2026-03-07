@@ -583,7 +583,7 @@ export const ChatArea: React.FC = () => {
             {filteredMessages.map((msg, i) => {
               const prevMsg = i > 0 ? filteredMessages[i - 1] : null;
               const isGrouped = prevMsg
-                && prevMsg.author === msg.author
+                && (prevMsg.sender_id && msg.sender_id ? prevMsg.sender_id === msg.sender_id : prevMsg.author === msg.author)
                 && Math.abs(msg.timestamp - prevMsg.timestamp) < 5 * 60 * 1000
                 && !msg.reply_to;
 
