@@ -3302,7 +3302,14 @@ function App() {
     return [...members].sort((a, b) => {
       const sa = order[getPresenceStatus(a.user_id)] ?? 3;
       const sb = order[getPresenceStatus(b.user_id)] ?? 3;
-      return sa - sb;
+      if (sa !== sb) return sa - sb;
+      // Within same status group, sort by highest role position (desc), then alphabetically
+      const ra = getMemberHighestHoistedRole(a.user_id)?.position ?? -1;
+      const rb = getMemberHighestHoistedRole(b.user_id)?.position ?? -1;
+      if (ra !== rb) return rb - ra;
+      const na = (a.user?.display_name || a.user_id).toLowerCase();
+      const nb = (b.user?.display_name || b.user_id).toLowerCase();
+      return na.localeCompare(nb);
     });
   }, [members, getPresenceStatus]);
 

@@ -180,6 +180,7 @@ export interface UserProfile {
   bio?: string;
   status: PresenceStatus;
   custom_status?: string;
+  activity?: string;
   updated_at: number;
 }
 

@@ -46,6 +46,9 @@ export const MemberSidebar: React.FC = () => {
           {member.profile?.custom_status && (
             <span className="member-custom-status">{member.profile.custom_status}</span>
           )}
+          {member.profile?.activity && (
+            <span className="member-activity-text">{member.profile.activity}</span>
+          )}
         </div>
         <div className="member-actions">
           {!isCurrentUser && (
