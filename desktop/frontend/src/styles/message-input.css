@@ -7,8 +7,9 @@
   align-items: flex-end;
   gap: 0;
   flex-shrink: 0;
-  position: relative;
   flex-wrap: wrap;
+  background: var(--bg-content);
+  border-top: 1px solid rgba(255,255,255,0.06);
 }
 
 .message-input-wrapper {
@@ -346,23 +347,23 @@
 
 /* =================== Send Button =================== */
 .send-btn {
-  background: var(--accent);
+  background: transparent;
   border: none;
-  color: #fff;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  color: var(--text-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-bottom: 28px;
-  transition: background var(--transition-fast), opacity var(--transition-fast);
+  transition: background var(--transition-fast), opacity var(--transition-fast), color var(--transition-fast);
 }
 
 .send-btn:hover:not(:disabled) {
-  background: var(--accent-hover, #4752c4);
+  color: var(--text-primary);
+  background: var(--bg-modifier-hover);
 }
 
 .send-btn:disabled {

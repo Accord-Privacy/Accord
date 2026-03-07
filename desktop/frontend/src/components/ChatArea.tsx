@@ -1099,6 +1099,7 @@ export const ChatArea: React.FC = () => {
                 <button type="button" className={`formatting-btn${showPreview ? ' formatting-btn-active' : ''}`} title="Preview (Ctrl+Shift+P)" onMouseDown={(e) => { e.preventDefault(); setShowPreview(p => !p); }}>👁</button>
               </div>
             )}
+            <div className="message-input-wrapper">
             <textarea
               ref={ctx.messageInputRef}
               className="message-input"
@@ -1196,6 +1197,7 @@ export const ChatArea: React.FC = () => {
             >
               {ctx.slowModeCooldown > 0 ? `${ctx.slowModeCooldown}s` : <Icon name="send" size={18} />}
             </button>
+            </div>
           </div>
         </FileDropZone>
       </div>
