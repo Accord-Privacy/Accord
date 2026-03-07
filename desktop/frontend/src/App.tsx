@@ -3734,8 +3734,9 @@ function App() {
             if (stored) serverDisplayName = stored;
           }
 
-          // Key already saved with password in SetupWizard — don't overwrite with saveKeyToStorage
-          // (saveKeyToStorage uses a different passphrase and would break password-based login)
+          // Save to session-based slots too (used by loadKeyFromStorage on refresh)
+          await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+          localStorage.setItem('accord_public_key_hash', result.publicKeyHash);
 
           setAppState(prev => ({
             ...prev,
@@ -3774,7 +3775,9 @@ function App() {
                 try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
               }
 
-              // Key already saved with password in SetupWizard — don't overwrite
+              // Save to session-based slots too (used by loadKeyFromStorage on refresh)
+              await saveKeyToStorage(result.keyPair, result.publicKeyHash);
+              localStorage.setItem('accord_public_key_hash', result.publicKeyHash);
 
               setAppState(prev => ({
                 ...prev,
