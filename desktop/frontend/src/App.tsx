@@ -253,6 +253,10 @@ function App() {
     deleteChannelConfirm, setDeleteChannelConfirm,
     showInviteModal, setShowInviteModal,
     generatedInvite, setGeneratedInvite,
+    inviteExpiry, setInviteExpiry,
+    inviteMaxUses, setInviteMaxUses,
+    inviteCopied, setInviteCopied,
+    inviteGenerating, setInviteGenerating,
     showDisplayNamePrompt, setShowDisplayNamePrompt,
     displayNameInput, setDisplayNameInput,
     displayNameSaving, setDisplayNameSaving,
@@ -1896,26 +1900,40 @@ function App() {
     }
   };
 
-  // Handle generating an invite
+  // Handle generating an invite (simple - opens modal and auto-generates)
   const handleGenerateInvite = async () => {
     if (!selectedNodeId || !appState.token) return;
-    
+    setShowInviteModal(true);
+    setInviteCopied(false);
+    await handleGenerateInviteWithOptions(inviteExpiry, inviteMaxUses);
+  };
+
+  // Handle generating an invite with specific options
+  const handleGenerateInviteWithOptions = async (expiry?: string, maxUsesVal?: string) => {
+    if (!selectedNodeId || !appState.token) return;
+    setInviteGenerating(true);
+    setInviteCopied(false);
     try {
-      const response = await api.createInviteWithOptions(selectedNodeId, appState.token);
-      // Construct full invite link from the current relay URL
+      const maxUsesNum = maxUsesVal ? parseInt(maxUsesVal, 10) : undefined;
+      // Convert expiry string to hours: "0.5" = 30min, "never" = undefined
+      let expiresHoursNum: number | undefined;
+      if (expiry && expiry !== 'never') {
+        expiresHoursNum = parseFloat(expiry);
+      }
+      const response = await api.createInviteWithOptions(selectedNodeId, appState.token, maxUsesNum, expiresHoursNum);
       const baseUrl = api.getBaseUrl();
       try {
         const url = new URL(baseUrl);
-        const host = url.host; // includes port
+        const host = url.host;
         setGeneratedInvite(generateInviteLink(host, response.invite_code));
       } catch {
-        // Fallback to just the code if URL parsing fails
         setGeneratedInvite(response.invite_code);
       }
-      setShowInviteModal(true);
     } catch (error) {
       console.error('Failed to generate invite:', error);
       handleApiError(error);
+    } finally {
+      setInviteGenerating(false);
     }
   };
 
@@ -3376,6 +3394,11 @@ function App() {
     newChannelCategoryId, setNewChannelCategoryId,
     showInviteModal, setShowInviteModal,
     generatedInvite, setGeneratedInvite,
+    inviteExpiry, setInviteExpiry,
+    inviteMaxUses, setInviteMaxUses,
+    inviteCopied, setInviteCopied,
+    inviteGenerating, setInviteGenerating,
+    handleGenerateInviteWithOptions,
     error, setError,
 
     // Voice

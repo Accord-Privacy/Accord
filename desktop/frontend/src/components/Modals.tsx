@@ -249,14 +249,77 @@ export const AppModals: React.FC = () => {
 
       {/* Invite Modal */}
       {ctx.showInviteModal && (
-        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); } inviteTrap.handleKeyDown(e); }}>
-          <div className="modal-card" ref={inviteTrap.ref} role="dialog" aria-modal="true" aria-labelledby="invite-modal-title">
-            <h3 id="invite-modal-title">Invite Link Generated</h3>
-            <p>Share this link to invite others to your node. The relay address is encoded for privacy.</p>
-            <div className="modal-code-block modal-code-block-mono">{ctx.generatedInvite}</div>
+        <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); ctx.setInviteCopied(false); } inviteTrap.handleKeyDown(e); }}>
+          <div className="modal-card invite-modal-card" ref={inviteTrap.ref} role="dialog" aria-modal="true" aria-labelledby="invite-modal-title">
+            <div className="modal-header-row">
+              <h3 id="invite-modal-title">Invite People</h3>
+              <button className="modal-close-btn" onClick={() => { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); ctx.setInviteCopied(false); }} aria-label="Close">×</button>
+            </div>
+            <p className="invite-modal-subtitle">Share this link to invite others to your node.</p>
+
+            <div className="invite-link-display">
+              {ctx.inviteGenerating ? (
+                <span className="invite-link-text invite-link-loading">Generating...</span>
+              ) : (
+                <span className="invite-link-text">{ctx.generatedInvite}</span>
+              )}
+              <button
+                className={`btn btn-copy ${ctx.inviteCopied ? 'copied' : ''}`}
+                disabled={!ctx.generatedInvite || ctx.inviteGenerating}
+                onClick={() => {
+                  ctx.copyToClipboard(ctx.generatedInvite).then(() => {
+                    ctx.setInviteCopied(true);
+                    setTimeout(() => ctx.setInviteCopied(false), 2000);
+                  });
+                }}
+              >
+                {ctx.inviteCopied ? '✓ Copied!' : 'Copy'}
+              </button>
+            </div>
+
+            <div className="invite-options-row">
+              <div className="invite-option">
+                <label className="form-label">Expire After</label>
+                <select
+                  className="form-select"
+                  value={ctx.inviteExpiry}
+                  onChange={(e) => ctx.setInviteExpiry(e.target.value)}
+                >
+                  <option value="0.5">30 minutes</option>
+                  <option value="1">1 hour</option>
+                  <option value="6">6 hours</option>
+                  <option value="12">12 hours</option>
+                  <option value="24">1 day</option>
+                  <option value="168">7 days</option>
+                  <option value="never">Never</option>
+                </select>
+              </div>
+              <div className="invite-option">
+                <label className="form-label">Max Uses</label>
+                <select
+                  className="form-select"
+                  value={ctx.inviteMaxUses}
+                  onChange={(e) => ctx.setInviteMaxUses(e.target.value)}
+                >
+                  <option value="">No limit</option>
+                  <option value="1">1 use</option>
+                  <option value="5">5 uses</option>
+                  <option value="10">10 uses</option>
+                  <option value="25">25 uses</option>
+                  <option value="50">50 uses</option>
+                  <option value="100">100 uses</option>
+                </select>
+              </div>
+            </div>
+
             <div className="modal-actions">
-              <button onClick={() => { ctx.copyToClipboard(ctx.generatedInvite).then(() => { alert('Invite code copied to clipboard!'); }); }} className="btn btn-primary btn-auto-width">Copy</button>
-              <button onClick={() => { ctx.setShowInviteModal(false); ctx.setGeneratedInvite(""); }} className="btn btn-outline btn-auto-width">Close</button>
+              <button
+                onClick={() => ctx.handleGenerateInviteWithOptions(ctx.inviteExpiry, ctx.inviteMaxUses)}
+                disabled={ctx.inviteGenerating}
+                className="btn btn-primary"
+              >
+                {ctx.inviteGenerating ? 'Generating...' : 'Generate New Link'}
+              </button>
             </div>
           </div>
         </div>

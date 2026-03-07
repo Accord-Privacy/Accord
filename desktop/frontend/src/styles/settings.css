@@ -1471,3 +1471,103 @@
 .ns-role-tag-remove:hover {
   opacity: 1;
 }
+
+/* Role color palette */
+.ns-color-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ns-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  padding: 0;
+}
+.ns-color-swatch:hover {
+  transform: scale(1.15);
+}
+.ns-color-swatch.selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.ns-color-custom {
+  width: 28px;
+  height: 28px;
+  border: 2px dashed var(--text-muted);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Drag handle */
+.ns-drag-handle {
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: grab;
+  user-select: none;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  line-height: 1;
+  letter-spacing: -1px;
+}
+.ns-role-item:hover .ns-drag-handle {
+  opacity: 0.8;
+}
+
+/* Role member count */
+.ns-role-member-count {
+  font-size: var(--font-xs, 0.75rem);
+  color: var(--text-muted);
+  margin-left: auto;
+  margin-right: 8px;
+  white-space: nowrap;
+}
+
+/* Admin badge */
+.ns-badge-admin {
+  background: #e74c3c;
+  color: #fff;
+}
+
+/* Permission description */
+.ns-perm-desc {
+  font-size: var(--font-xs, 0.75rem);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.ns-perm-admin {
+  border-left: 3px solid #e74c3c;
+  padding-left: 8px;
+  border-radius: 0;
+}
+
+/* Delete confirmation dialog */
+.ns-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  border-radius: inherit;
+}
+.ns-confirm-dialog {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 360px;
+  width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Role item clickable */
+.ns-role-item {
+  cursor: pointer;
+}

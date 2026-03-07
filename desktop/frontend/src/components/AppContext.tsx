@@ -127,6 +127,15 @@ export interface AppContextType {
   setShowInviteModal: React.Dispatch<React.SetStateAction<boolean>>;
   generatedInvite: string;
   setGeneratedInvite: React.Dispatch<React.SetStateAction<string>>;
+  inviteExpiry: string;
+  setInviteExpiry: React.Dispatch<React.SetStateAction<string>>;
+  inviteMaxUses: string;
+  setInviteMaxUses: React.Dispatch<React.SetStateAction<string>>;
+  inviteCopied: boolean;
+  setInviteCopied: React.Dispatch<React.SetStateAction<boolean>>;
+  inviteGenerating: boolean;
+  setInviteGenerating: React.Dispatch<React.SetStateAction<boolean>>;
+  handleGenerateInviteWithOptions: (expiry?: string, maxUses?: string) => Promise<void>;
   error: string;
   setError: React.Dispatch<React.SetStateAction<string>>;
 

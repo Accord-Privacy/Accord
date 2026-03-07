@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { api } from './api';
+import { api, generateInviteLink } from './api';
 import { Icon } from './components/Icon';
 import { Node, AuditLogEntry, Role, CustomEmoji, BatchMemberEntry } from './types';
 
@@ -73,6 +73,8 @@ export function NodeSettings({
   const [editRoleMentionable, setEditRoleMentionable] = useState(false);
   const [editRolePermissions, setEditRolePermissions] = useState(0);
   const [savingRole, setSavingRole] = useState(false);
+  const [deleteRoleConfirm, setDeleteRoleConfirm] = useState<string | null>(null);
+  const [newRolePermissions, setNewRolePermissions] = useState(0);
 
   // Moderation state
   const [autoModWords, setAutoModWords] = useState<Array<{ word: string; action: string; created_at: number }>>([]);
@@ -137,6 +139,7 @@ export function NodeSettings({
         color: newRoleColor,
         hoist: newRoleHoist,
         mentionable: newRoleMentionable,
+        permissions: newRolePermissions,
       });
       setSuccess('Role created!');
       setShowCreateRole(false);
@@ -144,6 +147,7 @@ export function NodeSettings({
       setNewRoleColor('#99aab5');
       setNewRoleHoist(false);
       setNewRoleMentionable(false);
+      setNewRolePermissions(0);
       await loadRoles();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create role');
@@ -175,10 +179,10 @@ export function NodeSettings({
   }, [node.id, token, editingRole, editRoleName, editRoleColor, editRoleHoist, editRoleMentionable, editRolePermissions, loadRoles]);
 
   const handleDeleteRole = useCallback(async (roleId: string) => {
-    if (!confirm('Delete this role? Members will lose it.')) return;
     try {
       await api.deleteRole(node.id, roleId, token);
       setSuccess('Role deleted!');
+      setDeleteRoleConfirm(null);
       if (editingRole?.id === roleId) setEditingRole(null);
       await loadRoles();
     } catch (err) {
@@ -266,14 +270,24 @@ export function NodeSettings({
     setEditRolePermissions(role.permissions);
   }, []);
 
+  const ROLE_COLOR_PALETTE = [
+    '#e74c3c', '#e91e63', '#9b59b6', '#7c4dff',
+    '#3498db', '#00bcd4', '#2ecc71', '#4caf50',
+    '#f39c12', '#ff9800', '#e67e22', '#99aab5',
+  ];
+
   const PERMISSIONS = [
-    { bit: 1, label: 'Manage Channels' },
-    { bit: 2, label: 'Manage Members' },
-    { bit: 4, label: 'Kick Members' },
-    { bit: 8, label: 'Manage Invites' },
-    { bit: 16, label: 'Manage Node' },
-    { bit: 32, label: 'Manage Roles' },
-    { bit: 64, label: 'Manage Messages' },
+    { bit: 1 << 11, label: 'Send Messages', desc: 'Allow sending messages in text channels' },
+    { bit: 1 << 4,  label: 'Manage Channels', desc: 'Create, edit, and delete channels' },
+    { bit: 1 << 28, label: 'Manage Roles', desc: 'Create, edit, and assign roles' },
+    { bit: 1 << 1,  label: 'Kick Members', desc: 'Remove members from the node' },
+    { bit: 1 << 2,  label: 'Ban Members', desc: 'Permanently ban members' },
+    { bit: 1 << 5,  label: 'Manage Node', desc: 'Edit node name, description, and settings' },
+    { bit: 1 << 13, label: 'Manage Messages', desc: 'Delete or pin messages from other members' },
+    { bit: 1 << 0,  label: 'Create Invites', desc: 'Create invite links' },
+    { bit: 1 << 6,  label: 'Add Reactions', desc: 'React to messages' },
+    { bit: 1 << 17, label: 'Mention Everyone', desc: 'Use @everyone mentions' },
+    { bit: 1 << 3,  label: 'Administrator', desc: 'Full access — bypasses all permission checks' },
   ];
 
   const handleCreateInvite = useCallback(async () => {
@@ -464,17 +478,27 @@ export function NodeSettings({
     }
   }, [isAdmin, node.id, token, onLeaveNode, onClose]);
 
+  const getInviteLink = useCallback((code: string): string => {
+    try {
+      const url = new URL(api.getBaseUrl());
+      return generateInviteLink(url.host, code);
+    } catch {
+      return code;
+    }
+  }, []);
+
   const copyInviteCode = (inviteCode: string) => {
-    navigator.clipboard?.writeText(inviteCode).then(() => {
-      setSuccess('Invite code copied to clipboard!');
+    const link = getInviteLink(inviteCode);
+    navigator.clipboard?.writeText(link).then(() => {
+      setSuccess('Invite link copied!');
     }).catch(() => {
       const textArea = document.createElement('textarea');
-      textArea.value = inviteCode;
+      textArea.value = link;
       document.body.appendChild(textArea);
       textArea.select();
       document.execCommand('copy');
       document.body.removeChild(textArea);
-      setSuccess('Invite code copied to clipboard!');
+      setSuccess('Invite link copied!');
     });
   };
 
@@ -658,6 +682,22 @@ export function NodeSettings({
           {/* =================== ROLES =================== */}
           {activeTab === 'roles' && canManageRoles && (
             <div>
+              {/* Delete confirmation dialog */}
+              {deleteRoleConfirm && (
+                <div className="ns-confirm-overlay">
+                  <div className="ns-confirm-dialog">
+                    <h4 style={{ margin: '0 0 8px', color: 'var(--text-primary)' }}>Delete Role</h4>
+                    <p style={{ margin: '0 0 16px', color: 'var(--text-secondary)', fontSize: 'var(--font-sm)' }}>
+                      Are you sure you want to delete <strong>{roles.find(r => r.id === deleteRoleConfirm)?.name}</strong>? All members will lose this role.
+                    </p>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <button className="ns-btn ns-btn-ghost" onClick={() => setDeleteRoleConfirm(null)}>Cancel</button>
+                      <button className="ns-btn ns-btn-danger" onClick={() => handleDeleteRole(deleteRoleConfirm)}>Delete</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {editingRole ? (
                 <div>
                   <div className="settings-action-row" style={{ marginBottom: 20 }}>
@@ -670,29 +710,38 @@ export function NodeSettings({
                     <input type="text" className="ns-input" value={editRoleName} onChange={e => setEditRoleName(e.target.value)} maxLength={32} />
                   </div>
 
-                  <div className="ns-field" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div>
-                      <label className="ns-label">Color</label>
-                      <input type="color" value={editRoleColor} onChange={e => setEditRoleColor(e.target.value)} style={{ width: 48, height: 32, border: 'none', background: 'none', cursor: 'pointer' }} />
+                  <div className="ns-field">
+                    <label className="ns-label">Color</label>
+                    <div className="ns-color-palette">
+                      {ROLE_COLOR_PALETTE.map(c => (
+                        <button key={c} className={`ns-color-swatch ${editRoleColor === c ? 'selected' : ''}`}
+                          style={{ background: c }} onClick={() => setEditRoleColor(c)} title={c} />
+                      ))}
+                      <input type="color" value={editRoleColor} onChange={e => setEditRoleColor(e.target.value)}
+                        className="ns-color-custom" title="Custom color" />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <label className="ns-perm-item">
-                        <input type="checkbox" checked={editRoleHoist} onChange={e => setEditRoleHoist(e.target.checked)} /> Display separately in member list
-                      </label>
-                      <label className="ns-perm-item">
-                        <input type="checkbox" checked={editRoleMentionable} onChange={e => setEditRoleMentionable(e.target.checked)} /> Allow anyone to @mention this role
-                      </label>
-                    </div>
+                  </div>
+
+                  <div className="ns-field" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <label className="ns-perm-item">
+                      <input type="checkbox" checked={editRoleHoist} onChange={e => setEditRoleHoist(e.target.checked)} /> Display separately in member list
+                    </label>
+                    <label className="ns-perm-item">
+                      <input type="checkbox" checked={editRoleMentionable} onChange={e => setEditRoleMentionable(e.target.checked)} /> Allow anyone to @mention this role
+                    </label>
                   </div>
 
                   <div className="ns-field">
                     <label className="ns-label">Permissions</label>
                     <div className="ns-perm-list">
                       {PERMISSIONS.map(p => (
-                        <label key={p.bit} className="ns-perm-item">
+                        <label key={p.bit} className={`ns-perm-item ${p.bit === (1 << 3) ? 'ns-perm-admin' : ''}`}>
                           <input type="checkbox" checked={(editRolePermissions & p.bit) !== 0}
                             onChange={e => setEditRolePermissions(prev => e.target.checked ? prev | p.bit : prev & ~p.bit)} />
-                          {p.label}
+                          <div>
+                            <div>{p.label}</div>
+                            <div className="ns-perm-desc">{p.desc}</div>
+                          </div>
                         </label>
                       ))}
                     </div>
@@ -702,7 +751,7 @@ export function NodeSettings({
                     <button className="ns-btn ns-btn-success" onClick={handleSaveRole} disabled={savingRole}>
                       {savingRole ? 'Saving...' : 'Save Changes'}
                     </button>
-                    <button className="ns-btn ns-btn-danger" onClick={() => handleDeleteRole(editingRole.id)}>
+                    <button className="ns-btn ns-btn-danger" onClick={() => setDeleteRoleConfirm(editingRole.id)}>
                       Delete Role
                     </button>
                   </div>
@@ -717,14 +766,19 @@ export function NodeSettings({
                     ) : (
                       <div className="ns-form-card">
                         <h4>New Role</h4>
-                        <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="ns-label">Name</label>
-                            <input type="text" className="ns-input" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} maxLength={32} />
-                          </div>
-                          <div>
-                            <label className="ns-label">Color</label>
-                            <input type="color" value={newRoleColor} onChange={e => setNewRoleColor(e.target.value)} style={{ width: 48, height: 32, border: 'none', background: 'none', cursor: 'pointer' }} />
+                        <div className="ns-field">
+                          <label className="ns-label">Name</label>
+                          <input type="text" className="ns-input" value={newRoleName} onChange={e => setNewRoleName(e.target.value)} maxLength={32} />
+                        </div>
+                        <div className="ns-field">
+                          <label className="ns-label">Color</label>
+                          <div className="ns-color-palette">
+                            {ROLE_COLOR_PALETTE.map(c => (
+                              <button key={c} className={`ns-color-swatch ${newRoleColor === c ? 'selected' : ''}`}
+                                style={{ background: c }} onClick={() => setNewRoleColor(c)} title={c} />
+                            ))}
+                            <input type="color" value={newRoleColor} onChange={e => setNewRoleColor(e.target.value)}
+                              className="ns-color-custom" title="Custom color" />
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
@@ -734,6 +788,21 @@ export function NodeSettings({
                           <label className="ns-perm-item">
                             <input type="checkbox" checked={newRoleMentionable} onChange={e => setNewRoleMentionable(e.target.checked)} /> Mentionable
                           </label>
+                        </div>
+                        <div className="ns-field">
+                          <label className="ns-label">Permissions</label>
+                          <div className="ns-perm-list">
+                            {PERMISSIONS.map(p => (
+                              <label key={p.bit} className={`ns-perm-item ${p.bit === (1 << 3) ? 'ns-perm-admin' : ''}`}>
+                                <input type="checkbox" checked={(newRolePermissions & p.bit) !== 0}
+                                  onChange={e => setNewRolePermissions(prev => e.target.checked ? prev | p.bit : prev & ~p.bit)} />
+                                <div>
+                                  <div>{p.label}</div>
+                                  <div className="ns-perm-desc">{p.desc}</div>
+                                </div>
+                              </label>
+                            ))}
+                          </div>
                         </div>
                         <div style={{ display: 'flex', gap: 8 }}>
                           <button className="ns-btn ns-btn-success" onClick={handleCreateRole} disabled={savingRole}>
@@ -751,19 +820,25 @@ export function NodeSettings({
                     <div className="ns-empty">No roles created yet</div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {roles.map((role, idx) => (
-                        <div key={role.id} className="ns-role-item">
-                          <div className="ns-role-dot" style={{ background: role.color || '#99aab5' }} />
-                          <span className="ns-role-name" style={{ color: role.color || 'var(--text-secondary)' }} onClick={() => startEditRole(role)}>
-                            {role.name}
-                          </span>
-                          {role.hoist && <span className="ns-badge">hoisted</span>}
-                          <div style={{ display: 'flex', gap: 2 }}>
-                            <button className="ns-arrow-btn" onClick={() => handleMoveRole(role.id, 'up')} disabled={idx === 0}>▲</button>
-                            <button className="ns-arrow-btn" onClick={() => handleMoveRole(role.id, 'down')} disabled={idx === roles.length - 1}>▼</button>
+                      {roles.map((role, idx) => {
+                        const memberCount = Object.values(memberRolesMap).filter(rids => rids.includes(role.id)).length;
+                        return (
+                          <div key={role.id} className="ns-role-item" onClick={() => startEditRole(role)}>
+                            <span className="ns-drag-handle" title="Drag to reorder (coming soon)">⠿</span>
+                            <div className="ns-role-dot" style={{ background: role.color || '#99aab5' }} />
+                            <span className="ns-role-name" style={{ color: role.color || 'var(--text-secondary)' }}>
+                              {role.name}
+                            </span>
+                            <span className="ns-role-member-count">{memberCount} {memberCount === 1 ? 'member' : 'members'}</span>
+                            {role.hoist && <span className="ns-badge">hoisted</span>}
+                            {(role.permissions & (1 << 3)) !== 0 && <span className="ns-badge ns-badge-admin">admin</span>}
+                            <div style={{ display: 'flex', gap: 2 }} onClick={e => e.stopPropagation()}>
+                              <button className="ns-arrow-btn" onClick={() => handleMoveRole(role.id, 'up')} disabled={idx === 0}>▲</button>
+                              <button className="ns-arrow-btn" onClick={() => handleMoveRole(role.id, 'down')} disabled={idx === roles.length - 1}>▼</button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -829,7 +904,7 @@ export function NodeSettings({
                     return (
                       <div key={invite.code} className={`ns-invite-card ${isInactive ? 'inactive' : ''}`}>
                         <div className="ns-invite-header">
-                          <code className="ns-invite-code">{invite.code}</code>
+                          <code className="ns-invite-code" title={getInviteLink(invite.code)}>{invite.code}</code>
                           <div style={{ display: 'flex', gap: 8 }}>
                             <button className="ns-btn ns-btn-primary" onClick={() => copyInviteCode(invite.code)} disabled={isInactive} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
                               Copy

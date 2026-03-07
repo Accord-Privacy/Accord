@@ -468,3 +468,140 @@
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
+
+/* ── Invite People Modal ── */
+.invite-modal-card {
+  max-width: 440px;
+}
+
+.modal-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.modal-header-row h3 {
+  margin: 0;
+}
+
+.modal-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+
+.modal-close-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.invite-modal-subtitle {
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  margin: 0 0 16px 0;
+}
+
+.invite-link-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-deepest);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 16px;
+}
+
+.invite-link-text {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--text-primary);
+  word-break: break-all;
+  user-select: all;
+}
+
+.invite-link-loading {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.btn-copy {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-sm);
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 72px;
+  transition: background-color 150ms ease, transform 100ms ease;
+}
+
+.btn-copy:hover:not(:disabled) {
+  background: var(--accent-hover, #4752c4);
+}
+
+.btn-copy:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-copy.copied {
+  background: var(--green, #3ba55d);
+}
+
+.btn-copy:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.invite-options-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.invite-option {
+  flex: 1;
+}
+
+.invite-option .form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+
+.form-select {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-deepest);
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-sm);
+  outline: none;
+  cursor: pointer;
+  appearance: auto;
+  transition: border-color 150ms ease;
+}
+
+.form-select:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.form-select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.3);
+}

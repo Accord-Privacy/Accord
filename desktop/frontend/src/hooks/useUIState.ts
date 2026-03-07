@@ -53,6 +53,10 @@ export function useUIState() {
   // Invite modal
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [generatedInvite, setGeneratedInvite] = useState<string>("");
+  const [inviteExpiry, setInviteExpiry] = useState<string>("24");
+  const [inviteMaxUses, setInviteMaxUses] = useState<string>("");
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteGenerating, setInviteGenerating] = useState(false);
 
   // Display name prompt
   const [showDisplayNamePrompt, setShowDisplayNamePrompt] = useState(false);
@@ -147,6 +151,10 @@ export function useUIState() {
     deleteChannelConfirm, setDeleteChannelConfirm,
     showInviteModal, setShowInviteModal,
     generatedInvite, setGeneratedInvite,
+    inviteExpiry, setInviteExpiry,
+    inviteMaxUses, setInviteMaxUses,
+    inviteCopied, setInviteCopied,
+    inviteGenerating, setInviteGenerating,
     showDisplayNamePrompt, setShowDisplayNamePrompt,
     displayNameInput, setDisplayNameInput,
     displayNameSaving, setDisplayNameSaving,
