@@ -750,28 +750,30 @@ async fn test_channel_join_leave_and_messaging() {
         .unwrap();
 
     // Both users should receive the channel message (including the sender)
-    let response1 = tokio::time::timeout(Duration::from_secs(5), stream1.next()).await;
-    let response2 = tokio::time::timeout(Duration::from_secs(5), stream2.next()).await;
-
-    // Check that both users got the message
-    for (user_name, response) in [("user1", response1), ("user2", response2)] {
-        assert!(
-            response.is_ok(),
-            "User {} should have received channel message",
-            user_name
-        );
-
-        if let Some(Ok(WsMessage::Text(text))) = response.unwrap() {
-            let response_data: Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(response_data["type"], "channel_message");
-            assert_eq!(response_data["from"], user1_id.to_string());
-            assert_eq!(response_data["channel_id"], channel_id.to_string());
-            assert_eq!(
-                response_data["encrypted_data"],
-                "ZW5jcnlwdGVkX2NoYW5uZWxfbWVzc2FnZV80NTY="
-            );
-        } else {
-            panic!("User {} expected channel message", user_name);
+    // Use a loop to skip interleaved events (member_joined, sender_key, etc.)
+    for (user_name, stream) in [("user1", &mut stream1), ("user2", &mut stream2)] {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("User {} timed out waiting for channel_message", user_name);
+            }
+            match tokio::time::timeout(remaining, stream.next()).await {
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    let response_data: Value = serde_json::from_str(&text).unwrap();
+                    if response_data["type"] == "channel_message" {
+                        assert_eq!(response_data["from"], user1_id.to_string());
+                        assert_eq!(response_data["channel_id"], channel_id.to_string());
+                        assert_eq!(
+                            response_data["encrypted_data"],
+                            "ZW5jcnlwdGVkX2NoYW5uZWxfbWVzc2FnZV80NTY="
+                        );
+                        break;
+                    }
+                    // Skip non-channel_message events (member_joined, sender_key, etc.)
+                }
+                _ => panic!("User {} expected channel message", user_name),
+            }
         }
     }
 

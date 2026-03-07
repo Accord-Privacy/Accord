@@ -3245,6 +3245,7 @@ impl Database {
         row.map(|r| parse_user_profile(&r)).transpose()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_user_profile(
         &self,
         user_id: Uuid,

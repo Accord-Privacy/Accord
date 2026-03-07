@@ -4287,12 +4287,20 @@ async fn handle_ws_message(
             // Notify existing channel members that a new member joined
             // (so they can send their sender keys to the new member)
             // Also broadcast member_joined so clients update their member lists
-            let display_name = state.db.get_user_profile(sender_user_id).await
-                .ok().flatten()
+            let display_name = state
+                .db
+                .get_user_profile(sender_user_id)
+                .await
+                .ok()
+                .flatten()
                 .map(|p| p.display_name)
                 .unwrap_or_default();
-            let pk_hash = state.db.get_user_public_key_hash(sender_user_id).await
-                .ok().flatten()
+            let pk_hash = state
+                .db
+                .get_user_public_key_hash(sender_user_id)
+                .await
+                .ok()
+                .flatten()
                 .unwrap_or_default();
             if let Ok(channels) = state.db.get_node_channels(node_id).await {
                 for channel in &channels {

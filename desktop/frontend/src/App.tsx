@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
-import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry } from "./types";
+import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry, PresenceStatus } from "./types";
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -1116,7 +1116,8 @@ function App() {
           setMembers(prev => {
             // Don't add if already exists
             if (prev.some(m => m.user_id === data.user_id)) return prev;
-            const newMember: NodeMember = {
+            const newMember: NodeMember & { user: User } = {
+              node_id: data.node_id,
               user_id: data.user_id,
               role: 'member',
               joined_at: Date.now() / 1000,
@@ -1134,7 +1135,7 @@ function App() {
           // Also update presence to online
           setPresenceMap(prev => {
             const newMap = new Map(prev);
-            newMap.set(data.user_id, 'online');
+            newMap.set(data.user_id, PresenceStatus.Online);
             return newMap;
           });
         }
@@ -1697,7 +1698,7 @@ function App() {
         parent_id: ch.category_id,
         position: ch.position,
         unread_count: ch.unread_count,
-        channel_type: ch.channel_type,
+        channel_type: ch.channel_type as Channel['channel_type'],
       }));
       setChannels(uiChannels);
       
