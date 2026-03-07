@@ -191,11 +191,20 @@
   line-height: 22px;
 }
 
+.message-role-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 .message-author {
   font-weight: 600;
   color: var(--text-primary);
   font-size: var(--font-lg);
-  cursor: pointer;
   cursor: pointer;
   white-space: nowrap;
 }

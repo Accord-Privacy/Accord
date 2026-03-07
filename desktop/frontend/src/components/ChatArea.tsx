@@ -530,6 +530,7 @@ export const ChatArea: React.FC = () => {
                           {(msg as any)._botResponse && (
                             <span className="message-bot-badge">BOT</span>
                           )}
+                          {(() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); const rc = am ? ctx.getMemberRoleColor(am.user_id) : undefined; return rc ? <span className="message-role-dot" style={{ background: rc }} /> : null; })()}
                           <span className="message-author" style={{ color: (() => { const am = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author); return am ? ctx.getMemberRoleColor(am.user_id) : undefined; })() || undefined }}
                           onClick={(e) => {
                             const authorMember = ctx.members.find(m => ctx.displayName(m.user) === msg.author || ctx.fingerprint(m.public_key_hash) === msg.author);
