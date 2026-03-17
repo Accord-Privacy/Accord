@@ -278,7 +278,7 @@ const KEY_ROTATION_INVOCATION_THRESHOLD: u64 = 1000;
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs()
 }
 
@@ -831,7 +831,15 @@ pub async fn invoke_command_handler(
     let mut new_node_pubkey: Option<[u8; 32]> = None;
 
     if use_encryption {
-        let ci = crypto_info.as_ref().unwrap();
+        let ci = crypto_info.as_ref().ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Crypto info unavailable despite encryption being enabled".into(),
+                    code: 500,
+                }),
+            )
+        })?;
         if needs_key_rotation(ci) {
             let new_secret = X25519StaticSecret::random_from_rng(rand::thread_rng());
             let new_pub = X25519PublicKey::from(&new_secret);
@@ -853,12 +861,27 @@ pub async fn invoke_command_handler(
     let bot_id_clone = bot_id.clone();
 
     if use_encryption {
-        let ci = crypto_info.as_ref().unwrap();
-        let shared_secret_bytes = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            ci.shared_secret.as_ref().unwrap(),
-        )
-        .unwrap_or_default();
+        let ci = crypto_info.as_ref().ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Crypto info unavailable despite encryption being enabled".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+        let shared_secret = ci.shared_secret.as_ref().ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Shared secret missing despite encryption being enabled".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+        let shared_secret_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, shared_secret)
+                .unwrap_or_default();
         let mut key = [0u8; 32];
         key.copy_from_slice(&shared_secret_bytes[..32.min(shared_secret_bytes.len())]);
 
@@ -962,9 +985,7 @@ pub async fn invoke_command_handler(
                 // Keep old shared secret until bot confirms rotation
                 crypto_info
                     .as_ref()
-                    .unwrap()
-                    .shared_secret
-                    .as_deref()
+                    .and_then(|ci| ci.shared_secret.as_deref())
                     .unwrap_or(""),
             )
             .await;
