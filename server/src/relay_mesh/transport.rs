@@ -211,8 +211,14 @@ impl MeshTransport {
 
         let tls = if config.tls_enabled() {
             let tls_config = build_tls_config(
-                config.mesh_tls_cert.as_ref().unwrap(),
-                config.mesh_tls_key.as_ref().unwrap(),
+                config
+                    .mesh_tls_cert
+                    .as_ref()
+                    .expect("tls_enabled() guarantees cert/key are present"),
+                config
+                    .mesh_tls_key
+                    .as_ref()
+                    .expect("tls_enabled() guarantees cert/key are present"),
             )?;
             info!("Mesh transport: TLS enabled");
             Some(tls_config)
@@ -549,7 +555,7 @@ impl MeshTransport {
     )> {
         if let Some(tls_config) = tls {
             let server_name = rustls::pki_types::ServerName::try_from("mesh.local")
-                .unwrap()
+                .expect("static string 'mesh.local' is always valid")
                 .to_owned();
             let tls_stream = tokio::time::timeout(
                 HANDSHAKE_TIMEOUT,

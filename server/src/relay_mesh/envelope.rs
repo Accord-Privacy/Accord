@@ -50,7 +50,11 @@ impl MeshEnvelope {
         hasher.update(b"|");
         hasher.update(to_relay_id.as_bytes());
         hasher.update(b"|");
-        hasher.update(serde_json::to_string(&payload_type).unwrap().as_bytes());
+        hasher.update(
+            serde_json::to_string(&payload_type)
+                .expect("enum variant serialization cannot fail")
+                .as_bytes(),
+        );
         hasher.update(b"|");
         hasher.update(encrypted_payload);
         hasher.update(b"|");

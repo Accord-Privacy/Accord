@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ProfileCard } from '../ProfileCard';
 import type { UserProfile, Role } from '../types';
 
@@ -96,7 +96,9 @@ describe('ProfileCard', () => {
       <ProfileCard {...baseProps} userId="user-1" currentUserId="user-2"
         profile={mockProfile({ display_name: 'Tab User' })} nodeId="node-1" />
     );
-    fireEvent.click(screen.getByText('Mutual Nodes'));
+    act(() => {
+      fireEvent.click(screen.getByText('Mutual Nodes'));
+    });
     expect(screen.getByText('Current Node')).toBeInTheDocument();
   });
 
