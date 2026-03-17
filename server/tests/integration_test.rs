@@ -583,20 +583,28 @@ async fn test_message_routing_between_two_clients() {
         .await
         .unwrap();
 
-    // User2 should receive the message
-    let response = tokio::time::timeout(Duration::from_secs(5), stream2.next()).await;
-    assert!(response.is_ok());
-
-    if let Some(Ok(WsMessage::Text(text))) = response.unwrap() {
-        let response_data: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(response_data["type"], "channel_message");
-        assert_eq!(response_data["from"], user1_id.to_string());
-        assert_eq!(
-            response_data["encrypted_data"],
-            "ZW5jcnlwdGVkX3Rlc3RfbWVzc2FnZV8xMjM="
-        );
-    } else {
-        panic!("Expected channel message");
+    // User2 should receive the message (drain interleaved events like node_joined)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            panic!("Timed out waiting for channel_message on stream2");
+        }
+        match tokio::time::timeout(remaining, stream2.next()).await {
+            Ok(Some(Ok(WsMessage::Text(text)))) => {
+                let response_data: Value = serde_json::from_str(&text).unwrap();
+                if response_data["type"] == "channel_message" {
+                    assert_eq!(response_data["from"], user1_id.to_string());
+                    assert_eq!(
+                        response_data["encrypted_data"],
+                        "ZW5jcnlwdGVkX3Rlc3RfbWVzc2FnZV8xMjM="
+                    );
+                    break;
+                }
+                // Skip non-channel_message events (member_joined, node_joined, etc.)
+            }
+            _ => panic!("Expected channel message"),
+        }
     }
 }
 
