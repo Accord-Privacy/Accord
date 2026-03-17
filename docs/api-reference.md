@@ -26,12 +26,17 @@
 - [Roles & Permissions](#roles--permissions)
 - [Channel Permission Overwrites](#channel-permission-overwrites)
 - [Voice](#voice)
+- [Custom Emojis](#custom-emojis)
+- [Webhooks](#webhooks)
+- [Sender Keys (Group E2EE)](#sender-keys-group-e2ee)
+- [Batch API](#batch-api)
 - [Friends](#friends)
 - [Direct Messages](#direct-messages)
 - [User Blocking](#user-blocking)
 - [Key Exchange (E2EE)](#key-exchange-e2ee)
 - [Push Notifications](#push-notifications)
-- [Bot API](#bot-api)
+- [Bot API v2](#bot-api-v2)
+- [Federation](#federation)
 - [Admin](#admin)
 - [Miscellaneous](#miscellaneous)
 - [WebSocket API](#websocket-api)
@@ -533,6 +538,7 @@ curl -X POST "http://localhost:8080/nodes/{node_id}/import-discord-template?toke
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | No | Channel name (default: "general") |
+| `channel_type` | string | No | `"text"` (default), `"voice"`, or `"category"` |
 
 **Response (200):**
 ```json
@@ -540,14 +546,15 @@ curl -X POST "http://localhost:8080/nodes/{node_id}/import-discord-template?toke
   "id": "uuid",
   "name": "general",
   "node_id": "uuid",
-  "created_at": 1700000000
+  "created_at": 1700000000,
+  "channel_type": "text"
 }
 ```
 
 ```bash
 curl -X POST "http://localhost:8080/nodes/{node_id}/channels?token=AUTH_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "off-topic"}'
+  -d '{"name": "off-topic", "channel_type": "text"}'
 ```
 
 ---
@@ -564,7 +571,8 @@ curl -X POST "http://localhost:8080/nodes/{node_id}/channels?token=AUTH_TOKEN" \
     "name": "general",
     "node_id": "uuid",
     "created_at": 1700000000,
-    "unread_count": 3
+    "unread_count": 3,
+    "channel_type": "text"
   }
 ]
 ```
@@ -609,6 +617,37 @@ curl -X PATCH "http://localhost:8080/channels/{channel_id}?token=AUTH_TOKEN" \
 
 ```bash
 curl -X DELETE "http://localhost:8080/channels/{channel_id}?token=AUTH_TOKEN"
+```
+
+---
+
+### `PUT /nodes/:id/channels/reorder` — Reorder channels
+
+**Auth required:** Yes (token, ManageChannels permission)
+
+**Request body:**
+```json
+{
+  "channels": [
+    { "id": "channel-uuid-1", "position": 0, "category_id": "cat-uuid" },
+    { "id": "channel-uuid-2", "position": 1, "category_id": null }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channels` | array | Yes | Array of channel reorder entries |
+| `channels[].id` | uuid | Yes | Channel ID |
+| `channels[].position` | i32 | Yes | New sort position |
+| `channels[].category_id` | uuid | No | New parent category (null to unset) |
+
+**Response:** `204 No Content`
+
+```bash
+curl -X PUT "http://localhost:8080/nodes/{node_id}/channels/reorder?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"channels": [{"id": "uuid", "position": 0, "category_id": null}]}'
 ```
 
 ---
@@ -1109,6 +1148,32 @@ curl -X POST "http://localhost:8080/invites/abc123/join?token=AUTH_TOKEN"
 
 ---
 
+### `GET /invites/:code/preview` — Preview invite (no auth)
+
+**Auth required:** No
+
+Returns basic Node info for an invite code without joining. Used by clients to show a preview before the user decides to join.
+
+**Response (200):**
+```json
+{
+  "node_name": "My Server",
+  "node_id": "uuid",
+  "member_count": 42,
+  "server_build_hash": "abc123..."
+}
+```
+
+**Error responses:**
+- `404` — Invalid invite code
+- `410` — Invite expired or max uses reached
+
+```bash
+curl "http://localhost:8080/invites/abc123/preview"
+```
+
+---
+
 ## Moderation
 
 ### `POST /nodes/:id/bans` — Ban a user
@@ -1537,7 +1602,419 @@ Voice is handled entirely over WebSocket. See the [WebSocket API](#websocket-api
 - `VoiceSpeakingState`
 - `VoiceKeyExchange` (SRTP key exchange, opaque to server)
 - `SrtpVoicePacket` (SRTP encrypted audio, opaque to server)
-- `P2PSignal` (WebRTC ICE/SDP signaling, opaque to server)
+- `SetVoiceMode` / `GetVoiceMode` (switch between relay and P2P mode)
+- `VoiceOffer` / `VoiceAnswer` / `VoiceIceCandidate` (WebRTC signaling for P2P mode)
+- `P2PSignal` (legacy generic WebRTC signaling, opaque to server)
+
+---
+
+## Custom Emojis
+
+### `GET /nodes/:id/emojis` — List custom emojis
+
+**Auth required:** Yes (token)
+
+**Response (200):**
+```json
+{
+  "emojis": [
+    {
+      "id": "uuid",
+      "node_id": "uuid",
+      "name": "pepe_dance",
+      "uploaded_by": "uuid",
+      "content_hash": "sha256hex",
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+```bash
+curl "http://localhost:8080/nodes/{node_id}/emojis?token=AUTH_TOKEN"
+```
+
+---
+
+### `POST /nodes/:id/emojis` — Upload custom emoji
+
+**Auth required:** Yes (token, ManageEmojis permission)  
+**Content-Type:** `multipart/form-data`
+
+**Form fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` or `image` | file | Image file (PNG, GIF, WebP — no JPEG). Max 256KB. |
+| `name` | string | Emoji name (2-32 chars, alphanumeric + underscores) |
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "node_id": "uuid",
+  "name": "pepe_dance",
+  "uploaded_by": "uuid",
+  "content_hash": "sha256hex",
+  "created_at": "2024-01-01T00:00:00Z"
+}
+```
+
+```bash
+curl -X POST "http://localhost:8080/nodes/{node_id}/emojis?token=AUTH_TOKEN" \
+  -F "name=pepe_dance" \
+  -F "image=@emoji.png"
+```
+
+---
+
+### `DELETE /nodes/:id/emojis/:emoji_id` — Delete custom emoji
+
+**Auth required:** Yes (token, uploader or ManageEmojis permission)
+
+**Response (200):**
+```json
+{ "status": "deleted", "emoji_id": "uuid" }
+```
+
+```bash
+curl -X DELETE "http://localhost:8080/nodes/{node_id}/emojis/{emoji_id}?token=AUTH_TOKEN"
+```
+
+---
+
+### `GET /api/emojis/:content_hash` — Get emoji image
+
+**Auth required:** No
+
+Serves the emoji image by its content hash. Returns raw image bytes with appropriate `Content-Type` header (image/png, image/gif, or image/webp). Supports `ETag` caching.
+
+```bash
+curl -o emoji.png "http://localhost:8080/api/emojis/{content_hash}"
+```
+
+---
+
+## Webhooks
+
+Outbound webhooks allow node admins to receive HTTP POST notifications when events occur.
+
+**Supported events:** `message_create`, `message_delete`, `member_join`, `member_leave`, `reaction_add`
+
+**Delivery:** Webhooks are delivered with HMAC-SHA256 signatures for verification:
+- `X-Accord-Signature` — HMAC-SHA256(secret, body) hex digest
+- `X-Accord-Event` — Event type string
+
+**Retry policy:** 3 attempts with exponential backoff (2s, 4s). 10s timeout per attempt.
+
+### `GET /nodes/:id/webhooks` — List webhooks
+
+**Auth required:** Yes (token, ManageNode permission)
+
+**Response (200):**
+```json
+{
+  "webhooks": [
+    {
+      "id": "uuid",
+      "node_id": "uuid",
+      "channel_id": null,
+      "url": "https://example.com/webhook",
+      "events": "message_create,member_join",
+      "created_by": "uuid",
+      "created_at": 1700000000,
+      "active": true
+    }
+  ]
+}
+```
+
+```bash
+curl "http://localhost:8080/nodes/{node_id}/webhooks?token=AUTH_TOKEN"
+```
+
+---
+
+### `POST /nodes/:id/webhooks` — Create webhook
+
+**Auth required:** Yes (token, ManageNode permission)
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | Webhook delivery URL |
+| `events` | string[] | Yes | Event types to subscribe to |
+| `channel_id` | uuid | No | Filter to specific channel (null = all channels) |
+| `secret` | string | No | HMAC secret (auto-generated if omitted) |
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "node_id": "uuid",
+  "channel_id": null,
+  "url": "https://example.com/webhook",
+  "secret": "hex-encoded-secret",
+  "events": "message_create,member_join",
+  "created_by": "uuid",
+  "created_at": 1700000000,
+  "active": true
+}
+```
+
+```bash
+curl -X POST "http://localhost:8080/nodes/{node_id}/webhooks?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/hook", "events": ["message_create"]}'
+```
+
+---
+
+### `PATCH /webhooks/:id` — Update webhook
+
+**Auth required:** Yes (token, ManageNode permission on webhook's node)
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | No | New delivery URL |
+| `events` | string[] | No | New event subscriptions |
+| `channel_id` | uuid | No | New channel filter |
+| `secret` | string | No | New HMAC secret |
+| `active` | bool | No | Enable/disable webhook |
+
+**Response (200):**
+```json
+{ "status": "updated", "id": "uuid" }
+```
+
+```bash
+curl -X PATCH "http://localhost:8080/webhooks/{webhook_id}?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"active": false}'
+```
+
+---
+
+### `DELETE /webhooks/:id` — Delete webhook
+
+**Auth required:** Yes (token, ManageNode permission on webhook's node)
+
+**Response (200):**
+```json
+{ "status": "deleted", "id": "uuid" }
+```
+
+```bash
+curl -X DELETE "http://localhost:8080/webhooks/{webhook_id}?token=AUTH_TOKEN"
+```
+
+---
+
+### `POST /webhooks/:id/test` — Send test webhook
+
+**Auth required:** Yes (token, ManageNode permission on webhook's node)
+
+Sends a test payload to the webhook URL to verify connectivity.
+
+**Response (200):**
+```json
+{ "status": "sent", "response_status": 200 }
+```
+
+Or on failure:
+```json
+{ "status": "failed", "error": "Connection refused" }
+```
+
+```bash
+curl -X POST "http://localhost:8080/webhooks/{webhook_id}/test?token=AUTH_TOKEN"
+```
+
+---
+
+## Sender Keys (Group E2EE)
+
+Sender Keys enable efficient group encryption for channels. Each sender distributes a Sender Key to all channel members via Double Ratchet-encrypted messages. The server stores and relays these opaque blobs without being able to read them.
+
+### `POST /channels/:id/sender-keys` — Store sender key distribution
+
+**Auth required:** Yes (token, must be node member)
+
+Stores an encrypted Sender Key distribution for a specific recipient. The server also sends a real-time WebSocket notification to the recipient.
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `to_user_id` | uuid | Yes | Recipient user ID (must be in same node) |
+| `payload` | string | Yes | Base64-encoded DR-encrypted Sender Key distribution message |
+
+**Response (200):**
+```json
+{ "id": "uuid", "status": "stored" }
+```
+
+```bash
+curl -X POST "http://localhost:8080/channels/{channel_id}/sender-keys?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"to_user_id": "uuid", "payload": "base64..."}'
+```
+
+---
+
+### `GET /sender-keys/pending` — Get pending sender key distributions
+
+**Auth required:** Yes (token)
+
+Returns all pending Sender Key distributions for the authenticated user.
+
+**Response (200):**
+```json
+{
+  "distributions": [
+    {
+      "id": "uuid",
+      "channel_id": "uuid",
+      "from_user_id": "uuid",
+      "to_user_id": "uuid",
+      "encrypted_payload": "base64...",
+      "created_at": 1700000000
+    }
+  ]
+}
+```
+
+```bash
+curl "http://localhost:8080/sender-keys/pending?token=AUTH_TOKEN"
+```
+
+---
+
+### `POST /sender-keys/ack` — Acknowledge sender key distributions
+
+**Auth required:** Yes (token)
+
+Marks sender key distributions as received so they won't be returned by `/sender-keys/pending` again.
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ids` | uuid[] | Yes | Distribution IDs to acknowledge |
+
+**Response (200):**
+```json
+{ "acknowledged": 3 }
+```
+
+```bash
+curl -X POST "http://localhost:8080/sender-keys/ack?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ids": ["uuid1", "uuid2", "uuid3"]}'
+```
+
+---
+
+## Batch API
+
+Batch endpoints return aggregated data in single responses, eliminating N+1 query patterns. Designed for initial page loads.
+
+### `GET /api/nodes/:node_id/members/batch` — Batch members
+
+**Auth required:** Yes (token, must be node member)
+
+Returns all members with their roles, profiles, and online status in a single response.
+
+**Response (200):**
+```json
+{
+  "members": [
+    {
+      "user_id": "uuid",
+      "display_name": "Alice",
+      "avatar_url": null,
+      "roles": [
+        { "id": "uuid", "name": "Moderator", "color": 3447003, "position": 1, "hoist": true }
+      ],
+      "online": true,
+      "status": "online",
+      "custom_status": "Working",
+      "joined_at": 1700000000,
+      "node_role": "admin"
+    }
+  ],
+  "roles": [...]
+}
+```
+
+```bash
+curl "http://localhost:8080/api/nodes/{node_id}/members/batch?token=AUTH_TOKEN"
+```
+
+---
+
+### `GET /api/nodes/:node_id/channels/batch` — Batch channels
+
+**Auth required:** Yes (token, must be node member)
+
+Returns all channels with their permission overrides, unread counts, and category info.
+
+**Response (200):**
+```json
+{
+  "channels": [
+    {
+      "id": "uuid",
+      "name": "general",
+      "node_id": "uuid",
+      "category_id": "uuid",
+      "category_name": "Text Channels",
+      "position": 0,
+      "permission_overrides": [
+        { "role_id": "uuid", "allow": 2048, "deny": 0 }
+      ],
+      "unread_count": 3,
+      "channel_type": "text"
+    }
+  ]
+}
+```
+
+```bash
+curl "http://localhost:8080/api/nodes/{node_id}/channels/batch?token=AUTH_TOKEN"
+```
+
+---
+
+### `GET /api/nodes/:node_id/overview` — Node overview
+
+**Auth required:** Yes (token, must be node member)
+
+Returns node info + channels + members + roles in a single call. Designed for initial node load.
+
+**Response (200):**
+```json
+{
+  "node": { "id": "uuid", "name": "My Server", "owner_id": "uuid", ... },
+  "channels": [
+    {
+      "id": "uuid", "name": "general", "node_id": "uuid",
+      "category_id": null, "category_name": null,
+      "position": 0, "unread_count": 3, "channel_type": "text"
+    }
+  ],
+  "members": [
+    {
+      "user_id": "uuid", "display_name": "Alice", "avatar_url": null,
+      "roles": [{ "id": "uuid", "name": "Admin", "color": 0, "position": 1 }],
+      "online": true, "status": "online", "joined_at": 1700000000, "node_role": "admin"
+    }
+  ],
+  "roles": [...]
+}
+```
+
+```bash
+curl "http://localhost:8080/api/nodes/{node_id}/overview?token=AUTH_TOKEN"
+```
 
 ---
 
@@ -1920,133 +2397,326 @@ curl -X PUT "http://localhost:8080/push/preferences?token=AUTH_TOKEN" \
 
 ---
 
-## Bot API
+## Bot API v2
 
-### `POST /bots` — Register a bot
+Bot API v2 uses an **airgapped command architecture**. Bots are stateless command processors that never see messages, member lists, or encrypted data. They register command manifests and respond to invocations via webhooks. All bot ↔ Node communication supports optional E2EE via X25519 key exchange + AES-256-GCM.
 
-**Auth required:** Yes (token)
+### Concepts
+
+- **Manifest:** A JSON declaration of the bot's identity and available commands
+- **Install:** An admin installs a bot on a Node by providing its manifest and webhook URL
+- **Invoke:** Any member can invoke a bot command; the server forwards it to the bot's webhook
+- **Respond:** The bot posts a response back via its bot token; the server broadcasts to the channel
+- **E2EE (optional):** If the bot provides an X25519 public key, invocations are encrypted. Key rotation happens automatically every 24h or 1000 invocations.
+
+### `GET /api/nodes/:node_id/bots` — List installed bots
+
+**Auth required:** Yes (token, must be node member)
+
+**Response (200):**
+```json
+[
+  {
+    "bot_id": "weather-bot",
+    "name": "Weather",
+    "icon": "🌤️",
+    "description": "Get weather forecasts",
+    "commands": [
+      {
+        "name": "forecast",
+        "description": "Get weather forecast",
+        "params": [
+          { "name": "location", "type": "string", "required": true, "description": "City name" }
+        ]
+      }
+    ],
+    "installed_at": 1700000000,
+    "invocation_count": 42
+  }
+]
+```
+
+```bash
+curl "http://localhost:8080/api/nodes/{node_id}/bots?token=AUTH_TOKEN"
+```
+
+---
+
+### `POST /api/nodes/:node_id/bots` — Install bot on Node
+
+**Auth required:** Yes (token, Node admin only)
 
 **Request body:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Bot name |
-| `description` | string | No | Bot description |
-| `avatar_url` | string | No | Avatar URL |
-| `scopes` | string[] | Yes | Permission scopes (see below) |
-| `event_subscriptions` | string[] | No | Event types to subscribe to |
-| `webhook_url` | string | No | Webhook delivery URL |
+| `manifest` | object | Yes | Bot manifest (see below) |
+| `manifest.bot_id` | string | Yes | Unique bot identifier |
+| `manifest.name` | string | Yes | Display name |
+| `manifest.icon` | string | No | Emoji or icon URL |
+| `manifest.description` | string | No | Bot description |
+| `manifest.commands` | array | Yes | Array of command definitions |
+| `webhook_url` | string | Yes | URL to receive command invocations |
+| `ed25519_pubkey` | string | No | Bot's Ed25519 public key (base64) for signature verification |
+| `x25519_pubkey` | string | No | Bot's X25519 public key (base64) for E2EE key exchange |
+| `allowed_channels` | string[] | No | Channel IDs the bot can respond in (empty = all) |
 
-**Bot scopes:** `read_messages`, `send_messages`, `read_channels`, `manage_channels`, `read_members`, `manage_reactions`, `read_reactions`, `manage_files`
+**Command definition:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Command name |
+| `description` | string | Yes | Command description |
+| `params` | array | No | Array of parameter definitions |
+| `params[].name` | string | Yes | Parameter name |
+| `params[].type` | string | Yes | Parameter type (e.g. `"string"`, `"number"`) |
+| `params[].required` | bool | No | Whether the parameter is required |
+| `params[].default` | any | No | Default value |
+| `params[].description` | string | No | Parameter description |
 
 **Response (200):**
 ```json
 {
-  "bot_id": "uuid",
-  "api_token": "bot-token-string",
-  "webhook_secret": "secret",
-  "message": "Bot registered successfully",
-  "privacy_warning": "Bots break E2E encryption in channels they participate in."
+  "bot_id": "weather-bot",
+  "bot_token": "accord_botv2_...",
+  "node_x25519_pubkey": "base64...",
+  "message": "Bot installed successfully. Store the bot_token securely."
 }
 ```
 
+> **Important:** The `bot_token` is shown only once. Store it securely — it's used by the bot to authenticate responses.
+
 ```bash
-curl -X POST "http://localhost:8080/bots?token=AUTH_TOKEN" \
+curl -X POST "http://localhost:8080/api/nodes/{node_id}/bots?token=AUTH_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "MyBot", "scopes": ["read_messages", "send_messages"]}'
+  -d '{
+    "manifest": {
+      "bot_id": "weather-bot",
+      "name": "Weather",
+      "commands": [{"name": "forecast", "description": "Get forecast", "params": [{"name": "location", "type": "string", "required": true}]}]
+    },
+    "webhook_url": "https://my-bot.example.com/webhook"
+  }'
 ```
 
 ---
 
-### `GET /bots/:id` — Get bot info
+### `DELETE /api/nodes/:node_id/bots/:bot_id` — Uninstall bot
 
-**Auth required:** Yes (token, must be bot owner)
+**Auth required:** Yes (token, Node admin only)
+
+Removes the bot and securely zeroizes all associated cryptographic material.
+
+**Response (200):**
+```json
+{ "status": "uninstalled", "bot_id": "weather-bot" }
+```
 
 ```bash
-curl "http://localhost:8080/bots/{bot_id}?token=AUTH_TOKEN"
+curl -X DELETE "http://localhost:8080/api/nodes/{node_id}/bots/weather-bot?token=AUTH_TOKEN"
 ```
 
 ---
 
-### `PATCH /bots/:id` — Update bot
+### `GET /api/nodes/:node_id/bots/:bot_id/commands` — Get bot commands
 
-**Auth required:** Yes (token, must be bot owner)
+**Auth required:** Yes (token, must be node member)
 
-**Request body:** Same fields as register (all optional).
+**Response (200):**
+```json
+[
+  {
+    "name": "forecast",
+    "description": "Get weather forecast",
+    "params": [
+      { "name": "location", "type": "string", "required": true }
+    ]
+  }
+]
+```
 
 ```bash
-curl -X PATCH "http://localhost:8080/bots/{bot_id}?token=AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "RenamedBot"}'
+curl "http://localhost:8080/api/nodes/{node_id}/bots/weather-bot/commands?token=AUTH_TOKEN"
 ```
 
 ---
 
-### `DELETE /bots/:id` — Delete bot
+### `POST /api/nodes/:node_id/bots/:bot_id/invoke` — Invoke bot command
 
-**Auth required:** Yes (token, must be bot owner)
+**Auth required:** Yes (token, must be node member)
 
-```bash
-curl -X DELETE "http://localhost:8080/bots/{bot_id}?token=AUTH_TOKEN"
-```
-
----
-
-### `POST /bots/:id/regenerate-token` — Regenerate bot API token
-
-**Auth required:** Yes (token, must be bot owner)
-
-```bash
-curl -X POST "http://localhost:8080/bots/{bot_id}/regenerate-token?token=AUTH_TOKEN"
-```
-
----
-
-### `POST /bots/invite` — Invite bot to channel
-
-**Auth required:** Yes (token, channel admin)
+Sends a command invocation to the bot's webhook. The server generates an `invocation_id` and delivers the command asynchronously. If E2EE is configured, the payload is encrypted with AES-256-GCM.
 
 **Request body:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `bot_id` | uuid | Yes | Bot ID |
-| `channel_id` | uuid | Yes | Channel ID |
+| `command` | string | Yes | Command name to invoke |
+| `params` | object | No | Command parameters (key-value pairs) |
+| `channel_id` | string | Yes | Channel context for the response |
+
+**Response (200):**
+```json
+{ "invocation_id": "uuid", "status": "sent" }
+```
+
+**Webhook payload sent to bot (plaintext mode):**
+```json
+{
+  "type": "command_invocation",
+  "command": "forecast",
+  "invoker_display_name": "Alice",
+  "params": { "location": "Minneapolis" },
+  "invocation_id": "uuid",
+  "channel_id": "uuid"
+}
+```
 
 ```bash
-curl -X POST "http://localhost:8080/bots/invite?token=AUTH_TOKEN" \
+curl -X POST "http://localhost:8080/api/nodes/{node_id}/bots/weather-bot/invoke?token=AUTH_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"bot_id": "uuid", "channel_id": "uuid"}'
+  -d '{"command": "forecast", "params": {"location": "Minneapolis"}, "channel_id": "chan-uuid"}'
 ```
 
 ---
 
-### `DELETE /bots/:bot_id/channels/:channel_id` — Remove bot from channel
+### `POST /api/bots/respond` — Bot responds to invocation
 
-**Auth required:** Yes (token, channel admin or bot owner)
+**Auth required:** Yes (`Authorization: Bearer <bot_token>`)
 
-```bash
-curl -X DELETE "http://localhost:8080/bots/{bot_id}/channels/{channel_id}?token=AUTH_TOKEN"
+Called by the bot to deliver a response. The server broadcasts the response to channel members via WebSocket as a `bot_response` event.
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `invocation_id` | string | Yes | The invocation being responded to |
+| `content` | object | Yes | Response content (see below) |
+| `signature` | string | No | Ed25519 signature of content (base64) |
+
+**Response content types:**
+
+**Text:**
+```json
+{ "type": "text", "text": "The forecast for Minneapolis is 72°F and sunny." }
 ```
 
----
+**Embed (rich response):**
+```json
+{
+  "type": "embed",
+  "title": "Weather Forecast",
+  "sections": [
+    { "type": "text", "text": "Current conditions for Minneapolis" },
+    { "type": "fields", "fields": [
+      { "name": "Temperature", "value": "72°F", "inline": true },
+      { "name": "Humidity", "value": "45%", "inline": true }
+    ]},
+    { "type": "divider" },
+    { "type": "grid", "columns": ["Day", "High", "Low"], "rows": [["Mon", "75", "60"], ["Tue", "70", "55"]] },
+    { "type": "image", "url": "https://example.com/weather-map.png", "alt": "Weather map" },
+    { "type": "code", "code": "console.log('hello')", "language": "javascript" },
+    { "type": "progress", "label": "UV Index", "value": 6, "max": 11 },
+    { "type": "actions", "buttons": [
+      { "label": "Refresh", "command": "forecast", "params": {"location": "Minneapolis"} }
+    ]},
+    { "type": "input", "name": "city", "placeholder": "Enter city...", "command": "forecast" }
+  ]
+}
+```
 
-### `POST /bot/channels/:channel_id/messages` — Bot send message
-
-**Auth required:** Yes (bot API token)
+**Response (200):**
+```json
+{ "status": "delivered" }
+```
 
 ```bash
-curl -X POST "http://localhost:8080/bot/channels/{channel_id}/messages?token=BOT_TOKEN" \
+curl -X POST "http://localhost:8080/api/bots/respond" \
+  -H "Authorization: Bearer accord_botv2_..." \
   -H "Content-Type: application/json" \
-  -d '{"encrypted_data": "base64..."}'
+  -d '{"invocation_id": "uuid", "content": {"type": "text", "text": "Hello!"}}'
 ```
 
 ---
 
-### `GET /channels/:id/bots` — List bots in channel
+## Federation
 
-**Auth required:** Yes (token, channel member)
+Federation enables relay-to-relay discovery, registration, and health monitoring. Endpoints are optionally authenticated via the `X-Mesh-Secret` header (if `mesh_secret` is configured; otherwise open federation).
+
+### `GET /federation/relays` — List known relays
+
+**Auth required:** No (or mesh secret if configured)
+
+**Response (200):**
+```json
+{
+  "relays": [
+    {
+      "relay_id": "relay-abc123",
+      "hostname": "relay2.example.com",
+      "port": 8443,
+      "public_key": "base64-ed25519-pubkey",
+      "last_seen": 1700000000,
+      "status": "active",
+      "registered_at": 1699900000
+    }
+  ]
+}
+```
 
 ```bash
-curl "http://localhost:8080/channels/{channel_id}/bots?token=AUTH_TOKEN"
+curl "http://localhost:8080/federation/relays"
+```
+
+---
+
+### `POST /federation/register` — Register relay
+
+**Auth required:** Mesh secret (if configured)
+
+Announces a relay to the federation network.
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `relay_id` | string | Yes | Unique relay identifier |
+| `hostname` | string | Yes | Relay hostname |
+| `port` | u16 | Yes | Relay port |
+| `public_key` | string | Yes | Ed25519 public key (base64) |
+
+**Response (200):**
+```json
+{ "ok": true, "message": "Relay registered" }
+```
+
+```bash
+curl -X POST "http://localhost:8080/federation/register" \
+  -H "Content-Type: application/json" \
+  -H "X-Mesh-Secret: your-mesh-secret" \
+  -d '{"relay_id": "relay-1", "hostname": "relay.example.com", "port": 8443, "public_key": "base64..."}'
+```
+
+---
+
+### `POST /federation/heartbeat` — Relay heartbeat
+
+**Auth required:** Mesh secret (if configured)
+
+Periodic liveness ping. If a relay misses 3 heartbeats, it's marked inactive.
+
+**Request body:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `relay_id` | string | Yes | Relay ID to heartbeat |
+
+**Response (200):**
+```json
+{ "ok": true, "message": "Heartbeat acknowledged" }
+```
+
+**Error (404):** Relay not registered — call `/federation/register` first.
+
+```bash
+curl -X POST "http://localhost:8080/federation/heartbeat" \
+  -H "Content-Type: application/json" \
+  -H "X-Mesh-Secret: your-mesh-secret" \
+  -d '{"relay_id": "relay-1"}'
 ```
 
 ---
@@ -2303,11 +2973,21 @@ All client → server messages use this envelope:
 | `VoiceSpeakingState` | `channel_id`, `user_id`, `speaking` | Speaking state |
 | `VoiceKeyExchange` | `channel_id`, `wrapped_key`, `target_user_id?`, `sender_ssrc`, `key_generation` | SRTP key exchange |
 | `SrtpVoicePacket` | `channel_id`, `packet_data` | SRTP audio packet |
-| `P2PSignal` | `channel_id`, `target_user_id`, `signal_data` | WebRTC signaling |
+| `SetVoiceMode` | `channel_id`, `mode` | Set voice mode (`"relay"` or `"p2p"`) |
+| `GetVoiceMode` | `channel_id` | Get current voice mode for channel |
+| `P2PSignal` | `channel_id`, `target_user_id`, `signal_data` | Legacy generic WebRTC signaling |
+| `VoiceOffer` | `channel_id`, `target_user_id`, `sdp` | WebRTC SDP offer (P2P mode only) |
+| `VoiceAnswer` | `channel_id`, `target_user_id`, `sdp` | WebRTC SDP answer (P2P mode only) |
+| `VoiceIceCandidate` | `channel_id`, `target_user_id`, `candidate` | WebRTC ICE candidate (P2P mode only) |
 | `PublishKeyBundle` | `identity_key`, `signed_prekey`, `one_time_prekeys` | Publish E2EE keys |
 | `FetchKeyBundle` | `target_user_id` | Fetch user's keys |
 | `StorePrekeyMessage` | `recipient_id`, `message_data` | Store prekey message |
 | `GetPrekeyMessages` | — | Get pending prekey messages |
+| `StoreSenderKey` | `channel_id`, `to_user_id`, `payload` | Store Sender Key distribution (base64 DR-encrypted) |
+| `GetPendingSenderKeys` | — | Get pending Sender Key distributions |
+| `AckSenderKeys` | `ids` | Acknowledge received Sender Key distributions |
+| `UpdateChannel` | `channel_id`, `category_id?`, `position?` | Update channel category/position |
+| `BotResponse` | `bot_id`, `invocation_id`, `content` | Server→client: bot response broadcast |
 | `Ping` | — | Heartbeat |
 
 ### Server → Client Event Types
@@ -2335,6 +3015,12 @@ All client → server messages use this envelope:
 | `voice_key_exchange` | SRTP key exchange relay |
 | `srtp_voice_packet` | SRTP audio relay |
 | `p2p_signal` | WebRTC signaling relay |
+| `voice_offer` | WebRTC SDP offer relay (P2P mode) |
+| `voice_answer` | WebRTC SDP answer relay (P2P mode) |
+| `voice_ice_candidate` | WebRTC ICE candidate relay (P2P mode) |
+| `voice_mode` | Voice mode response (`channel_id`, `mode`) |
+| `sender_key_distribution` | Sender Key received notification |
+| `bot_response` | Bot command response (`bot_id`, `invocation_id`, `content`) |
 | `node_created` | Node created confirmation |
 | `node_joined` | Joined Node confirmation |
 | `node_left` | Left Node confirmation |
