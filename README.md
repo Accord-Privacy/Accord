@@ -90,6 +90,19 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 
 ---
 
+## Screenshots
+
+> 📸 *Screenshots coming soon — want to help? See [CONTRIBUTING.md](CONTRIBUTING.md).*
+
+<!--
+<div align="center">
+  <img src="docs/design/screenshot-desktop.png" alt="Desktop client" width="720">
+  <img src="docs/design/screenshot-mobile.png" alt="Mobile client" width="280">
+</div>
+-->
+
+---
+
 ## Architecture
 
 ```
