@@ -1,5 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+/// Payload for a member joining a node.
+///
+/// Emitted when a user joins a node (via invite or direct join).
+/// Maps to the server-side `member_joined` WebSocket event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemberJoin {
+    /// The node the user joined.
+    pub node_id: String,
+    /// The user who joined.
+    pub user_id: String,
+    /// Display name of the user at join time.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Unix timestamp (seconds) of when the join occurred.
+    #[serde(default)]
+    pub timestamp: Option<u64>,
+}
+
+/// Payload for a member leaving a node.
+///
+/// Emitted when a user voluntarily leaves a node.
+/// Maps to the server-side `member_left` WebSocket event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemberLeave {
+    /// The node the user left.
+    pub node_id: String,
+    /// The user who left.
+    pub user_id: String,
+    /// Display name of the user (may be absent if profile was purged).
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Unix timestamp (seconds) of when the leave occurred.
+    #[serde(default)]
+    pub timestamp: Option<u64>,
+}
+
 /// A user on the Accord platform.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -96,6 +132,100 @@ pub enum Event {
     },
     /// A user started typing.
     TypingStart { channel_id: String, user_id: String },
+    /// A user joined a node.
+    ///
+    /// Fired when any member joins the node this bot is connected to.
+    MemberJoin(MemberJoin),
+    /// A user left a node.
+    ///
+    /// Fired when any member voluntarily leaves a node.
+    MemberLeave(MemberLeave),
     /// Unknown/unhandled event.
     Unknown(serde_json::Value),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── MemberJoin deserialization ──
+
+    #[test]
+    fn test_member_join_deserialize_full() {
+        let json = r#"{
+            "node_id": "node-abc",
+            "user_id": "user-123",
+            "display_name": "Alice",
+            "timestamp": 1700000000
+        }"#;
+        let ev: MemberJoin = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.node_id, "node-abc");
+        assert_eq!(ev.user_id, "user-123");
+        assert_eq!(ev.display_name, Some("Alice".to_string()));
+        assert_eq!(ev.timestamp, Some(1700000000));
+    }
+
+    #[test]
+    fn test_member_join_deserialize_minimal() {
+        // display_name and timestamp are optional
+        let json = r#"{"node_id": "node-abc", "user_id": "user-123"}"#;
+        let ev: MemberJoin = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.node_id, "node-abc");
+        assert_eq!(ev.user_id, "user-123");
+        assert!(ev.display_name.is_none());
+        assert!(ev.timestamp.is_none());
+    }
+
+    #[test]
+    fn test_member_join_roundtrip() {
+        let orig = MemberJoin {
+            node_id: "n1".to_string(),
+            user_id: "u1".to_string(),
+            display_name: Some("Bob".to_string()),
+            timestamp: Some(999),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let back: MemberJoin = serde_json::from_str(&json).unwrap();
+        assert_eq!(orig, back);
+    }
+
+    // ── MemberLeave deserialization ──
+
+    #[test]
+    fn test_member_leave_deserialize_full() {
+        let json = r#"{
+            "node_id": "node-xyz",
+            "user_id": "user-456",
+            "display_name": "Bob",
+            "timestamp": 1700000001
+        }"#;
+        let ev: MemberLeave = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.node_id, "node-xyz");
+        assert_eq!(ev.user_id, "user-456");
+        assert_eq!(ev.display_name, Some("Bob".to_string()));
+        assert_eq!(ev.timestamp, Some(1700000001));
+    }
+
+    #[test]
+    fn test_member_leave_deserialize_minimal() {
+        let json = r#"{"node_id": "node-xyz", "user_id": "user-456"}"#;
+        let ev: MemberLeave = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.node_id, "node-xyz");
+        assert_eq!(ev.user_id, "user-456");
+        assert!(ev.display_name.is_none());
+        assert!(ev.timestamp.is_none());
+    }
+
+    #[test]
+    fn test_member_leave_roundtrip() {
+        let orig = MemberLeave {
+            node_id: "n2".to_string(),
+            user_id: "u2".to_string(),
+            display_name: None,
+            timestamp: Some(42),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let back: MemberLeave = serde_json::from_str(&json).unwrap();
+        assert_eq!(orig, back);
+    }
 }

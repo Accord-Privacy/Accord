@@ -26,4 +26,4 @@ pub mod models;
 
 pub use client::AccordBot;
 pub use error::{BotError, Result};
-pub use models::{Channel, Event, Message, Reaction, User};
+pub use models::{Channel, Event, MemberJoin, MemberLeave, Message, Reaction, User};

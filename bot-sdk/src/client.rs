@@ -6,7 +6,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use crate::error::{BotError, Result};
-use crate::models::{Event, Message};
+use crate::models::{Event, MemberJoin, MemberLeave, Message};
 
 type MessageHandler =
     Arc<dyn Fn(Message) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
@@ -15,6 +15,10 @@ type ReactionHandler = Arc<
         + Send
         + Sync,
 >;
+type MemberJoinHandler =
+    Arc<dyn Fn(MemberJoin) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
+type MemberLeaveHandler =
+    Arc<dyn Fn(MemberLeave) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
 
 /// The main bot client for interacting with an Accord relay server.
 ///
@@ -60,6 +64,8 @@ pub struct AccordBot {
     >,
     message_handlers: Arc<RwLock<Vec<MessageHandler>>>,
     reaction_handlers: Arc<RwLock<Vec<ReactionHandler>>>,
+    member_join_handlers: Arc<RwLock<Vec<MemberJoinHandler>>>,
+    member_leave_handlers: Arc<RwLock<Vec<MemberLeaveHandler>>>,
     user_id: Arc<RwLock<Option<String>>>,
 }
 
@@ -83,6 +89,8 @@ impl AccordBot {
             ws_stream: None,
             message_handlers: Arc::new(RwLock::new(Vec::new())),
             reaction_handlers: Arc::new(RwLock::new(Vec::new())),
+            member_join_handlers: Arc::new(RwLock::new(Vec::new())),
+            member_leave_handlers: Arc::new(RwLock::new(Vec::new())),
             user_id: Arc::new(RwLock::new(None)),
         }
     }
@@ -177,11 +185,25 @@ impl AccordBot {
         Ok(())
     }
 
-    /// Add a reaction to a message.
-    pub async fn add_reaction(&self, message_id: &str, emoji: &str) -> Result<()> {
+    /// Add a reaction emoji to a message.
+    ///
+    /// # Arguments
+    /// - `channel_id`: The channel containing the message (used for membership validation).
+    /// - `message_id`: The ID of the message to react to.
+    /// - `emoji`: The emoji string to add as a reaction (e.g. `"👍"` or `"thumbsup"`).
+    ///
+    /// # Errors
+    /// Returns [`BotError::Api`] if the server rejects the request (e.g. the bot is not a
+    /// member of the channel, or the message does not exist).
+    pub async fn add_reaction(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) -> Result<()> {
         let url = format!(
-            "{}/messages/{}/reactions/{}?token={}",
-            self.http_base, message_id, emoji, self.token
+            "{}/messages/{}/reactions/{}?token={}&channel_id={}",
+            self.http_base, message_id, emoji, self.token, channel_id
         );
         let resp = self.http.put(&url).send().await?;
         if !resp.status().is_success() {
@@ -193,6 +215,101 @@ impl AccordBot {
             });
         }
         Ok(())
+    }
+
+    /// Fetch message history for a channel.
+    ///
+    /// Returns messages in reverse-chronological order (newest first), matching the
+    /// server's default pagination behaviour.
+    ///
+    /// # Arguments
+    /// - `channel_id`: The channel to fetch messages from.
+    /// - `limit`: Maximum number of messages to return (server caps at 100; default 50).
+    /// - `before`: An optional message ID cursor — only messages older than this ID are
+    ///   returned, enabling backwards pagination.
+    ///
+    /// # Errors
+    /// Returns [`BotError::Api`] if the server rejects the request (e.g. the bot lacks
+    /// channel access).
+    pub async fn fetch_messages(
+        &self,
+        channel_id: &str,
+        limit: Option<u32>,
+        before: Option<&str>,
+    ) -> Result<Vec<Message>> {
+        let mut url = format!(
+            "{}/channels/{}/messages?token={}",
+            self.http_base, channel_id, self.token
+        );
+        if let Some(lim) = limit {
+            url.push_str(&format!("&limit={}", lim));
+        }
+        if let Some(cursor) = before {
+            url.push_str(&format!("&before={}", cursor));
+        }
+
+        let resp = self.http.get(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Api {
+                code: status,
+                message: body,
+            });
+        }
+
+        let body: serde_json::Value = resp.json().await?;
+        let messages = body
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut result = Vec::with_capacity(messages.len());
+        for raw in messages {
+            let msg = Message {
+                id: raw
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                channel_id: raw
+                    .get("channel_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(channel_id)
+                    .to_string(),
+                sender_id: raw
+                    .get("sender_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                sender_public_key_hash: raw
+                    .get("sender_public_key_hash")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                content: raw
+                    .get("encrypted_data")
+                    .or_else(|| raw.get("content"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                encrypted_payload: raw
+                    .get("encrypted_payload")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                display_name: raw
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                created_at: raw.get("created_at").and_then(|v| v.as_u64()),
+                edited_at: raw.get("edited_at").and_then(|v| v.as_u64()),
+                reply_to: raw
+                    .get("reply_to")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            };
+            result.push(msg);
+        }
+        Ok(result)
     }
 
     /// Register a handler for incoming messages.
@@ -229,6 +346,58 @@ impl AccordBot {
             },
         );
         self.reaction_handlers.write().await.push(handler);
+    }
+
+    /// Register a handler for member-join events.
+    ///
+    /// The callback receives a [`MemberJoin`] describing who joined and which node.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use accord_bot_sdk::AccordBot;
+    /// # async fn example(bot: &AccordBot) {
+    /// bot.on_member_join(|ev| async move {
+    ///     println!("{} joined node {}", ev.user_id, ev.node_id);
+    /// }).await;
+    /// # }
+    /// ```
+    pub async fn on_member_join<F, Fut>(&self, handler: F)
+    where
+        F: Fn(MemberJoin) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let handler = Arc::new(
+            move |ev: MemberJoin| -> futures_util::future::BoxFuture<'static, ()> {
+                Box::pin(handler(ev))
+            },
+        );
+        self.member_join_handlers.write().await.push(handler);
+    }
+
+    /// Register a handler for member-leave events.
+    ///
+    /// The callback receives a [`MemberLeave`] describing who left and which node.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use accord_bot_sdk::AccordBot;
+    /// # async fn example(bot: &AccordBot) {
+    /// bot.on_member_leave(|ev| async move {
+    ///     println!("{} left node {}", ev.user_id, ev.node_id);
+    /// }).await;
+    /// # }
+    /// ```
+    pub async fn on_member_leave<F, Fut>(&self, handler: F)
+    where
+        F: Fn(MemberLeave) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let handler = Arc::new(
+            move |ev: MemberLeave| -> futures_util::future::BoxFuture<'static, ()> {
+                Box::pin(handler(ev))
+            },
+        );
+        self.member_leave_handlers.write().await.push(handler);
     }
 
     /// Join a channel to receive messages from it.
@@ -311,6 +480,22 @@ impl AccordBot {
                     tokio::spawn(async move { handler(mid, cid, uid, e).await });
                 }
             }
+            Event::MemberJoin(ev) => {
+                let handlers = self.member_join_handlers.read().await;
+                for handler in handlers.iter() {
+                    let handler = handler.clone();
+                    let ev = ev.clone();
+                    tokio::spawn(async move { handler(ev).await });
+                }
+            }
+            Event::MemberLeave(ev) => {
+                let handlers = self.member_leave_handlers.read().await;
+                for handler in handlers.iter() {
+                    let handler = handler.clone();
+                    let ev = ev.clone();
+                    tokio::spawn(async move { handler(ev).await });
+                }
+            }
             _ => {}
         }
     }
@@ -369,6 +554,27 @@ fn parse_event(val: &Value) -> Option<Event> {
             channel_id: val.get("channel_id")?.as_str()?.to_string(),
             user_id: val.get("user_id")?.as_str()?.to_string(),
         }),
+        // Server broadcasts "member_joined" when a user joins a node.
+        // Also accept "member_join" for webhook-style naming consistency.
+        "member_joined" | "member_join" => Some(Event::MemberJoin(crate::models::MemberJoin {
+            node_id: val.get("node_id")?.as_str()?.to_string(),
+            user_id: val.get("user_id")?.as_str()?.to_string(),
+            display_name: val
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            timestamp: val.get("timestamp").and_then(|v| v.as_u64()),
+        })),
+        // "member_left" / "member_leave" for when a user leaves a node.
+        "member_left" | "member_leave" => Some(Event::MemberLeave(crate::models::MemberLeave {
+            node_id: val.get("node_id")?.as_str()?.to_string(),
+            user_id: val.get("user_id")?.as_str()?.to_string(),
+            display_name: val
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            timestamp: val.get("timestamp").and_then(|v| v.as_u64()),
+        })),
         _ => Some(Event::Unknown(val.clone())),
     }
 }
@@ -396,4 +602,418 @@ fn now_epoch() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Build a bot client that points at the given mock server base URL.
+    fn make_bot(base_url: &str) -> AccordBot {
+        // Replace the protocol prefix so the http_base derivation in `new()` works.
+        // MockServer listens on http://, but AccordBot::new() expects a ws:// URL and
+        // internally converts it to http://.
+        let ws_url = base_url.replacen("http://", "ws://", 1);
+        AccordBot::new(&ws_url, "test-token")
+    }
+
+    // -------------------------------------------------------------------------
+    // add_reaction tests
+    // -------------------------------------------------------------------------
+
+    /// Happy path: server returns 200, method returns Ok(()).
+    #[tokio::test]
+    async fn add_reaction_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/messages/[^/]+/reactions/.+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "emoji": "👍",
+                "count": 1
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot
+            .add_reaction("chan-111", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "👍")
+            .await;
+
+        assert!(result.is_ok(), "expected Ok but got {:?}", result);
+    }
+
+    /// Server returns 403 → BotError::Api with code 403.
+    #[tokio::test]
+    async fn add_reaction_forbidden() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/messages/[^/]+/reactions/.+$"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_string("You must be a member of this channel to add reactions"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.add_reaction("chan-111", "msg-222", "👎").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 403),
+            other => panic!("expected Api(403) error, got {:?}", other),
+        }
+    }
+
+    /// Server returns 404 for unknown message → BotError::Api with code 404.
+    #[tokio::test]
+    async fn add_reaction_not_found() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/messages/[^/]+/reactions/.+$"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("Message not found"))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.add_reaction("chan-111", "no-such-msg", "❤️").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 404),
+            other => panic!("expected Api(404) error, got {:?}", other),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // fetch_messages tests
+    // -------------------------------------------------------------------------
+
+    /// Happy path: server returns a list of messages, they are deserialised correctly.
+    #[tokio::test]
+    async fn fetch_messages_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/channels/chan-abc/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "messages": [
+                    {
+                        "id": "msg-001",
+                        "channel_id": "chan-abc",
+                        "sender_id": "user-xyz",
+                        "sender_public_key_hash": "deadbeef",
+                        "encrypted_payload": "base64data",
+                        "display_name": "Alice",
+                        "created_at": 1700000000_u64,
+                        "edited_at": null,
+                        "reply_to": null
+                    },
+                    {
+                        "id": "msg-002",
+                        "channel_id": "chan-abc",
+                        "sender_id": "user-abc",
+                        "sender_public_key_hash": "cafebabe",
+                        "encrypted_payload": "morebase64",
+                        "display_name": null,
+                        "created_at": 1700000100_u64,
+                        "edited_at": null,
+                        "reply_to": null
+                    }
+                ],
+                "has_more": false,
+                "next_cursor": null
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let messages = bot
+            .fetch_messages("chan-abc", Some(50), None)
+            .await
+            .expect("fetch_messages should succeed");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, "msg-001");
+        assert_eq!(messages[0].sender_id, "user-xyz");
+        assert_eq!(messages[0].display_name.as_deref(), Some("Alice"));
+        assert_eq!(messages[1].id, "msg-002");
+        assert_eq!(messages[1].display_name, None);
+    }
+
+    /// Empty channel — server returns an empty messages array.
+    #[tokio::test]
+    async fn fetch_messages_empty_channel() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/channels/empty-chan/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "messages": [],
+                "has_more": false,
+                "next_cursor": null
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let messages = bot
+            .fetch_messages("empty-chan", None, None)
+            .await
+            .expect("fetch_messages should succeed");
+
+        assert!(messages.is_empty());
+    }
+
+    /// Pagination: passing `before` cursor is forwarded as a query parameter.
+    #[tokio::test]
+    async fn fetch_messages_with_before_cursor() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/channels/chan-paged/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "messages": [
+                    {
+                        "id": "msg-old",
+                        "channel_id": "chan-paged",
+                        "sender_id": "user-1",
+                        "sender_public_key_hash": "abc",
+                        "encrypted_payload": "x",
+                        "created_at": 1699999000_u64
+                    }
+                ],
+                "has_more": false,
+                "next_cursor": null
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let messages = bot
+            .fetch_messages("chan-paged", Some(25), Some("cursor-msg-id"))
+            .await
+            .expect("fetch_messages with cursor should succeed");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, "msg-old");
+    }
+
+    /// Server returns 403 → BotError::Api with code 403.
+    #[tokio::test]
+    async fn fetch_messages_forbidden() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/channels/secret-chan/messages"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("Access denied"))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.fetch_messages("secret-chan", None, None).await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 403),
+            other => panic!("expected Api(403) error, got {:?}", other),
+        }
+    }
+
+    // ── parse_event helpers ──
+
+    fn parse_ws(json: &str) -> Option<Event> {
+        let val: Value = serde_json::from_str(json).unwrap();
+        parse_event(&val)
+    }
+
+    // ── parse_event: MemberJoin ──
+
+    #[test]
+    fn test_parse_member_joined_event() {
+        let json = r#"{
+            "type": "member_joined",
+            "node_id": "node-abc",
+            "user_id": "user-123",
+            "display_name": "Alice",
+            "timestamp": 1700000000
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::MemberJoin(ev) => {
+                assert_eq!(ev.node_id, "node-abc");
+                assert_eq!(ev.user_id, "user-123");
+                assert_eq!(ev.display_name, Some("Alice".to_string()));
+                assert_eq!(ev.timestamp, Some(1700000000));
+            }
+            other => panic!("expected MemberJoin, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_member_join_alias_event() {
+        // webhook-style name "member_join" also accepted
+        let json = r#"{
+            "type": "member_join",
+            "node_id": "node-abc",
+            "user_id": "user-123"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        assert!(matches!(event, Event::MemberJoin(_)));
+    }
+
+    #[test]
+    fn test_parse_member_joined_missing_required_field() {
+        // Missing user_id → parse_event returns None
+        let json = r#"{"type": "member_joined", "node_id": "node-abc"}"#;
+        let event = parse_ws(json);
+        // user_id is required (uses `?`), so should return None
+        assert!(event.is_none());
+    }
+
+    // ── parse_event: MemberLeave ──
+
+    #[test]
+    fn test_parse_member_left_event() {
+        let json = r#"{
+            "type": "member_left",
+            "node_id": "node-xyz",
+            "user_id": "user-456",
+            "display_name": "Bob",
+            "timestamp": 1700000001
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::MemberLeave(ev) => {
+                assert_eq!(ev.node_id, "node-xyz");
+                assert_eq!(ev.user_id, "user-456");
+                assert_eq!(ev.display_name, Some("Bob".to_string()));
+                assert_eq!(ev.timestamp, Some(1700000001));
+            }
+            other => panic!("expected MemberLeave, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_member_leave_alias_event() {
+        let json = r#"{
+            "type": "member_leave",
+            "node_id": "node-xyz",
+            "user_id": "user-456"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        assert!(matches!(event, Event::MemberLeave(_)));
+    }
+
+    #[test]
+    fn test_parse_member_left_optional_fields() {
+        // timestamp and display_name are optional
+        let json = r#"{
+            "type": "member_left",
+            "node_id": "node-xyz",
+            "user_id": "user-456"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::MemberLeave(ev) => {
+                assert!(ev.display_name.is_none());
+                assert!(ev.timestamp.is_none());
+            }
+            other => panic!("expected MemberLeave, got {:?}", other),
+        }
+    }
+
+    // ── dispatch: MemberJoin ──
+
+    #[tokio::test]
+    async fn test_dispatch_member_join_calls_handler() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc as StdArc;
+
+        let counter = StdArc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let bot = AccordBot::new("ws://localhost:9999", "test-token");
+        bot.on_member_join(move |ev: MemberJoin| {
+            let c = counter_clone.clone();
+            async move {
+                assert_eq!(ev.user_id, "user-123");
+                assert_eq!(ev.node_id, "node-abc");
+                c.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .await;
+
+        let ev = MemberJoin {
+            node_id: "node-abc".to_string(),
+            user_id: "user-123".to_string(),
+            display_name: Some("Alice".to_string()),
+            timestamp: None,
+        };
+        bot.dispatch(Event::MemberJoin(ev)).await;
+
+        // Give the spawned task a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    // ── dispatch: MemberLeave ──
+
+    #[tokio::test]
+    async fn test_dispatch_member_leave_calls_handler() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc as StdArc;
+
+        let counter = StdArc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let bot = AccordBot::new("ws://localhost:9999", "test-token");
+        bot.on_member_leave(move |ev: MemberLeave| {
+            let c = counter_clone.clone();
+            async move {
+                assert_eq!(ev.user_id, "user-456");
+                assert_eq!(ev.node_id, "node-xyz");
+                c.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .await;
+
+        let ev = MemberLeave {
+            node_id: "node-xyz".to_string(),
+            user_id: "user-456".to_string(),
+            display_name: None,
+            timestamp: Some(42),
+        };
+        bot.dispatch(Event::MemberLeave(ev)).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_member_join_no_handlers_is_noop() {
+        let bot = AccordBot::new("ws://localhost:9999", "test-token");
+        let ev = MemberJoin {
+            node_id: "n".to_string(),
+            user_id: "u".to_string(),
+            display_name: None,
+            timestamp: None,
+        };
+        // Should not panic
+        bot.dispatch(Event::MemberJoin(ev)).await;
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_member_leave_no_handlers_is_noop() {
+        let bot = AccordBot::new("ws://localhost:9999", "test-token");
+        let ev = MemberLeave {
+            node_id: "n".to_string(),
+            user_id: "u".to_string(),
+            display_name: None,
+            timestamp: None,
+        };
+        bot.dispatch(Event::MemberLeave(ev)).await;
+    }
 }
