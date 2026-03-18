@@ -9964,3 +9964,1240 @@ fn html_decode(s: &str) -> String {
         .replace("&#x27;", "'")
         .replace("&apos;", "'")
 }
+
+// ════════════════════════════════════════════════════════════════
+// Unit tests — error-path coverage for HTTP handlers
+// ════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use axum::{
+        extract::{Path, Query, State},
+        http::{HeaderMap, HeaderValue, StatusCode},
+        Json,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use uuid::Uuid;
+
+    // ── helpers ──────────────────────────────────────────────────
+
+    /// Build a fresh in-memory AppState (no disk, no network).
+    async fn make_state() -> Arc<AppState> {
+        Arc::new(AppState::new_in_memory().await.unwrap())
+    }
+
+    /// Register a user and issue a valid auth token. Returns (user_id, token).
+    async fn register_and_auth(state: &Arc<AppState>, public_key: &str) -> (Uuid, String) {
+        let user_id = state
+            .register_user(public_key.to_string(), "".to_string())
+            .await
+            .unwrap();
+        // Compute the hash the same way authenticate_user does.
+        let pkh = crate::db::compute_public_key_hash(public_key);
+        let auth = state.authenticate_user(pkh, "".to_string()).await.unwrap();
+        (user_id, auth.token)
+    }
+
+    /// Build a HeaderMap with `Authorization: Bearer <token>`.
+    fn auth_header(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+        headers
+    }
+
+    /// Empty HeaderMap (no auth).
+    fn no_auth_header() -> HeaderMap {
+        HeaderMap::new()
+    }
+
+    /// Empty query params.
+    fn no_params() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 1. Registration — missing / invalid fields
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn register_empty_public_key_returns_400() {
+        let state = make_state().await;
+
+        let request = crate::models::RegisterRequest {
+            username: String::new(),
+            public_key: "".into(),
+            password: "".into(),
+            display_name: None,
+        };
+
+        let result = register_handler(State(state), no_auth_header(), Json(request)).await;
+
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.error.contains("empty"),
+            "Expected 'empty' in error message, got: {}",
+            err.error
+        );
+    }
+
+    #[tokio::test]
+    async fn register_display_name_too_long_returns_400() {
+        let state = make_state().await;
+
+        // display names > 32 chars should fail validation
+        let long_name = "a".repeat(200);
+        let request = crate::models::RegisterRequest {
+            username: String::new(),
+            public_key: "valid_public_key_abc123".into(),
+            password: "".into(),
+            display_name: Some(long_name),
+        };
+
+        let result = register_handler(State(state), no_auth_header(), Json(request)).await;
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 2. Authentication — missing / bad credentials
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn auth_no_public_key_or_hash_returns_400() {
+        let state = make_state().await;
+
+        let request = crate::models::AuthRequest {
+            username: String::new(), // empty username
+            password: "pass".into(),
+            public_key: None,
+            public_key_hash: None,
+        };
+
+        let result = auth_handler(State(state), no_auth_header(), Json(request)).await;
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.error.contains("public_key"),
+            "Expected mention of public_key, got: {}",
+            err.error
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_non_existent_user_returns_401() {
+        let state = make_state().await;
+
+        let request = crate::models::AuthRequest {
+            username: String::new(),
+            password: "".into(),
+            public_key: None,
+            public_key_hash: Some("deadbeef_nonexistent_hash".into()),
+        };
+
+        let result = auth_handler(State(state), no_auth_header(), Json(request)).await;
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 3. Token validation — no token / invalid token → 401
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn missing_token_returns_401_on_create_node() {
+        let state = make_state().await;
+
+        let request = crate::models::CreateNodeRequest {
+            name: "MyNode".into(),
+            description: None,
+        };
+
+        let result = create_node_handler(
+            State(state),
+            no_auth_header(),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(err.code, 401);
+    }
+
+    #[tokio::test]
+    async fn invalid_token_returns_401_on_list_nodes() {
+        let state = make_state().await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer tok_totally_fake_token"),
+        );
+
+        let result = list_user_nodes_handler(State(state), headers, Query(no_params())).await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn missing_token_returns_401_on_get_user_profile() {
+        let state = make_state().await;
+        let random_id = Uuid::new_v4();
+
+        let result = get_user_profile_handler(
+            State(state),
+            Path(random_id),
+            no_auth_header(),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 4. Node operations — invalid IDs / non-membership
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn get_nonexistent_node_returns_404() {
+        let state = make_state().await;
+        let ghost_id = Uuid::new_v4();
+
+        let result = get_node_handler(State(state), Path(ghost_id)).await;
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(err.code, 404);
+    }
+
+    #[tokio::test]
+    async fn join_nonexistent_node_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "join_ghost_key").await;
+
+        let ghost_node = Uuid::new_v4();
+        let result = join_node_handler(
+            State(state),
+            Path(ghost_node),
+            auth_header(&token),
+            Query(no_params()),
+            None,
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_node_empty_name_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "create_node_empty_name_key").await;
+
+        let request = crate::models::CreateNodeRequest {
+            name: "   ".into(), // whitespace-only, will fail validate_node_name
+            description: None,
+        };
+
+        let result = create_node_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn leave_node_owner_cannot_leave_returns_error() {
+        // Owners can't leave their own node — that's the error path here.
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "leave_owner_key").await;
+
+        let node = state
+            .create_node("LeaveTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        // Owner tries to leave (not allowed)
+        let result = leave_node_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 5. Channel operations — invalid IDs
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn create_channel_empty_name_returns_400() {
+        let state = make_state().await;
+        let (owner_id, token) = register_and_auth(&state, "create_chan_key").await;
+        let node = state
+            .create_node("ChanTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let body = serde_json::json!({ "name": "" }); // empty name
+
+        let result = create_channel_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&token),
+            Query(no_params()),
+            Json(body),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_channel_messages_non_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "chan_msgs_owner_key").await;
+        let (_, outsider_token) = register_and_auth(&state, "chan_msgs_outsider_key").await;
+
+        let node = state
+            .create_node("MsgTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let channels = state.db.get_node_channels(node.id).await.unwrap();
+        let channel = channels.into_iter().next().unwrap();
+
+        let result = get_channel_messages_handler(
+            State(state),
+            Path(channel.id),
+            auth_header(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn get_channel_messages_missing_auth_returns_401() {
+        let state = make_state().await;
+        let channel_id = Uuid::new_v4();
+
+        let result = get_channel_messages_handler(
+            State(state),
+            Path(channel_id),
+            no_auth_header(),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 6. Update node — permission checks
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn update_node_non_owner_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "update_node_owner_key").await;
+        let (_, member_token) = register_and_auth(&state, "update_node_member_key").await;
+
+        let node = state
+            .create_node("UpdateTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        // Regular member joins
+        let member_id = state
+            .validate_token(
+                // extract user_id from token we just got
+                member_token.trim_start_matches("tok_"),
+            )
+            .await;
+        // easier: just use the state directly to join with member
+        // We need to get the member's user_id from the token, so re-register & join
+        let (member_id2, member_token2) =
+            register_and_auth(&state, "update_node_member_key2").await;
+        state.join_node(member_id2, node.id).await.unwrap();
+
+        let request = serde_json::json!({ "name": "HackedName" });
+        let result = update_node_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&member_token2),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn update_node_invalid_name_returns_400() {
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "update_node_name_key").await;
+
+        let node = state
+            .create_node("ValidName".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        // Too-long name should fail validation
+        let request = serde_json::json!({ "name": "a".repeat(200) });
+        let result = update_node_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 7. Invite system — invalid codes
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn use_invite_invalid_code_format_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "invite_user_key").await;
+
+        // Invite codes must be alphanumeric + reasonable length
+        let result = use_invite_handler(
+            State(state),
+            Path("!!!invalid!!!".to_string()),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn use_invite_missing_auth_returns_401() {
+        let state = make_state().await;
+
+        let result = use_invite_handler(
+            State(state),
+            Path("ABCDEFGH".to_string()),
+            no_auth_header(),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn invite_preview_invalid_code_returns_400() {
+        let state = make_state().await;
+
+        // Invalid characters in invite code
+        let result = invite_preview_handler(State(state), Path("../etc/passwd".to_string())).await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn invite_preview_nonexistent_valid_code_returns_404() {
+        let state = make_state().await;
+
+        // Valid format but doesn't exist in DB
+        let result = invite_preview_handler(State(state), Path("ABCDEFGH".to_string())).await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 8. User profile validation
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn update_profile_invalid_status_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "profile_status_key").await;
+
+        let request = crate::models::UpdateProfileRequest {
+            display_name: None,
+            bio: None,
+            status: Some("invisible".into()), // not a valid status
+            custom_status: None,
+            banner_color: None,
+            banner_url: None,
+        };
+
+        let result = update_user_profile_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.error.to_lowercase().contains("status"),
+            "Expected 'status' in error, got: {}",
+            err.error
+        );
+    }
+
+    #[tokio::test]
+    async fn update_profile_bio_too_long_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "profile_bio_key").await;
+
+        let too_long_bio = "x".repeat(10000);
+        let request = crate::models::UpdateProfileRequest {
+            display_name: None,
+            bio: Some(too_long_bio),
+            status: None,
+            custom_status: None,
+            banner_color: None,
+            banner_url: None,
+        };
+
+        let result = update_user_profile_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_user_profile_nonexistent_returns_404() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "profile_404_key").await;
+        let ghost_id = Uuid::new_v4();
+
+        let result = get_user_profile_handler(
+            State(state),
+            Path(ghost_id),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 9. Ban operations — permission checks
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn ban_user_non_admin_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "ban_owner_key").await;
+        let (member_id, member_token) = register_and_auth(&state, "ban_member_key").await;
+        let (target_id, _) = register_and_auth(&state, "ban_target_key").await;
+
+        let node = state
+            .create_node("BanTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        state.join_node(member_id, node.id).await.unwrap();
+        state.join_node(target_id, node.id).await.unwrap();
+
+        let request = crate::models::BanUserRequest {
+            public_key_hash: "some_hash".into(),
+            reason_encrypted: None,
+            expires_at: None,
+            device_fingerprint_hash: None,
+        };
+
+        let result = ban_user_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&member_token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn ban_user_non_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "ban_nm_owner_key").await;
+        let (_, outsider_token) = register_and_auth(&state, "ban_nm_outsider_key").await;
+
+        let node = state
+            .create_node("BanNMTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let request = crate::models::BanUserRequest {
+            public_key_hash: "some_hash".into(),
+            reason_encrypted: None,
+            expires_at: None,
+            device_fingerprint_hash: None,
+        };
+
+        let result = ban_user_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&outsider_token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 10. Search messages — validation
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn search_messages_missing_q_param_returns_400() {
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "search_owner_key").await;
+
+        let node = state
+            .create_node("SearchTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        // No 'q' query parameter
+        let result = search_messages_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.error.contains("'q'"),
+            "Expected mention of 'q' param, got: {}",
+            err.error
+        );
+    }
+
+    #[tokio::test]
+    async fn search_messages_empty_query_returns_400() {
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "search_empty_key").await;
+
+        let node = state
+            .create_node("SearchEmptyTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let mut params = no_params();
+        params.insert("q".into(), "   ".into()); // whitespace-only
+
+        let result = search_messages_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(params),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn search_messages_non_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "search_nonmember_owner_key").await;
+        let (_, outsider_token) = register_and_auth(&state, "search_nonmember_out_key").await;
+
+        let node = state
+            .create_node("SearchNMTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let mut params = no_params();
+        params.insert("q".into(), "hello".into());
+
+        let result = search_messages_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&outsider_token),
+            Query(params),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 11. Node presence — non-member access denied
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn node_presence_non_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "presence_owner_key").await;
+        let (_, outsider_token) = register_and_auth(&state, "presence_outsider_key").await;
+
+        let node = state
+            .create_node("PresenceTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = get_node_presence_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 12. Node members — non-member access denied
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn get_node_members_non_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "members_owner_key").await;
+        let (_, outsider_token) = register_and_auth(&state, "members_outsider_key").await;
+
+        let node = state
+            .create_node("MembersTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = get_node_members_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 13. Edit / Delete message — invalid UUID format
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn edit_message_invalid_uuid_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "edit_msg_key").await;
+
+        let request = crate::models::EditMessageRequest {
+            encrypted_data: base64::engine::general_purpose::STANDARD.encode(b"some data"),
+        };
+
+        let result = edit_message_handler(
+            Path("not-a-valid-uuid".to_string()),
+            auth_header(&token),
+            Query(no_params()),
+            State(state),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn delete_message_invalid_uuid_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "delete_msg_key").await;
+
+        let result = delete_message_handler(
+            Path("not-a-uuid!!".to_string()),
+            auth_header(&token),
+            Query(no_params()),
+            State(state),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn edit_message_nonexistent_returns_forbidden() {
+        // A well-formed UUID that doesn't exist in the DB — returns 403
+        // (DB returns false, which maps to FORBIDDEN per handler logic)
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "edit_nonexist_key").await;
+
+        let request = crate::models::EditMessageRequest {
+            encrypted_data: base64::engine::general_purpose::STANDARD.encode(b"payload"),
+        };
+
+        let result = edit_message_handler(
+            Path(Uuid::new_v4().to_string()),
+            auth_header(&token),
+            Query(no_params()),
+            State(state),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn edit_message_invalid_base64_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "edit_b64_key").await;
+
+        let request = crate::models::EditMessageRequest {
+            encrypted_data: "!!!not base64!!!".into(),
+        };
+
+        let result = edit_message_handler(
+            Path(Uuid::new_v4().to_string()),
+            auth_header(&token),
+            Query(no_params()),
+            State(state),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 14. Key bundle — invalid base64
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn publish_key_bundle_bad_identity_key_base64_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "keybundle_b64_key").await;
+
+        let request = crate::models::PublishKeyBundleRequest {
+            identity_key: "!!!bad base64".into(),
+            signed_prekey: base64::engine::general_purpose::STANDARD.encode(b"spk"),
+            one_time_prekeys: vec![],
+        };
+
+        let result = publish_key_bundle_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn publish_key_bundle_bad_signed_prekey_base64_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "keybundle_spk_b64_key").await;
+
+        let request = crate::models::PublishKeyBundleRequest {
+            identity_key: base64::engine::general_purpose::STANDARD.encode(b"ik"),
+            signed_prekey: "not+valid+base64!@#".into(),
+            one_time_prekeys: vec![],
+        };
+
+        let result = publish_key_bundle_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn fetch_key_bundle_nonexistent_user_returns_404() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "fetchbundle_key").await;
+        let ghost_id = Uuid::new_v4();
+
+        let result = fetch_key_bundle_handler(
+            State(state),
+            Path(ghost_id),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 15. Ban check — missing required params
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn ban_check_no_params_returns_400() {
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "bancheck_owner_key").await;
+
+        let node = state
+            .create_node("BanCheckTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = ban_check_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(no_params()), // neither public_key_hash nor device_fingerprint_hash
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 16. Auto-mod — invalid action value
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn add_auto_mod_word_invalid_action_returns_400() {
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "automod_owner_key").await;
+
+        let node = state
+            .create_node("AutoModTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let request = crate::models::AddAutoModWordRequest {
+            word: "badword".into(),
+            action: "delete".into(), // invalid — only "block" or "warn" accepted
+        };
+
+        let result = add_auto_mod_word_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn add_auto_mod_word_too_long_returns_400() {
+        let state = make_state().await;
+        let (owner_id, owner_token) = register_and_auth(&state, "automod_long_key").await;
+
+        let node = state
+            .create_node("AutoModLongTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let request = crate::models::AddAutoModWordRequest {
+            word: "w".repeat(101), // exceeds 100-char limit
+            action: "block".into(),
+        };
+
+        let result = add_auto_mod_word_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&owner_token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn add_auto_mod_word_non_admin_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "automod_owner2_key").await;
+        let (member_id, member_token) = register_and_auth(&state, "automod_member_key").await;
+
+        let node = state
+            .create_node("AutoModPermTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        state.join_node(member_id, node.id).await.unwrap();
+
+        let request = crate::models::AddAutoModWordRequest {
+            word: "bad".into(),
+            action: "block".into(),
+        };
+
+        let result = add_auto_mod_word_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&member_token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 17. Push token — empty token rejected
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn register_push_token_empty_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "push_token_key").await;
+
+        let request = crate::models::RegisterDeviceTokenRequest {
+            platform: crate::models::PushPlatform::Ios,
+            token: "".into(), // empty device token
+            privacy_level: None,
+        };
+
+        let result = register_push_token_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 18. Audit log — non-member access denied
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn audit_log_non_member_returns_403() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "audit_owner_key").await;
+        let (_, outsider_token) = register_and_auth(&state, "audit_outsider_key").await;
+
+        let node = state
+            .create_node("AuditTest".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = get_node_audit_log_handler(
+            State(state),
+            Path(node.id),
+            auth_header(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 19. Friend request — self-request rejected
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn friend_request_to_self_returns_400() {
+        let state = make_state().await;
+        let (user_id, token) = register_and_auth(&state, "friend_self_key").await;
+
+        let request = crate::models::SendFriendRequestRequest {
+            to_user_id: user_id, // same as self
+            node_id: Uuid::new_v4(),
+            dm_key_bundle: None,
+        };
+
+        let result = send_friend_request_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn friend_request_nonexistent_target_returns_404() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "friend_ghost_key").await;
+
+        let request = crate::models::SendFriendRequestRequest {
+            to_user_id: Uuid::new_v4(), // ghost user
+            node_id: Uuid::new_v4(),
+            dm_key_bundle: None,
+        };
+
+        let result = send_friend_request_handler(
+            State(state),
+            auth_header(&token),
+            Query(no_params()),
+            Json(request),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 20. Block user — self-block rejected
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn block_self_returns_400() {
+        let state = make_state().await;
+        let (user_id, token) = register_and_auth(&state, "block_self_key").await;
+
+        let result = block_user_handler(
+            State(state),
+            Path(user_id),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn block_nonexistent_user_returns_404() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "block_ghost_key").await;
+
+        let result = block_user_handler(
+            State(state),
+            Path(Uuid::new_v4()),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 21. DM channel — cannot DM yourself
+    // ════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn dm_channel_self_returns_400() {
+        let state = make_state().await;
+        let (user_id, token) = register_and_auth(&state, "dm_self_key").await;
+
+        let result = create_dm_channel_handler(
+            State(state),
+            Path(user_id.to_string()),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn dm_channel_nonexistent_user_returns_404() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "dm_ghost_key").await;
+
+        let result = create_dm_channel_handler(
+            State(state),
+            Path(Uuid::new_v4().to_string()),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn dm_channel_invalid_uuid_returns_400() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "dm_bad_uuid_key").await;
+
+        let result = create_dm_channel_handler(
+            State(state),
+            Path("not-a-uuid-at-all".to_string()),
+            auth_header(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
