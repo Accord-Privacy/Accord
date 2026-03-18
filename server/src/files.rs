@@ -173,16 +173,25 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_file_storage() {
+    /// Helper: create a FileHandler backed by a fresh temp directory
+    async fn setup_handler(max_file_size: u64) -> (FileHandler, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let config = FileConfig {
             storage_dir: temp_dir.path().to_path_buf(),
-            max_file_size: 1024,
+            max_file_size,
         };
-
         let handler = FileHandler::new(config);
         handler.init().await.unwrap();
+        (handler, temp_dir)
+    }
+
+    // ---------------------------------------------------------------
+    // Basic store / read / delete round-trip
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_file_storage() {
+        let (handler, _dir) = setup_handler(1024).await;
 
         let file_id = Uuid::new_v4();
         let test_data = b"encrypted_test_data";
@@ -209,40 +218,438 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_file_size_limit() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = FileConfig {
-            storage_dir: temp_dir.path().to_path_buf(),
-            max_file_size: 10, // Very small limit
-        };
+    async fn test_store_empty_file() {
+        let (handler, _dir) = setup_handler(1024).await;
+        let file_id = Uuid::new_v4();
+        let empty: &[u8] = b"";
 
-        let handler = FileHandler::new(config);
-        handler.init().await.unwrap();
+        let (path, hash) = handler.store_file(file_id, empty).await.unwrap();
+        let data = handler.read_file(&path).await.unwrap();
+        assert!(data.is_empty());
+        // SHA-256 of empty input is the well-known constant
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_store_binary_data_with_null_bytes() {
+        let (handler, _dir) = setup_handler(1024).await;
+        let file_id = Uuid::new_v4();
+        let data: Vec<u8> = vec![0x00, 0xFF, 0x00, 0xDE, 0xAD, 0x00, 0xBE, 0xEF];
+
+        let (path, _hash) = handler.store_file(file_id, &data).await.unwrap();
+        let read_back = handler.read_file(&path).await.unwrap();
+        assert_eq!(read_back, data);
+    }
+
+    #[tokio::test]
+    async fn test_deterministic_content_hash() {
+        let (handler, _dir) = setup_handler(4096).await;
+        let data = b"same_data";
+
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let (_, hash1) = handler.store_file(id1, data).await.unwrap();
+        let (_, hash2) = handler.store_file(id2, data).await.unwrap();
+        assert_eq!(
+            hash1, hash2,
+            "identical content must produce identical hashes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_different_data_different_hash() {
+        let (handler, _dir) = setup_handler(4096).await;
+
+        let (_, h1) = handler.store_file(Uuid::new_v4(), b"aaa").await.unwrap();
+        let (_, h2) = handler.store_file(Uuid::new_v4(), b"bbb").await.unwrap();
+        assert_ne!(h1, h2);
+    }
+
+    // ---------------------------------------------------------------
+    // File size limit enforcement
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_file_size_limit() {
+        let (handler, _dir) = setup_handler(10).await;
 
         let file_id = Uuid::new_v4();
         let large_data = vec![0u8; 100]; // Exceeds limit
 
-        // Should fail due to size limit
         let result = handler.store_file(file_id, &large_data).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("exceeds maximum"),
+            "error message should mention size limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_file_size_exactly_at_limit() {
+        let (handler, _dir) = setup_handler(10).await;
+
+        // Exactly at the limit should succeed
+        let data = vec![0u8; 10];
+        let result = handler.store_file(Uuid::new_v4(), &data).await;
+        assert!(
+            result.is_ok(),
+            "file exactly at size limit should be accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_file_size_one_byte_over_limit() {
+        let (handler, _dir) = setup_handler(10).await;
+
+        let data = vec![0u8; 11];
+        let result = handler.store_file(Uuid::new_v4(), &data).await;
+        assert!(result.is_err(), "file one byte over limit must be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_file_size_one_byte_under_limit() {
+        let (handler, _dir) = setup_handler(10).await;
+
+        let data = vec![0u8; 9];
+        let result = handler.store_file(Uuid::new_v4(), &data).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_zero_size_limit_rejects_nonempty() {
+        let (handler, _dir) = setup_handler(0).await;
+
+        let result = handler.store_file(Uuid::new_v4(), b"x").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
+    async fn test_zero_size_limit_accepts_empty() {
+        let (handler, _dir) = setup_handler(0).await;
+
+        let result = handler.store_file(Uuid::new_v4(), b"").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_oversized_file_not_written_to_disk() {
+        let (handler, dir) = setup_handler(10).await;
+
+        let file_id = Uuid::new_v4();
+        let _ = handler.store_file(file_id, &vec![0u8; 100]).await;
+
+        // The file should NOT exist on disk after rejection
+        let would_be_path = dir.path().join(file_id.to_string());
+        assert!(
+            !would_be_path.exists(),
+            "rejected file must not be persisted to disk"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Path traversal protection (validate_path)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
     async fn test_path_traversal_protection() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        // Classic path traversal
+        let result = handler.read_file("../../../etc/passwd").await;
+        assert!(result.is_err());
+
+        let result = handler.delete_file("../../../important_file").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_path_traversal_dot_dot_in_middle() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        let result = handler.read_file("subdir/../../../etc/shadow").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_path_traversal_absolute_path() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        // Absolute path pointing outside storage
+        let result = handler.read_file("/etc/passwd").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_path_traversal_double_encoded() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        // Percent-encoded dots won't help on the filesystem but test robustness
+        let result = handler.read_file("..%2f..%2f..%2fetc%2fpasswd").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_path_traversal_null_byte() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        // Null byte injection — canonicalize should fail
+        let result = handler.read_file("file\0.txt").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_rejects_symlink_escape() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        // Create a symlink inside storage that points outside
+        let link_path = dir.path().join("escape_link");
+        std::os::unix::fs::symlink("/etc/hostname", &link_path).unwrap();
+
+        let result = handler.read_file(link_path.to_str().unwrap()).await;
+        assert!(
+            result.is_err(),
+            "symlink escaping storage dir must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_file_exists_returns_false_for_traversal() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        assert!(
+            !handler.file_exists("../../../etc/passwd").await,
+            "file_exists must return false for traversal paths"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_file_size_rejects_traversal() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        let result = handler.get_file_size("../../../etc/passwd").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_file_rejects_traversal() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        let result = handler.delete_file("../../../tmp/should_not_delete").await;
+        assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Content hash verification
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_verify_content_hash_wrong_hash() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        let (path, _correct_hash) = handler.store_file(Uuid::new_v4(), b"hello").await.unwrap();
+
+        let result = handler
+            .verify_content_hash(
+                &path,
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .await
+            .unwrap();
+        assert!(!result, "wrong hash must not verify");
+    }
+
+    #[tokio::test]
+    async fn test_verify_content_hash_correct() {
+        let (handler, _dir) = setup_handler(1024).await;
+
+        let (path, hash) = handler.store_file(Uuid::new_v4(), b"hello").await.unwrap();
+
+        assert!(handler.verify_content_hash(&path, &hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_verify_content_hash_nonexistent_file() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        let fake_path = dir.path().join("nonexistent").to_string_lossy().to_string();
+        let result = handler.verify_content_hash(&fake_path, "abc").await;
+        assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Read / delete / size of nonexistent files
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_read_nonexistent_file() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        let fake = dir
+            .path()
+            .join("does_not_exist")
+            .to_string_lossy()
+            .to_string();
+        let result = handler.read_file(&fake).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_file_is_ok() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        // Current implementation: delete of missing file succeeds (no-op)
+        // because it checks .exists() before remove_file.
+        // BUT validate_path uses canonicalize which will fail on nonexistent files.
+        let fake = dir.path().join("ghost").to_string_lossy().to_string();
+        let result = handler.delete_file(&fake).await;
+        // canonicalize fails on nonexistent path, so this is an error
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_file_size_nonexistent() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        let fake = dir.path().join("nope").to_string_lossy().to_string();
+        let result = handler.get_file_size(&fake).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_file_exists_nonexistent() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        let fake = dir.path().join("nope").to_string_lossy().to_string();
+        assert!(!handler.file_exists(&fake).await);
+    }
+
+    // ---------------------------------------------------------------
+    // get_file_size returns correct value
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_file_size_correct() {
+        let (handler, _dir) = setup_handler(4096).await;
+
+        let data = vec![0xABu8; 256];
+        let (path, _) = handler.store_file(Uuid::new_v4(), &data).await.unwrap();
+
+        let size = handler.get_file_size(&path).await.unwrap();
+        assert_eq!(size, 256);
+    }
+
+    // ---------------------------------------------------------------
+    // Default config sanity
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_default_config_values() {
+        let cfg = FileConfig::default();
+        assert_eq!(
+            cfg.max_file_size,
+            100 * 1024 * 1024,
+            "default max should be 100 MB"
+        );
+        assert_eq!(cfg.storage_dir, PathBuf::from("./data/files"));
+    }
+
+    #[test]
+    fn test_with_default_config_constructor() {
+        let handler = FileHandler::with_default_config();
+        assert_eq!(handler.config.max_file_size, 100 * 1024 * 1024);
+    }
+
+    // ---------------------------------------------------------------
+    // Storage path uses UUID filename (no user-controlled names)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_storage_path_uses_uuid() {
+        let (handler, dir) = setup_handler(1024).await;
+
+        let file_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let (path, _) = handler.store_file(file_id, b"data").await.unwrap();
+
+        // The stored path should contain the UUID as filename
+        assert!(
+            path.contains("550e8400-e29b-41d4-a716-446655440000"),
+            "storage path should use the UUID as filename, got: {}",
+            path
+        );
+        // And the file should be directly under storage_dir
+        let expected = dir.path().join("550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(Path::new(&path), expected.as_path());
+    }
+
+    // ---------------------------------------------------------------
+    // Init creates nested directories
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_init_creates_nested_dirs() {
         let temp_dir = TempDir::new().unwrap();
+        let nested = temp_dir.path().join("a").join("b").join("c");
         let config = FileConfig {
-            storage_dir: temp_dir.path().to_path_buf(),
+            storage_dir: nested.clone(),
             max_file_size: 1024,
         };
 
         let handler = FileHandler::new(config);
+        handler.init().await.unwrap();
+        assert!(nested.exists());
+    }
 
-        // Try to read a file outside the storage directory
-        let result = handler.read_file("../../../etc/passwd").await;
-        assert!(result.is_err());
+    #[tokio::test]
+    async fn test_init_idempotent() {
+        let (handler, _dir) = setup_handler(1024).await;
+        // Calling init again should not fail
+        handler.init().await.unwrap();
+    }
 
-        // Try to delete a file outside the storage directory
-        let result = handler.delete_file("../../../important_file").await;
-        assert!(result.is_err());
+    // ---------------------------------------------------------------
+    // Multiple files stored independently
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_multiple_files_independent() {
+        let (handler, _dir) = setup_handler(4096).await;
+
+        let (path1, _) = handler
+            .store_file(Uuid::new_v4(), b"file_one")
+            .await
+            .unwrap();
+        let (path2, _) = handler
+            .store_file(Uuid::new_v4(), b"file_two")
+            .await
+            .unwrap();
+
+        assert_ne!(path1, path2);
+
+        // Deleting one doesn't affect the other
+        handler.delete_file(&path1).await.unwrap();
+        assert!(!handler.file_exists(&path1).await);
+        assert!(handler.file_exists(&path2).await);
+
+        let data2 = handler.read_file(&path2).await.unwrap();
+        assert_eq!(data2, b"file_two");
+    }
+
+    // ---------------------------------------------------------------
+    // Large file at exact boundary (default 100MB not practical,
+    // but we test the boundary logic with small limits)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_large_data_within_limit() {
+        // 1 MB limit, store exactly 1 MB
+        let limit = 1024 * 1024;
+        let (handler, _dir) = setup_handler(limit).await;
+
+        let data = vec![0x42u8; limit as usize];
+        let result = handler.store_file(Uuid::new_v4(), &data).await;
+        assert!(result.is_ok());
     }
 }

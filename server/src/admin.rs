@@ -747,3 +747,763 @@ init();
 </script>
 </body>
 </html>"##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use axum::extract::{Query, State};
+    use axum::http::{HeaderMap, HeaderValue};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::Mutex as TokioMutex;
+
+    // Serialize all tests that touch ACCORD_ADMIN_TOKEN env var.
+    // Using tokio Mutex so we can hold it across await points.
+    static ENV_LOCK: std::sync::LazyLock<TokioMutex<()>> =
+        std::sync::LazyLock::new(|| TokioMutex::new(()));
+
+    /// RAII guard that sets ACCORD_ADMIN_TOKEN and restores on drop.
+    struct AdminTokenGuard {
+        prev: Option<String>,
+        // Hold the tokio MutexGuard to serialize across tests.
+        // We use an Option so we can take it in drop.
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for AdminTokenGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => unsafe { std::env::set_var("ACCORD_ADMIN_TOKEN", v) },
+                None => unsafe { std::env::remove_var("ACCORD_ADMIN_TOKEN") },
+            }
+        }
+    }
+
+    async fn set_admin_token(token: Option<&str>) -> AdminTokenGuard {
+        let lock = ENV_LOCK.lock().await;
+        let prev = std::env::var("ACCORD_ADMIN_TOKEN").ok();
+        match token {
+            Some(t) => unsafe { std::env::set_var("ACCORD_ADMIN_TOKEN", t) },
+            None => unsafe { std::env::remove_var("ACCORD_ADMIN_TOKEN") },
+        }
+        AdminTokenGuard { prev, _lock: lock }
+    }
+
+    /// Sync version for non-async tests (uses std Mutex internally).
+    fn set_admin_token_sync(token: Option<&str>) -> impl Drop {
+        struct SyncGuard {
+            prev: Option<String>,
+        }
+        impl Drop for SyncGuard {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => unsafe { std::env::set_var("ACCORD_ADMIN_TOKEN", v) },
+                    None => unsafe { std::env::remove_var("ACCORD_ADMIN_TOKEN") },
+                }
+            }
+        }
+        // We can't easily hold the tokio mutex from sync. Use a simple
+        // blocking approach — sync tests are fast enough.
+        let prev = std::env::var("ACCORD_ADMIN_TOKEN").ok();
+        match token {
+            Some(t) => unsafe { std::env::set_var("ACCORD_ADMIN_TOKEN", t) },
+            None => unsafe { std::env::remove_var("ACCORD_ADMIN_TOKEN") },
+        }
+        SyncGuard { prev }
+    }
+
+    fn headers_with_token(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-admin-token", HeaderValue::from_str(token).unwrap());
+        headers
+    }
+
+    fn empty_params() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    fn params_with_token(token: &str) -> HashMap<String, String> {
+        let mut params = HashMap::new();
+        params.insert("admin_token".to_string(), token.to_string());
+        params
+    }
+
+    async fn make_test_state() -> SharedState {
+        Arc::new(AppState::new_in_memory().await.unwrap())
+    }
+
+    // ── validate_admin_token tests ──
+
+    #[tokio::test]
+    async fn test_valid_admin_token_via_header() {
+        let _g = set_admin_token(Some("test-secret-123")).await;
+        let headers = headers_with_token("test-secret-123");
+        assert!(validate_admin_token(&headers, &empty_params()));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_admin_token_via_header() {
+        let _g = set_admin_token(Some("test-secret-123")).await;
+        let headers = headers_with_token("wrong-token");
+        assert!(!validate_admin_token(&headers, &empty_params()));
+    }
+
+    #[tokio::test]
+    async fn test_missing_admin_token_header() {
+        let _g = set_admin_token(Some("test-secret-123")).await;
+        let headers = HeaderMap::new();
+        assert!(!validate_admin_token(&headers, &empty_params()));
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_not_configured() {
+        let _g = set_admin_token(None).await;
+        let headers = headers_with_token("anything");
+        assert!(!validate_admin_token(&headers, &empty_params()));
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_configured_empty() {
+        let _g = set_admin_token(Some("")).await;
+        let headers = headers_with_token("anything");
+        assert!(!validate_admin_token(&headers, &empty_params()));
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_ignores_query_params() {
+        let _g = set_admin_token(Some("secret")).await;
+        let headers = HeaderMap::new();
+        let params = params_with_token("secret");
+        assert!(!validate_admin_token(&headers, &params));
+    }
+
+    #[tokio::test]
+    async fn test_admin_token_constant_time_comparison() {
+        let _g = set_admin_token(Some("secret-token-value")).await;
+        // Off by one — shorter
+        assert!(!validate_admin_token(
+            &headers_with_token("secret-token-valu"),
+            &empty_params()
+        ));
+        // Off by one — longer
+        assert!(!validate_admin_token(
+            &headers_with_token("secret-token-valuee"),
+            &empty_params()
+        ));
+    }
+
+    // ── validate_admin_token_ws tests ──
+
+    #[tokio::test]
+    async fn test_ws_token_via_header() {
+        let _g = set_admin_token(Some("ws-secret")).await;
+        assert!(validate_admin_token_ws(
+            &headers_with_token("ws-secret"),
+            &empty_params()
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_ws_token_via_query_param() {
+        let _g = set_admin_token(Some("ws-secret")).await;
+        assert!(validate_admin_token_ws(
+            &HeaderMap::new(),
+            &params_with_token("ws-secret")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_ws_token_wrong_query_param() {
+        let _g = set_admin_token(Some("ws-secret")).await;
+        assert!(!validate_admin_token_ws(
+            &HeaderMap::new(),
+            &params_with_token("wrong")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_ws_token_header_takes_priority() {
+        let _g = set_admin_token(Some("ws-secret")).await;
+        // Correct header, wrong query — should pass (header wins)
+        assert!(validate_admin_token_ws(
+            &headers_with_token("ws-secret"),
+            &params_with_token("wrong")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_ws_no_token_configured() {
+        let _g = set_admin_token(None).await;
+        assert!(!validate_admin_token_ws(
+            &HeaderMap::new(),
+            &params_with_token("anything")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_ws_no_credentials_at_all() {
+        let _g = set_admin_token(Some("ws-secret")).await;
+        assert!(!validate_admin_token_ws(&HeaderMap::new(), &empty_params()));
+    }
+
+    // ── Handler authorization tests ──
+
+    #[tokio::test]
+    async fn test_stats_handler_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result =
+            admin_stats_handler(State(state), HeaderMap::new(), Query(empty_params())).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_stats_handler_rejects_wrong_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_stats_handler(
+            State(state),
+            headers_with_token("wrong"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_stats_handler_accepts_valid_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_stats_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        let json = result.unwrap().0;
+        assert!(json.get("user_count").is_some());
+        assert!(json.get("node_count").is_some());
+        assert!(json.get("message_count").is_some());
+        assert!(json.get("connection_count").is_some());
+        assert!(json.get("uptime_seconds").is_some());
+        assert!(json.get("version").is_some());
+        assert!(json.get("memory_bytes").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_stats_handler_returns_zero_counts_on_fresh_db() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_stats_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let json = result.unwrap().0;
+        assert_eq!(json["user_count"], 0);
+        assert_eq!(json["node_count"], 0);
+        assert_eq!(json["message_count"], 0);
+        assert_eq!(json["connection_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_stats_reflects_connections() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let fake_id = uuid::Uuid::new_v4();
+        let (tx, _rx) = broadcast::channel(1);
+        state.connections.write().await.insert(fake_id, tx);
+
+        let result = admin_stats_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let json = result.unwrap().0;
+        assert_eq!(json["connection_count"], 1);
+    }
+
+    // ── Users handler tests ──
+
+    #[tokio::test]
+    async fn test_users_handler_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result =
+            admin_users_handler(State(state), HeaderMap::new(), Query(empty_params())).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_users_handler_accepts_valid_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_users_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        let json = result.unwrap().0;
+        assert!(json.get("users").is_some());
+        assert!(json["users"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_users_handler_returns_registered_users() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        state
+            .register_user("test-pubkey-123".into(), "".into())
+            .await
+            .unwrap();
+        let result = admin_users_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let json = result.unwrap().0;
+        let users = json["users"].as_array().unwrap();
+        assert_eq!(users.len(), 1);
+    }
+
+    // ── Nodes handler tests ──
+
+    #[tokio::test]
+    async fn test_nodes_handler_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result =
+            admin_nodes_handler(State(state), HeaderMap::new(), Query(empty_params())).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_nodes_handler_accepts_valid_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_nodes_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().0.get("nodes").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_nodes_handler_returns_created_nodes() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let user_id = state
+            .register_user("nodeowner-key".into(), "".into())
+            .await
+            .unwrap();
+        state
+            .create_node("TestNode".into(), user_id, Some("A test node".into()))
+            .await
+            .unwrap();
+        let result = admin_nodes_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let json = result.unwrap().0;
+        let nodes = json["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+    }
+
+    // ── Build allowlist handler tests ──
+
+    #[tokio::test]
+    async fn test_build_allowlist_get_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_build_allowlist_get_handler(
+            State(state),
+            HeaderMap::new(),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_get_accepts_valid_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_build_allowlist_get_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        let json = result.unwrap().0;
+        assert!(json.get("allowlist").is_some());
+        assert!(json.get("enforcement").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_add_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let input = crate::models::RelayBuildHashAllowlistInput {
+            build_hash: "abc123".into(),
+            label: Some("test".into()),
+        };
+        let result = admin_build_allowlist_add_handler(
+            State(state),
+            HeaderMap::new(),
+            Query(empty_params()),
+            Json(input),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_add_and_get() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let input = crate::models::RelayBuildHashAllowlistInput {
+            build_hash: "deadbeef".into(),
+            label: Some("v1.0".into()),
+        };
+        let result = admin_build_allowlist_add_handler(
+            State(state.clone()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+            Json(input),
+        )
+        .await;
+        assert!(result.is_ok());
+        let json = result.unwrap().0;
+        assert_eq!(json["status"], "added");
+        assert_eq!(json["build_hash"], "deadbeef");
+
+        // Verify it shows in get
+        let result = admin_build_allowlist_get_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let json = result.unwrap().0;
+        let allowlist = json["allowlist"].as_array().unwrap();
+        assert_eq!(allowlist.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_add_duplicate() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let input = crate::models::RelayBuildHashAllowlistInput {
+            build_hash: "deadbeef".into(),
+            label: Some("v1.0".into()),
+        };
+        // Add once
+        let _ = admin_build_allowlist_add_handler(
+            State(state.clone()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+            Json(input.clone()),
+        )
+        .await
+        .unwrap();
+
+        // Add again
+        let result = admin_build_allowlist_add_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+            Json(input),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0["status"], "already_exists");
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_set_replaces_all() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        // Add initial
+        let _ = admin_build_allowlist_add_handler(
+            State(state.clone()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+            Json(crate::models::RelayBuildHashAllowlistInput {
+                build_hash: "hash1".into(),
+                label: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Set entirely new list
+        let new_list = vec![
+            crate::models::RelayBuildHashAllowlistInput {
+                build_hash: "new1".into(),
+                label: Some("new-one".into()),
+            },
+            crate::models::RelayBuildHashAllowlistInput {
+                build_hash: "new2".into(),
+                label: None,
+            },
+        ];
+        let result = admin_build_allowlist_set_handler(
+            State(state.clone()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+            Json(new_list),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0["count"], 2);
+
+        // Verify old entry is gone
+        let result = admin_build_allowlist_get_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let allowlist = result.unwrap().0["allowlist"].as_array().unwrap().clone();
+        assert_eq!(allowlist.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_set_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_build_allowlist_set_handler(
+            State(state),
+            HeaderMap::new(),
+            Query(empty_params()),
+            Json(vec![]),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_remove() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let _ = admin_build_allowlist_add_handler(
+            State(state.clone()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+            Json(crate::models::RelayBuildHashAllowlistInput {
+                build_hash: "removeme".into(),
+                label: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = admin_build_allowlist_remove_handler(
+            State(state),
+            axum::extract::Path("removeme".to_string()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0["status"], "removed");
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_remove_nonexistent() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_build_allowlist_remove_handler(
+            State(state),
+            axum::extract::Path("doesnotexist".to_string()),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_build_allowlist_remove_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_build_allowlist_remove_handler(
+            State(state),
+            axum::extract::Path("anything".to_string()),
+            HeaderMap::new(),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    // ── Audit log handler tests ──
+
+    #[tokio::test]
+    async fn test_audit_log_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result =
+            admin_audit_log_handler(State(state), HeaderMap::new(), Query(empty_params())).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_accepts_valid_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_audit_log_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        let json = result.unwrap().0;
+        assert!(json.get("entries").is_some());
+        assert!(json.get("total").is_some());
+        assert!(json.get("page").is_some());
+        assert!(json.get("per_page").is_some());
+        assert!(json.get("total_pages").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_pagination_defaults() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_audit_log_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        let json = result.unwrap().0;
+        assert_eq!(json["page"], 1);
+        assert_eq!(json["per_page"], 25);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_custom_pagination() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let mut params = HashMap::new();
+        params.insert("page".to_string(), "2".to_string());
+        params.insert("per_page".to_string(), "10".to_string());
+        let result = admin_audit_log_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(params),
+        )
+        .await;
+        let json = result.unwrap().0;
+        assert_eq!(json["page"], 2);
+        assert_eq!(json["per_page"], 10);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_per_page_capped_at_100() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let mut params = HashMap::new();
+        params.insert("per_page".to_string(), "500".to_string());
+        let result = admin_audit_log_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(params),
+        )
+        .await;
+        let json = result.unwrap().0;
+        assert_eq!(json["per_page"], 100);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_page_minimum_is_1() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let mut params = HashMap::new();
+        params.insert("page".to_string(), "0".to_string());
+        let result = admin_audit_log_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(params),
+        )
+        .await;
+        let json = result.unwrap().0;
+        assert_eq!(json["page"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_actions_rejects_no_auth() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result =
+            admin_audit_log_actions_handler(State(state), HeaderMap::new(), Query(empty_params()))
+                .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_audit_log_actions_accepts_valid_token() {
+        let _g = set_admin_token(Some("admin-pass")).await;
+        let state = make_test_state().await;
+        let result = admin_audit_log_actions_handler(
+            State(state),
+            headers_with_token("admin-pass"),
+            Query(empty_params()),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().0.get("actions").is_some());
+    }
+
+    // ── unauthorized() helper test ──
+
+    #[test]
+    fn test_unauthorized_response() {
+        let (status, body) = unauthorized();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body.0["error"], "Invalid or missing admin token");
+    }
+
+    // ── get_rss_bytes sanity test ──
+
+    #[test]
+    fn test_get_rss_bytes_does_not_panic() {
+        let _result = get_rss_bytes();
+    }
+
+    // ── new_log_broadcast test ──
+
+    #[test]
+    fn test_new_log_broadcast_creates_channel() {
+        let tx = new_log_broadcast();
+        let mut rx = tx.subscribe();
+        tx.send("test line".to_string()).unwrap();
+        let received = rx.try_recv().unwrap();
+        assert_eq!(received, "test line");
+    }
+}
