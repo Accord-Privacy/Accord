@@ -16,6 +16,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use uuid::Uuid;
 
 use accord_server::state::AppState;
 
@@ -244,6 +245,74 @@ fn bench_broadcast(c: &mut Criterion) {
     group.finish();
 }
 
+// ─── Database query benchmarks ───────────────────────────────────────────────
+
+fn bench_message_query(c: &mut Criterion) {
+    let rt = rt();
+
+    // Seed: create a channel and insert a batch of messages to query against
+    let state = rt.block_on(AppState::new_in_memory()).unwrap();
+    let owner = rt
+        .block_on(state.register_user("pk".into(), "pw".into()))
+        .unwrap();
+    let node = rt
+        .block_on(state.create_node("query_node".into(), owner, None))
+        .unwrap();
+    let channel = rt
+        .block_on(state.create_channel("query_ch".into(), node.id, owner))
+        .unwrap();
+
+    // Insert 500 messages as baseline data
+    rt.block_on(async {
+        for i in 0..500 {
+            state
+                .store_message(channel.id, owner, format!("message body {i}").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let mut group = c.benchmark_group("db_query");
+
+    for page_size in [10u32, 50, 100] {
+        group.bench_with_input(
+            BenchmarkId::new("messages_paginated", page_size),
+            &page_size,
+            |b, &limit| {
+                b.to_async(&rt).iter(|| {
+                    let state_ref = &state;
+                    let ch_id = channel.id;
+                    async move {
+                        black_box(
+                            state_ref
+                                .get_channel_messages_paginated(ch_id, limit, None::<Uuid>)
+                                .await
+                                .unwrap(),
+                        );
+                    }
+                });
+            },
+        );
+    }
+
+    group.bench_function("message_search", |b| {
+        b.to_async(&rt).iter(|| {
+            let state_ref = &state;
+            let nid = node.id;
+            async move {
+                black_box(
+                    state_ref
+                        .search_messages(nid, "message", None::<Uuid>, None::<Uuid>, None, None, 25)
+                        .await
+                        .unwrap(),
+                );
+            }
+        });
+    });
+
+    group.finish();
+}
+
 // ─── Groups ──────────────────────────────────────────────────────────────────
 
 criterion_group!(
@@ -254,6 +323,7 @@ criterion_group!(
     bench_token_validation,
     bench_node_operations,
     bench_message_storage,
+    bench_message_query,
     bench_broadcast,
 );
 criterion_main!(benches);
