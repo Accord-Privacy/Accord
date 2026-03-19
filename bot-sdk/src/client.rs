@@ -6,7 +6,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use crate::error::{BotError, Result};
-use crate::models::{Event, MemberJoin, MemberLeave, Message};
+use crate::models::{Event, MemberJoin, MemberLeave, Message, Role};
 
 type MessageHandler =
     Arc<dyn Fn(Message) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
@@ -310,6 +310,152 @@ impl AccordBot {
             result.push(msg);
         }
         Ok(result)
+    }
+
+    // ── Role Management ──────────────────────────────────────────────────────
+
+    /// List all roles defined in a node.
+    ///
+    /// Returns every role for `node_id` in position order (ascending).
+    /// The built-in `@everyone` role (position `0`) is included.
+    ///
+    /// Requires the bot to be a member of the node; no special permission needed
+    /// beyond membership.
+    ///
+    /// # Errors
+    /// Returns [`BotError::Api`] if the server returns a non-2xx status (e.g. the
+    /// node does not exist or the bot is not a member).
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use accord_bot_sdk::AccordBot;
+    /// # async fn example(bot: &AccordBot) {
+    /// let roles = bot.list_roles("node-uuid-here").await.unwrap();
+    /// for role in &roles {
+    ///     println!("{}: {} (pos {})", role.id, role.name, role.position);
+    /// }
+    /// # }
+    /// ```
+    pub async fn list_roles(&self, node_id: &str) -> Result<Vec<Role>> {
+        let url = format!(
+            "{}/nodes/{}/roles?token={}",
+            self.http_base, node_id, self.token
+        );
+        let resp = self.http.get(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Api {
+                code: status,
+                message: body,
+            });
+        }
+
+        let body: serde_json::Value = resp.json().await?;
+        let roles_raw = body
+            .get("roles")
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut roles = Vec::with_capacity(roles_raw.len());
+        for raw in roles_raw {
+            let role: Role = serde_json::from_value(raw)?;
+            roles.push(role);
+        }
+        Ok(roles)
+    }
+
+    /// Assign a role to a node member.
+    ///
+    /// Uses `PUT /nodes/{node_id}/members/{user_id}/roles/{role_id}`.
+    /// This is idempotent — assigning a role the member already has is a no-op.
+    ///
+    /// Requires the `MANAGE_ROLES` permission in the target node.
+    ///
+    /// # Arguments
+    /// - `node_id`: The node that owns both the member and the role.
+    /// - `user_id`: The member to assign the role to.
+    /// - `role_id`: The role to assign.
+    ///
+    /// # Errors
+    /// Returns [`BotError::Api`] on:
+    /// - `403` — bot lacks `MANAGE_ROLES` permission.
+    /// - `404` — role or user not found in the node.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use accord_bot_sdk::AccordBot;
+    /// # async fn example(bot: &AccordBot) {
+    /// bot.assign_role("node-id", "user-id", "role-id").await.unwrap();
+    /// # }
+    /// ```
+    pub async fn assign_role(
+        &self,
+        node_id: &str,
+        user_id: &str,
+        role_id: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/nodes/{}/members/{}/roles/{}?token={}",
+            self.http_base, node_id, user_id, role_id, self.token
+        );
+        let resp = self.http.put(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Api {
+                code: status,
+                message: body,
+            });
+        }
+        Ok(())
+    }
+
+    /// Remove a role from a node member.
+    ///
+    /// Uses `DELETE /nodes/{node_id}/members/{user_id}/roles/{role_id}`.
+    /// This is idempotent — removing a role the member does not have is a no-op.
+    ///
+    /// Requires the `MANAGE_ROLES` permission in the target node.
+    ///
+    /// # Arguments
+    /// - `node_id`: The node that owns both the member and the role.
+    /// - `user_id`: The member to remove the role from.
+    /// - `role_id`: The role to remove.
+    ///
+    /// # Errors
+    /// Returns [`BotError::Api`] on:
+    /// - `403` — bot lacks `MANAGE_ROLES` permission.
+    /// - `404` — role or user not found in the node.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use accord_bot_sdk::AccordBot;
+    /// # async fn example(bot: &AccordBot) {
+    /// bot.remove_role("node-id", "user-id", "role-id").await.unwrap();
+    /// # }
+    /// ```
+    pub async fn remove_role(
+        &self,
+        node_id: &str,
+        user_id: &str,
+        role_id: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/nodes/{}/members/{}/roles/{}?token={}",
+            self.http_base, node_id, user_id, role_id, self.token
+        );
+        let resp = self.http.delete(&url).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BotError::Api {
+                code: status,
+                message: body,
+            });
+        }
+        Ok(())
     }
 
     /// Register a handler for incoming messages.
@@ -1015,5 +1161,213 @@ mod http_tests {
             timestamp: None,
         };
         bot.dispatch(Event::MemberLeave(ev)).await;
+    }
+
+    // ── list_roles tests ──────────────────────────────────────────────────────
+
+    fn make_role_json(id: &str, name: &str, position: i32) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "node_id": "node-abc",
+            "name": name,
+            "color": 0,
+            "permissions": 0,
+            "position": position,
+            "hoist": false,
+            "mentionable": false,
+            "icon_emoji": null,
+            "created_at": 1700000000_u64
+        })
+    }
+
+    /// Happy path: server returns two roles, they are deserialized correctly.
+    #[tokio::test]
+    async fn list_roles_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/nodes/node-abc/roles"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "roles": [
+                    make_role_json("role-001", "@everyone", 0),
+                    make_role_json("role-002", "Moderator", 1),
+                ]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let roles = bot.list_roles("node-abc").await.expect("list_roles should succeed");
+
+        assert_eq!(roles.len(), 2);
+        assert_eq!(roles[0].id, "role-001");
+        assert_eq!(roles[0].name, "@everyone");
+        assert_eq!(roles[0].position, 0);
+        assert_eq!(roles[1].id, "role-002");
+        assert_eq!(roles[1].name, "Moderator");
+        assert_eq!(roles[1].position, 1);
+    }
+
+    /// Empty node — server returns an empty roles array.
+    #[tokio::test]
+    async fn list_roles_empty() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/nodes/node-empty/roles"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "roles": []
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let roles = bot.list_roles("node-empty").await.expect("list_roles should succeed");
+        assert!(roles.is_empty());
+    }
+
+    /// Non-member → server returns 403 → BotError::Api with code 403.
+    #[tokio::test]
+    async fn list_roles_forbidden() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/nodes/node-secret/roles"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("Not a member of this node"))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.list_roles("node-secret").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 403),
+            other => panic!("expected Api(403), got {:?}", other),
+        }
+    }
+
+    // ── assign_role tests ─────────────────────────────────────────────────────
+
+    /// Happy path: server returns 204 No Content → Ok(()).
+    #[tokio::test]
+    async fn assign_role_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.assign_role("node-abc", "user-123", "role-mod").await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    }
+
+    /// Bot lacks MANAGE_ROLES → server returns 403.
+    #[tokio::test]
+    async fn assign_role_forbidden() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_string("Missing permission: MANAGE_ROLES"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.assign_role("node-abc", "user-123", "role-mod").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 403),
+            other => panic!("expected Api(403), got {:?}", other),
+        }
+    }
+
+    /// Role not found in node → server returns 404.
+    #[tokio::test]
+    async fn assign_role_not_found() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/nodes/node-abc/members/user-123/roles/no-such-role"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("Role not found"))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.assign_role("node-abc", "user-123", "no-such-role").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 404),
+            other => panic!("expected Api(404), got {:?}", other),
+        }
+    }
+
+    // ── remove_role tests ─────────────────────────────────────────────────────
+
+    /// Happy path: server returns 204 No Content → Ok(()).
+    #[tokio::test]
+    async fn remove_role_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.remove_role("node-abc", "user-123", "role-mod").await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    }
+
+    /// Bot lacks MANAGE_ROLES → server returns 403.
+    #[tokio::test]
+    async fn remove_role_forbidden() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_string("Missing permission: MANAGE_ROLES"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.remove_role("node-abc", "user-123", "role-mod").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 403),
+            other => panic!("expected Api(403), got {:?}", other),
+        }
+    }
+
+    /// User not a member of the node → server returns 404.
+    #[tokio::test]
+    async fn remove_role_user_not_found() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/nodes/node-abc/members/ghost-user/roles/role-mod"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_string("User is not a member of this node"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.remove_role("node-abc", "ghost-user", "role-mod").await;
+
+        match result {
+            Err(BotError::Api { code, .. }) => assert_eq!(code, 404),
+            other => panic!("expected Api(404), got {:?}", other),
+        }
     }
 }

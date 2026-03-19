@@ -87,6 +87,42 @@ pub struct Message {
     pub reply_to: Option<String>,
 }
 
+/// A role within a Node.
+///
+/// Roles define permission sets and can be assigned to node members.
+/// They are ordered by `position` — higher values grant more authority.
+/// The built-in `@everyone` role always has position `0`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Role {
+    /// Unique role identifier (UUID).
+    pub id: String,
+    /// The node this role belongs to.
+    pub node_id: String,
+    /// Human-readable role name (e.g. `"Moderator"`).
+    pub name: String,
+    /// RGB color encoded as an integer (`0` = no color / default).
+    #[serde(default)]
+    pub color: u32,
+    /// Permission bitmask. Each set bit enables a specific permission.
+    #[serde(default)]
+    pub permissions: u64,
+    /// Hierarchy position — higher number = more authority. `@everyone` is always 0.
+    #[serde(default)]
+    pub position: i32,
+    /// Whether members with this role appear separately in the member list.
+    #[serde(default)]
+    pub hoist: bool,
+    /// Whether this role can be @mentioned by anyone.
+    #[serde(default)]
+    pub mentionable: bool,
+    /// Optional Unicode emoji shown as the role icon.
+    #[serde(default)]
+    pub icon_emoji: Option<String>,
+    /// Unix timestamp (seconds) when the role was created.
+    #[serde(default)]
+    pub created_at: Option<u64>,
+}
+
 /// A reaction on a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reaction {
