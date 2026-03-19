@@ -1359,3 +1359,486 @@ pub struct SetNodeUserProfileRequest {
     #[serde(default)]
     pub encrypted_avatar_url: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::permission_bits::*;
+    use super::*;
+
+    // ── permission_bits: each constant is a single bit (power of 2) ──
+
+    #[test]
+    fn permission_constants_are_powers_of_two() {
+        let bits = [
+            CREATE_INVITE,
+            KICK_MEMBERS,
+            BAN_MEMBERS,
+            ADMINISTRATOR,
+            MANAGE_CHANNELS,
+            MANAGE_NODE,
+            ADD_REACTIONS,
+            VIEW_CHANNEL,
+            SEND_MESSAGES,
+            MANAGE_MESSAGES,
+            EMBED_LINKS,
+            ATTACH_FILES,
+            READ_MESSAGE_HISTORY,
+            MENTION_EVERYONE,
+            CONNECT,
+            SPEAK,
+            MUTE_MEMBERS,
+            DEAFEN_MEMBERS,
+            MOVE_MEMBERS,
+            MANAGE_ROLES,
+        ];
+        for &b in &bits {
+            assert!(b != 0 && (b & (b - 1)) == 0, "{b:#x} is not a power of 2");
+        }
+    }
+
+    #[test]
+    fn permission_constants_are_unique() {
+        let bits = [
+            CREATE_INVITE,
+            KICK_MEMBERS,
+            BAN_MEMBERS,
+            ADMINISTRATOR,
+            MANAGE_CHANNELS,
+            MANAGE_NODE,
+            ADD_REACTIONS,
+            VIEW_CHANNEL,
+            SEND_MESSAGES,
+            MANAGE_MESSAGES,
+            EMBED_LINKS,
+            ATTACH_FILES,
+            READ_MESSAGE_HISTORY,
+            MENTION_EVERYONE,
+            CONNECT,
+            SPEAK,
+            MUTE_MEMBERS,
+            DEAFEN_MEMBERS,
+            MOVE_MEMBERS,
+            MANAGE_ROLES,
+        ];
+        for i in 0..bits.len() {
+            for j in (i + 1)..bits.len() {
+                assert_ne!(bits[i], bits[j], "bits[{i}] == bits[{j}] ({:#x})", bits[i]);
+            }
+        }
+    }
+
+    #[test]
+    fn default_everyone_includes_expected_bits() {
+        let expected = [
+            VIEW_CHANNEL,
+            SEND_MESSAGES,
+            READ_MESSAGE_HISTORY,
+            ADD_REACTIONS,
+            CONNECT,
+            SPEAK,
+            EMBED_LINKS,
+            ATTACH_FILES,
+            CREATE_INVITE,
+        ];
+        for &b in &expected {
+            assert_ne!(
+                DEFAULT_EVERYONE & b,
+                0,
+                "DEFAULT_EVERYONE should include {}",
+                name(b)
+            );
+        }
+    }
+
+    #[test]
+    fn default_everyone_excludes_admin_bits() {
+        let admin_bits = [
+            ADMINISTRATOR,
+            KICK_MEMBERS,
+            BAN_MEMBERS,
+            MANAGE_CHANNELS,
+            MANAGE_NODE,
+            MANAGE_MESSAGES,
+            MANAGE_ROLES,
+            MUTE_MEMBERS,
+            DEAFEN_MEMBERS,
+            MOVE_MEMBERS,
+        ];
+        for &b in &admin_bits {
+            assert_eq!(
+                DEFAULT_EVERYONE & b,
+                0,
+                "DEFAULT_EVERYONE should NOT include {}",
+                name(b)
+            );
+        }
+    }
+
+    #[test]
+    fn all_permissions_includes_every_defined_bit() {
+        let bits = [
+            CREATE_INVITE,
+            KICK_MEMBERS,
+            BAN_MEMBERS,
+            ADMINISTRATOR,
+            MANAGE_CHANNELS,
+            MANAGE_NODE,
+            ADD_REACTIONS,
+            VIEW_CHANNEL,
+            SEND_MESSAGES,
+            MANAGE_MESSAGES,
+            EMBED_LINKS,
+            ATTACH_FILES,
+            READ_MESSAGE_HISTORY,
+            MENTION_EVERYONE,
+            CONNECT,
+            SPEAK,
+            MUTE_MEMBERS,
+            DEAFEN_MEMBERS,
+            MOVE_MEMBERS,
+            MANAGE_ROLES,
+        ];
+        for &b in &bits {
+            assert_ne!(
+                ALL_PERMISSIONS & b,
+                0,
+                "ALL_PERMISSIONS should include {}",
+                name(b)
+            );
+        }
+    }
+
+    #[test]
+    fn all_permissions_has_no_extra_bits() {
+        let bits = [
+            CREATE_INVITE,
+            KICK_MEMBERS,
+            BAN_MEMBERS,
+            ADMINISTRATOR,
+            MANAGE_CHANNELS,
+            MANAGE_NODE,
+            ADD_REACTIONS,
+            VIEW_CHANNEL,
+            SEND_MESSAGES,
+            MANAGE_MESSAGES,
+            EMBED_LINKS,
+            ATTACH_FILES,
+            READ_MESSAGE_HISTORY,
+            MENTION_EVERYONE,
+            CONNECT,
+            SPEAK,
+            MUTE_MEMBERS,
+            DEAFEN_MEMBERS,
+            MOVE_MEMBERS,
+            MANAGE_ROLES,
+        ];
+        let union: u64 = bits.iter().fold(0u64, |acc, &b| acc | b);
+        assert_eq!(ALL_PERMISSIONS, union);
+    }
+
+    #[test]
+    fn name_returns_correct_string_for_each_bit() {
+        assert_eq!(name(CREATE_INVITE), "CREATE_INVITE");
+        assert_eq!(name(KICK_MEMBERS), "KICK_MEMBERS");
+        assert_eq!(name(BAN_MEMBERS), "BAN_MEMBERS");
+        assert_eq!(name(ADMINISTRATOR), "ADMINISTRATOR");
+        assert_eq!(name(MANAGE_CHANNELS), "MANAGE_CHANNELS");
+        assert_eq!(name(MANAGE_NODE), "MANAGE_NODE");
+        assert_eq!(name(ADD_REACTIONS), "ADD_REACTIONS");
+        assert_eq!(name(VIEW_CHANNEL), "VIEW_CHANNEL");
+        assert_eq!(name(SEND_MESSAGES), "SEND_MESSAGES");
+        assert_eq!(name(MANAGE_MESSAGES), "MANAGE_MESSAGES");
+        assert_eq!(name(EMBED_LINKS), "EMBED_LINKS");
+        assert_eq!(name(ATTACH_FILES), "ATTACH_FILES");
+        assert_eq!(name(READ_MESSAGE_HISTORY), "READ_MESSAGE_HISTORY");
+        assert_eq!(name(MENTION_EVERYONE), "MENTION_EVERYONE");
+        assert_eq!(name(CONNECT), "CONNECT");
+        assert_eq!(name(SPEAK), "SPEAK");
+        assert_eq!(name(MUTE_MEMBERS), "MUTE_MEMBERS");
+        assert_eq!(name(DEAFEN_MEMBERS), "DEAFEN_MEMBERS");
+        assert_eq!(name(MOVE_MEMBERS), "MOVE_MEMBERS");
+        assert_eq!(name(MANAGE_ROLES), "MANAGE_ROLES");
+    }
+
+    #[test]
+    fn name_returns_unknown_for_undefined_bits() {
+        assert_eq!(name(1 << 7), "UNKNOWN");
+        assert_eq!(name(1 << 40), "UNKNOWN");
+        assert_eq!(name(0), "UNKNOWN");
+    }
+
+    #[test]
+    fn compute_channel_permissions_admin_bypass() {
+        let perms = compute_channel_permissions(
+            ADMINISTRATOR | VIEW_CHANNEL,
+            Some((0, VIEW_CHANNEL)), // deny VIEW_CHANNEL
+            None,
+        );
+        assert_eq!(
+            perms, ALL_PERMISSIONS,
+            "ADMINISTRATOR should bypass all overwrites"
+        );
+    }
+
+    #[test]
+    fn compute_channel_permissions_cascade() {
+        let base = VIEW_CHANNEL | SEND_MESSAGES | ADD_REACTIONS;
+        // Category denies SEND_MESSAGES, allows EMBED_LINKS
+        let cat_allow = EMBED_LINKS;
+        let cat_deny = SEND_MESSAGES;
+        // Channel denies ADD_REACTIONS, allows ATTACH_FILES
+        let ch_allow = ATTACH_FILES;
+        let ch_deny = ADD_REACTIONS;
+
+        let result = compute_channel_permissions(
+            base,
+            Some((cat_allow, cat_deny)),
+            Some((ch_allow, ch_deny)),
+        );
+        assert_ne!(result & VIEW_CHANNEL, 0, "VIEW_CHANNEL should remain");
+        assert_eq!(
+            result & SEND_MESSAGES,
+            0,
+            "SEND_MESSAGES should be denied by category"
+        );
+        assert_ne!(
+            result & EMBED_LINKS,
+            0,
+            "EMBED_LINKS should be allowed by category"
+        );
+        assert_eq!(
+            result & ADD_REACTIONS,
+            0,
+            "ADD_REACTIONS should be denied by channel"
+        );
+        assert_ne!(
+            result & ATTACH_FILES,
+            0,
+            "ATTACH_FILES should be allowed by channel"
+        );
+    }
+
+    #[test]
+    fn compute_channel_permissions_no_overwrites() {
+        let base = VIEW_CHANNEL | SEND_MESSAGES;
+        assert_eq!(compute_channel_permissions(base, None, None), base);
+    }
+
+    #[test]
+    fn map_discord_permissions_known_bits() {
+        // Discord CREATE_INSTANT_INVITE = 0x1, maps to CREATE_INVITE = 1 << 0
+        assert_eq!(map_discord_permissions(0x1), CREATE_INVITE);
+        // Discord ADMINISTRATOR = 0x8
+        assert_eq!(map_discord_permissions(0x8), ADMINISTRATOR);
+        // Multiple bits
+        let discord = 0x1 | 0x8 | 0x400; // INVITE + ADMIN + VIEW_CHANNEL
+        let expected = CREATE_INVITE | ADMINISTRATOR | VIEW_CHANNEL;
+        assert_eq!(map_discord_permissions(discord), expected);
+    }
+
+    #[test]
+    fn map_discord_permissions_unmapped_bits_ignored() {
+        // Bit 7 (0x80) = VIEW_AUDIT_LOG in Discord — not mapped in Accord
+        let result = map_discord_permissions(0x80);
+        assert_eq!(result, 0, "unmapped Discord bit should produce 0");
+    }
+
+    // ── ChannelType ──
+
+    #[test]
+    fn channel_type_from_i32_valid() {
+        assert_eq!(ChannelType::from_i32(0), Some(ChannelType::Text));
+        assert_eq!(ChannelType::from_i32(2), Some(ChannelType::Voice));
+        assert_eq!(ChannelType::from_i32(4), Some(ChannelType::Category));
+    }
+
+    #[test]
+    fn channel_type_from_i32_invalid() {
+        assert_eq!(ChannelType::from_i32(1), None);
+        assert_eq!(ChannelType::from_i32(-1), None);
+        assert_eq!(ChannelType::from_i32(99), None);
+    }
+
+    #[test]
+    fn channel_type_default_is_text() {
+        assert_eq!(ChannelType::default(), ChannelType::Text);
+    }
+
+    #[test]
+    fn channel_type_serde_roundtrip() {
+        for variant in [ChannelType::Text, ChannelType::Voice, ChannelType::Category] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let back: ChannelType = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, variant);
+        }
+    }
+
+    // ── PushPlatform ──
+
+    #[test]
+    fn push_platform_from_str_valid() {
+        assert_eq!("ios".parse::<PushPlatform>().unwrap(), PushPlatform::Ios);
+        assert_eq!(
+            "android".parse::<PushPlatform>().unwrap(),
+            PushPlatform::Android
+        );
+    }
+
+    #[test]
+    fn push_platform_from_str_case_sensitive() {
+        assert!("IOS".parse::<PushPlatform>().is_err());
+        assert!("Android".parse::<PushPlatform>().is_err());
+    }
+
+    #[test]
+    fn push_platform_from_str_invalid() {
+        let err = "windows".parse::<PushPlatform>().unwrap_err();
+        assert!(err.contains("unknown platform"), "error: {err}");
+    }
+
+    #[test]
+    fn push_platform_as_str_roundtrip() {
+        for p in [PushPlatform::Ios, PushPlatform::Android] {
+            let s = p.as_str();
+            let back: PushPlatform = s.parse().unwrap();
+            assert_eq!(back, p);
+        }
+    }
+
+    // ── NotificationPrivacy ──
+
+    #[test]
+    fn notification_privacy_from_str_valid() {
+        assert_eq!(
+            "full".parse::<NotificationPrivacy>().unwrap(),
+            NotificationPrivacy::Full
+        );
+        assert_eq!(
+            "partial".parse::<NotificationPrivacy>().unwrap(),
+            NotificationPrivacy::Partial
+        );
+        assert_eq!(
+            "stealth".parse::<NotificationPrivacy>().unwrap(),
+            NotificationPrivacy::Stealth
+        );
+    }
+
+    #[test]
+    fn notification_privacy_from_str_invalid() {
+        let err = "silent".parse::<NotificationPrivacy>().unwrap_err();
+        assert!(err.contains("unknown privacy level"), "error: {err}");
+    }
+
+    #[test]
+    fn notification_privacy_as_str_roundtrip() {
+        for v in [
+            NotificationPrivacy::Full,
+            NotificationPrivacy::Partial,
+            NotificationPrivacy::Stealth,
+        ] {
+            let s = v.as_str();
+            let back: NotificationPrivacy = s.parse().unwrap();
+            assert_eq!(back, v);
+        }
+    }
+
+    #[test]
+    fn notification_privacy_default_is_partial() {
+        assert_eq!(NotificationPrivacy::default(), NotificationPrivacy::Partial);
+    }
+
+    // ── PermissionDeniedResponse ──
+
+    #[test]
+    fn permission_denied_response_status_code() {
+        let resp = PermissionDeniedResponse::new("MANAGE_CHANNELS", "member");
+        assert_eq!(resp.code, 403);
+    }
+
+    #[test]
+    fn permission_denied_response_message_format() {
+        let resp = PermissionDeniedResponse::new("KICK_MEMBERS", "moderator");
+        assert!(
+            resp.error.contains("KICK_MEMBERS"),
+            "error should mention the permission"
+        );
+        assert!(
+            resp.error.contains("moderator"),
+            "error should mention the role"
+        );
+        assert_eq!(resp.required_permission, "KICK_MEMBERS");
+        assert_eq!(resp.user_role, "moderator");
+    }
+
+    // ── WsMessageType serde ──
+
+    #[test]
+    fn ws_message_type_serialize_ping() {
+        let json = serde_json::to_string(&WsMessageType::Ping).unwrap();
+        assert_eq!(json, "\"Ping\"");
+    }
+
+    #[test]
+    fn ws_message_type_deserialize_pong() {
+        let msg: WsMessageType = serde_json::from_str("\"Pong\"").unwrap();
+        assert!(matches!(msg, WsMessageType::Pong));
+    }
+
+    #[test]
+    fn ws_message_type_roundtrip_with_data() {
+        let id = uuid::Uuid::nil();
+        let original = WsMessageType::JoinNode { node_id: id };
+        let json = serde_json::to_string(&original).unwrap();
+        let back: WsMessageType = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, WsMessageType::JoinNode { node_id } if node_id == id));
+    }
+
+    // ── Serde round-trips for key request/response types ──
+
+    #[test]
+    fn register_request_deserialize() {
+        let json = r#"{"public_key":"abc123","password":"pw"}"#;
+        let req: RegisterRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.public_key, "abc123");
+        assert_eq!(req.username, ""); // default
+    }
+
+    #[test]
+    fn auth_request_deserialize() {
+        let json = r#"{"password":"pw","public_key":"key1"}"#;
+        let req: AuthRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.password, "pw");
+        assert_eq!(req.public_key, Some("key1".to_string()));
+        assert_eq!(req.username, ""); // default
+    }
+
+    #[test]
+    fn error_response_serialize() {
+        let resp = ErrorResponse {
+            error: "not found".into(),
+            code: 404,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["error"], "not found");
+        assert_eq!(v["code"], 404);
+    }
+
+    #[test]
+    fn health_response_serialize() {
+        let resp = HealthResponse {
+            status: "ok".into(),
+            version: "1.0.0".into(),
+            uptime_seconds: 3600,
+            build_hash: "abc123".into(),
+            database_ok: true,
+            websocket_connections: 42,
+            memory_usage_bytes: 1024,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["status"], "ok");
+        assert_eq!(v["database_ok"], true);
+        assert_eq!(v["websocket_connections"], 42);
+    }
+}
