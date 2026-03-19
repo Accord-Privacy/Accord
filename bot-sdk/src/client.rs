@@ -390,12 +390,7 @@ impl AccordBot {
     /// bot.assign_role("node-id", "user-id", "role-id").await.unwrap();
     /// # }
     /// ```
-    pub async fn assign_role(
-        &self,
-        node_id: &str,
-        user_id: &str,
-        role_id: &str,
-    ) -> Result<()> {
+    pub async fn assign_role(&self, node_id: &str, user_id: &str, role_id: &str) -> Result<()> {
         let url = format!(
             "{}/nodes/{}/members/{}/roles/{}?token={}",
             self.http_base, node_id, user_id, role_id, self.token
@@ -436,12 +431,7 @@ impl AccordBot {
     /// bot.remove_role("node-id", "user-id", "role-id").await.unwrap();
     /// # }
     /// ```
-    pub async fn remove_role(
-        &self,
-        node_id: &str,
-        user_id: &str,
-        role_id: &str,
-    ) -> Result<()> {
+    pub async fn remove_role(&self, node_id: &str, user_id: &str, role_id: &str) -> Result<()> {
         let url = format!(
             "{}/nodes/{}/members/{}/roles/{}?token={}",
             self.http_base, node_id, user_id, role_id, self.token
@@ -1197,7 +1187,10 @@ mod http_tests {
             .await;
 
         let bot = make_bot(&mock_server.uri());
-        let roles = bot.list_roles("node-abc").await.expect("list_roles should succeed");
+        let roles = bot
+            .list_roles("node-abc")
+            .await
+            .expect("list_roles should succeed");
 
         assert_eq!(roles.len(), 2);
         assert_eq!(roles[0].id, "role-001");
@@ -1222,7 +1215,10 @@ mod http_tests {
             .await;
 
         let bot = make_bot(&mock_server.uri());
-        let roles = bot.list_roles("node-empty").await.expect("list_roles should succeed");
+        let roles = bot
+            .list_roles("node-empty")
+            .await
+            .expect("list_roles should succeed");
         assert!(roles.is_empty());
     }
 
@@ -1272,8 +1268,7 @@ mod http_tests {
         Mock::given(method("PUT"))
             .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
             .respond_with(
-                ResponseTemplate::new(403)
-                    .set_body_string("Missing permission: MANAGE_ROLES"),
+                ResponseTemplate::new(403).set_body_string("Missing permission: MANAGE_ROLES"),
             )
             .mount(&mock_server)
             .await;
@@ -1299,7 +1294,9 @@ mod http_tests {
             .await;
 
         let bot = make_bot(&mock_server.uri());
-        let result = bot.assign_role("node-abc", "user-123", "no-such-role").await;
+        let result = bot
+            .assign_role("node-abc", "user-123", "no-such-role")
+            .await;
 
         match result {
             Err(BotError::Api { code, .. }) => assert_eq!(code, 404),
@@ -1333,8 +1330,7 @@ mod http_tests {
         Mock::given(method("DELETE"))
             .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
             .respond_with(
-                ResponseTemplate::new(403)
-                    .set_body_string("Missing permission: MANAGE_ROLES"),
+                ResponseTemplate::new(403).set_body_string("Missing permission: MANAGE_ROLES"),
             )
             .mount(&mock_server)
             .await;
@@ -1356,8 +1352,7 @@ mod http_tests {
         Mock::given(method("DELETE"))
             .and(path("/nodes/node-abc/members/ghost-user/roles/role-mod"))
             .respond_with(
-                ResponseTemplate::new(404)
-                    .set_body_string("User is not a member of this node"),
+                ResponseTemplate::new(404).set_body_string("User is not a member of this node"),
             )
             .mount(&mock_server)
             .await;
