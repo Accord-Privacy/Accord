@@ -808,3 +808,350 @@ async fn deliver_with_retry(webhook: &Webhook, body: &str, event: &str) {
         webhook.id, webhook.url
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── validate_events tests ──
+
+    #[test]
+    fn validate_events_single_valid() {
+        let events = vec!["message_create".to_string()];
+        assert!(validate_events(&events).is_ok());
+    }
+
+    #[test]
+    fn validate_events_all_valid_types() {
+        let events: Vec<String> = VALID_EVENTS.iter().map(|s| s.to_string()).collect();
+        assert!(validate_events(&events).is_ok());
+    }
+
+    #[test]
+    fn validate_events_empty_list_returns_error() {
+        let events: Vec<String> = vec![];
+        let err = validate_events(&events).unwrap_err();
+        assert!(err.contains("at least one event"));
+    }
+
+    #[test]
+    fn validate_events_invalid_event_name() {
+        let events = vec!["not_a_real_event".to_string()];
+        let err = validate_events(&events).unwrap_err();
+        assert!(err.contains("Invalid event type"));
+        assert!(err.contains("not_a_real_event"));
+    }
+
+    #[test]
+    fn validate_events_mix_valid_and_invalid() {
+        let events = vec!["message_create".to_string(), "bogus".to_string()];
+        let err = validate_events(&events).unwrap_err();
+        assert!(err.contains("bogus"));
+    }
+
+    #[test]
+    fn validate_events_each_individual_type() {
+        for event in VALID_EVENTS {
+            let events = vec![event.to_string()];
+            assert!(
+                validate_events(&events).is_ok(),
+                "Expected '{}' to be valid",
+                event
+            );
+        }
+    }
+
+    // ── compute_hmac_sha256 tests ──
+
+    #[test]
+    fn hmac_rfc4231_test_case_2() {
+        // RFC 4231 Test Case 2: Key = "Jefe", Data = "what do ya want for nothing?"
+        let key = b"Jefe";
+        let data = b"what do ya want for nothing?";
+        let result = compute_hmac_sha256(key, data);
+        assert_eq!(
+            result,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn hmac_empty_key_empty_message() {
+        // HMAC-SHA256 with empty key and empty message should produce a
+        // deterministic known value.
+        let result = compute_hmac_sha256(b"", b"");
+        assert_eq!(result.len(), 64, "SHA-256 hex digest should be 64 chars");
+        // Verify it's valid hex
+        assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn hmac_empty_key() {
+        let result = compute_hmac_sha256(b"", b"hello");
+        assert_eq!(result.len(), 64);
+        assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn hmac_empty_message() {
+        let result = compute_hmac_sha256(b"secret", b"");
+        assert_eq!(result.len(), 64);
+        assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn hmac_consistency() {
+        let key = b"my-webhook-secret";
+        let data = b"some payload data";
+        let first = compute_hmac_sha256(key, data);
+        let second = compute_hmac_sha256(key, data);
+        assert_eq!(first, second, "Same inputs must produce same HMAC");
+    }
+
+    #[test]
+    fn hmac_different_keys_differ() {
+        let data = b"same payload";
+        let a = compute_hmac_sha256(b"key-a", data);
+        let b = compute_hmac_sha256(b"key-b", data);
+        assert_ne!(a, b, "Different keys should produce different HMACs");
+    }
+
+    #[test]
+    fn hmac_different_data_differ() {
+        let key = b"same-key";
+        let a = compute_hmac_sha256(key, b"payload-1");
+        let b = compute_hmac_sha256(key, b"payload-2");
+        assert_ne!(a, b, "Different data should produce different HMACs");
+    }
+
+    #[test]
+    fn hmac_long_key_hashed() {
+        // Keys longer than the block size (64 bytes) are hashed first.
+        let long_key = vec![0xABu8; 128];
+        let result = compute_hmac_sha256(&long_key, b"test");
+        assert_eq!(result.len(), 64);
+        assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ── Webhook struct serde tests ──
+
+    #[test]
+    fn webhook_serde_roundtrip() {
+        let id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        let created_by = Uuid::new_v4();
+
+        let webhook = Webhook {
+            id,
+            node_id,
+            channel_id: None,
+            url: "https://example.com/hook".to_string(),
+            secret: "supersecret".to_string(),
+            events: "message_create,member_join".to_string(),
+            created_by,
+            created_at: 1700000000,
+            active: true,
+        };
+
+        let json_str = serde_json::to_string(&webhook).unwrap();
+        let deserialized: Webhook = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(deserialized.id, id);
+        assert_eq!(deserialized.node_id, node_id);
+        assert_eq!(deserialized.channel_id, None);
+        assert_eq!(deserialized.url, "https://example.com/hook");
+        assert_eq!(deserialized.secret, "supersecret");
+        assert_eq!(deserialized.events, "message_create,member_join");
+        assert_eq!(deserialized.created_by, created_by);
+        assert_eq!(deserialized.created_at, 1700000000);
+        assert!(deserialized.active);
+    }
+
+    #[test]
+    fn webhook_serde_with_channel_id() {
+        let channel_id = Uuid::new_v4();
+        let webhook = Webhook {
+            id: Uuid::new_v4(),
+            node_id: Uuid::new_v4(),
+            channel_id: Some(channel_id),
+            url: "https://example.com/hook".to_string(),
+            secret: "sec".to_string(),
+            events: "message_create".to_string(),
+            created_by: Uuid::new_v4(),
+            created_at: 1700000000,
+            active: false,
+        };
+
+        let json_str = serde_json::to_string(&webhook).unwrap();
+        let deserialized: Webhook = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(deserialized.channel_id, Some(channel_id));
+        assert!(!deserialized.active);
+    }
+
+    #[test]
+    fn webhook_deserialize_from_json_object() {
+        let id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        let created_by = Uuid::new_v4();
+
+        let json_val = json!({
+            "id": id,
+            "node_id": node_id,
+            "channel_id": null,
+            "url": "https://hooks.example.com/receive",
+            "secret": "abc123",
+            "events": "reaction_add",
+            "created_by": created_by,
+            "created_at": 1234567890u64,
+            "active": true
+        });
+
+        let webhook: Webhook = serde_json::from_value(json_val).unwrap();
+        assert_eq!(webhook.id, id);
+        assert_eq!(webhook.url, "https://hooks.example.com/receive");
+        assert_eq!(webhook.channel_id, None);
+        assert_eq!(webhook.events, "reaction_add");
+    }
+
+    // ── CreateWebhookRequest serde tests ──
+
+    #[test]
+    fn create_request_minimal() {
+        let json_val = json!({
+            "url": "https://example.com/webhook",
+            "events": ["message_create"]
+        });
+
+        let req: CreateWebhookRequest = serde_json::from_value(json_val).unwrap();
+        assert_eq!(req.url, "https://example.com/webhook");
+        assert_eq!(req.events, vec!["message_create"]);
+        assert!(req.channel_id.is_none());
+        assert!(req.secret.is_none());
+    }
+
+    #[test]
+    fn create_request_with_all_fields() {
+        let channel_id = Uuid::new_v4();
+        let json_val = json!({
+            "url": "https://example.com/webhook",
+            "events": ["message_create", "member_join"],
+            "channel_id": channel_id,
+            "secret": "my-custom-secret"
+        });
+
+        let req: CreateWebhookRequest = serde_json::from_value(json_val).unwrap();
+        assert_eq!(req.url, "https://example.com/webhook");
+        assert_eq!(req.events.len(), 2);
+        assert_eq!(req.channel_id, Some(channel_id));
+        assert_eq!(req.secret.as_deref(), Some("my-custom-secret"));
+    }
+
+    #[test]
+    fn create_request_with_channel_id_null() {
+        let json_val = json!({
+            "url": "https://example.com/webhook",
+            "events": ["reaction_add"],
+            "channel_id": null
+        });
+
+        let req: CreateWebhookRequest = serde_json::from_value(json_val).unwrap();
+        assert!(req.channel_id.is_none());
+    }
+
+    // ── UpdateWebhookRequest serde tests ──
+
+    #[test]
+    fn update_request_empty_body() {
+        let json_val = json!({});
+        let req: UpdateWebhookRequest = serde_json::from_value(json_val).unwrap();
+        assert!(req.url.is_none());
+        assert!(req.events.is_none());
+        assert!(req.channel_id.is_none());
+        assert!(req.secret.is_none());
+        assert!(req.active.is_none());
+    }
+
+    #[test]
+    fn update_request_partial_fields() {
+        let json_val = json!({
+            "url": "https://new-url.com/hook",
+            "active": false
+        });
+
+        let req: UpdateWebhookRequest = serde_json::from_value(json_val).unwrap();
+        assert_eq!(req.url.as_deref(), Some("https://new-url.com/hook"));
+        assert_eq!(req.active, Some(false));
+        assert!(req.events.is_none());
+        assert!(req.secret.is_none());
+    }
+
+    // ── WebhookPayload serde tests ──
+
+    #[test]
+    fn webhook_payload_serialize_structure() {
+        let payload = WebhookPayload {
+            event: "message_create".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            data: json!({
+                "message_id": "abc-123",
+                "content": "Hello world"
+            }),
+        };
+
+        let serialized = serde_json::to_value(&payload).unwrap();
+        assert_eq!(serialized["event"], "message_create");
+        assert_eq!(serialized["timestamp"], "2024-01-01T00:00:00Z");
+        assert_eq!(serialized["data"]["message_id"], "abc-123");
+        assert_eq!(serialized["data"]["content"], "Hello world");
+    }
+
+    #[test]
+    fn webhook_payload_serialize_empty_data() {
+        let payload = WebhookPayload {
+            event: "member_leave".to_string(),
+            timestamp: "2024-06-15T12:00:00Z".to_string(),
+            data: json!({}),
+        };
+
+        let serialized = serde_json::to_value(&payload).unwrap();
+        assert_eq!(serialized["event"], "member_leave");
+        assert!(serialized["data"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn webhook_payload_json_string_roundtrip() {
+        let payload = WebhookPayload {
+            event: "reaction_add".to_string(),
+            timestamp: "2024-03-20T08:30:00Z".to_string(),
+            data: json!({
+                "emoji": "thumbsup",
+                "user_id": "user-uuid-here"
+            }),
+        };
+
+        let json_str = serde_json::to_string(&payload).unwrap();
+        // Parse back as generic JSON to verify structure
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(parsed.is_object());
+        assert_eq!(parsed["event"], "reaction_add");
+        assert_eq!(parsed["data"]["emoji"], "thumbsup");
+    }
+
+    #[test]
+    fn webhook_payload_has_exactly_three_top_level_fields() {
+        let payload = WebhookPayload {
+            event: "test".to_string(),
+            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            data: json!(null),
+        };
+
+        let serialized = serde_json::to_value(&payload).unwrap();
+        let obj = serialized.as_object().unwrap();
+        assert_eq!(obj.len(), 3);
+        assert!(obj.contains_key("event"));
+        assert!(obj.contains_key("timestamp"));
+        assert!(obj.contains_key("data"));
+    }
+}
