@@ -10332,7 +10332,7 @@ mod tests {
             .unwrap();
 
         // Regular member joins
-        let member_id = state
+        let _member_id = state
             .validate_token(
                 // extract user_id from token we just got
                 member_token.trim_start_matches("tok_"),
