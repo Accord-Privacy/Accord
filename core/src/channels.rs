@@ -486,4 +486,450 @@ mod tests {
         // User should see: visible private + lobby, but not hidden private
         assert_eq!(visible.len(), 2);
     }
+
+    // --- create_channel tests ---
+
+    #[test]
+    fn test_create_lobby_channel() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let id = manager
+            .create_channel("Lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+        let ch = manager.get_channel(id).unwrap();
+        assert_eq!(ch.name, "Lobby");
+        assert_eq!(ch.channel_type, ChannelType::Lobby);
+        assert!(ch.members.contains_key(&creator));
+        assert_eq!(ch.created_by, creator);
+    }
+
+    #[test]
+    fn test_create_private_channel() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "Secret".into(),
+                ChannelType::Private {
+                    visible_in_list: false,
+                },
+                creator,
+                Some("Top secret".into()),
+            )
+            .unwrap();
+        let ch = manager.get_channel(id).unwrap();
+        assert_eq!(
+            ch.channel_type,
+            ChannelType::Private {
+                visible_in_list: false
+            }
+        );
+        assert_eq!(ch.description, Some("Top secret".into()));
+    }
+
+    #[test]
+    fn test_create_text_channel() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let id = manager
+            .create_channel("chat".into(), ChannelType::Text, creator, None)
+            .unwrap();
+        let ch = manager.get_channel(id).unwrap();
+        assert_eq!(ch.channel_type, ChannelType::Text);
+    }
+
+    #[test]
+    fn test_create_voice_channel() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let vtype = ChannelType::Voice {
+            channel_type: VoiceChannelType::Private {
+                visible_in_list: true,
+            },
+        };
+        let id = manager
+            .create_channel("vc".into(), vtype.clone(), creator, None)
+            .unwrap();
+        let ch = manager.get_channel(id).unwrap();
+        assert_eq!(ch.channel_type, vtype);
+    }
+
+    #[test]
+    fn test_creator_is_admin_member() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let id = manager
+            .create_channel("test".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+        let ch = manager.get_channel(id).unwrap();
+        let member = ch.members.get(&creator).unwrap();
+        assert!(member.permissions.can_speak);
+        assert!(member.permissions.can_invite);
+        assert!(member.permissions.can_approve_entry);
+        assert!(member.permissions.can_kick);
+        assert!(member.permissions.can_modify_permissions);
+    }
+
+    // --- join_lobby_channel tests ---
+
+    #[test]
+    fn test_join_lobby_channel_already_joined_idempotent() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel("lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+
+        manager.join_lobby_channel(id, user).unwrap();
+        // Joining again should succeed (HashMap insert is idempotent)
+        manager.join_lobby_channel(id, user).unwrap();
+
+        let ch = manager.get_channel(id).unwrap();
+        assert!(ch.members.contains_key(&user));
+    }
+
+    #[test]
+    fn test_join_private_channel_fails() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "private".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        let result = manager.join_lobby_channel(id, user);
+        assert!(result.is_err());
+    }
+
+    // --- request_channel_entry tests ---
+
+    #[test]
+    fn test_request_channel_entry_creates_pending() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "private".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        let req_id = manager
+            .request_channel_entry(id, user, Some("Please!".into()))
+            .unwrap();
+
+        let ch = manager.get_channel(id).unwrap();
+        assert_eq!(ch.entry_requests.len(), 1);
+        assert_eq!(ch.entry_requests[0].request_id, req_id);
+        assert_eq!(ch.entry_requests[0].user_id, user);
+        assert_eq!(ch.entry_requests[0].message, Some("Please!".into()));
+    }
+
+    #[test]
+    fn test_request_entry_fails_for_lobby() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel("lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+
+        let result = manager.request_channel_entry(id, user, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_request_entry_fails_if_already_member() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "private".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        // Creator is already a member
+        let result = manager.request_channel_entry(id, creator, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_request_entry_fails_if_duplicate() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "private".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        manager.request_channel_entry(id, user, None).unwrap();
+        let result = manager.request_channel_entry(id, user, None);
+        assert!(result.is_err(), "Duplicate request should fail");
+    }
+
+    // --- approve / deny entry request tests ---
+
+    #[test]
+    fn test_approve_entry_request_adds_member() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "priv".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        let req_id = manager.request_channel_entry(id, user, None).unwrap();
+        manager.approve_entry_request(req_id, creator).unwrap();
+
+        let ch = manager.get_channel(id).unwrap();
+        assert!(ch.members.contains_key(&user));
+        assert!(ch.entry_requests.is_empty());
+        // Approved member should have basic permissions
+        let member = ch.members.get(&user).unwrap();
+        assert!(member.permissions.can_speak);
+        assert!(!member.permissions.can_kick);
+    }
+
+    #[test]
+    fn test_deny_entry_request_removes_request() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "priv".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        let req_id = manager.request_channel_entry(id, user, None).unwrap();
+        manager.deny_entry_request(req_id, creator).unwrap();
+
+        let ch = manager.get_channel(id).unwrap();
+        assert!(
+            !ch.members.contains_key(&user),
+            "Denied user should not be a member"
+        );
+        assert!(ch.entry_requests.is_empty(), "Request should be removed");
+    }
+
+    #[test]
+    fn test_approve_without_permission_fails() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let regular_user = Uuid::new_v4();
+        let requester = Uuid::new_v4();
+        let id = manager
+            .create_channel(
+                "priv".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        // Add regular_user as basic member (approve via entry request)
+        let req1 = manager
+            .request_channel_entry(id, regular_user, None)
+            .unwrap();
+        manager.approve_entry_request(req1, creator).unwrap();
+
+        // requester asks to join
+        let req2 = manager.request_channel_entry(id, requester, None).unwrap();
+
+        // regular_user tries to approve — should fail (no can_approve_entry)
+        let result = manager.approve_entry_request(req2, regular_user);
+        assert!(result.is_err());
+    }
+
+    // --- get_visible_channels tests ---
+
+    #[test]
+    fn test_hidden_private_visible_to_member() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+
+        // Hidden private channel
+        let id = manager
+            .create_channel(
+                "hidden".into(),
+                ChannelType::Private {
+                    visible_in_list: false,
+                },
+                creator,
+                None,
+            )
+            .unwrap();
+
+        // User can't see it
+        let visible = manager.get_visible_channels(user);
+        assert!(visible.iter().all(|ch| ch.id != id));
+
+        // After approval, user can see it
+        let req = manager.request_channel_entry(id, user, None).unwrap();
+        manager.approve_entry_request(req, creator).unwrap();
+
+        let visible = manager.get_visible_channels(user);
+        assert!(visible.iter().any(|ch| ch.id == id));
+    }
+
+    #[test]
+    fn test_text_channel_visible_to_all() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let outsider = Uuid::new_v4();
+
+        manager
+            .create_channel("general".into(), ChannelType::Text, creator, None)
+            .unwrap();
+
+        let visible = manager.get_visible_channels(outsider);
+        assert_eq!(visible.len(), 1);
+    }
+
+    // --- leave_channel tests ---
+
+    #[test]
+    fn test_leave_channel_removes_user() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel("lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+        manager.join_lobby_channel(id, user).unwrap();
+
+        manager.leave_channel(id, user).unwrap();
+
+        let ch = manager.get_channel(id).unwrap();
+        assert!(!ch.members.contains_key(&user));
+    }
+
+    #[test]
+    fn test_leave_channel_creator_can_leave() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let id = manager
+            .create_channel("lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+
+        // Current implementation allows creator to leave (no restriction)
+        manager.leave_channel(id, creator).unwrap();
+        let ch = manager.get_channel(id).unwrap();
+        assert!(!ch.members.contains_key(&creator));
+    }
+
+    // --- has_permission tests ---
+
+    #[test]
+    fn test_has_permission_admin_vs_member() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let user = Uuid::new_v4();
+        let id = manager
+            .create_channel("lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+        manager.join_lobby_channel(id, user).unwrap();
+
+        // Creator (admin) has kick permission
+        assert!(manager.has_permission(id, creator, |p| p.can_kick));
+        // Regular member does not
+        assert!(!manager.has_permission(id, user, |p| p.can_kick));
+        // Both can speak
+        assert!(manager.has_permission(id, creator, |p| p.can_speak));
+        assert!(manager.has_permission(id, user, |p| p.can_speak));
+    }
+
+    #[test]
+    fn test_has_permission_non_member() {
+        let mut manager = ChannelManager::new();
+        let creator = Uuid::new_v4();
+        let outsider = Uuid::new_v4();
+        let id = manager
+            .create_channel("lobby".into(), ChannelType::Lobby, creator, None)
+            .unwrap();
+
+        assert!(!manager.has_permission(id, outsider, |p| p.can_speak));
+    }
+
+    // --- get_pending_requests tests ---
+
+    #[test]
+    fn test_get_pending_requests_only_for_approver() {
+        let mut manager = ChannelManager::new();
+        let admin = Uuid::new_v4();
+        let regular = Uuid::new_v4();
+        let requester1 = Uuid::new_v4();
+        let requester2 = Uuid::new_v4();
+
+        let id = manager
+            .create_channel(
+                "priv".into(),
+                ChannelType::Private {
+                    visible_in_list: true,
+                },
+                admin,
+                None,
+            )
+            .unwrap();
+
+        // Add regular as a basic member via approve
+        let r = manager.request_channel_entry(id, regular, None).unwrap();
+        manager.approve_entry_request(r, admin).unwrap();
+
+        // Two new requests
+        manager.request_channel_entry(id, requester1, None).unwrap();
+        manager.request_channel_entry(id, requester2, None).unwrap();
+
+        // Admin sees the pending requests
+        let admin_requests = manager.get_pending_requests(admin);
+        assert_eq!(admin_requests.len(), 2);
+
+        // Regular member (no approve perm) sees nothing
+        let regular_requests = manager.get_pending_requests(regular);
+        assert_eq!(regular_requests.len(), 0);
+
+        // Outsider sees nothing
+        let outsider_requests = manager.get_pending_requests(Uuid::new_v4());
+        assert_eq!(outsider_requests.len(), 0);
+    }
 }

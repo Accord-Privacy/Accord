@@ -367,4 +367,311 @@ mod tests {
 
         assert_eq!(audio_data.to_vec(), decrypted);
     }
+
+    // --- Key generation tests ---
+
+    #[test]
+    fn test_generate_key_pair_unique() {
+        let crypto = CryptoManager::new();
+        let kp1 = crypto.generate_key_pair().unwrap();
+        let kp2 = crypto.generate_key_pair().unwrap();
+        assert_ne!(
+            kp1.public_key, kp2.public_key,
+            "Two key pairs should differ"
+        );
+    }
+
+    #[test]
+    fn test_generate_key_pair_public_key_not_empty() {
+        let crypto = CryptoManager::new();
+        let kp = crypto.generate_key_pair().unwrap();
+        assert!(!kp.public_key.is_empty());
+        assert!(
+            kp.public_key.iter().any(|&b| b != 0),
+            "Public key should not be all zeros"
+        );
+    }
+
+    // --- Identity key tests ---
+
+    #[test]
+    fn test_generate_identity_key_sets_identity() {
+        let mut crypto = CryptoManager::new();
+        assert!(crypto.get_identity_key().is_none());
+        let identity = crypto.generate_identity_key().unwrap();
+        assert!(crypto.get_identity_key().is_some());
+        assert_eq!(
+            crypto.get_identity_key().unwrap().public_key,
+            identity.public_key
+        );
+    }
+
+    #[test]
+    fn test_generate_identity_key_signature_key_not_empty() {
+        let mut crypto = CryptoManager::new();
+        let identity = crypto.generate_identity_key().unwrap();
+        assert!(!identity.signature_key.is_empty());
+        assert_eq!(identity.signature_key.len(), 32);
+    }
+
+    // --- Session establishment tests ---
+
+    #[test]
+    fn test_establish_session_and_roundtrip() {
+        // Simulate two managers establishing a session through key exchange
+        let mut alice = CryptoManager::new();
+        let mut bob = CryptoManager::new();
+
+        // Alice generates a key pair, Bob uses Alice's public key to establish session
+        let alice_kp = alice.generate_key_pair().unwrap();
+        let bob_session = bob
+            .establish_session("alice", &alice_kp.public_key)
+            .unwrap();
+
+        // Both sides share the same key material via set_session for the paired direction
+        alice.set_session(
+            "bob",
+            SessionKey {
+                key_material: bob_session.key_material,
+                chain_key: bob_session.chain_key,
+                message_number: 0,
+            },
+        );
+
+        let message = b"Hello from Bob!";
+        let encrypted = bob.encrypt_message("alice", message).unwrap();
+        let decrypted = alice.decrypt_message("bob", &encrypted).unwrap();
+        assert_eq!(decrypted, message.to_vec());
+    }
+
+    // --- Encrypt message tests ---
+
+    #[test]
+    fn test_encrypt_message_fails_without_session() {
+        let mut crypto = CryptoManager::new();
+        let result = crypto.encrypt_message("unknown_user", b"hello");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("No session key"),
+            "Should mention missing session key"
+        );
+    }
+
+    #[test]
+    fn test_ciphertext_differs_from_plaintext() {
+        let mut crypto = CryptoManager::new();
+        crypto.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key: [2u8; 32],
+                message_number: 0,
+            },
+        );
+
+        let plaintext = b"This is a secret message";
+        let encrypted = crypto.encrypt_message("peer", plaintext).unwrap();
+        // Ciphertext (after 12-byte nonce) should differ from plaintext
+        assert_ne!(&encrypted[12..12 + plaintext.len()], plaintext.as_slice());
+    }
+
+    #[test]
+    fn test_encrypt_message_includes_nonce_prefix() {
+        let mut crypto = CryptoManager::new();
+        crypto.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key: [2u8; 32],
+                message_number: 0,
+            },
+        );
+
+        let encrypted = crypto.encrypt_message("peer", b"test").unwrap();
+        // Encrypted output = 12-byte nonce + ciphertext + 16-byte AES-GCM tag
+        assert!(
+            encrypted.len() >= 12 + 4 + 16,
+            "Should have nonce + ciphertext + tag"
+        );
+    }
+
+    // --- Decrypt message tests ---
+
+    #[test]
+    fn test_decrypt_message_fails_with_wrong_session_key() {
+        let mut encryptor = CryptoManager::new();
+        let mut decryptor = CryptoManager::new();
+
+        encryptor.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key: [2u8; 32],
+                message_number: 0,
+            },
+        );
+        decryptor.set_session(
+            "peer",
+            SessionKey {
+                key_material: [99u8; 32],
+                chain_key: [88u8; 32], // Different chain key => different message key
+                message_number: 0,
+            },
+        );
+
+        let encrypted = encryptor.encrypt_message("peer", b"secret").unwrap();
+        let result = decryptor.decrypt_message("peer", &encrypted);
+        assert!(result.is_err(), "Decryption should fail with wrong key");
+    }
+
+    #[test]
+    fn test_decrypt_message_fails_with_tampered_ciphertext() {
+        let mut crypto1 = CryptoManager::new();
+        let mut crypto2 = CryptoManager::new();
+
+        let chain_key = [50u8; 32];
+        crypto1.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key,
+                message_number: 0,
+            },
+        );
+        crypto2.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key,
+                message_number: 0,
+            },
+        );
+
+        let mut encrypted = crypto1.encrypt_message("peer", b"integrity test").unwrap();
+        // Tamper with ciphertext (flip a byte after the nonce)
+        let last = encrypted.len() - 1;
+        encrypted[last] ^= 0xFF;
+
+        let result = crypto2.decrypt_message("peer", &encrypted);
+        assert!(
+            result.is_err(),
+            "Tampered ciphertext should fail decryption"
+        );
+    }
+
+    #[test]
+    fn test_decrypt_message_fails_without_session() {
+        let mut crypto = CryptoManager::new();
+        let result = crypto.decrypt_message("unknown_user", &[0u8; 32]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_message_fails_with_short_ciphertext() {
+        let mut crypto = CryptoManager::new();
+        crypto.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key: [2u8; 32],
+                message_number: 0,
+            },
+        );
+        let result = crypto.decrypt_message("peer", &[0u8; 5]);
+        assert!(result.is_err(), "Ciphertext shorter than nonce should fail");
+    }
+
+    // --- Large payload roundtrip ---
+
+    #[test]
+    fn test_encrypt_decrypt_large_payload() {
+        let mut encryptor = CryptoManager::new();
+        let mut decryptor = CryptoManager::new();
+
+        let chain_key = [77u8; 32];
+        encryptor.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key,
+                message_number: 0,
+            },
+        );
+        decryptor.set_session(
+            "peer",
+            SessionKey {
+                key_material: [1u8; 32],
+                chain_key,
+                message_number: 0,
+            },
+        );
+
+        let large_payload = vec![0xABu8; 10 * 1024]; // 10KB
+        let encrypted = encryptor.encrypt_message("peer", &large_payload).unwrap();
+        let decrypted = decryptor.decrypt_message("peer", &encrypted).unwrap();
+        assert_eq!(decrypted, large_payload);
+    }
+
+    // --- Voice key tests ---
+
+    #[test]
+    fn test_generate_voice_key_nonzero() {
+        let crypto = CryptoManager::new();
+        let vk = crypto.generate_voice_key().unwrap();
+        assert!(
+            vk.aes_key.iter().any(|&b| b != 0),
+            "Voice AES key should not be all zeros"
+        );
+        assert_eq!(vk.sequence, 0);
+    }
+
+    #[test]
+    fn test_voice_encrypt_decrypt_roundtrip() {
+        let crypto = CryptoManager::new();
+        let mut vk = crypto.generate_voice_key().unwrap();
+
+        let samples = vec![b"frame1".to_vec(), b"frame2".to_vec(), b"frame3".to_vec()];
+        for sample in &samples {
+            let encrypted = crypto.encrypt_voice_packet(&mut vk, sample).unwrap();
+            let decrypted = crypto.decrypt_voice_packet(&vk, &encrypted).unwrap();
+            assert_eq!(&decrypted, sample);
+        }
+    }
+
+    #[test]
+    fn test_voice_decrypt_fails_with_wrong_key() {
+        let crypto = CryptoManager::new();
+        let mut vk1 = crypto.generate_voice_key().unwrap();
+        let vk2 = crypto.generate_voice_key().unwrap();
+
+        let encrypted = crypto
+            .encrypt_voice_packet(&mut vk1, b"audio data")
+            .unwrap();
+        let result = crypto.decrypt_voice_packet(&vk2, &encrypted);
+        assert!(result.is_err(), "Decryption with wrong key should fail");
+    }
+
+    #[test]
+    fn test_voice_sequence_increments() {
+        let crypto = CryptoManager::new();
+        let mut vk = crypto.generate_voice_key().unwrap();
+        assert_eq!(vk.sequence, 0);
+
+        crypto.encrypt_voice_packet(&mut vk, b"pkt1").unwrap();
+        assert_eq!(vk.sequence, 1);
+
+        crypto.encrypt_voice_packet(&mut vk, b"pkt2").unwrap();
+        assert_eq!(vk.sequence, 2);
+
+        crypto.encrypt_voice_packet(&mut vk, b"pkt3").unwrap();
+        assert_eq!(vk.sequence, 3);
+    }
+
+    #[test]
+    fn test_voice_packet_too_short() {
+        let crypto = CryptoManager::new();
+        let vk = crypto.generate_voice_key().unwrap();
+        let result = crypto.decrypt_voice_packet(&vk, &[0u8; 4]);
+        assert!(result.is_err(), "Packet shorter than 8 bytes should fail");
+    }
 }
