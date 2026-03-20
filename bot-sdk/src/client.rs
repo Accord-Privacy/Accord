@@ -142,13 +142,14 @@ impl AccordBot {
 
     /// Send a message to a channel.
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<()> {
-        let url = format!(
-            "{}/bot/channels/{}/messages?token={}",
-            self.http_base, channel_id, self.token
-        );
+        let url = format!("{}/bot/channels/{}/messages", self.http_base, channel_id);
         let resp = self
             .http
             .post(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
             .json(&json!({ "encrypted_data": content }))
             .send()
             .await?;
@@ -202,10 +203,18 @@ impl AccordBot {
         emoji: &str,
     ) -> Result<()> {
         let url = format!(
-            "{}/messages/{}/reactions/{}?token={}&channel_id={}",
-            self.http_base, message_id, emoji, self.token, channel_id
+            "{}/messages/{}/reactions/{}?channel_id={}",
+            self.http_base, message_id, emoji, channel_id
         );
-        let resp = self.http.put(&url).send().await?;
+        let resp = self
+            .http
+            .put(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -237,18 +246,25 @@ impl AccordBot {
         limit: Option<u32>,
         before: Option<&str>,
     ) -> Result<Vec<Message>> {
-        let mut url = format!(
-            "{}/channels/{}/messages?token={}",
-            self.http_base, channel_id, self.token
-        );
+        let mut url = format!("{}/channels/{}/messages", self.http_base, channel_id);
+        let mut sep = '?';
         if let Some(lim) = limit {
-            url.push_str(&format!("&limit={}", lim));
+            url.push_str(&format!("{}limit={}", sep, lim));
+            sep = '&';
         }
         if let Some(cursor) = before {
-            url.push_str(&format!("&before={}", cursor));
+            url.push_str(&format!("{}before={}", sep, cursor));
         }
 
-        let resp = self.http.get(&url).send().await?;
+        let resp = self
+            .http
+            .get(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -337,11 +353,16 @@ impl AccordBot {
     /// # }
     /// ```
     pub async fn list_roles(&self, node_id: &str) -> Result<Vec<Role>> {
-        let url = format!(
-            "{}/nodes/{}/roles?token={}",
-            self.http_base, node_id, self.token
-        );
-        let resp = self.http.get(&url).send().await?;
+        let url = format!("{}/nodes/{}/roles", self.http_base, node_id);
+        let resp = self
+            .http
+            .get(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -392,10 +413,18 @@ impl AccordBot {
     /// ```
     pub async fn assign_role(&self, node_id: &str, user_id: &str, role_id: &str) -> Result<()> {
         let url = format!(
-            "{}/nodes/{}/members/{}/roles/{}?token={}",
-            self.http_base, node_id, user_id, role_id, self.token
+            "{}/nodes/{}/members/{}/roles/{}",
+            self.http_base, node_id, user_id, role_id
         );
-        let resp = self.http.put(&url).send().await?;
+        let resp = self
+            .http
+            .put(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -433,10 +462,18 @@ impl AccordBot {
     /// ```
     pub async fn remove_role(&self, node_id: &str, user_id: &str, role_id: &str) -> Result<()> {
         let url = format!(
-            "{}/nodes/{}/members/{}/roles/{}?token={}",
-            self.http_base, node_id, user_id, role_id, self.token
+            "{}/nodes/{}/members/{}/roles/{}",
+            self.http_base, node_id, user_id, role_id
         );
-        let resp = self.http.delete(&url).send().await?;
+        let resp = self
+            .http
+            .delete(&url)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token),
+            )
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
@@ -743,8 +780,10 @@ fn now_epoch() -> u64 {
 #[cfg(test)]
 mod http_tests {
     use super::*;
-    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::matchers::{header, method, path, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const EXPECTED_AUTH: &str = "Bearer test-token";
 
     /// Build a bot client that points at the given mock server base URL.
     fn make_bot(base_url: &str) -> AccordBot {
@@ -766,6 +805,7 @@ mod http_tests {
 
         Mock::given(method("PUT"))
             .and(path_regex(r"^/messages/[^/]+/reactions/.+$"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "emoji": "👍",
                 "count": 1
@@ -788,6 +828,7 @@ mod http_tests {
 
         Mock::given(method("PUT"))
             .and(path_regex(r"^/messages/[^/]+/reactions/.+$"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(
                 ResponseTemplate::new(403)
                     .set_body_string("You must be a member of this channel to add reactions"),
@@ -811,6 +852,7 @@ mod http_tests {
 
         Mock::given(method("PUT"))
             .and(path_regex(r"^/messages/[^/]+/reactions/.+$"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(404).set_body_string("Message not found"))
             .mount(&mock_server)
             .await;
@@ -835,6 +877,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/channels/chan-abc/messages"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "messages": [
                     {
@@ -887,6 +930,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/channels/empty-chan/messages"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "messages": [],
                 "has_more": false,
@@ -911,6 +955,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/channels/chan-paged/messages"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "messages": [
                     {
@@ -945,6 +990,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/channels/secret-chan/messages"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(403).set_body_string("Access denied"))
             .mount(&mock_server)
             .await;
@@ -1177,6 +1223,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/nodes/node-abc/roles"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "roles": [
                     make_role_json("role-001", "@everyone", 0),
@@ -1208,6 +1255,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/nodes/node-empty/roles"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "roles": []
             })))
@@ -1229,6 +1277,7 @@ mod http_tests {
 
         Mock::given(method("GET"))
             .and(path("/nodes/node-secret/roles"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(403).set_body_string("Not a member of this node"))
             .mount(&mock_server)
             .await;
@@ -1251,6 +1300,7 @@ mod http_tests {
 
         Mock::given(method("PUT"))
             .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(204))
             .mount(&mock_server)
             .await;
@@ -1267,6 +1317,7 @@ mod http_tests {
 
         Mock::given(method("PUT"))
             .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(
                 ResponseTemplate::new(403).set_body_string("Missing permission: MANAGE_ROLES"),
             )
@@ -1289,6 +1340,7 @@ mod http_tests {
 
         Mock::given(method("PUT"))
             .and(path("/nodes/node-abc/members/user-123/roles/no-such-role"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(404).set_body_string("Role not found"))
             .mount(&mock_server)
             .await;
@@ -1313,6 +1365,7 @@ mod http_tests {
 
         Mock::given(method("DELETE"))
             .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(ResponseTemplate::new(204))
             .mount(&mock_server)
             .await;
@@ -1329,6 +1382,7 @@ mod http_tests {
 
         Mock::given(method("DELETE"))
             .and(path("/nodes/node-abc/members/user-123/roles/role-mod"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(
                 ResponseTemplate::new(403).set_body_string("Missing permission: MANAGE_ROLES"),
             )
@@ -1351,6 +1405,7 @@ mod http_tests {
 
         Mock::given(method("DELETE"))
             .and(path("/nodes/node-abc/members/ghost-user/roles/role-mod"))
+            .and(header("Authorization", EXPECTED_AUTH))
             .respond_with(
                 ResponseTemplate::new(404).set_body_string("User is not a member of this node"),
             )
