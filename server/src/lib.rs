@@ -16,6 +16,7 @@ pub mod metadata;
 pub mod models;
 pub mod node;
 pub mod permissions;
+pub mod push;
 pub mod rate_limit;
 pub mod relay_mesh;
 pub mod state;
