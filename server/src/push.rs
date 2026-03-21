@@ -506,4 +506,278 @@ mod tests {
         let tokens = db.get_device_tokens(user.id).await.unwrap();
         assert!(tokens.is_empty());
     }
+
+    // ── Serialization tests ──
+
+    #[test]
+    fn test_push_payload_skip_none_fields() {
+        let payload = PushPayload {
+            event: PushEvent::NewMessage,
+            channel_id: None,
+            node_id: None,
+            count: None,
+            sender_name: None,
+            encrypted_metadata: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(!json.contains("channel_id"));
+        assert!(!json.contains("node_id"));
+        assert!(!json.contains("count"));
+        assert!(!json.contains("sender_name"));
+        assert!(!json.contains("encrypted_metadata"));
+        assert!(json.contains("event"));
+    }
+
+    #[test]
+    fn test_push_payload_includes_some_fields() {
+        let channel = Uuid::new_v4();
+        let payload = PushPayload {
+            event: PushEvent::Mention,
+            channel_id: Some(channel),
+            node_id: None,
+            count: Some(7),
+            sender_name: Some("Eve".into()),
+            encrypted_metadata: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("mention"));
+        assert!(json.contains(&channel.to_string()));
+        assert!(json.contains("\"count\":7"));
+        assert!(json.contains("Eve"));
+    }
+
+    #[test]
+    fn test_push_event_serialization_variants() {
+        let cases = vec![
+            (PushEvent::NewMessage, "new_message"),
+            (PushEvent::NewDirectMessage, "new_direct_message"),
+            (PushEvent::Mention, "mention"),
+            (PushEvent::VoiceCall, "voice_call"),
+        ];
+        for (event, expected) in cases {
+            let json = serde_json::to_string(&event).unwrap();
+            assert_eq!(json, format!("\"{}\"", expected));
+        }
+    }
+
+    #[test]
+    fn test_push_payload_roundtrip() {
+        let payload = PushPayload {
+            event: PushEvent::VoiceCall,
+            channel_id: Some(Uuid::new_v4()),
+            node_id: Some(Uuid::new_v4()),
+            count: Some(2),
+            sender_name: Some("Roundtrip".into()),
+            encrypted_metadata: Some("enc_blob".into()),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        let deserialized: PushPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.count, Some(2));
+        assert_eq!(deserialized.sender_name.as_deref(), Some("Roundtrip"));
+        assert_eq!(deserialized.encrypted_metadata.as_deref(), Some("enc_blob"));
+    }
+
+    // ── Coalescing edge cases ──
+
+    #[tokio::test]
+    async fn test_different_channels_no_coalesce() {
+        let dispatcher = PushDispatcher::new(
+            Box::new(MockApnsProvider::new()),
+            Box::new(MockFcmProvider::new()),
+        );
+        let user = Uuid::new_v4();
+        let ch1 = Uuid::new_v4();
+        let ch2 = Uuid::new_v4();
+
+        dispatcher
+            .notify(user, PushEvent::NewMessage, Some(ch1), None, None)
+            .await;
+        dispatcher
+            .notify(user, PushEvent::NewMessage, Some(ch2), None, None)
+            .await;
+
+        let pending = dispatcher.pending.read().await;
+        let user_pending = pending.get(&user).unwrap();
+        assert_eq!(user_pending.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_different_users_independent() {
+        let dispatcher = PushDispatcher::new(
+            Box::new(MockApnsProvider::new()),
+            Box::new(MockFcmProvider::new()),
+        );
+        let user_a = Uuid::new_v4();
+        let user_b = Uuid::new_v4();
+        let channel = Uuid::new_v4();
+
+        dispatcher
+            .notify(user_a, PushEvent::NewMessage, Some(channel), None, None)
+            .await;
+        dispatcher
+            .notify(user_b, PushEvent::NewMessage, Some(channel), None, None)
+            .await;
+
+        let pending = dispatcher.pending.read().await;
+        assert!(pending.contains_key(&user_a));
+        assert!(pending.contains_key(&user_b));
+        assert_eq!(pending.get(&user_a).unwrap().len(), 1);
+        assert_eq!(pending.get(&user_b).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_coalesce_updates_sender_name() {
+        let dispatcher = PushDispatcher::new(
+            Box::new(MockApnsProvider::new()),
+            Box::new(MockFcmProvider::new()),
+        );
+        let user = Uuid::new_v4();
+        let channel = Uuid::new_v4();
+
+        dispatcher
+            .notify(
+                user,
+                PushEvent::NewMessage,
+                Some(channel),
+                None,
+                Some("Alice".into()),
+            )
+            .await;
+        dispatcher
+            .notify(
+                user,
+                PushEvent::NewMessage,
+                Some(channel),
+                None,
+                Some("Bob".into()),
+            )
+            .await;
+
+        let pending = dispatcher.pending.read().await;
+        let entry = &pending.get(&user).unwrap()[0];
+        assert_eq!(entry.sender_name.as_deref(), Some("Bob"));
+        assert_eq!(entry.count, 2);
+    }
+
+    // ── Provider accumulation ──
+
+    #[tokio::test]
+    async fn test_mock_apns_accumulates() {
+        let provider = MockApnsProvider::new();
+        let payload = PushPayload {
+            event: PushEvent::NewMessage,
+            channel_id: None,
+            node_id: None,
+            count: None,
+            sender_name: None,
+            encrypted_metadata: None,
+        };
+
+        provider.send("tok1", &payload).await;
+        provider.send("tok2", &payload).await;
+        provider.send("tok3", &payload).await;
+
+        let sent = provider.sent.lock().await;
+        assert_eq!(sent.len(), 3);
+        assert_eq!(sent[0].0, "tok1");
+        assert_eq!(sent[2].0, "tok3");
+    }
+
+    #[tokio::test]
+    async fn test_mock_fcm_accumulates() {
+        let provider = MockFcmProvider::new();
+        let payload = PushPayload {
+            event: PushEvent::NewDirectMessage,
+            channel_id: None,
+            node_id: None,
+            count: None,
+            sender_name: None,
+            encrypted_metadata: None,
+        };
+
+        provider.send("fcm1", &payload).await;
+        provider.send("fcm2", &payload).await;
+
+        assert_eq!(provider.sent.lock().await.len(), 2);
+    }
+
+    // ── Clone and Debug ──
+
+    #[test]
+    fn test_push_payload_clone() {
+        let original = PushPayload {
+            event: PushEvent::Mention,
+            channel_id: Some(Uuid::new_v4()),
+            node_id: Some(Uuid::new_v4()),
+            count: Some(10),
+            sender_name: Some("Cloned".into()),
+            encrypted_metadata: Some("secret".into()),
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.count, original.count);
+        assert_eq!(cloned.sender_name, original.sender_name);
+        assert_eq!(cloned.channel_id, original.channel_id);
+    }
+
+    #[test]
+    fn test_push_event_debug() {
+        let event = PushEvent::VoiceCall;
+        let debug = format!("{:?}", event);
+        assert!(debug.contains("VoiceCall"));
+    }
+
+    #[test]
+    fn test_push_result_debug() {
+        let sent = PushResult::Sent;
+        assert!(format!("{:?}", sent).contains("Sent"));
+        let invalid = PushResult::InvalidToken;
+        assert!(format!("{:?}", invalid).contains("InvalidToken"));
+        let retry = PushResult::RetryLater;
+        assert!(format!("{:?}", retry).contains("RetryLater"));
+        let err = PushResult::Error("timeout".into());
+        assert!(format!("{:?}", err).contains("timeout"));
+    }
+
+    // ── Multiple device tokens ──
+
+    #[tokio::test]
+    async fn test_multiple_device_tokens_per_user() {
+        let db = Database::new(":memory:").await.unwrap();
+        let user = db.create_user("multidev", "").await.unwrap();
+
+        db.register_device_token(
+            user.id,
+            PushPlatform::Ios,
+            "ios-tok",
+            NotificationPrivacy::Full,
+        )
+        .await
+        .unwrap();
+        db.register_device_token(
+            user.id,
+            PushPlatform::Android,
+            "android-tok",
+            NotificationPrivacy::Partial,
+        )
+        .await
+        .unwrap();
+
+        let tokens = db.get_device_tokens(user.id).await.unwrap();
+        assert_eq!(tokens.len(), 2);
+
+        let platforms: Vec<_> = tokens.iter().map(|t| t.platform).collect();
+        assert!(platforms.contains(&PushPlatform::Ios));
+        assert!(platforms.contains(&PushPlatform::Android));
+    }
+
+    // ── No tokens registered ──
+
+    #[tokio::test]
+    async fn test_no_device_tokens() {
+        let db = Database::new(":memory:").await.unwrap();
+        let user = db.create_user("notokens", "").await.unwrap();
+
+        let tokens = db.get_device_tokens(user.id).await.unwrap();
+        assert!(tokens.is_empty());
+    }
 }

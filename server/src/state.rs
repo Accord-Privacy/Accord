@@ -2182,4 +2182,487 @@ mod tests {
         assert!(state.db.remove_friend(&hash_a, &hash_b).await.unwrap());
         assert!(!state.db.are_friends(&hash_a, &hash_b).await.unwrap());
     }
+
+    // ── Enum Display/FromStr tests ──
+
+    #[test]
+    fn test_metadata_mode_display() {
+        assert_eq!(MetadataMode::Standard.to_string(), "standard");
+        assert_eq!(MetadataMode::Minimal.to_string(), "minimal");
+    }
+
+    #[test]
+    fn test_metadata_mode_from_str() {
+        assert_eq!(
+            "standard".parse::<MetadataMode>().unwrap(),
+            MetadataMode::Standard
+        );
+        assert_eq!(
+            "STANDARD".parse::<MetadataMode>().unwrap(),
+            MetadataMode::Standard
+        );
+        assert_eq!(
+            "Minimal".parse::<MetadataMode>().unwrap(),
+            MetadataMode::Minimal
+        );
+        assert!("invalid".parse::<MetadataMode>().is_err());
+        assert!("".parse::<MetadataMode>().is_err());
+    }
+
+    #[test]
+    fn test_metadata_mode_default() {
+        assert_eq!(MetadataMode::default(), MetadataMode::Standard);
+    }
+
+    #[test]
+    fn test_build_hash_enforcement_mode_display() {
+        assert_eq!(BuildHashEnforcementMode::Off.to_string(), "off");
+        assert_eq!(BuildHashEnforcementMode::Warn.to_string(), "warn");
+        assert_eq!(BuildHashEnforcementMode::Strict.to_string(), "strict");
+    }
+
+    #[test]
+    fn test_build_hash_enforcement_mode_from_str() {
+        assert_eq!(
+            "off".parse::<BuildHashEnforcementMode>().unwrap(),
+            BuildHashEnforcementMode::Off
+        );
+        assert_eq!(
+            "WARN".parse::<BuildHashEnforcementMode>().unwrap(),
+            BuildHashEnforcementMode::Warn
+        );
+        assert_eq!(
+            "Strict".parse::<BuildHashEnforcementMode>().unwrap(),
+            BuildHashEnforcementMode::Strict
+        );
+        assert!("bogus".parse::<BuildHashEnforcementMode>().is_err());
+    }
+
+    #[test]
+    fn test_build_hash_enforcement_mode_default() {
+        assert_eq!(
+            BuildHashEnforcementMode::default(),
+            BuildHashEnforcementMode::Off
+        );
+    }
+
+    #[test]
+    fn test_build_verification_mode_default() {
+        assert_eq!(
+            BuildVerificationMode::default(),
+            BuildVerificationMode::Disabled
+        );
+    }
+
+    // ── BuildVerification tests ──
+
+    #[test]
+    fn test_build_verification_new() {
+        let bv = BuildVerification::new(BuildVerificationMode::Disabled);
+        assert_eq!(bv.mode, BuildVerificationMode::Disabled);
+        assert!(!bv.server_build_info.build_hash.is_empty());
+    }
+
+    #[test]
+    fn test_build_verification_unknown_hash() {
+        let bv = BuildVerification::new(BuildVerificationMode::Warn);
+        let trust = bv.verify_client_hash("definitely-not-a-real-hash");
+        // With no hashes.json loaded, should be Unknown
+        assert_eq!(trust, BuildTrust::Unknown);
+    }
+
+    // ── AppState creation tests ──
+
+    #[tokio::test]
+    async fn test_new_in_memory_state() {
+        let state = AppState::new_in_memory().await.unwrap();
+        assert!(state.auth_tokens.read().await.is_empty());
+        assert!(state.connections.read().await.is_empty());
+        assert!(state.voice_channels.read().await.is_empty());
+        assert_eq!(state.metadata_mode, MetadataMode::Standard);
+    }
+
+    // ── Registration edge cases ──
+
+    #[tokio::test]
+    async fn test_register_user_happy_path() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user_id = state
+            .register_user("pubkey123".into(), "password".into())
+            .await
+            .unwrap();
+        // Returned user_id should be a valid UUID
+        assert!(!user_id.is_nil());
+    }
+
+    #[tokio::test]
+    async fn test_register_user_duplicate_key() {
+        let state = AppState::new_in_memory().await.unwrap();
+        state
+            .register_user("same_key".into(), "pass1".into())
+            .await
+            .unwrap();
+        // Second registration with same key should fail
+        let result = state.register_user("same_key".into(), "pass2".into()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_user_empty_password() {
+        let state = AppState::new_in_memory().await.unwrap();
+        // Empty password should still work (keypair-only auth)
+        let user_id = state
+            .register_user("key_no_pass".into(), "".into())
+            .await
+            .unwrap();
+        assert!(!user_id.is_nil());
+    }
+
+    // ── Authentication tests ──
+
+    #[tokio::test]
+    async fn test_authenticate_valid() {
+        let state = AppState::new_in_memory().await.unwrap();
+        state
+            .register_user("authkey".into(), "secret".into())
+            .await
+            .unwrap();
+        let pkh = crate::db::compute_public_key_hash("authkey");
+        let auth_token = state.authenticate_user(pkh, "secret".into()).await.unwrap();
+        assert!(!auth_token.token.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_wrong_password() {
+        let state = AppState::new_in_memory().await.unwrap();
+        state
+            .register_user("authkey2".into(), "correct".into())
+            .await
+            .unwrap();
+        let pkh = crate::db::compute_public_key_hash("authkey2");
+        let result = state.authenticate_user(pkh, "wrong".into()).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_authenticate_nonexistent_user() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let pkh = crate::db::compute_public_key_hash("no_such_key");
+        let result = state.authenticate_user(pkh, "pass".into()).await;
+        assert!(result.is_err());
+    }
+
+    // ── Token validation ──
+
+    #[tokio::test]
+    async fn test_validate_token_valid() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user_id = state
+            .register_user("tokkey".into(), "pass".into())
+            .await
+            .unwrap();
+        let pkh = crate::db::compute_public_key_hash("tokkey");
+        let auth_token = state.authenticate_user(pkh, "pass".into()).await.unwrap();
+        let validated = state.validate_token(&auth_token.token).await;
+        assert_eq!(validated, Some(user_id));
+    }
+
+    #[tokio::test]
+    async fn test_validate_token_invalid() {
+        let state = AppState::new_in_memory().await.unwrap();
+        assert_eq!(state.validate_token("garbage-token").await, None);
+    }
+
+    // ── Invite system ──
+
+    #[tokio::test]
+    async fn test_invite_create_and_use() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner = state
+            .register_user("inv_owner".into(), "".into())
+            .await
+            .unwrap();
+        let joiner = state
+            .register_user("inv_joiner".into(), "".into())
+            .await
+            .unwrap();
+
+        let node = state
+            .create_node("InvNode".into(), owner, None)
+            .await
+            .unwrap();
+        let invite = state
+            .create_invite(node.id, owner, Some(5), None)
+            .await
+            .unwrap();
+        assert!(!invite.1.is_empty());
+
+        // Use invite
+        state.use_invite(&invite.1, joiner).await.unwrap();
+        let info = state.get_node_info(node.id).await.unwrap();
+        assert_eq!(info.members.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_invite_invalid_code() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user = state
+            .register_user("inv_user".into(), "".into())
+            .await
+            .unwrap();
+        let result = state.use_invite("BADCODE", user).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_invite_max_uses() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner = state
+            .register_user("maxinv_owner".into(), "".into())
+            .await
+            .unwrap();
+        let node = state
+            .create_node("MaxNode".into(), owner, None)
+            .await
+            .unwrap();
+
+        // Create invite with max_uses = 1
+        let invite = state
+            .create_invite(node.id, owner, Some(1), None)
+            .await
+            .unwrap();
+
+        let user1 = state
+            .register_user("maxinv_u1".into(), "".into())
+            .await
+            .unwrap();
+        state.use_invite(&invite.1, user1).await.unwrap();
+
+        // Second use should fail
+        let user2 = state
+            .register_user("maxinv_u2".into(), "".into())
+            .await
+            .unwrap();
+        let result = state.use_invite(&invite.1, user2).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_revoke_invite() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner = state
+            .register_user("rev_owner".into(), "".into())
+            .await
+            .unwrap();
+        let node = state
+            .create_node("RevNode".into(), owner, None)
+            .await
+            .unwrap();
+        let invite = state
+            .create_invite(node.id, owner, None, None)
+            .await
+            .unwrap();
+
+        state.revoke_invite(invite.0, owner).await.unwrap();
+
+        // Can't use revoked invite
+        let user = state
+            .register_user("rev_user".into(), "".into())
+            .await
+            .unwrap();
+        let result = state.use_invite(&invite.1, user).await;
+        assert!(result.is_err());
+    }
+
+    // ── Voice channel additional tests ──
+
+    #[tokio::test]
+    async fn test_voice_relay_mode_default() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let channel_id = Uuid::new_v4();
+        // Default should be relay mode (true)
+        assert!(state.get_voice_relay_mode(channel_id).await);
+    }
+
+    #[tokio::test]
+    async fn test_voice_relay_mode_toggle() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let channel_id = Uuid::new_v4();
+        state.set_voice_relay_mode(channel_id, false).await;
+        assert!(!state.get_voice_relay_mode(channel_id).await);
+        state.set_voice_relay_mode(channel_id, true).await;
+        assert!(state.get_voice_relay_mode(channel_id).await);
+    }
+
+    #[tokio::test]
+    async fn test_leave_all_voice_channels() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user = state
+            .register_user("voice_leaver".into(), "".into())
+            .await
+            .unwrap();
+        let owner = state
+            .register_user("voice_owner".into(), "".into())
+            .await
+            .unwrap();
+        let node = state
+            .create_node("VNode".into(), owner, None)
+            .await
+            .unwrap();
+        state.join_node(user, node.id).await.unwrap();
+
+        let ch1 = state
+            .create_channel("vc1".into(), node.id, owner)
+            .await
+            .unwrap();
+        let ch2 = state
+            .create_channel("vc2".into(), node.id, owner)
+            .await
+            .unwrap();
+
+        state.join_voice_channel(user, ch1.id).await.unwrap();
+        state.join_voice_channel(user, ch2.id).await.unwrap();
+
+        let left = state.leave_all_voice_channels(user).await;
+        assert_eq!(left.len(), 2);
+        assert!(state
+            .get_voice_channel_participants(ch1.id)
+            .await
+            .is_empty());
+        assert!(state
+            .get_voice_channel_participants(ch2.id)
+            .await
+            .is_empty());
+    }
+
+    // ── Uptime test ──
+
+    #[tokio::test]
+    async fn test_uptime() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let uptime = state.uptime();
+        // Should be 0 or 1 second immediately after creation
+        assert!(uptime <= 2);
+    }
+
+    // ── Client build hash tracking ──
+
+    #[tokio::test]
+    async fn test_client_build_hash_tracking() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user = state
+            .register_user("hash_user".into(), "".into())
+            .await
+            .unwrap();
+
+        assert!(state.get_client_build_hash(user).await.is_none());
+        state.set_client_build_hash(user, "abc123".into()).await;
+        assert_eq!(state.get_client_build_hash(user).await.unwrap(), "abc123");
+    }
+
+    // ── Node info edge cases ──
+
+    #[tokio::test]
+    async fn test_get_node_info_nonexistent() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let result = state.get_node_info(Uuid::new_v4()).await;
+        assert!(result.is_err());
+    }
+
+    // ── Channel deletion permission check ──
+
+    #[tokio::test]
+    async fn test_delete_channel_requires_permission() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner = state
+            .register_user("delch_owner".into(), "".into())
+            .await
+            .unwrap();
+        let member = state
+            .register_user("delch_member".into(), "".into())
+            .await
+            .unwrap();
+
+        let node = state
+            .create_node("DelNode".into(), owner, None)
+            .await
+            .unwrap();
+        state.join_node(member, node.id).await.unwrap();
+
+        let channel = state
+            .create_channel("doomed".into(), node.id, owner)
+            .await
+            .unwrap();
+
+        // Non-owner shouldn't be able to delete
+        let result = state.delete_channel(channel.id, member).await;
+        assert!(result.is_err());
+
+        // Owner should succeed
+        state.delete_channel(channel.id, owner).await.unwrap();
+    }
+
+    // ── Token cleanup ──
+
+    #[tokio::test]
+    async fn test_cleanup_expired_tokens() {
+        let state = AppState::new_in_memory().await.unwrap();
+        // Insert an expired token manually
+        let expired_token = AuthToken {
+            token: "expired_tok".into(),
+            user_id: Uuid::new_v4(),
+            expires_at: 1000, // long past
+        };
+        state
+            .auth_tokens
+            .write()
+            .await
+            .insert("expired_tok".into(), expired_token);
+
+        let cleaned = state.cleanup_expired_tokens().await;
+        assert!(cleaned >= 1);
+        assert!(state.validate_token("expired_tok").await.is_none());
+    }
+
+    // ── Connection management ──
+
+    #[tokio::test]
+    async fn test_add_remove_connection() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user = Uuid::new_v4();
+        let (sender, _) = broadcast::channel(16);
+
+        state.add_connection(user, sender).await;
+        assert!(state.connections.read().await.contains_key(&user));
+
+        state.remove_connection(user).await;
+        assert!(!state.connections.read().await.contains_key(&user));
+    }
+
+    // ── Relay build hash check ──
+
+    #[tokio::test]
+    async fn test_relay_build_hash_check_off() {
+        let state = AppState::new_in_memory().await.unwrap();
+        // Default enforcement is Off, should accept anything
+        let result = state.check_relay_build_hash(Some("any-hash")).await;
+        assert!(result.is_ok());
+        let result = state.check_relay_build_hash(None).await;
+        assert!(result.is_ok());
+    }
+
+    // ── Join node already member ──
+
+    #[tokio::test]
+    async fn test_join_node_already_member() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let user = state
+            .register_user("already_m".into(), "".into())
+            .await
+            .unwrap();
+        let node = state.create_node("ANode".into(), user, None).await.unwrap();
+        // Owner is already a member, joining again should error
+        let result = state.join_node(user, node.id).await;
+        assert!(result.is_err());
+    }
 }
