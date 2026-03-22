@@ -336,3 +336,378 @@ pub async fn node_overview_handler(
         "roles": roles,
     })))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use axum::extract::{Path, Query, State};
+    use axum::http::{HeaderMap, HeaderValue, header};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    // ── Test helpers ────────────────────────────────────────────
+
+    async fn make_state() -> SharedState {
+        Arc::new(AppState::new_in_memory().await.unwrap())
+    }
+
+    /// Register a user and return (user_id, valid_token).
+    async fn register_and_auth(state: &SharedState, public_key: &str) -> (Uuid, String) {
+        let user_id = state
+            .register_user(public_key.to_string(), "".to_string())
+            .await
+            .unwrap();
+        let pkh = crate::db::compute_public_key_hash(public_key);
+        let auth = state.authenticate_user(pkh, "".to_string()).await.unwrap();
+        (user_id, auth.token)
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+        headers
+    }
+
+    fn no_auth() -> HeaderMap {
+        HeaderMap::new()
+    }
+
+    fn no_params() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    // ── batch_members_handler ───────────────────────────────────
+
+    #[tokio::test]
+    async fn batch_members_success() {
+        let state = make_state().await;
+        let (owner_id, token) = register_and_auth(&state, "pk-owner-bm").await;
+
+        let node = state
+            .create_node("Test Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_members_handler(
+            State(state),
+            Path(node.id),
+            bearer(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let Json(body) = result.unwrap();
+        assert!(body.get("members").is_some(), "response must have 'members'");
+        assert!(body.get("roles").is_some(), "response must have 'roles'");
+        let members = body["members"].as_array().unwrap();
+        // Owner is automatically a member
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0]["user_id"].as_str().unwrap(), owner_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn batch_members_unauthorized_no_token() {
+        let state = make_state().await;
+        let (owner_id, _token) = register_and_auth(&state, "pk-owner-bm-unauth").await;
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_members_handler(
+            State(state),
+            Path(node.id),
+            no_auth(),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn batch_members_forbidden_non_member() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-bm-nm").await;
+        let (_, outsider_token) = register_and_auth(&state, "pk-outsider-bm-nm").await;
+
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_members_handler(
+            State(state),
+            Path(node.id),
+            bearer(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn batch_members_invalid_token() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-bm-inv").await;
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_members_handler(
+            State(state),
+            Path(node.id),
+            bearer("tok_not_a_real_token"),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    // ── batch_channels_handler ──────────────────────────────────
+
+    #[tokio::test]
+    async fn batch_channels_success() {
+        let state = make_state().await;
+        let (owner_id, token) = register_and_auth(&state, "pk-owner-bc").await;
+
+        let node = state
+            .create_node("Channel Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        // Create a channel so we have something to return
+        state
+            .create_channel("general".into(), node.id, owner_id)
+            .await
+            .unwrap();
+
+        let result = batch_channels_handler(
+            State(state),
+            Path(node.id),
+            bearer(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let Json(body) = result.unwrap();
+        assert!(body.get("channels").is_some(), "response must have 'channels'");
+        let channels = body["channels"].as_array().unwrap();
+        assert!(!channels.is_empty());
+        assert_eq!(channels[0]["name"].as_str().unwrap(), "general");
+    }
+
+    #[tokio::test]
+    async fn batch_channels_returns_array() {
+        // Just verifies the response shape is correct and the endpoint is reachable.
+        // Node creation may add default channels, so we only assert the key exists.
+        let state = make_state().await;
+        let (owner_id, token) = register_and_auth(&state, "pk-owner-bc-empty").await;
+
+        let node = state
+            .create_node("Empty Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_channels_handler(
+            State(state),
+            Path(node.id),
+            bearer(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let Json(body) = result.unwrap();
+        // Must have the "channels" key and it must be an array
+        assert!(body["channels"].is_array(), "response 'channels' must be an array");
+    }
+
+    #[tokio::test]
+    async fn batch_channels_unauthorized_no_token() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-bc-unauth").await;
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_channels_handler(
+            State(state),
+            Path(node.id),
+            no_auth(),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn batch_channels_forbidden_non_member() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-bc-nm").await;
+        let (_, outsider_token) = register_and_auth(&state, "pk-outsider-bc-nm").await;
+
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = batch_channels_handler(
+            State(state),
+            Path(node.id),
+            bearer(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ── node_overview_handler ───────────────────────────────────
+
+    #[tokio::test]
+    async fn node_overview_success() {
+        let state = make_state().await;
+        let (owner_id, token) = register_and_auth(&state, "pk-owner-ov").await;
+
+        let node = state
+            .create_node("Overview Node".into(), owner_id, Some("A desc".into()))
+            .await
+            .unwrap();
+
+        state
+            .create_channel("announcements".into(), node.id, owner_id)
+            .await
+            .unwrap();
+
+        let result = node_overview_handler(
+            State(state),
+            Path(node.id),
+            bearer(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        let Json(body) = result.unwrap();
+        assert!(body.get("node").is_some(), "response must have 'node'");
+        assert!(body.get("channels").is_some(), "response must have 'channels'");
+        assert!(body.get("members").is_some(), "response must have 'members'");
+        assert!(body.get("roles").is_some(), "response must have 'roles'");
+
+        let channels = body["channels"].as_array().unwrap();
+        assert!(!channels.is_empty());
+        // Verify our created channel is present (order may vary)
+        let names: Vec<&str> = channels
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        assert!(
+            names.contains(&"announcements"),
+            "expected 'announcements' channel, got: {:?}",
+            names
+        );
+
+        let members = body["members"].as_array().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0]["user_id"].as_str().unwrap(), owner_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn node_overview_unauthorized_no_token() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-ov-unauth").await;
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = node_overview_handler(
+            State(state),
+            Path(node.id),
+            no_auth(),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn node_overview_forbidden_non_member() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-ov-nm").await;
+        let (_, outsider_token) = register_and_auth(&state, "pk-outsider-ov-nm").await;
+
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = node_overview_handler(
+            State(state),
+            Path(node.id),
+            bearer(&outsider_token),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn node_overview_not_found() {
+        let state = make_state().await;
+        let (_, token) = register_and_auth(&state, "pk-owner-ov-404").await;
+
+        // Use a random UUID that doesn't correspond to any node
+        let phantom_node_id = Uuid::new_v4();
+
+        let result = node_overview_handler(
+            State(state),
+            Path(phantom_node_id),
+            bearer(&token),
+            Query(no_params()),
+        )
+        .await;
+
+        // Non-member check fires before not-found, so we get FORBIDDEN
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn node_overview_invalid_token() {
+        let state = make_state().await;
+        let (owner_id, _) = register_and_auth(&state, "pk-owner-ov-inv").await;
+        let node = state
+            .create_node("Node".into(), owner_id, None)
+            .await
+            .unwrap();
+
+        let result = node_overview_handler(
+            State(state),
+            Path(node.id),
+            bearer("tok_bogus_not_real"),
+            Query(no_params()),
+        )
+        .await;
+
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+}
