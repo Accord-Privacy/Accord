@@ -47,10 +47,7 @@ impl TestServer {
                 get(list_user_nodes_handler).post(create_node_handler),
             )
             .route("/nodes/:id", get(get_node_handler))
-            .route(
-                "/nodes/:id",
-                axum::routing::patch(update_node_handler),
-            )
+            .route("/nodes/:id", axum::routing::patch(update_node_handler))
             .route("/nodes/:id/join", post(join_node_handler))
             .route("/nodes/:id/leave", post(leave_node_handler))
             .route(
@@ -333,8 +330,12 @@ async fn test_list_node_channels() {
     let (_, owner_token) = server.register_and_auth("list_chan_owner").await;
     let node_id = server.create_node(&owner_token, "ListChanNode").await;
 
-    server.create_channel(&owner_token, node_id, "ch-alpha").await;
-    server.create_channel(&owner_token, node_id, "ch-beta").await;
+    server
+        .create_channel(&owner_token, node_id, "ch-alpha")
+        .await;
+    server
+        .create_channel(&owner_token, node_id, "ch-beta")
+        .await;
 
     let resp = server
         .client
@@ -350,10 +351,7 @@ async fn test_list_node_channels() {
     let body: Value = resp.json().await.unwrap();
     let channels = body.as_array().unwrap();
     assert!(channels.len() >= 2);
-    let names: Vec<&str> = channels
-        .iter()
-        .filter_map(|c| c["name"].as_str())
-        .collect();
+    let names: Vec<&str> = channels.iter().filter_map(|c| c["name"].as_str()).collect();
     assert!(names.contains(&"ch-alpha"));
     assert!(names.contains(&"ch-beta"));
 }
@@ -379,7 +377,9 @@ async fn test_delete_channel_success() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("del_chan_owner").await;
     let node_id = server.create_node(&owner_token, "DelChanNode").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "to-delete").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "to-delete")
+        .await;
 
     let resp = server
         .client
@@ -402,7 +402,9 @@ async fn test_delete_channel_by_non_owner_forbidden() {
     let (_, owner_token) = server.register_and_auth("del_chan_owner2").await;
     let (_, member_token) = server.register_and_auth("del_chan_member").await;
     let node_id = server.create_node(&owner_token, "DelChanNode2").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "protected-ch").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "protected-ch")
+        .await;
 
     // Member joins but is not admin
     server.join_node(&member_token, node_id).await;
@@ -461,7 +463,9 @@ async fn test_get_channel_messages_access_denied() {
     let (_, owner_token) = server.register_and_auth("msg_hist_owner").await;
     let (_, stranger_token) = server.register_and_auth("msg_hist_stranger").await;
     let node_id = server.create_node(&owner_token, "MsgHistNode2").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "private-ch").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "private-ch")
+        .await;
 
     // Stranger is not a member of the node at all
     let resp = server
@@ -548,7 +552,9 @@ async fn test_update_channel_category_success() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("cat_upd_owner").await;
     let node_id = server.create_node(&owner_token, "CatUpdNode").await;
-    let category_id = server.create_category(&owner_token, node_id, "OldName").await;
+    let category_id = server
+        .create_category(&owner_token, node_id, "OldName")
+        .await;
 
     let resp = server
         .client
@@ -593,7 +599,9 @@ async fn test_update_channel_category_forbidden_for_member() {
     let (_, owner_token) = server.register_and_auth("cat_upd_own").await;
     let (_, member_token) = server.register_and_auth("cat_upd_mem").await;
     let node_id = server.create_node(&owner_token, "CatUpdForbNode").await;
-    let category_id = server.create_category(&owner_token, node_id, "Locked").await;
+    let category_id = server
+        .create_category(&owner_token, node_id, "Locked")
+        .await;
     server.join_node(&member_token, node_id).await;
 
     let resp = server
@@ -615,7 +623,9 @@ async fn test_delete_channel_category_success() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("cat_del_owner").await;
     let node_id = server.create_node(&owner_token, "CatDelNode").await;
-    let category_id = server.create_category(&owner_token, node_id, "ToDelete").await;
+    let category_id = server
+        .create_category(&owner_token, node_id, "ToDelete")
+        .await;
 
     let resp = server
         .client
@@ -658,7 +668,9 @@ async fn test_delete_channel_category_forbidden_for_member() {
     let (_, owner_token) = server.register_and_auth("cat_del_own2").await;
     let (_, member_token) = server.register_and_auth("cat_del_mem2").await;
     let node_id = server.create_node(&owner_token, "CatDelForbNode").await;
-    let category_id = server.create_category(&owner_token, node_id, "Protected").await;
+    let category_id = server
+        .create_category(&owner_token, node_id, "Protected")
+        .await;
     server.join_node(&member_token, node_id).await;
 
     let resp = server
@@ -1126,7 +1138,9 @@ async fn test_update_node_forbidden_for_member() {
 async fn test_update_node_unauthorized() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("upd_node_unauth").await;
-    let node_id = server.create_node(&owner_token, "NodeForUpdateUnauth").await;
+    let node_id = server
+        .create_node(&owner_token, "NodeForUpdateUnauth")
+        .await;
 
     let resp = server
         .client
@@ -1234,11 +1248,7 @@ async fn test_kick_user_forbidden_for_member() {
     let node_id = server.create_node(&owner_token, "KickForbNode").await;
 
     // Join both members
-    server
-        .state
-        .join_node(member1_id, node_id)
-        .await
-        .unwrap();
+    server.state.join_node(member1_id, node_id).await.unwrap();
     let (member2_id, member2_token) = server.register_and_auth("kick_mem2b").await;
     server.join_node(&member2_token, node_id).await;
 
@@ -1307,7 +1317,9 @@ async fn test_set_channel_overwrite_success() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("overwrite_own").await;
     let node_id = server.create_node(&owner_token, "OverwriteNode").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "perm-ch").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "perm-ch")
+        .await;
     let role_id = create_role(&server, &owner_token, node_id, "TestRole").await;
 
     let resp = server
@@ -1330,7 +1342,9 @@ async fn test_set_channel_overwrite_forbidden_for_member() {
     let (_, owner_token) = server.register_and_auth("ow_own2").await;
     let (_, member_token) = server.register_and_auth("ow_mem2").await;
     let node_id = server.create_node(&owner_token, "OverwriteNodeFrb").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "perm-ch2").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "perm-ch2")
+        .await;
     let role_id = create_role(&server, &owner_token, node_id, "RoleFrb").await;
     server.join_node(&member_token, node_id).await;
 
@@ -1375,7 +1389,9 @@ async fn test_delete_channel_overwrite_success() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("del_ow_own").await;
     let node_id = server.create_node(&owner_token, "DelOvNode").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "del-perm-ch").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "del-perm-ch")
+        .await;
     let role_id = create_role(&server, &owner_token, node_id, "DelOvRole").await;
 
     // First set an overwrite
@@ -1434,7 +1450,9 @@ async fn test_get_effective_permissions_success() {
     let server = TestServer::new().await;
     let (owner_id, owner_token) = server.register_and_auth("eff_perm_own").await;
     let node_id = server.create_node(&owner_token, "EffPermNode").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "eff-perm-ch").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "eff-perm-ch")
+        .await;
 
     // Owner should have all permissions
     let resp = server
@@ -1481,7 +1499,9 @@ async fn test_get_effective_permissions_unauthorized() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("eff_perm_unauth").await;
     let node_id = server.create_node(&owner_token, "EffPermUnauthNode").await;
-    let channel_id = server.create_channel(&owner_token, node_id, "eff-perm-unauth-ch").await;
+    let channel_id = server
+        .create_channel(&owner_token, node_id, "eff-perm-unauth-ch")
+        .await;
 
     let resp = server
         .client
