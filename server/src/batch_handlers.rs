@@ -342,7 +342,7 @@ mod tests {
     use super::*;
     use crate::state::AppState;
     use axum::extract::{Path, Query, State};
-    use axum::http::{HeaderMap, HeaderValue, header};
+    use axum::http::{header, HeaderMap, HeaderValue};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -401,12 +401,18 @@ mod tests {
         .await;
 
         let Json(body) = result.unwrap();
-        assert!(body.get("members").is_some(), "response must have 'members'");
+        assert!(
+            body.get("members").is_some(),
+            "response must have 'members'"
+        );
         assert!(body.get("roles").is_some(), "response must have 'roles'");
         let members = body["members"].as_array().unwrap();
         // Owner is automatically a member
         assert_eq!(members.len(), 1);
-        assert_eq!(members[0]["user_id"].as_str().unwrap(), owner_id.to_string());
+        assert_eq!(
+            members[0]["user_id"].as_str().unwrap(),
+            owner_id.to_string()
+        );
     }
 
     #[tokio::test]
@@ -418,13 +424,8 @@ mod tests {
             .await
             .unwrap();
 
-        let result = batch_members_handler(
-            State(state),
-            Path(node.id),
-            no_auth(),
-            Query(no_params()),
-        )
-        .await;
+        let result =
+            batch_members_handler(State(state), Path(node.id), no_auth(), Query(no_params())).await;
 
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -501,7 +502,10 @@ mod tests {
         .await;
 
         let Json(body) = result.unwrap();
-        assert!(body.get("channels").is_some(), "response must have 'channels'");
+        assert!(
+            body.get("channels").is_some(),
+            "response must have 'channels'"
+        );
         let channels = body["channels"].as_array().unwrap();
         assert!(!channels.is_empty());
         assert_eq!(channels[0]["name"].as_str().unwrap(), "general");
@@ -529,7 +533,10 @@ mod tests {
 
         let Json(body) = result.unwrap();
         // Must have the "channels" key and it must be an array
-        assert!(body["channels"].is_array(), "response 'channels' must be an array");
+        assert!(
+            body["channels"].is_array(),
+            "response 'channels' must be an array"
+        );
     }
 
     #[tokio::test]
@@ -541,13 +548,9 @@ mod tests {
             .await
             .unwrap();
 
-        let result = batch_channels_handler(
-            State(state),
-            Path(node.id),
-            no_auth(),
-            Query(no_params()),
-        )
-        .await;
+        let result =
+            batch_channels_handler(State(state), Path(node.id), no_auth(), Query(no_params()))
+                .await;
 
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -603,8 +606,14 @@ mod tests {
 
         let Json(body) = result.unwrap();
         assert!(body.get("node").is_some(), "response must have 'node'");
-        assert!(body.get("channels").is_some(), "response must have 'channels'");
-        assert!(body.get("members").is_some(), "response must have 'members'");
+        assert!(
+            body.get("channels").is_some(),
+            "response must have 'channels'"
+        );
+        assert!(
+            body.get("members").is_some(),
+            "response must have 'members'"
+        );
         assert!(body.get("roles").is_some(), "response must have 'roles'");
 
         let channels = body["channels"].as_array().unwrap();
@@ -622,7 +631,10 @@ mod tests {
 
         let members = body["members"].as_array().unwrap();
         assert_eq!(members.len(), 1);
-        assert_eq!(members[0]["user_id"].as_str().unwrap(), owner_id.to_string());
+        assert_eq!(
+            members[0]["user_id"].as_str().unwrap(),
+            owner_id.to_string()
+        );
     }
 
     #[tokio::test]
@@ -634,13 +646,8 @@ mod tests {
             .await
             .unwrap();
 
-        let result = node_overview_handler(
-            State(state),
-            Path(node.id),
-            no_auth(),
-            Query(no_params()),
-        )
-        .await;
+        let result =
+            node_overview_handler(State(state), Path(node.id), no_auth(), Query(no_params())).await;
 
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::UNAUTHORIZED);
