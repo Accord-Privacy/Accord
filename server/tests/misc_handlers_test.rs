@@ -219,7 +219,10 @@ async fn test_update_user_profile_success() {
 
     let resp = server
         .client
-        .patch(&format!("{}/users/me/profile?token={}", server.base_url, token))
+        .patch(&format!(
+            "{}/users/me/profile?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "display_name": "Test User",
             "bio": "Hello world",
@@ -256,7 +259,10 @@ async fn test_update_user_profile_invalid_status() {
 
     let resp = server
         .client
-        .patch(&format!("{}/users/me/profile?token={}", server.base_url, token))
+        .patch(&format!(
+            "{}/users/me/profile?token={}",
+            server.base_url, token
+        ))
         .json(&json!({ "status": "invisible" }))
         .send()
         .await
@@ -273,7 +279,10 @@ async fn test_get_user_profile_success() {
     // Update profile so there's something to retrieve
     server
         .client
-        .patch(&format!("{}/users/me/profile?token={}", server.base_url, token))
+        .patch(&format!(
+            "{}/users/me/profile?token={}",
+            server.base_url, token
+        ))
         .json(&json!({ "display_name": "GetMe", "bio": "bio text", "status": "online" }))
         .send()
         .await
@@ -379,7 +388,9 @@ async fn test_get_build_allowlist_member_forbidden() {
 async fn test_get_build_allowlist_unauthorized() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("allow_get_unauth").await;
-    let node_id = server.create_node(&owner_token, "AllowListUnauthNode").await;
+    let node_id = server
+        .create_node(&owner_token, "AllowListUnauthNode")
+        .await;
 
     let resp = server
         .client
@@ -745,7 +756,10 @@ async fn test_register_push_token_success() {
 
     let resp = server
         .client
-        .post(&format!("{}/push/register?token={}", server.base_url, token))
+        .post(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "platform": "ios",
             "token": "device-token-abc-123",
@@ -768,7 +782,10 @@ async fn test_register_push_token_android() {
 
     let resp = server
         .client
-        .post(&format!("{}/push/register?token={}", server.base_url, token))
+        .post(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "platform": "android",
             "token": "fcm-device-token-xyz",
@@ -790,7 +807,10 @@ async fn test_register_push_token_empty_token() {
 
     let resp = server
         .client
-        .post(&format!("{}/push/register?token={}", server.base_url, token))
+        .post(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "platform": "ios",
             "token": ""
@@ -830,7 +850,10 @@ async fn test_deregister_push_token_success() {
     // Register first
     let resp = server
         .client
-        .post(&format!("{}/push/register?token={}", server.base_url, token))
+        .post(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "platform": "ios",
             "token": device_token
@@ -843,7 +866,10 @@ async fn test_deregister_push_token_success() {
     // Now deregister
     let resp = server
         .client
-        .delete(&format!("{}/push/register?token={}", server.base_url, token))
+        .delete(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({ "token": device_token }))
         .send()
         .await
@@ -861,7 +887,10 @@ async fn test_deregister_push_token_not_found() {
 
     let resp = server
         .client
-        .delete(&format!("{}/push/register?token={}", server.base_url, token))
+        .delete(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({ "token": "nonexistent-token" }))
         .send()
         .await
@@ -895,7 +924,10 @@ async fn test_update_push_preferences_success() {
     // Register a token first
     server
         .client
-        .post(&format!("{}/push/register?token={}", server.base_url, token))
+        .post(&format!(
+            "{}/push/register?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "platform": "ios",
             "token": device_token,
@@ -908,7 +940,10 @@ async fn test_update_push_preferences_success() {
     // Update preferences
     let resp = server
         .client
-        .put(&format!("{}/push/preferences?token={}", server.base_url, token))
+        .put(&format!(
+            "{}/push/preferences?token={}",
+            server.base_url, token
+        ))
         .json(&json!({
             "privacy_level": "stealth",
             "token": device_token
@@ -931,7 +966,10 @@ async fn test_update_push_preferences_no_tokens() {
     // No tokens registered — should return 404
     let resp = server
         .client
-        .put(&format!("{}/push/preferences?token={}", server.base_url, token))
+        .put(&format!(
+            "{}/push/preferences?token={}",
+            server.base_url, token
+        ))
         .json(&json!({ "privacy_level": "full" }))
         .send()
         .await
@@ -1360,7 +1398,10 @@ async fn test_list_channel_files_unauthorized() {
 
     let resp = server
         .client
-        .get(&format!("{}/channels/{}/files", server.base_url, channel_id))
+        .get(&format!(
+            "{}/channels/{}/files",
+            server.base_url, channel_id
+        ))
         .send()
         .await
         .unwrap();
