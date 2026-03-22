@@ -30,6 +30,15 @@ use sqlx::{Row, SqlitePool as Pool};
 use std::path::Path;
 use uuid::Uuid;
 
+/// Sentinel system user ID used as the owner of system-internal records (e.g. DM backing channels).
+pub const DM_SYSTEM_USER_ID: Uuid =
+    Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+/// Sentinel system node ID used as the node_id for DM backing channels.
+/// This avoids FK constraint violations since channels require a valid node_id.
+pub const DM_SYSTEM_NODE_ID: Uuid =
+    Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -1183,6 +1192,32 @@ impl Database {
         .execute(&self.pool)
         .await
         .ok();
+
+        // Insert sentinel system user and node for DM backing channels.
+        // These must exist so that DM channels can reference a valid node_id
+        // without violating FK constraints (PRAGMA foreign_keys = ON).
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        sqlx::query(
+            "INSERT OR IGNORE INTO users (id, public_key_hash, public_key, password_hash, created_at) VALUES (?, 'SYSTEM', 'SYSTEM', '', ?)"
+        )
+        .bind(DM_SYSTEM_USER_ID.to_string())
+        .bind(now_ts)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert sentinel system user")?;
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO nodes (id, name, owner_id, description, created_at) VALUES (?, '__dm_system__', ?, 'System node for DM channels', ?)"
+        )
+        .bind(DM_SYSTEM_NODE_ID.to_string())
+        .bind(DM_SYSTEM_USER_ID.to_string())
+        .bind(now_ts)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert sentinel system node")?;
 
         Ok(())
     }
@@ -3787,6 +3822,7 @@ impl Database {
                 user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
                 user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                is_dm: true,
             });
         }
 
@@ -3806,7 +3842,7 @@ impl Database {
         .context("Failed to create DM channel")?;
 
         // Create a channel entry for message infrastructure
-        self.create_channel_with_id(dm_id, &format!("DM-{}", dm_id), Uuid::nil(), user1_id)
+        self.create_channel_with_id(dm_id, &format!("DM-{}", dm_id), DM_SYSTEM_NODE_ID, user1_id)
             .await?;
 
         // Add both users to the channel
@@ -3818,6 +3854,7 @@ impl Database {
             user1_id: user1,
             user2_id: user2,
             created_at,
+            is_dm: true,
         })
     }
 
@@ -3831,7 +3868,7 @@ impl Database {
             SELECT 
                 dm.id, dm.user1_id, dm.user2_id, dm.created_at,
                 u.id as other_user_id, u.public_key_hash as other_public_key_hash, u.public_key as other_public_key, u.created_at as other_user_created_at,
-                up.display_name, up.avatar_url, up.bio, up.status, up.custom_status, up.updated_at
+                up.display_name, up.avatar_url, up.bio, up.status, up.custom_status, up.banner_color, up.banner_url, up.updated_at
             FROM dm_channels dm
             JOIN users u ON (
                 CASE 
@@ -3933,6 +3970,7 @@ impl Database {
                 user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
                 user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                is_dm: true,
             }))
         } else {
             Ok(None)
@@ -3957,6 +3995,7 @@ impl Database {
                 user1_id: Uuid::parse_str(&r.get::<String, _>("user1_id"))?,
                 user2_id: Uuid::parse_str(&r.get::<String, _>("user2_id"))?,
                 created_at: r.get::<i64, _>("created_at") as u64,
+                is_dm: true,
             })
         })
         .transpose()

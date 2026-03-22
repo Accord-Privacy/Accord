@@ -1053,7 +1053,6 @@ async fn test_create_dm_channel_unknown_user_fails() {
 }
 
 #[tokio::test]
-#[ignore = "DM handler uses Uuid::nil() as node_id which violates FK constraint in test DB"]
 async fn test_create_dm_channel_after_friendship() {
     let server = SocialTestServer::new().await;
     let (user1_id, token1) = server.register_and_auth("dm_friends1").await;
@@ -1082,7 +1081,6 @@ async fn test_create_dm_channel_after_friendship() {
 }
 
 #[tokio::test]
-#[ignore = "DM handler uses Uuid::nil() as node_id which violates FK constraint in test DB"]
 async fn test_create_dm_channel_idempotent() {
     let server = SocialTestServer::new().await;
     let (user1_id, token1) = server.register_and_auth("dm_idem1").await;
@@ -1138,7 +1136,6 @@ async fn test_get_dm_channels_empty() {
 }
 
 #[tokio::test]
-#[ignore = "DM handler uses Uuid::nil() as node_id which violates FK constraint in test DB"]
 async fn test_get_dm_channels_after_create() {
     let server = SocialTestServer::new().await;
     let (user1_id, token1) = server.register_and_auth("get_dm_full1").await;

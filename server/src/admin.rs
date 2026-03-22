@@ -1005,8 +1005,9 @@ mod tests {
         )
         .await;
         let json = result.unwrap().0;
-        assert_eq!(json["user_count"], 0);
-        assert_eq!(json["node_count"], 0);
+        // Sentinel system user and node are created during DB init for DM channels
+        assert_eq!(json["user_count"], 1); // system user
+        assert_eq!(json["node_count"], 1); // system DM node
         assert_eq!(json["message_count"], 0);
         assert_eq!(json["connection_count"], 0);
     }
@@ -1054,7 +1055,8 @@ mod tests {
         assert!(result.is_ok());
         let json = result.unwrap().0;
         assert!(json.get("users").is_some());
-        assert!(json["users"].as_array().unwrap().is_empty());
+        // System user exists from DB init (DM sentinel)
+        assert_eq!(json["users"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1073,7 +1075,7 @@ mod tests {
         .await;
         let json = result.unwrap().0;
         let users = json["users"].as_array().unwrap();
-        assert_eq!(users.len(), 1);
+        assert_eq!(users.len(), 2); // system user + registered user
     }
 
     // ── Nodes handler tests ──
@@ -1122,7 +1124,7 @@ mod tests {
         .await;
         let json = result.unwrap().0;
         let nodes = json["nodes"].as_array().unwrap();
-        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes.len(), 2); // system DM node + created node
     }
 
     // ── Build allowlist handler tests ──

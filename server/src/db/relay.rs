@@ -936,6 +936,7 @@ impl RelayDatabase {
                 user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
                 user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                is_dm: true,
             });
         }
 
@@ -958,6 +959,7 @@ impl RelayDatabase {
             user1_id: user1,
             user2_id: user2,
             created_at,
+            is_dm: true,
         })
     }
 
@@ -1017,6 +1019,7 @@ impl RelayDatabase {
                 user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
                 user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
                 created_at: row.get::<i64, _>("created_at") as u64,
+                is_dm: true,
             }))
         } else {
             Ok(None)

@@ -954,6 +954,13 @@ pub struct DmChannel {
     pub user1_id: Uuid,
     pub user2_id: Uuid,
     pub created_at: u64,
+    /// Always true — indicates this channel is a DM channel.
+    #[serde(default = "dm_true")]
+    pub is_dm: bool,
+}
+
+fn dm_true() -> bool {
+    true
 }
 
 /// DM channel with last message preview and user info
