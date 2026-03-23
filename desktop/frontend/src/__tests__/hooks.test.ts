@@ -452,6 +452,16 @@ describe('useBlocking', () => {
     expect(result.current.blockedUsers.has('u10')).toBe(true);
   });
 
+  it('unblock does nothing when token is undefined', async () => {
+    const { api } = await import('../api');
+    const { result } = renderHook(() => useBlocking(undefined, false));
+    await act(async () => {
+      await result.current.handleUnblockUser('u1');
+    });
+    expect(api.unblockUser).not.toHaveBeenCalled();
+    expect(result.current.blockedUsers.size).toBe(0);
+  });
+
   it('propagates block API error', async () => {
     const { api } = await import('../api');
     (api.blockUser as any).mockRejectedValueOnce(new Error('network'));
@@ -547,5 +557,248 @@ describe('useBookmarks', () => {
     localStorage.setItem('accord_saved_messages', '{broken');
     const { result } = renderHook(() => useBookmarks());
     expect(result.current.bookmarks).toEqual([]);
+  });
+});
+
+// ─── useMentionAutocomplete ─────────────────────────────────────────────────
+
+import { useMentionAutocomplete, type AutocompleteItem } from '../hooks/useMentionAutocomplete';
+
+describe('useMentionAutocomplete', () => {
+  const users: AutocompleteItem[] = [
+    { type: 'user', id: 'u1', label: 'Alice', insertText: '@Alice' },
+    { type: 'user', id: 'u2', label: 'Bob', insertText: '@Bob' },
+    { type: 'user', id: 'u3', label: 'John', insertText: '@John' },
+    { type: 'user', id: 'u4', label: 'Joanna', insertText: '@Joanna' },
+  ];
+
+  const channels: AutocompleteItem[] = [
+    { type: 'channel', id: 'c1', label: 'general', insertText: '#general' },
+    { type: 'channel', id: 'c2', label: 'random', insertText: '#random' },
+  ];
+
+  it('initial state is inactive', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    expect(result.current.mentionState.active).toBe(false);
+    expect(result.current.mentionState.items).toEqual([]);
+  });
+
+  it('typing @ activates with user list', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@', 1));
+    expect(result.current.mentionState.active).toBe(true);
+    expect(result.current.mentionState.triggerChar).toBe('@');
+    expect(result.current.mentionState.items).toHaveLength(4);
+  });
+
+  it('typing # activates with channel list', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('#', 1));
+    expect(result.current.mentionState.active).toBe(true);
+    expect(result.current.mentionState.triggerChar).toBe('#');
+    expect(result.current.mentionState.items).toHaveLength(2);
+  });
+
+  it('typing @jo filters to matching users', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@jo', 3));
+    expect(result.current.mentionState.active).toBe(true);
+    const labels = result.current.mentionState.items.map(i => i.label);
+    expect(labels).toContain('John');
+    expect(labels).toContain('Joanna');
+    expect(labels).not.toContain('Alice');
+    expect(labels).not.toContain('Bob');
+  });
+
+  it('space after trigger dismisses', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@', 1));
+    expect(result.current.mentionState.active).toBe(true);
+    act(() => result.current.handleMentionInput('@ ', 2));
+    expect(result.current.mentionState.active).toBe(false);
+  });
+
+  it('ArrowUp/ArrowDown cycles selectedIndex', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@', 1));
+    expect(result.current.mentionState.selectedIndex).toBe(0);
+
+    const makeKeyEvent = (key: string) => ({
+      key,
+      preventDefault: vi.fn(),
+    } as unknown as React.KeyboardEvent);
+
+    const setMsg = vi.fn();
+    const inputRef = { current: null };
+
+    act(() => {
+      result.current.handleMentionKeyDown(makeKeyEvent('ArrowDown'), '@', setMsg, inputRef as any);
+    });
+    expect(result.current.mentionState.selectedIndex).toBe(1);
+
+    act(() => {
+      result.current.handleMentionKeyDown(makeKeyEvent('ArrowUp'), '@', setMsg, inputRef as any);
+    });
+    expect(result.current.mentionState.selectedIndex).toBe(0);
+
+    // ArrowUp from 0 wraps to last
+    act(() => {
+      result.current.handleMentionKeyDown(makeKeyEvent('ArrowUp'), '@', setMsg, inputRef as any);
+    });
+    expect(result.current.mentionState.selectedIndex).toBe(3);
+  });
+
+  it('Enter selects item and inserts text', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@', 1));
+
+    const setMsg = vi.fn();
+    const inputRef = { current: null };
+    const makeKeyEvent = (key: string) => ({
+      key,
+      preventDefault: vi.fn(),
+    } as unknown as React.KeyboardEvent);
+
+    act(() => {
+      result.current.handleMentionKeyDown(makeKeyEvent('Enter'), '@', setMsg, inputRef as any);
+    });
+    expect(setMsg).toHaveBeenCalledWith('@Alice ');
+    expect(result.current.mentionState.active).toBe(false);
+  });
+
+  it('Tab selects item and inserts text', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@', 1));
+
+    const setMsg = vi.fn();
+    const inputRef = { current: null };
+    const makeKeyEvent = (key: string) => ({
+      key,
+      preventDefault: vi.fn(),
+    } as unknown as React.KeyboardEvent);
+
+    act(() => {
+      result.current.handleMentionKeyDown(makeKeyEvent('Tab'), '@', setMsg, inputRef as any);
+    });
+    expect(setMsg).toHaveBeenCalledWith('@Alice ');
+    expect(result.current.mentionState.active).toBe(false);
+  });
+
+  it('Escape dismisses', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('@', 1));
+    expect(result.current.mentionState.active).toBe(true);
+
+    const makeKeyEvent = (key: string) => ({
+      key,
+      preventDefault: vi.fn(),
+    } as unknown as React.KeyboardEvent);
+
+    act(() => {
+      result.current.handleMentionKeyDown(makeKeyEvent('Escape'), '@', vi.fn(), { current: null } as any);
+    });
+    expect(result.current.mentionState.active).toBe(false);
+  });
+
+  it('fuzzyMatch works for substring and character-order matching', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    // "ace" should fuzzy-match "Alice" (a...l...i...c...e — a,c,e in order)
+    act(() => result.current.handleMentionInput('@ace', 4));
+    const labels = result.current.mentionState.items.map(i => i.label);
+    expect(labels).toContain('Alice');
+    // substring match: "ob" matches "Bob"
+    act(() => result.current.handleMentionInput('@ob', 3));
+    const labels2 = result.current.mentionState.items.map(i => i.label);
+    expect(labels2).toContain('Bob');
+  });
+
+  it('no trigger char keeps state inactive', () => {
+    const { result } = renderHook(() => useMentionAutocomplete(users, channels));
+    act(() => result.current.handleMentionInput('hello world', 11));
+    expect(result.current.mentionState.active).toBe(false);
+  });
+});
+
+// ─── useSlashCommands ───────────────────────────────────────────────────────
+
+import { useSlashCommands, SLASH_COMMANDS } from '../hooks/useSlashCommands';
+
+describe('useSlashCommands', () => {
+  const makeCallbacks = () => ({
+    onNick: vi.fn(),
+    onStatus: vi.fn(),
+    onClear: vi.fn(),
+  });
+
+  it('initial state is inactive', () => {
+    const { result } = renderHook(() => useSlashCommands(makeCallbacks()));
+    expect(result.current.slashState.active).toBe(false);
+    expect(result.current.slashState.items).toEqual([]);
+  });
+
+  it('typing / activates with all commands', () => {
+    const { result } = renderHook(() => useSlashCommands(makeCallbacks()));
+    act(() => result.current.handleSlashInput('/'));
+    expect(result.current.slashState.active).toBe(true);
+    expect(result.current.slashState.items).toHaveLength(SLASH_COMMANDS.length);
+  });
+
+  it('typing /sh filters to shrug', () => {
+    const { result } = renderHook(() => useSlashCommands(makeCallbacks()));
+    act(() => result.current.handleSlashInput('/sh'));
+    expect(result.current.slashState.active).toBe(true);
+    const names = result.current.slashState.items.map(i => i.name);
+    expect(names).toContain('shrug');
+    expect(names).not.toContain('clear');
+  });
+
+  it('space dismisses autocomplete (user typing argument)', () => {
+    const { result } = renderHook(() => useSlashCommands(makeCallbacks()));
+    act(() => result.current.handleSlashInput('/nick'));
+    expect(result.current.slashState.active).toBe(true);
+    act(() => result.current.handleSlashInput('/nick newname'));
+    expect(result.current.slashState.active).toBe(false);
+  });
+
+  it('processCommand returns true for valid commands', () => {
+    const cbs = makeCallbacks();
+    const { result } = renderHook(() => useSlashCommands(cbs));
+    const handled = result.current.processSlashCommand('/clear');
+    expect(handled).toBe(true);
+  });
+
+  it('processCommand calls onNick with argument', () => {
+    const cbs = makeCallbacks();
+    const { result } = renderHook(() => useSlashCommands(cbs));
+    result.current.processSlashCommand('/nick CoolName');
+    expect(cbs.onNick).toHaveBeenCalledWith('CoolName');
+  });
+
+  it('processCommand calls onClear for /clear', () => {
+    const cbs = makeCallbacks();
+    const { result } = renderHook(() => useSlashCommands(cbs));
+    result.current.processSlashCommand('/clear');
+    expect(cbs.onClear).toHaveBeenCalled();
+  });
+
+  it('processCommand returns false for unknown commands', () => {
+    const { result } = renderHook(() => useSlashCommands(makeCallbacks()));
+    const handled = result.current.processSlashCommand('/unknowncmd foo');
+    expect(handled).toBe(false);
+  });
+
+  it('selectItem with appendText (shrug) sets message to emoticon', () => {
+    const { result } = renderHook(() => useSlashCommands(makeCallbacks()));
+    act(() => result.current.handleSlashInput('/shrug'));
+    const shrugIdx = result.current.slashState.items.findIndex(i => i.name === 'shrug');
+    expect(shrugIdx).toBeGreaterThanOrEqual(0);
+
+    const setMsg = vi.fn();
+    const inputRef = { current: null };
+    act(() => {
+      result.current.selectSlashItem(shrugIdx, '/shrug', setMsg, inputRef as any);
+    });
+    expect(setMsg).toHaveBeenCalledWith('¯\\_(ツ)_/¯');
+    expect(result.current.slashState.active).toBe(false);
   });
 });
