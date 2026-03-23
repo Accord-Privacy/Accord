@@ -1420,4 +1420,402 @@ mod http_tests {
             other => panic!("expected Api(404), got {:?}", other),
         }
     }
+
+    // ── AccordBot constructor ───────────────────────────────────────────
+
+    #[test]
+    fn new_stores_token() {
+        let bot = AccordBot::new("ws://localhost:8080", "my-secret-token");
+        assert_eq!(bot.token, "my-secret-token");
+    }
+
+    #[test]
+    fn new_strips_trailing_slash() {
+        let bot = AccordBot::new("ws://localhost:8080/", "tok");
+        assert_eq!(bot.relay_url, "ws://localhost:8080");
+    }
+
+    #[test]
+    fn new_http_base_from_ws() {
+        let bot = AccordBot::new("ws://localhost:8080", "tok");
+        assert_eq!(bot.http_base, "http://localhost:8080");
+    }
+
+    #[test]
+    fn new_http_base_from_wss() {
+        let bot = AccordBot::new("wss://relay.example.com", "tok");
+        assert_eq!(bot.http_base, "https://relay.example.com");
+    }
+
+    #[test]
+    fn new_starts_disconnected() {
+        let bot = AccordBot::new("ws://localhost:8080", "tok");
+        assert!(bot.ws_sink.is_none());
+        assert!(bot.ws_stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn new_user_id_is_none() {
+        let bot = AccordBot::new("ws://localhost:8080", "tok");
+        assert!(bot.user_id().await.is_none());
+    }
+
+    // ── reply / join_channel without connection ─────────────────────────
+
+    #[tokio::test]
+    async fn reply_without_connection_returns_not_connected() {
+        let bot = AccordBot::new("ws://localhost:9999", "tok");
+        let result = bot.reply("ch-1", "msg-1", "hello").await;
+        assert!(matches!(result, Err(BotError::NotConnected)));
+    }
+
+    #[tokio::test]
+    async fn join_channel_without_connection_returns_not_connected() {
+        let bot = AccordBot::new("ws://localhost:9999", "tok");
+        let result = bot.join_channel("ch-1").await;
+        assert!(matches!(result, Err(BotError::NotConnected)));
+    }
+
+    // ── send_message HTTP tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn send_message_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bot/channels/ch-1/messages"))
+            .and(header("Authorization", EXPECTED_AUTH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg-new"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.send_message("ch-1", "Hello!").await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn send_message_unauthorized() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/bot/channels/.+/messages$"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
+            .mount(&mock_server)
+            .await;
+
+        let bot = make_bot(&mock_server.uri());
+        let result = bot.send_message("ch-1", "Hello!").await;
+
+        match result {
+            Err(BotError::Api { code, message }) => {
+                assert_eq!(code, 401);
+                assert_eq!(message, "Unauthorized");
+            }
+            other => panic!("expected Api(401), got {:?}", other),
+        }
+    }
+
+    // ── parse_event: channel_message ────────────────────────────────────
+
+    #[test]
+    fn parse_channel_message_full() {
+        let json = r#"{
+            "type": "channel_message",
+            "message_id": "msg-1",
+            "channel_id": "ch-1",
+            "from": "user-1",
+            "encrypted_data": "Hello!",
+            "sender_display_name": "Alice",
+            "timestamp": 1700000000,
+            "reply_to": "msg-0"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::MessageCreate(msg) => {
+                assert_eq!(msg.id, "msg-1");
+                assert_eq!(msg.channel_id, "ch-1");
+                assert_eq!(msg.sender_id, "user-1");
+                assert_eq!(msg.content.as_deref(), Some("Hello!"));
+                assert_eq!(msg.display_name.as_deref(), Some("Alice"));
+                assert_eq!(msg.created_at, Some(1700000000));
+                assert_eq!(msg.reply_to.as_deref(), Some("msg-0"));
+            }
+            other => panic!("expected MessageCreate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_channel_message_minimal() {
+        let json = r#"{
+            "type": "channel_message",
+            "message_id": "msg-2",
+            "channel_id": "ch-1",
+            "from": "user-2"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::MessageCreate(msg) => {
+                assert!(msg.content.is_none());
+                assert!(msg.display_name.is_none());
+                assert!(msg.reply_to.is_none());
+                assert!(msg.created_at.is_none());
+            }
+            other => panic!("expected MessageCreate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_channel_message_missing_required_returns_none() {
+        // Missing "from" field
+        let json = r#"{"type": "channel_message", "message_id": "msg-x", "channel_id": "ch-1"}"#;
+        assert!(parse_ws(json).is_none());
+    }
+
+    // ── parse_event: reaction_add / reaction_remove ─────────────────────
+
+    #[test]
+    fn parse_reaction_add() {
+        let json = r#"{
+            "type": "reaction_add",
+            "message_id": "msg-1",
+            "channel_id": "ch-1",
+            "user_id": "u-1",
+            "emoji": "👍"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::ReactionAdd {
+                message_id,
+                channel_id,
+                user_id,
+                emoji,
+            } => {
+                assert_eq!(message_id, "msg-1");
+                assert_eq!(channel_id, "ch-1");
+                assert_eq!(user_id, "u-1");
+                assert_eq!(emoji, "👍");
+            }
+            other => panic!("expected ReactionAdd, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_reaction_remove() {
+        let json = r#"{
+            "type": "reaction_remove",
+            "message_id": "msg-1",
+            "channel_id": "ch-1",
+            "user_id": "u-1",
+            "emoji": "👎"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        assert!(matches!(event, Event::ReactionRemove { .. }));
+    }
+
+    #[test]
+    fn parse_reaction_add_missing_emoji_returns_none() {
+        let json = r#"{
+            "type": "reaction_add",
+            "message_id": "msg-1",
+            "channel_id": "ch-1",
+            "user_id": "u-1"
+        }"#;
+        assert!(parse_ws(json).is_none());
+    }
+
+    // ── parse_event: message_edit / message_delete ──────────────────────
+
+    #[test]
+    fn parse_message_edit() {
+        let json = r#"{
+            "type": "message_edit",
+            "message_id": "msg-1",
+            "channel_id": "ch-1",
+            "encrypted_data": "Updated text",
+            "edited_at": 1700000500
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        match event {
+            Event::MessageEdit {
+                message_id,
+                channel_id,
+                content,
+                edited_at,
+            } => {
+                assert_eq!(message_id, "msg-1");
+                assert_eq!(channel_id, "ch-1");
+                assert_eq!(content, "Updated text");
+                assert_eq!(edited_at, 1700000500);
+            }
+            other => panic!("expected MessageEdit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_message_delete() {
+        let json = r#"{
+            "type": "message_delete",
+            "message_id": "msg-1",
+            "channel_id": "ch-1"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        assert!(matches!(
+            event,
+            Event::MessageDelete {
+                message_id,
+                channel_id
+            } if message_id == "msg-1" && channel_id == "ch-1"
+        ));
+    }
+
+    // ── parse_event: typing_start ───────────────────────────────────────
+
+    #[test]
+    fn parse_typing_start() {
+        let json = r#"{
+            "type": "typing_start",
+            "channel_id": "ch-1",
+            "user_id": "u-1"
+        }"#;
+        let event = parse_ws(json).expect("should parse");
+        assert!(matches!(
+            event,
+            Event::TypingStart {
+                channel_id,
+                user_id
+            } if channel_id == "ch-1" && user_id == "u-1"
+        ));
+    }
+
+    // ── parse_event: unknown type ───────────────────────────────────────
+
+    #[test]
+    fn parse_unknown_event_type() {
+        let json = r#"{"type": "some_future_event", "data": 42}"#;
+        let event = parse_ws(json).expect("should parse as Unknown");
+        assert!(matches!(event, Event::Unknown(_)));
+    }
+
+    #[test]
+    fn parse_missing_type_field_returns_none() {
+        let json = r#"{"data": "no type field"}"#;
+        assert!(parse_ws(json).is_none());
+    }
+
+    // ── uuid_v4 / now_epoch helpers ─────────────────────────────────────
+
+    #[test]
+    fn uuid_v4_has_correct_format() {
+        let id = uuid_v4();
+        // 8-4-4-4-12 hex format
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 5, "UUID should have 5 parts: {}", id);
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 4);
+        assert_eq!(parts[2].len(), 4);
+        assert!(parts[2].starts_with('4'), "version nibble should be 4");
+        assert_eq!(parts[3].len(), 4);
+        assert_eq!(parts[4].len(), 12);
+    }
+
+    #[test]
+    fn uuid_v4_unique_on_successive_calls() {
+        let a = uuid_v4();
+        let b = uuid_v4();
+        // Extremely unlikely to collide; tests the function isn't returning a constant
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn now_epoch_returns_reasonable_timestamp() {
+        let ts = now_epoch();
+        // Should be after 2020-01-01 and before 2100-01-01
+        assert!(ts > 1_577_836_800, "timestamp too low: {}", ts);
+        assert!(ts < 4_102_444_800, "timestamp too high: {}", ts);
+    }
+
+    // ── dispatch: message handler ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_message_create_calls_handler() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let bot = AccordBot::new("ws://localhost:9999", "tok");
+        bot.on_message(move |msg: Message| {
+            let c = counter_clone.clone();
+            async move {
+                assert_eq!(msg.content.as_deref(), Some("Hello"));
+                c.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .await;
+
+        let msg = Message {
+            id: "msg-1".to_string(),
+            channel_id: "ch-1".to_string(),
+            sender_id: "u-1".to_string(),
+            sender_public_key_hash: None,
+            content: Some("Hello".to_string()),
+            encrypted_payload: None,
+            display_name: None,
+            created_at: None,
+            edited_at: None,
+            reply_to: None,
+        };
+        bot.dispatch(Event::MessageCreate(msg)).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    // ── dispatch: reaction handler ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn dispatch_reaction_add_calls_handler() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+
+        let bot = AccordBot::new("ws://localhost:9999", "tok");
+        bot.on_reaction(move |msg_id, _chan_id, _user_id, emoji| {
+            let c = counter_clone.clone();
+            async move {
+                assert_eq!(msg_id, "msg-1");
+                assert_eq!(emoji, "👍");
+                c.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+        .await;
+
+        bot.dispatch(Event::ReactionAdd {
+            message_id: "msg-1".to_string(),
+            channel_id: "ch-1".to_string(),
+            user_id: "u-1".to_string(),
+            emoji: "👍".to_string(),
+        })
+        .await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    // ── dispatch: unhandled events are silently ignored ──────────────────
+
+    #[tokio::test]
+    async fn dispatch_typing_start_is_noop() {
+        let bot = AccordBot::new("ws://localhost:9999", "tok");
+        // Should not panic — TypingStart is not dispatched to any handler
+        bot.dispatch(Event::TypingStart {
+            channel_id: "ch-1".to_string(),
+            user_id: "u-1".to_string(),
+        })
+        .await;
+    }
 }

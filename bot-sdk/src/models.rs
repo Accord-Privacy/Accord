@@ -264,4 +264,275 @@ mod tests {
         let back: MemberLeave = serde_json::from_str(&json).unwrap();
         assert_eq!(orig, back);
     }
+
+    // ── User serde ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_user_deserialize_full() {
+        let json = r#"{
+            "user_id": "u-1",
+            "display_name": "Alice",
+            "avatar_url": "https://example.com/a.png",
+            "bio": "Hello",
+            "status": "online",
+            "custom_status": "Working"
+        }"#;
+        let user: User = serde_json::from_str(json).unwrap();
+        assert_eq!(user.user_id, "u-1");
+        assert_eq!(user.display_name.as_deref(), Some("Alice"));
+        assert_eq!(
+            user.avatar_url.as_deref(),
+            Some("https://example.com/a.png")
+        );
+        assert_eq!(user.bio.as_deref(), Some("Hello"));
+        assert_eq!(user.status.as_deref(), Some("online"));
+        assert_eq!(user.custom_status.as_deref(), Some("Working"));
+    }
+
+    #[test]
+    fn test_user_deserialize_minimal() {
+        let json = r#"{"user_id": "u-2"}"#;
+        let user: User = serde_json::from_str(json).unwrap();
+        assert_eq!(user.user_id, "u-2");
+        assert!(user.display_name.is_none());
+        assert!(user.avatar_url.is_none());
+        assert!(user.bio.is_none());
+        assert!(user.status.is_none());
+        assert!(user.custom_status.is_none());
+    }
+
+    #[test]
+    fn test_user_roundtrip() {
+        let user = User {
+            user_id: "u-3".to_string(),
+            display_name: Some("Bob".to_string()),
+            avatar_url: None,
+            bio: Some("".to_string()),
+            status: None,
+            custom_status: None,
+        };
+        let json = serde_json::to_string(&user).unwrap();
+        let back: User = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.user_id, "u-3");
+        assert_eq!(back.bio.as_deref(), Some(""));
+    }
+
+    // ── Channel serde ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_channel_deserialize_full() {
+        let json = r#"{
+            "id": "ch-1",
+            "name": "general",
+            "node_id": "node-1",
+            "created_at": 1700000000
+        }"#;
+        let ch: Channel = serde_json::from_str(json).unwrap();
+        assert_eq!(ch.id, "ch-1");
+        assert_eq!(ch.name, "general");
+        assert_eq!(ch.node_id.as_deref(), Some("node-1"));
+        assert_eq!(ch.created_at, Some(1700000000));
+    }
+
+    #[test]
+    fn test_channel_deserialize_minimal() {
+        let json = r#"{"id": "ch-2", "name": "random"}"#;
+        let ch: Channel = serde_json::from_str(json).unwrap();
+        assert_eq!(ch.id, "ch-2");
+        assert_eq!(ch.name, "random");
+        assert!(ch.node_id.is_none());
+        assert!(ch.created_at.is_none());
+    }
+
+    #[test]
+    fn test_channel_empty_name() {
+        let json = r#"{"id": "ch-3", "name": ""}"#;
+        let ch: Channel = serde_json::from_str(json).unwrap();
+        assert_eq!(ch.name, "");
+    }
+
+    // ── Message serde ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_message_deserialize_full() {
+        let json = r#"{
+            "id": "msg-1",
+            "channel_id": "ch-1",
+            "sender_id": "u-1",
+            "sender_public_key_hash": "abcdef",
+            "content": "Hello world",
+            "encrypted_payload": "enc123",
+            "display_name": "Alice",
+            "created_at": 1700000000,
+            "edited_at": 1700000100,
+            "reply_to": "msg-0"
+        }"#;
+        let msg: Message = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, "msg-1");
+        assert_eq!(msg.channel_id, "ch-1");
+        assert_eq!(msg.sender_id, "u-1");
+        assert_eq!(msg.sender_public_key_hash.as_deref(), Some("abcdef"));
+        assert_eq!(msg.content.as_deref(), Some("Hello world"));
+        assert_eq!(msg.encrypted_payload.as_deref(), Some("enc123"));
+        assert_eq!(msg.display_name.as_deref(), Some("Alice"));
+        assert_eq!(msg.created_at, Some(1700000000));
+        assert_eq!(msg.edited_at, Some(1700000100));
+        assert_eq!(msg.reply_to.as_deref(), Some("msg-0"));
+    }
+
+    #[test]
+    fn test_message_deserialize_minimal() {
+        let json = r#"{"id": "msg-2", "channel_id": "ch-1", "sender_id": "u-1"}"#;
+        let msg: Message = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, "msg-2");
+        assert!(msg.content.is_none());
+        assert!(msg.encrypted_payload.is_none());
+        assert!(msg.display_name.is_none());
+        assert!(msg.created_at.is_none());
+        assert!(msg.edited_at.is_none());
+        assert!(msg.reply_to.is_none());
+    }
+
+    #[test]
+    fn test_message_roundtrip() {
+        let msg = Message {
+            id: "msg-3".to_string(),
+            channel_id: "ch-1".to_string(),
+            sender_id: "u-2".to_string(),
+            sender_public_key_hash: None,
+            content: Some("test content".to_string()),
+            encrypted_payload: None,
+            display_name: None,
+            created_at: Some(99),
+            edited_at: None,
+            reply_to: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "msg-3");
+        assert_eq!(back.content.as_deref(), Some("test content"));
+        assert_eq!(back.created_at, Some(99));
+    }
+
+    // ── Role serde ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_role_deserialize_full() {
+        let json = r#"{
+            "id": "role-1",
+            "node_id": "node-1",
+            "name": "Admin",
+            "color": 16711680,
+            "permissions": 8,
+            "position": 10,
+            "hoist": true,
+            "mentionable": true,
+            "icon_emoji": "⭐",
+            "created_at": 1700000000
+        }"#;
+        let role: Role = serde_json::from_str(json).unwrap();
+        assert_eq!(role.id, "role-1");
+        assert_eq!(role.name, "Admin");
+        assert_eq!(role.color, 16711680);
+        assert_eq!(role.permissions, 8);
+        assert_eq!(role.position, 10);
+        assert!(role.hoist);
+        assert!(role.mentionable);
+        assert_eq!(role.icon_emoji.as_deref(), Some("⭐"));
+        assert_eq!(role.created_at, Some(1700000000));
+    }
+
+    #[test]
+    fn test_role_deserialize_defaults() {
+        let json = r#"{"id": "role-2", "node_id": "node-1", "name": "@everyone"}"#;
+        let role: Role = serde_json::from_str(json).unwrap();
+        assert_eq!(role.color, 0);
+        assert_eq!(role.permissions, 0);
+        assert_eq!(role.position, 0);
+        assert!(!role.hoist);
+        assert!(!role.mentionable);
+        assert!(role.icon_emoji.is_none());
+        assert!(role.created_at.is_none());
+    }
+
+    #[test]
+    fn test_role_roundtrip() {
+        let orig = Role {
+            id: "role-3".to_string(),
+            node_id: "node-1".to_string(),
+            name: "Mod".to_string(),
+            color: 255,
+            permissions: 0xF,
+            position: 5,
+            hoist: true,
+            mentionable: false,
+            icon_emoji: Some("🔧".to_string()),
+            created_at: Some(42),
+        };
+        let json = serde_json::to_string(&orig).unwrap();
+        let back: Role = serde_json::from_str(&json).unwrap();
+        assert_eq!(orig, back);
+    }
+
+    // ── Reaction serde ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_reaction_deserialize_full() {
+        let json = r#"{
+            "emoji": "👍",
+            "count": 3,
+            "users": ["u-1", "u-2", "u-3"],
+            "created_at": 1700000000
+        }"#;
+        let r: Reaction = serde_json::from_str(json).unwrap();
+        assert_eq!(r.emoji, "👍");
+        assert_eq!(r.count, 3);
+        assert_eq!(r.users.len(), 3);
+        assert_eq!(r.created_at, Some(1700000000));
+    }
+
+    #[test]
+    fn test_reaction_deserialize_minimal() {
+        let json = r#"{"emoji": "❤️"}"#;
+        let r: Reaction = serde_json::from_str(json).unwrap();
+        assert_eq!(r.emoji, "❤️");
+        assert_eq!(r.count, 0);
+        assert!(r.users.is_empty());
+        assert!(r.created_at.is_none());
+    }
+
+    #[test]
+    fn test_reaction_empty_users_vec() {
+        let json = r#"{"emoji": "🎉", "count": 0, "users": []}"#;
+        let r: Reaction = serde_json::from_str(json).unwrap();
+        assert!(r.users.is_empty());
+        assert_eq!(r.count, 0);
+    }
+
+    // ── Missing required fields → error ─────────────────────────────────
+
+    #[test]
+    fn test_message_missing_required_fails() {
+        // Missing sender_id — should fail
+        let json = r#"{"id": "msg-x", "channel_id": "ch-1"}"#;
+        assert!(serde_json::from_str::<Message>(json).is_err());
+    }
+
+    #[test]
+    fn test_role_missing_name_fails() {
+        let json = r#"{"id": "r-x", "node_id": "n-1"}"#;
+        assert!(serde_json::from_str::<Role>(json).is_err());
+    }
+
+    #[test]
+    fn test_channel_missing_name_fails() {
+        let json = r#"{"id": "ch-x"}"#;
+        assert!(serde_json::from_str::<Channel>(json).is_err());
+    }
+
+    #[test]
+    fn test_user_missing_user_id_fails() {
+        let json = r#"{"display_name": "Alice"}"#;
+        assert!(serde_json::from_str::<User>(json).is_err());
+    }
 }
