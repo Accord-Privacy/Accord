@@ -339,7 +339,7 @@ mod tests {
         let (handler, dir) = setup_handler(10).await;
 
         let file_id = Uuid::new_v4();
-        let _ = handler.store_file(file_id, &vec![0u8; 100]).await;
+        let _ = handler.store_file(file_id, &[0u8; 100]).await;
 
         // The file should NOT exist on disk after rejection
         let would_be_path = dir.path().join(file_id.to_string());

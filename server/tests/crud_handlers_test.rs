@@ -1244,12 +1244,12 @@ async fn test_kick_user_forbidden_for_member() {
     let server = TestServer::new().await;
     let (_, owner_token) = server.register_and_auth("kick_own2").await;
     let (member1_id, _member1_token) = server.register_and_auth("kick_mem1").await;
-    let (_, member2_token) = server.register_and_auth("kick_mem2").await;
+    let (_, _member2_token) = server.register_and_auth("kick_mem2").await;
     let node_id = server.create_node(&owner_token, "KickForbNode").await;
 
     // Join both members
     server.state.join_node(member1_id, node_id).await.unwrap();
-    let (member2_id, member2_token) = server.register_and_auth("kick_mem2b").await;
+    let (_member2_id, member2_token) = server.register_and_auth("kick_mem2b").await;
     server.join_node(&member2_token, node_id).await;
 
     // member2 tries to kick member1 — should fail
@@ -1448,7 +1448,7 @@ async fn test_delete_channel_overwrite_forbidden_for_member() {
 #[tokio::test]
 async fn test_get_effective_permissions_success() {
     let server = TestServer::new().await;
-    let (owner_id, owner_token) = server.register_and_auth("eff_perm_own").await;
+    let (_owner_id, owner_token) = server.register_and_auth("eff_perm_own").await;
     let node_id = server.create_node(&owner_token, "EffPermNode").await;
     let channel_id = server
         .create_channel(&owner_token, node_id, "eff-perm-ch")
