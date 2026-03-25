@@ -136,7 +136,7 @@ impl PeerRegistry {
     }
 }
 
-/// Serde helper for Vec<u8> ↔ hex string.
+/// Serde helper for `Vec<u8>` ↔ hex string.
 mod hex_bytes {
     use serde::{self, Deserialize, Deserializer, Serializer};
 

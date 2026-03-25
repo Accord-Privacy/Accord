@@ -62,7 +62,7 @@ enum Commands {
     },
     /// Generate an Ed25519 signing keypair for release signing
     GenerateSigningKey {
-        /// Output path (private key written to <path>, public to <path>.pub)
+        /// Output path (private key written to `<path>`, public to `<path>.pub`)
         #[arg(long)]
         output: String,
     },

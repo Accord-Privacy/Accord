@@ -7781,7 +7781,7 @@ pub async fn get_dm_channels_handler(
 // ── Audit Log Handlers ──
 
 /// Get audit log for a Node (admin/mod only)
-/// GET /nodes/:node_id/audit-log?limit=50&before=<id>
+/// GET /nodes/:node_id/audit-log?limit=50&before=`<id>`
 pub async fn get_node_audit_log_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,

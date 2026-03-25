@@ -107,7 +107,7 @@ impl MeshEnvelope {
     }
 }
 
-/// Serde helper for Vec<u8> ↔ base64 string.
+/// Serde helper for `Vec<u8>` ↔ base64 string.
 mod base64_bytes {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use serde::{self, Deserialize, Deserializer, Serializer};
