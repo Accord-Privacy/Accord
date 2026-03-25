@@ -323,7 +323,7 @@ mod tests {
 
         assert_eq!(encrypted.ephemeral_public.len(), 32);
         assert_eq!(encrypted.nonce.len(), 12);
-        assert!(encrypted.ciphertext.len() > 0);
+        assert!(!encrypted.ciphertext.is_empty());
     }
 
     #[test]

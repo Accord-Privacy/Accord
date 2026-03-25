@@ -798,7 +798,7 @@ mod tests {
 
         let (mut envelope, _) = sender_key_encrypt(&sk, b"data").unwrap();
         // Replace signature with garbage
-        envelope.sig = BASE64.encode(&[0u8; 64]);
+        envelope.sig = BASE64.encode([0u8; 64]);
 
         let result = sender_key_decrypt(&state, &envelope);
         assert!(matches!(result, Err(SenderKeyError::SignatureVerification)));
@@ -1010,8 +1010,8 @@ mod tests {
             msg_type: "skdm".to_string(),
             ch: "ch-1".to_string(),
             skid: "fingerprint".to_string(),
-            ck: BASE64.encode(&[0u8; 16]), // Wrong length (should be 32)
-            spk: BASE64.encode(&[0u8; 32]),
+            ck: BASE64.encode([0u8; 16]), // Wrong length (should be 32)
+            spk: BASE64.encode([0u8; 32]),
             iter: 0,
             rep: None,
         };
@@ -1020,8 +1020,8 @@ mod tests {
         assert!(matches!(result, Err(SenderKeyError::InvalidKeyLength)));
 
         // Also test with signing key wrong length
-        dist.ck = BASE64.encode(&[0u8; 32]);
-        dist.spk = BASE64.encode(&[0u8; 16]); // Wrong length
+        dist.ck = BASE64.encode([0u8; 32]);
+        dist.spk = BASE64.encode([0u8; 16]); // Wrong length
         let result = parse_distribution_message(&dist);
         assert!(matches!(result, Err(SenderKeyError::InvalidKeyLength)));
     }

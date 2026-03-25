@@ -1458,7 +1458,7 @@ mod tests {
 
     #[test]
     fn test_verification_status_levels() {
-        let statuses = vec![
+        let statuses = [
             VerificationStatus::Unverified,
             VerificationStatus::EmailVerified,
             VerificationStatus::PhoneVerified,

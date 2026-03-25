@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_parameter_types() {
-        let types = vec![
+        let types = [
             ParameterType::String,
             ParameterType::Integer,
             ParameterType::User,
@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn test_button_styles() {
-        let styles = vec![
+        let styles = [
             ButtonStyle::Primary,
             ButtonStyle::Secondary,
             ButtonStyle::Success,
@@ -1358,7 +1358,7 @@ mod tests {
 
     #[test]
     fn test_interaction_types() {
-        let types = vec![
+        let types = [
             InteractionType::Command,
             InteractionType::ButtonClick,
             InteractionType::MenuSelect,
