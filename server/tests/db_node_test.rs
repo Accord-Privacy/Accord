@@ -26,24 +26,12 @@ async fn make_pool() -> sqlx::SqlitePool {
 }
 
 /// Create a NodeDatabase with a fresh pool and a random node_id.
-///
-/// NOTE: The `channels` table created by NodeDatabase migrations is missing
-/// a `channel_type` column that is referenced in several queries.  We patch
-/// the schema immediately after migration by cloning the pool handle (which
-/// shares the same underlying connection) and issuing an ALTER TABLE.
 async fn make_node_db() -> (NodeDatabase, Uuid) {
     let pool = make_pool().await;
-    // Clone before moving so we can patch the schema post-migration.
-    let pool_ref = pool.clone();
     let node_id = Uuid::new_v4();
     let node_db = NodeDatabase::new(pool, node_id)
         .await
         .expect("NodeDatabase::new failed");
-    // Add the missing channel_type column (ignored if it already exists).
-    sqlx::query("ALTER TABLE channels ADD COLUMN channel_type INTEGER NOT NULL DEFAULT 0")
-        .execute(&pool_ref)
-        .await
-        .ok();
     (node_db, node_id)
 }
 

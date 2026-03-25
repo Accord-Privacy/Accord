@@ -31,6 +31,7 @@ impl NodeDatabase {
                 created_at INTEGER NOT NULL,
                 category_id TEXT,
                 position INTEGER NOT NULL DEFAULT 0,
+                channel_type INTEGER NOT NULL DEFAULT 0,
                 encrypted_name BLOB,
                 FOREIGN KEY (category_id) REFERENCES channel_categories (id) ON DELETE SET NULL
             )
