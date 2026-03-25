@@ -224,4 +224,262 @@ mod tests {
         assert_eq!(decoded.user_a_public_key_hash, proof.user_a_public_key_hash);
         assert_eq!(decoded.signature_a, proof.signature_a);
     }
+
+    #[test]
+    fn test_canonical_bytes_deterministic() {
+        let hash_a = "abc123";
+        let hash_b = "def456";
+        let timestamp = 1234567890u64;
+
+        let bytes1 = FriendshipProof::canonical_bytes(hash_a, hash_b, timestamp);
+        let bytes2 = FriendshipProof::canonical_bytes(hash_a, hash_b, timestamp);
+
+        assert_eq!(bytes1, bytes2);
+        assert!(bytes1.starts_with(b"accord-friendship-v1"));
+    }
+
+    #[test]
+    fn test_canonical_bytes_different_order() {
+        let hash_a = "user_a";
+        let hash_b = "user_b";
+        let timestamp = 100u64;
+
+        let bytes_ab = FriendshipProof::canonical_bytes(hash_a, hash_b, timestamp);
+        let bytes_ba = FriendshipProof::canonical_bytes(hash_b, hash_a, timestamp);
+
+        // Different order should produce different bytes
+        assert_ne!(bytes_ab, bytes_ba);
+    }
+
+    #[test]
+    fn test_canonical_bytes_different_timestamps() {
+        let hash_a = "hash_a";
+        let hash_b = "hash_b";
+
+        let bytes1 = FriendshipProof::canonical_bytes(hash_a, hash_b, 100);
+        let bytes2 = FriendshipProof::canonical_bytes(hash_a, hash_b, 200);
+
+        assert_ne!(bytes1, bytes2);
+    }
+
+    #[test]
+    fn test_canonical_bytes_empty_hashes() {
+        let bytes = FriendshipProof::canonical_bytes("", "", 0);
+        assert!(bytes.starts_with(b"accord-friendship-v1"));
+        assert_eq!(bytes.len(), b"accord-friendship-v1".len() + 8); // only version + timestamp
+    }
+
+    #[test]
+    fn test_canonical_bytes_max_timestamp() {
+        let bytes = FriendshipProof::canonical_bytes("a", "b", u64::MAX);
+        assert!(bytes.ends_with(&u64::MAX.to_be_bytes()));
+    }
+
+    #[test]
+    fn test_create_proof_request_with_invalid_seed() {
+        let invalid_seed = [0u8; 32]; // All zeros may be valid, so we just test the function
+        let hash_a = "hash_a";
+        let hash_b = "hash_b";
+        let pub_key = [1u8; 32];
+
+        // This should succeed - Ed25519 accepts any 32-byte seed
+        let result = create_proof_request(hash_a, hash_b, 100, &invalid_seed, &pub_key);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_proof_request_contains_correct_data() {
+        let (seed_a, pub_a) = gen_keypair();
+        let hash_a = "hash_alice";
+        let hash_b = "hash_bob";
+        let timestamp = 9999u64;
+
+        let request = create_proof_request(hash_a, hash_b, timestamp, &seed_a, &pub_a).unwrap();
+
+        assert_eq!(request.user_a_public_key_hash, hash_a);
+        assert_eq!(request.user_b_public_key_hash, hash_b);
+        assert_eq!(request.established_at, timestamp);
+        assert_eq!(request.user_a_public_key, pub_a.to_vec());
+        assert_eq!(request.signature_a.len(), 64); // Ed25519 signatures are 64 bytes
+    }
+
+    #[test]
+    fn test_complete_proof_rejects_invalid_signature() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let mut request = create_proof_request(&hash_a, &hash_b, 100, &seed_a, &pub_a).unwrap();
+
+        // Corrupt the signature
+        request.signature_a[0] ^= 0xFF;
+
+        let result = complete_proof(&request, &seed_b, &pub_b);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid"));
+    }
+
+    #[test]
+    fn test_complete_proof_rejects_tampered_public_key() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let (_seed_c, pub_c) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let mut request = create_proof_request(&hash_a, &hash_b, 100, &seed_a, &pub_a).unwrap();
+
+        // Replace public key with wrong one
+        request.user_a_public_key = pub_c.to_vec();
+
+        let result = complete_proof(&request, &seed_b, &pub_b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_complete_proof_success() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let request = create_proof_request(&hash_a, &hash_b, 555, &seed_a, &pub_a).unwrap();
+        let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        assert_eq!(proof.user_a_public_key_hash, hash_a);
+        assert_eq!(proof.user_b_public_key_hash, hash_b);
+        assert_eq!(proof.established_at, 555);
+        assert_eq!(proof.signature_a.len(), 64);
+        assert_eq!(proof.signature_b.len(), 64);
+    }
+
+    #[test]
+    fn test_verify_proof_with_swapped_keys() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let request = create_proof_request(&hash_a, &hash_b, 100, &seed_a, &pub_a).unwrap();
+        let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        // Swap the keys
+        assert!(!verify_proof(&proof, &pub_b, &pub_a).unwrap());
+    }
+
+    #[test]
+    fn test_verify_proof_with_corrupted_signature_a() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let request = create_proof_request(&hash_a, &hash_b, 200, &seed_a, &pub_a).unwrap();
+        let mut proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        // Corrupt signature A
+        proof.signature_a[10] ^= 0xFF;
+
+        assert!(!verify_proof(&proof, &pub_a, &pub_b).unwrap());
+    }
+
+    #[test]
+    fn test_verify_proof_with_corrupted_signature_b() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let request = create_proof_request(&hash_a, &hash_b, 300, &seed_a, &pub_a).unwrap();
+        let mut proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        // Corrupt signature B
+        proof.signature_b[20] ^= 0xFF;
+
+        assert!(!verify_proof(&proof, &pub_a, &pub_b).unwrap());
+    }
+
+    #[test]
+    fn test_from_bytes_empty_input() {
+        let result = FriendshipProof::from_bytes(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_bytes_corrupted_data() {
+        let corrupted = vec![0xFF, 0xAA, 0x55, 0x00];
+        let result = FriendshipProof::from_bytes(&corrupted);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialization_preserves_all_fields() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let request = create_proof_request(&hash_a, &hash_b, 777, &seed_a, &pub_a).unwrap();
+        let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        let bytes = proof.to_bytes();
+        let decoded = FriendshipProof::from_bytes(&bytes).unwrap();
+
+        assert_eq!(decoded.user_a_public_key_hash, proof.user_a_public_key_hash);
+        assert_eq!(decoded.user_b_public_key_hash, proof.user_b_public_key_hash);
+        assert_eq!(decoded.established_at, proof.established_at);
+        assert_eq!(decoded.signature_a, proof.signature_a);
+        assert_eq!(decoded.signature_b, proof.signature_b);
+    }
+
+    #[test]
+    fn test_proof_with_long_hash_strings() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = "a".repeat(100);
+        let hash_b = "b".repeat(100);
+
+        let request = create_proof_request(&hash_a, &hash_b, 1000, &seed_a, &pub_a).unwrap();
+        let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        assert!(verify_proof(&proof, &pub_a, &pub_b).unwrap());
+    }
+
+    #[test]
+    fn test_proof_with_timestamp_zero() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        let request = create_proof_request(&hash_a, &hash_b, 0, &seed_a, &pub_a).unwrap();
+        let proof = complete_proof(&request, &seed_b, &pub_b).unwrap();
+
+        assert_eq!(proof.established_at, 0);
+        assert!(verify_proof(&proof, &pub_a, &pub_b).unwrap());
+    }
+
+    #[test]
+    fn test_multiple_proofs_with_same_keys() {
+        let (seed_a, pub_a) = gen_keypair();
+        let (seed_b, pub_b) = gen_keypair();
+        let hash_a = hex::encode(Sha256::digest(pub_a));
+        let hash_b = hex::encode(Sha256::digest(pub_b));
+
+        // Create two different proofs with different timestamps
+        let request1 = create_proof_request(&hash_a, &hash_b, 100, &seed_a, &pub_a).unwrap();
+        let proof1 = complete_proof(&request1, &seed_b, &pub_b).unwrap();
+
+        let request2 = create_proof_request(&hash_a, &hash_b, 200, &seed_a, &pub_a).unwrap();
+        let proof2 = complete_proof(&request2, &seed_b, &pub_b).unwrap();
+
+        // Both should verify independently
+        assert!(verify_proof(&proof1, &pub_a, &pub_b).unwrap());
+        assert!(verify_proof(&proof2, &pub_a, &pub_b).unwrap());
+
+        // But they should have different signatures due to different canonical data
+        assert_ne!(proof1.signature_a, proof2.signature_a);
+        assert_ne!(proof1.signature_b, proof2.signature_b);
+    }
 }
