@@ -288,8 +288,6 @@ async fn test_check_ip_ipv6_address() {
 async fn test_check_ip_multiple_rejections_after_limit() {
     let limiter = RateLimiter::new();
     let ip = "10.3.0.1";
-    let limit = ActionType::ProfileUpdate.default_limit(); // 5, short limit
-
     // Note: check_ip uses ip_windows, not user windows — ProfileUpdate via IP
     // We exhaust AuthAttempt instead since that's an IP-appropriate action
     let limit = ActionType::AuthAttempt.default_limit();
