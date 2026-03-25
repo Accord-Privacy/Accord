@@ -708,4 +708,512 @@ mod tests {
         assert_eq!(bob.decrypt(&a2).unwrap(), b"a2");
         assert_eq!(bob.decrypt(&a3).unwrap(), b"a3");
     }
+
+    // ─── NEW TESTS: Edge Cases ──────────────────────────────────────────────
+
+    #[test]
+    fn test_encrypt_empty_message() {
+        let (mut alice, mut bob) = setup_sessions();
+        let msg = alice.encrypt(b"").unwrap();
+        let dec = bob.decrypt(&msg).unwrap();
+        assert_eq!(dec, b"");
+    }
+
+    #[test]
+    fn test_encrypt_single_byte() {
+        let (mut alice, mut bob) = setup_sessions();
+        let msg = alice.encrypt(b"x").unwrap();
+        let dec = bob.decrypt(&msg).unwrap();
+        assert_eq!(dec, b"x");
+    }
+
+    #[test]
+    fn test_encrypt_max_length_message() {
+        let (mut alice, mut bob) = setup_sessions();
+        let large = vec![0xAB; 64 * 1024]; // 64KB message
+        let msg = alice.encrypt(&large).unwrap();
+        let dec = bob.decrypt(&msg).unwrap();
+        assert_eq!(dec, large);
+    }
+
+    #[test]
+    fn test_repeated_encryption_produces_different_ciphertexts() {
+        let (mut alice, _bob) = setup_sessions();
+        let msg1 = alice.encrypt(b"hello").unwrap();
+        let msg2 = alice.encrypt(b"hello").unwrap();
+        // Same plaintext should produce different ciphertexts (different nonces + keys)
+        assert_ne!(msg1.ciphertext, msg2.ciphertext);
+        assert_ne!(msg1.header.message_number, msg2.header.message_number);
+    }
+
+    #[test]
+    fn test_message_numbers_increment_correctly() {
+        let (mut alice, mut bob) = setup_sessions();
+        for i in 0..10 {
+            let msg = alice.encrypt(b"test").unwrap();
+            assert_eq!(msg.header.message_number, i);
+            bob.decrypt(&msg).unwrap();
+        }
+    }
+
+    // ─── NEW TESTS: Error Paths ─────────────────────────────────────────────
+
+    #[test]
+    fn test_decrypt_with_wrong_key_fails() {
+        let (mut alice, _) = setup_sessions();
+        let (_, mut charlie) = setup_sessions();
+
+        let msg = alice.encrypt(b"secret").unwrap();
+        let result = charlie.decrypt(&msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_corrupted_ciphertext_fails() {
+        let (mut alice, mut bob) = setup_sessions();
+        let mut msg = alice.encrypt(b"valid message").unwrap();
+
+        // Corrupt the last byte of ciphertext
+        if let Some(last) = msg.ciphertext.last_mut() {
+            *last ^= 0xFF;
+        }
+
+        let result = bob.decrypt(&msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_tampered_header_fails() {
+        let (mut alice, mut bob) = setup_sessions();
+        let mut msg = alice.encrypt(b"valid message").unwrap();
+
+        // Tamper with message number in header
+        msg.header.message_number = 999;
+
+        let result = bob.decrypt(&msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_short_ciphertext_fails() {
+        let (mut alice, mut bob) = setup_sessions();
+        let msg = alice.encrypt(b"test").unwrap();
+
+        // Create message with too-short ciphertext (less than nonce size)
+        let bad_msg = DoubleRatchetMessage {
+            header: msg.header,
+            ciphertext: vec![0u8; 5], // Less than 12 bytes for nonce
+        };
+
+        let result = bob.decrypt(&bad_msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_too_many_skipped_messages_fails() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends many messages
+        let mut messages = Vec::new();
+        for _ in 0..150 {
+            messages.push(alice.encrypt(b"skip me").unwrap());
+        }
+
+        // Bob tries to decrypt the last message, skipping MAX_SKIP + 1 messages
+        let result = bob.decrypt(messages.last().unwrap());
+        assert!(result.is_err());
+    }
+
+    // ─── NEW TESTS: Chain Advancement ───────────────────────────────────────
+
+    #[test]
+    fn test_chain_advances_on_each_message() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let msg1 = alice.encrypt(b"first").unwrap();
+        let msg2 = alice.encrypt(b"second").unwrap();
+        let msg3 = alice.encrypt(b"third").unwrap();
+
+        // Message numbers should be sequential
+        assert_eq!(msg1.header.message_number, 0);
+        assert_eq!(msg2.header.message_number, 1);
+        assert_eq!(msg3.header.message_number, 2);
+
+        // All should decrypt successfully
+        assert_eq!(bob.decrypt(&msg1).unwrap(), b"first");
+        assert_eq!(bob.decrypt(&msg2).unwrap(), b"second");
+        assert_eq!(bob.decrypt(&msg3).unwrap(), b"third");
+    }
+
+    #[test]
+    fn test_sending_chain_reset_after_dh_ratchet() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends some messages
+        alice.encrypt(b"a1").unwrap();
+        alice.encrypt(b"a2").unwrap();
+        let msg_a3 = alice.encrypt(b"a3").unwrap();
+
+        // Message 3 should have number 2
+        assert_eq!(msg_a3.header.message_number, 2);
+        bob.decrypt(&msg_a3).unwrap();
+
+        // Bob replies, triggering DH ratchet
+        let msg_b1 = bob.encrypt(b"b1").unwrap();
+        assert_eq!(msg_b1.header.message_number, 0); // Reset for Bob's new chain
+        assert_eq!(msg_b1.header.previous_chain_length, 0); // Bob had no previous sends
+
+        alice.decrypt(&msg_b1).unwrap();
+
+        // Alice replies again, triggering another DH ratchet
+        let msg_a4 = alice.encrypt(b"a4").unwrap();
+        assert_eq!(msg_a4.header.message_number, 0); // Reset for Alice's new chain
+        assert_eq!(msg_a4.header.previous_chain_length, 3); // Alice sent 3 messages before
+    }
+
+    #[test]
+    fn test_100_message_chain() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        for i in 0..100 {
+            let msg = alice.encrypt(format!("msg{}", i).as_bytes()).unwrap();
+            let dec = bob.decrypt(&msg).unwrap();
+            assert_eq!(dec, format!("msg{}", i).as_bytes());
+        }
+    }
+
+    // ─── NEW TESTS: Out-of-Order Delivery ───────────────────────────────────
+
+    #[test]
+    fn test_reverse_order_delivery() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let m0 = alice.encrypt(b"0").unwrap();
+        let m1 = alice.encrypt(b"1").unwrap();
+        let m2 = alice.encrypt(b"2").unwrap();
+        let m3 = alice.encrypt(b"3").unwrap();
+        let m4 = alice.encrypt(b"4").unwrap();
+
+        // Deliver in reverse order
+        assert_eq!(bob.decrypt(&m4).unwrap(), b"4");
+        assert_eq!(bob.decrypt(&m3).unwrap(), b"3");
+        assert_eq!(bob.decrypt(&m2).unwrap(), b"2");
+        assert_eq!(bob.decrypt(&m1).unwrap(), b"1");
+        assert_eq!(bob.decrypt(&m0).unwrap(), b"0");
+    }
+
+    #[test]
+    fn test_random_order_delivery() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let m0 = alice.encrypt(b"0").unwrap();
+        let m1 = alice.encrypt(b"1").unwrap();
+        let m2 = alice.encrypt(b"2").unwrap();
+        let m3 = alice.encrypt(b"3").unwrap();
+        let m4 = alice.encrypt(b"4").unwrap();
+
+        // Random order: 2, 4, 0, 3, 1
+        assert_eq!(bob.decrypt(&m2).unwrap(), b"2");
+        assert_eq!(bob.decrypt(&m4).unwrap(), b"4");
+        assert_eq!(bob.decrypt(&m0).unwrap(), b"0");
+        assert_eq!(bob.decrypt(&m3).unwrap(), b"3");
+        assert_eq!(bob.decrypt(&m1).unwrap(), b"1");
+    }
+
+    #[test]
+    fn test_duplicate_message_decryption() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let msg = alice.encrypt(b"once").unwrap();
+
+        // First decryption succeeds
+        assert_eq!(bob.decrypt(&msg).unwrap(), b"once");
+
+        // Second decryption of same message should fail (key was consumed)
+        let result = bob.decrypt(&msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skip_many_messages_within_limit() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends 50 messages
+        let mut messages = Vec::new();
+        for i in 0..50 {
+            messages.push(alice.encrypt(format!("{}", i).as_bytes()).unwrap());
+        }
+
+        // Bob receives only every 5th message
+        for i in (0..50).step_by(5) {
+            let dec = bob.decrypt(&messages[i]).unwrap();
+            assert_eq!(dec, format!("{}", i).as_bytes());
+        }
+    }
+
+    // ─── NEW TESTS: Key Rotation & Forward Secrecy ──────────────────────────
+
+    #[test]
+    fn test_dh_public_keys_rotate() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let msg1 = alice.encrypt(b"before").unwrap();
+        let alice_key_1 = msg1.header.dh_public_key;
+        bob.decrypt(&msg1).unwrap();
+
+        // Bob replies, Alice will ratchet on decrypt
+        let msg2 = bob.encrypt(b"reply").unwrap();
+        alice.decrypt(&msg2).unwrap();
+
+        // Alice sends again, should have new DH key
+        let msg3 = alice.encrypt(b"after").unwrap();
+        let alice_key_2 = msg3.header.dh_public_key;
+
+        assert_ne!(
+            alice_key_1, alice_key_2,
+            "Alice's DH key should have rotated"
+        );
+    }
+
+    #[test]
+    fn test_forward_secrecy_old_messages_undecryptable_after_ratchet() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends a message
+        let old_msg = alice.encrypt(b"old secret").unwrap();
+        bob.decrypt(&old_msg).unwrap();
+
+        // Trigger multiple DH ratchets
+        for i in 0..5 {
+            let b_msg = bob.encrypt(format!("b{}", i).as_bytes()).unwrap();
+            alice.decrypt(&b_msg).unwrap();
+            let a_msg = alice.encrypt(format!("a{}", i).as_bytes()).unwrap();
+            bob.decrypt(&a_msg).unwrap();
+        }
+
+        // Old message should fail to decrypt again (keys were advanced)
+        let result = bob.decrypt(&old_msg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_dh_ratchet_cycles() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        for round in 0..10 {
+            let a_msg = alice.encrypt(format!("alice{}", round).as_bytes()).unwrap();
+            assert_eq!(
+                bob.decrypt(&a_msg).unwrap(),
+                format!("alice{}", round).as_bytes()
+            );
+
+            let b_msg = bob.encrypt(format!("bob{}", round).as_bytes()).unwrap();
+            assert_eq!(
+                alice.decrypt(&b_msg).unwrap(),
+                format!("bob{}", round).as_bytes()
+            );
+        }
+    }
+
+    // ─── NEW TESTS: Serialization ───────────────────────────────────────────
+
+    #[test]
+    fn test_message_header_serialization_roundtrip() {
+        let header = MessageHeader {
+            dh_public_key: [42u8; 32],
+            previous_chain_length: 123,
+            message_number: 456,
+        };
+
+        let serialized = bincode::serialize(&header).unwrap();
+        let deserialized: MessageHeader = bincode::deserialize(&serialized).unwrap();
+
+        assert_eq!(header, deserialized);
+    }
+
+    #[test]
+    fn test_double_ratchet_message_serialization_roundtrip() {
+        let (mut alice, mut bob) = setup_sessions();
+        let msg = alice.encrypt(b"serialize me").unwrap();
+
+        let serialized = bincode::serialize(&msg).unwrap();
+        let deserialized: DoubleRatchetMessage = bincode::deserialize(&serialized).unwrap();
+
+        let dec = bob.decrypt(&deserialized).unwrap();
+        assert_eq!(dec, b"serialize me");
+    }
+
+    #[test]
+    fn test_prekey_bundle_serialization() {
+        let bundle = PreKeyBundle {
+            identity_key: [1u8; 32],
+            signed_prekey: [2u8; 32],
+            one_time_prekey: Some([3u8; 32]),
+        };
+
+        let json = serde_json::to_string(&bundle).unwrap();
+        let deserialized: PreKeyBundle = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(bundle.identity_key, deserialized.identity_key);
+        assert_eq!(bundle.signed_prekey, deserialized.signed_prekey);
+        assert_eq!(bundle.one_time_prekey, deserialized.one_time_prekey);
+    }
+
+    // ─── NEW TESTS: Concurrent/Interleaved Sessions ─────────────────────────
+
+    #[test]
+    fn test_interleaved_messages_from_both_parties() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends first (she can send immediately)
+        let a1 = alice.encrypt(b"a1").unwrap();
+        let a2 = alice.encrypt(b"a2").unwrap();
+
+        // Bob receives first message to establish his sending chain
+        assert_eq!(bob.decrypt(&a1).unwrap(), b"a1");
+
+        // Now Bob can send
+        let b1 = bob.encrypt(b"b1").unwrap();
+        let b2 = bob.encrypt(b"b2").unwrap();
+
+        // Cross-deliver remaining
+        assert_eq!(alice.decrypt(&b1).unwrap(), b"b1");
+        assert_eq!(bob.decrypt(&a2).unwrap(), b"a2");
+        assert_eq!(alice.decrypt(&b2).unwrap(), b"b2");
+    }
+
+    #[test]
+    fn test_bob_sends_after_receiving() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice must send first to establish the ratchet
+        let a1 = alice.encrypt(b"alice first").unwrap();
+        assert_eq!(bob.decrypt(&a1).unwrap(), b"alice first");
+
+        // Now Bob can send
+        let b1 = bob.encrypt(b"bob reply").unwrap();
+        assert_eq!(alice.decrypt(&b1).unwrap(), b"bob reply");
+    }
+
+    #[test]
+    fn test_batch_send_then_batch_receive() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends a batch
+        let mut alice_msgs = Vec::new();
+        for i in 0..20 {
+            alice_msgs.push(alice.encrypt(format!("a{}", i).as_bytes()).unwrap());
+        }
+
+        // Bob receives Alice's batch (this establishes Bob's sending chain)
+        for (i, msg) in alice_msgs.iter().enumerate() {
+            assert_eq!(bob.decrypt(msg).unwrap(), format!("a{}", i).as_bytes());
+        }
+
+        // Now Bob sends a batch
+        let mut bob_msgs = Vec::new();
+        for i in 0..20 {
+            bob_msgs.push(bob.encrypt(format!("b{}", i).as_bytes()).unwrap());
+        }
+
+        // Alice receives Bob's batch
+        for (i, msg) in bob_msgs.iter().enumerate() {
+            assert_eq!(alice.decrypt(msg).unwrap(), format!("b{}", i).as_bytes());
+        }
+    }
+
+    // ─── NEW TESTS: Additional X3DH & Session Init Tests ────────────────────
+
+    #[test]
+    fn test_x3dh_with_different_bundles_produces_different_secrets() {
+        let alice_ik = IdentityKeyPair::generate();
+        let bob_ik1 = IdentityKeyPair::generate();
+        let bob_ik2 = IdentityKeyPair::generate();
+        let bob_spk1 = SignedPreKeyPair::generate();
+        let bob_spk2 = SignedPreKeyPair::generate();
+
+        let bundle1 = PreKeyBundle {
+            identity_key: bob_ik1.public.to_bytes(),
+            signed_prekey: bob_spk1.public.to_bytes(),
+            one_time_prekey: None,
+        };
+
+        let bundle2 = PreKeyBundle {
+            identity_key: bob_ik2.public.to_bytes(),
+            signed_prekey: bob_spk2.public.to_bytes(),
+            one_time_prekey: None,
+        };
+
+        let out1 = x3dh_initiate(&alice_ik, &bundle1).unwrap();
+        let out2 = x3dh_initiate(&alice_ik, &bundle2).unwrap();
+
+        assert_ne!(out1.shared_secret.as_bytes(), out2.shared_secret.as_bytes());
+    }
+
+    #[test]
+    fn test_alice_init_bob_init_can_communicate() {
+        let alice_ik = IdentityKeyPair::generate();
+        let bob_ik = IdentityKeyPair::generate();
+        let bob_spk = SignedPreKeyPair::generate();
+        let bob_opk = OneTimePreKeyPair::generate();
+
+        let bundle = PreKeyBundle {
+            identity_key: bob_ik.public.to_bytes(),
+            signed_prekey: bob_spk.public.to_bytes(),
+            one_time_prekey: Some(bob_opk.public.to_bytes()),
+        };
+
+        let alice_x3dh = x3dh_initiate(&alice_ik, &bundle).unwrap();
+        let bob_sk = x3dh_respond(
+            &bob_ik,
+            &bob_spk,
+            Some(&bob_opk),
+            alice_ik.public.to_bytes(),
+            alice_x3dh.ephemeral_public.to_bytes(),
+        )
+        .unwrap();
+
+        let mut alice =
+            DoubleRatchetSession::init_alice(alice_x3dh.shared_secret, bob_spk.public.to_bytes())
+                .unwrap();
+
+        let mut bob = DoubleRatchetSession::init_bob(bob_sk, bob_spk.secret);
+
+        // Test communication
+        let msg = alice.encrypt(b"hello from alice").unwrap();
+        let dec = bob.decrypt(&msg).unwrap();
+        assert_eq!(dec, b"hello from alice");
+    }
+
+    #[test]
+    fn test_session_public_key_accessor() {
+        let (alice, bob) = setup_sessions();
+
+        let alice_pub = alice.our_public_key();
+        let bob_pub = bob.our_public_key();
+
+        assert_eq!(alice_pub.len(), 32);
+        assert_eq!(bob_pub.len(), 32);
+        assert_ne!(alice_pub, bob_pub);
+    }
+
+    #[test]
+    fn test_previous_chain_length_tracking() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        // Alice sends 7 messages
+        for _ in 0..7 {
+            let msg = alice.encrypt(b"x").unwrap();
+            bob.decrypt(&msg).unwrap();
+        }
+
+        // Bob replies (Alice will see previous_chain_length = 0 since Bob hasn't sent before)
+        let b_msg = bob.encrypt(b"reply").unwrap();
+        assert_eq!(b_msg.header.previous_chain_length, 0);
+        alice.decrypt(&b_msg).unwrap();
+
+        // Alice sends again (previous_chain_length should be 7)
+        let a_msg = alice.encrypt(b"after").unwrap();
+        assert_eq!(a_msg.header.previous_chain_length, 7);
+    }
 }

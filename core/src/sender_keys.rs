@@ -691,4 +691,535 @@ mod tests {
         let result = sender_key_decrypt(&state, &envelope);
         assert!(matches!(result, Err(SenderKeyError::TooManySkipped(_))));
     }
+
+    // ─── NEW TESTS: Edge Cases ──────────────────────────────────────────────
+
+    #[test]
+    fn test_encrypt_empty_message() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (envelope, _) = sender_key_encrypt(&sk, b"").unwrap();
+        let (plaintext, _) = sender_key_decrypt(&state, &envelope).unwrap();
+        assert_eq!(plaintext, b"");
+    }
+
+    #[test]
+    fn test_encrypt_single_byte() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (envelope, _) = sender_key_encrypt(&sk, b"A").unwrap();
+        let (plaintext, _) = sender_key_decrypt(&state, &envelope).unwrap();
+        assert_eq!(plaintext, b"A");
+    }
+
+    #[test]
+    fn test_encrypt_large_message() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let large_msg = vec![0xCD; 100 * 1024]; // 100KB
+        let (envelope, _) = sender_key_encrypt(&sk, &large_msg).unwrap();
+        let (plaintext, _) = sender_key_decrypt(&state, &envelope).unwrap();
+        assert_eq!(plaintext, large_msg);
+    }
+
+    #[test]
+    fn test_repeated_encryption_different_ciphertexts() {
+        let sk = generate_sender_key();
+        let (env1, sk) = sender_key_encrypt(&sk, b"same").unwrap();
+        let (env2, _) = sender_key_encrypt(&sk, b"same").unwrap();
+
+        // Same plaintext should produce different ciphertexts (different IV)
+        assert_ne!(env1.ct, env2.ct);
+        assert_ne!(env1.iv, env2.iv);
+    }
+
+    #[test]
+    fn test_iteration_starts_at_zero() {
+        let sk = generate_sender_key();
+        assert_eq!(sk.iteration, 0);
+        let (envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+        assert_eq!(envelope.i, 0);
+    }
+
+    #[test]
+    fn test_iteration_increments() {
+        let sk = generate_sender_key();
+        let (env0, sk) = sender_key_encrypt(&sk, b"0").unwrap();
+        let (env1, sk) = sender_key_encrypt(&sk, b"1").unwrap();
+        let (env2, sk) = sender_key_encrypt(&sk, b"2").unwrap();
+        let (env3, _) = sender_key_encrypt(&sk, b"3").unwrap();
+
+        assert_eq!(env0.i, 0);
+        assert_eq!(env1.i, 1);
+        assert_eq!(env2.i, 2);
+        assert_eq!(env3.i, 3);
+    }
+
+    // ─── NEW TESTS: Error Paths ─────────────────────────────────────────────
+
+    #[test]
+    fn test_wrong_signature_key_fails() {
+        let sk1 = generate_sender_key();
+        let sk2 = generate_sender_key();
+        let pub_key2 = sender_key_to_public(&sk2);
+        let state = create_sender_key_state(pub_key2);
+
+        // Encrypt with sk1, try to decrypt with sk2's state
+        let (envelope, _) = sender_key_encrypt(&sk1, b"secret").unwrap();
+        let result = sender_key_decrypt(&state, &envelope);
+        assert!(matches!(result, Err(SenderKeyError::SignatureVerification)));
+    }
+
+    #[test]
+    fn test_tampered_iv_fails() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (mut envelope, _) = sender_key_encrypt(&sk, b"data").unwrap();
+        // Tamper with IV
+        envelope.iv = BASE64.encode(b"fakefakefake");
+
+        let result = sender_key_decrypt(&state, &envelope);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tampered_signature_fails() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (mut envelope, _) = sender_key_encrypt(&sk, b"data").unwrap();
+        // Replace signature with garbage
+        envelope.sig = BASE64.encode(&[0u8; 64]);
+
+        let result = sender_key_decrypt(&state, &envelope);
+        assert!(matches!(result, Err(SenderKeyError::SignatureVerification)));
+    }
+
+    #[test]
+    fn test_unknown_version_fails() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (mut envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+        envelope.v = 99; // Unknown version
+
+        let result = sender_key_decrypt(&state, &envelope);
+        assert!(matches!(result, Err(SenderKeyError::UnknownVersion(99))));
+    }
+
+    #[test]
+    fn test_invalid_base64_iv_fails() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (mut envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+        envelope.iv = "!!!invalid-base64!!!".to_string();
+
+        let result = sender_key_decrypt(&state, &envelope);
+        assert!(matches!(result, Err(SenderKeyError::Base64(_))));
+    }
+
+    // ─── NEW TESTS: Chain Advancement ───────────────────────────────────────
+
+    #[test]
+    fn test_chain_key_advances() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let mut state = create_sender_key_state(pub_key);
+
+        let initial_chain_key = state.current_chain_key;
+
+        let (env, _) = sender_key_encrypt(&sk, b"msg").unwrap();
+        let (_, new_state) = sender_key_decrypt(&state, &env).unwrap();
+        state = new_state;
+
+        // Chain key should have advanced
+        assert_ne!(state.current_chain_key, initial_chain_key);
+    }
+
+    #[test]
+    fn test_chain_iteration_advances() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let mut state = create_sender_key_state(pub_key);
+
+        assert_eq!(state.current_iteration, 0);
+
+        let (env, _) = sender_key_encrypt(&sk, b"msg").unwrap();
+        let (_, new_state) = sender_key_decrypt(&state, &env).unwrap();
+        state = new_state;
+
+        assert_eq!(state.current_iteration, 1);
+    }
+
+    #[test]
+    fn test_100_sequential_messages() {
+        let mut sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let mut state = create_sender_key_state(pub_key);
+
+        for i in 0..100 {
+            let (env, new_sk) = sender_key_encrypt(&sk, format!("msg{}", i).as_bytes()).unwrap();
+            sk = new_sk;
+            let (plaintext, new_state) = sender_key_decrypt(&state, &env).unwrap();
+            state = new_state;
+            assert_eq!(plaintext, format!("msg{}", i).as_bytes());
+        }
+    }
+
+    // ─── NEW TESTS: Out-of-Order Delivery ───────────────────────────────────
+
+    #[test]
+    fn test_receive_out_of_order_complex() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let mut state = create_sender_key_state(pub_key);
+
+        let (env0, sk) = sender_key_encrypt(&sk, b"0").unwrap();
+        let (env1, sk) = sender_key_encrypt(&sk, b"1").unwrap();
+        let (env2, sk) = sender_key_encrypt(&sk, b"2").unwrap();
+        let (env3, sk) = sender_key_encrypt(&sk, b"3").unwrap();
+        let (env4, _) = sender_key_encrypt(&sk, b"4").unwrap();
+
+        // Receive: 3, 1, 4, 0, 2
+        let (p3, new_state) = sender_key_decrypt(&state, &env3).unwrap();
+        state = new_state;
+        assert_eq!(p3, b"3");
+
+        let (p1, new_state) = sender_key_decrypt(&state, &env1).unwrap();
+        state = new_state;
+        assert_eq!(p1, b"1");
+
+        let (p4, new_state) = sender_key_decrypt(&state, &env4).unwrap();
+        state = new_state;
+        assert_eq!(p4, b"4");
+
+        let (p0, new_state) = sender_key_decrypt(&state, &env0).unwrap();
+        state = new_state;
+        assert_eq!(p0, b"0");
+
+        let (p2, _) = sender_key_decrypt(&state, &env2).unwrap();
+        assert_eq!(p2, b"2");
+    }
+
+    #[test]
+    fn test_receive_only_last_message() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        // Send 10 messages but only receive the last one
+        let mut last_env = None;
+        let mut sk = sk;
+        for _ in 0..10 {
+            let (env, new_sk) = sender_key_encrypt(&sk, b"skip").unwrap();
+            sk = new_sk;
+            last_env = Some(env);
+        }
+
+        let (plaintext, _) = sender_key_decrypt(&state, &last_env.unwrap()).unwrap();
+        assert_eq!(plaintext, b"skip");
+    }
+
+    #[test]
+    fn test_skipped_keys_are_cached() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (env0, sk) = sender_key_encrypt(&sk, b"0").unwrap();
+        let (env1, sk) = sender_key_encrypt(&sk, b"1").unwrap();
+        let (env2, _) = sender_key_encrypt(&sk, b"2").unwrap();
+
+        // Receive env2 first, should cache keys for 0 and 1
+        let (_, state) = sender_key_decrypt(&state, &env2).unwrap();
+        assert_eq!(state.skipped_message_keys.len(), 2);
+
+        // Now decrypt env0 and env1
+        let (p0, state) = sender_key_decrypt(&state, &env0).unwrap();
+        assert_eq!(p0, b"0");
+        assert_eq!(state.skipped_message_keys.len(), 1); // env1 still cached
+
+        let (p1, state) = sender_key_decrypt(&state, &env1).unwrap();
+        assert_eq!(p1, b"1");
+        assert_eq!(state.skipped_message_keys.len(), 0); // All cached keys used
+    }
+
+    #[test]
+    fn test_duplicate_message_fails() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        let (env, _) = sender_key_encrypt(&sk, b"once").unwrap();
+
+        // First decrypt succeeds
+        let (p, state) = sender_key_decrypt(&state, &env).unwrap();
+        assert_eq!(p, b"once");
+
+        // Second decrypt should fail (key consumed)
+        let result = sender_key_decrypt(&state, &env);
+        assert!(matches!(result, Err(SenderKeyError::NoCachedKey(_))));
+    }
+
+    // ─── NEW TESTS: Serialization ───────────────────────────────────────────
+
+    #[test]
+    fn test_envelope_json_serialization() {
+        let sk = generate_sender_key();
+        let (envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+
+        let json = serde_json::to_string(&envelope).unwrap();
+        let deserialized: SenderKeyEnvelope = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(envelope.v, deserialized.v);
+        assert_eq!(envelope.sk, deserialized.sk);
+        assert_eq!(envelope.i, deserialized.i);
+        assert_eq!(envelope.iv, deserialized.iv);
+        assert_eq!(envelope.ct, deserialized.ct);
+        assert_eq!(envelope.sig, deserialized.sig);
+    }
+
+    #[test]
+    fn test_distribution_message_json_roundtrip() {
+        let sk = generate_sender_key();
+        let dist = build_distribution_message("ch-123", &sk, Some("old-key-id"));
+
+        let json = serde_json::to_string(&dist).unwrap();
+        let parsed: SenderKeyDistributionMessage = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.msg_type, "skdm");
+        assert_eq!(parsed.ch, "ch-123");
+        assert_eq!(parsed.rep, Some("old-key-id".to_string()));
+    }
+
+    #[test]
+    fn test_parse_distribution_with_invalid_chain_key_length() {
+        let mut dist = SenderKeyDistributionMessage {
+            msg_type: "skdm".to_string(),
+            ch: "ch-1".to_string(),
+            skid: "fingerprint".to_string(),
+            ck: BASE64.encode(&[0u8; 16]), // Wrong length (should be 32)
+            spk: BASE64.encode(&[0u8; 32]),
+            iter: 0,
+            rep: None,
+        };
+
+        let result = parse_distribution_message(&dist);
+        assert!(matches!(result, Err(SenderKeyError::InvalidKeyLength)));
+
+        // Also test with signing key wrong length
+        dist.ck = BASE64.encode(&[0u8; 32]);
+        dist.spk = BASE64.encode(&[0u8; 16]); // Wrong length
+        let result = parse_distribution_message(&dist);
+        assert!(matches!(result, Err(SenderKeyError::InvalidKeyLength)));
+    }
+
+    // ─── NEW TESTS: SenderKeyStore ──────────────────────────────────────────
+
+    #[test]
+    fn test_store_get_or_create_creates_on_first_access() {
+        let mut store = SenderKeyStore::new();
+        assert!(!store.has_channel_keys("ch-1"));
+
+        let _key = store.get_or_create_my_key("ch-1");
+        assert!(store.has_channel_keys("ch-1"));
+    }
+
+    #[test]
+    fn test_store_get_or_create_returns_same_key() {
+        let mut store = SenderKeyStore::new();
+
+        let key1 = store.get_or_create_my_key("ch-1");
+        let fingerprint1 = sender_key_fingerprint(&key1.signing_key.verifying_key());
+
+        let key2 = store.get_or_create_my_key("ch-1");
+        let fingerprint2 = sender_key_fingerprint(&key2.signing_key.verifying_key());
+
+        assert_eq!(fingerprint1, fingerprint2);
+    }
+
+    #[test]
+    fn test_store_rotate_changes_key() {
+        let mut store = SenderKeyStore::new();
+
+        let old_key = store.get_or_create_my_key("ch-1");
+        let old_fp = sender_key_fingerprint(&old_key.signing_key.verifying_key());
+
+        let new_key = store.rotate_my_key("ch-1");
+        let new_fp = sender_key_fingerprint(&new_key.signing_key.verifying_key());
+
+        assert_ne!(old_fp, new_fp);
+    }
+
+    #[test]
+    fn test_store_set_and_get_peer_key() {
+        let mut store = SenderKeyStore::new();
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        assert!(!store.has_peer_key("ch-1", "alice"));
+        store.set_peer_key("ch-1", "alice", state.clone());
+        assert!(store.has_peer_key("ch-1", "alice"));
+
+        let retrieved = store.get_peer_key("ch-1", "alice").unwrap();
+        assert_eq!(retrieved.current_iteration, state.current_iteration);
+    }
+
+    #[test]
+    fn test_store_remove_peer_key() {
+        let mut store = SenderKeyStore::new();
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        let state = create_sender_key_state(pub_key);
+
+        store.set_peer_key("ch-1", "alice", state);
+        assert!(store.has_peer_key("ch-1", "alice"));
+
+        store.remove_peer_key("ch-1", "alice");
+        assert!(!store.has_peer_key("ch-1", "alice"));
+    }
+
+    #[test]
+    fn test_store_clear_channel_peer_keys() {
+        let mut store = SenderKeyStore::new();
+        let sk1 = generate_sender_key();
+        let sk2 = generate_sender_key();
+        let state1 = create_sender_key_state(sender_key_to_public(&sk1));
+        let state2 = create_sender_key_state(sender_key_to_public(&sk2));
+
+        store.set_peer_key("ch-1", "alice", state1);
+        store.set_peer_key("ch-1", "bob", state2);
+        assert!(store.has_peer_key("ch-1", "alice"));
+        assert!(store.has_peer_key("ch-1", "bob"));
+
+        store.clear_channel_peer_keys("ch-1");
+        assert!(!store.has_peer_key("ch-1", "alice"));
+        assert!(!store.has_peer_key("ch-1", "bob"));
+    }
+
+    #[test]
+    fn test_encrypt_channel_message_creates_key_automatically() {
+        let mut store = SenderKeyStore::new();
+        assert!(!store.has_channel_keys("ch-1"));
+
+        let _envelope = encrypt_channel_message(&mut store, "ch-1", "hello").unwrap();
+        assert!(store.has_channel_keys("ch-1"));
+    }
+
+    #[test]
+    fn test_decrypt_channel_message_without_peer_key_fails() {
+        let mut store = SenderKeyStore::new();
+
+        // Need a valid envelope JSON string, not just "{}"
+        let sk = generate_sender_key();
+        let (envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+        let envelope_str = serde_json::to_string(&envelope).unwrap();
+
+        let result = decrypt_channel_message(&mut store, "ch-1", "alice", &envelope_str);
+        assert!(matches!(result, Err(SenderKeyError::NoSenderKey { .. })));
+    }
+
+    #[test]
+    fn test_store_full_roundtrip() {
+        let mut sender_store = SenderKeyStore::new();
+        let mut receiver_store = SenderKeyStore::new();
+
+        let channel = "general";
+        let sender_id = "alice";
+
+        // Sender creates key and distributes
+        let sk = sender_store.get_or_create_my_key(channel).clone();
+        let dist = build_distribution_message(channel, &sk, None);
+        let (_, state) = parse_distribution_message(&dist).unwrap();
+        receiver_store.set_peer_key(channel, sender_id, state);
+
+        // Send multiple messages
+        for i in 0..10 {
+            let msg = format!("Message {}", i);
+            let envelope = encrypt_channel_message(&mut sender_store, channel, &msg).unwrap();
+            let plaintext =
+                decrypt_channel_message(&mut receiver_store, channel, sender_id, &envelope)
+                    .unwrap();
+            assert_eq!(plaintext, msg);
+        }
+    }
+
+    // ─── NEW TESTS: Envelope Detection ──────────────────────────────────────
+
+    #[test]
+    fn test_is_sender_key_envelope_valid() {
+        let sk = generate_sender_key();
+        let (envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+        let json = serde_json::to_string(&envelope).unwrap();
+
+        assert!(is_sender_key_envelope(&json));
+    }
+
+    #[test]
+    fn test_is_sender_key_envelope_invalid_json() {
+        assert!(!is_sender_key_envelope("not json"));
+        assert!(!is_sender_key_envelope("{\"wrong\": \"fields\"}"));
+    }
+
+    #[test]
+    fn test_is_sender_key_envelope_wrong_version() {
+        let json = r#"{"v":2,"sk":"abc","i":0,"iv":"xyz","ct":"def","sig":"ghi"}"#;
+        assert!(!is_sender_key_envelope(json));
+    }
+
+    #[test]
+    fn test_parse_sender_key_envelope_valid() {
+        let sk = generate_sender_key();
+        let (envelope, _) = sender_key_encrypt(&sk, b"test").unwrap();
+        let json = serde_json::to_string(&envelope).unwrap();
+
+        let parsed = parse_sender_key_envelope(&json).unwrap();
+        assert_eq!(parsed.v, 1);
+    }
+
+    #[test]
+    fn test_parse_sender_key_envelope_wrong_version() {
+        let json = r#"{"v":99,"sk":"abc","i":0,"iv":"xyz","ct":"def","sig":"ghi"}"#;
+        let result = parse_sender_key_envelope(json);
+        assert!(matches!(result, Err(SenderKeyError::UnknownVersion(99))));
+    }
+
+    // ─── NEW TESTS: Fingerprinting ──────────────────────────────────────────
+
+    #[test]
+    fn test_sender_key_fingerprint_length() {
+        let sk = generate_sender_key();
+        let pub_key = sender_key_to_public(&sk);
+        assert_eq!(pub_key.sender_key_id.len(), 16); // 8 bytes hex = 16 chars
+    }
+
+    #[test]
+    fn test_different_keys_different_fingerprints() {
+        let sk1 = generate_sender_key();
+        let sk2 = generate_sender_key();
+        let fp1 = sender_key_fingerprint(&sk1.signing_key.verifying_key());
+        let fp2 = sender_key_fingerprint(&sk2.signing_key.verifying_key());
+        assert_ne!(fp1, fp2);
+    }
+
+    #[test]
+    fn test_same_key_same_fingerprint() {
+        let sk = generate_sender_key();
+        let fp1 = sender_key_fingerprint(&sk.signing_key.verifying_key());
+        let fp2 = sender_key_fingerprint(&sk.signing_key.verifying_key());
+        assert_eq!(fp1, fp2);
+    }
 }

@@ -512,7 +512,10 @@ mod tests {
         let encrypted = encrypt_push_metadata(&recipient_public.to_bytes(), &metadata).unwrap();
         let decrypted = decrypt_push_metadata(&recipient_secret.to_bytes(), &encrypted).unwrap();
 
-        assert_eq!(decrypted.sender_name, Some("User<script>alert('xss')</script>".into()));
+        assert_eq!(
+            decrypted.sender_name,
+            Some("User<script>alert('xss')</script>".into())
+        );
         assert_eq!(decrypted.channel_name, Some("channel\"with'quotes".into()));
         assert_eq!(decrypted.preview, Some("Line1\nLine2\tTab".into()));
     }
@@ -532,7 +535,9 @@ mod tests {
         let b64 = encrypted.to_base64();
 
         // Base64 should only contain valid characters
-        assert!(b64.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
+        assert!(b64
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
         assert!(!b64.is_empty());
     }
 }
