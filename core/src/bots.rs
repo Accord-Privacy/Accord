@@ -512,4 +512,958 @@ mod tests {
         assert_eq!(cmd.bot_id, bot_id);
         assert_eq!(cmd.command_prefix, "/test");
     }
+
+    #[test]
+    fn test_duplicate_command_registration() {
+        let mut manager = BotManager::new();
+
+        let bot1 = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Bot 1".to_string(),
+            description: "First bot".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "duplicate".to_string(),
+                description: "Duplicate command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![0u8; 32],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot1).unwrap();
+
+        // Try to register another bot with the same command
+        let bot2 = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Bot 2".to_string(),
+            description: "Second bot".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "duplicate".to_string(),
+                description: "Same command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![0u8; 32],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        let result = manager.register_bot(bot2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bot_manager_default() {
+        let manager = BotManager::default();
+        assert_eq!(manager.bots.len(), 0);
+        assert_eq!(manager.command_mappings.len(), 0);
+        assert_eq!(manager.pending_commands.len(), 0);
+        assert_eq!(manager.interactions.len(), 0);
+    }
+
+    #[test]
+    fn test_command_with_parameters() {
+        let params = vec![
+            CommandParameter {
+                name: "location".to_string(),
+                parameter_type: ParameterType::String,
+                required: true,
+                description: "Location to check".to_string(),
+            },
+            CommandParameter {
+                name: "units".to_string(),
+                parameter_type: ParameterType::String,
+                required: false,
+                description: "Temperature units".to_string(),
+            },
+        ];
+
+        let cmd_def = BotCommandDefinition {
+            command: "weather".to_string(),
+            description: "Get weather".to_string(),
+            parameters: params.clone(),
+            requires_permissions: vec![],
+        };
+
+        assert_eq!(cmd_def.parameters.len(), 2);
+        assert!(cmd_def.parameters[0].required);
+        assert!(!cmd_def.parameters[1].required);
+    }
+
+    #[test]
+    fn test_parameter_types() {
+        let types = vec![
+            ParameterType::String,
+            ParameterType::Integer,
+            ParameterType::User,
+            ParameterType::Channel,
+            ParameterType::Role,
+            ParameterType::Boolean,
+        ];
+
+        assert_eq!(types.len(), 6);
+    }
+
+    #[test]
+    fn test_bot_permissions_all_enabled() {
+        let perms = BotPermissions {
+            can_send_messages: true,
+            can_send_embeds: true,
+            can_use_external_resources: true,
+            can_manage_messages: true,
+            allowed_channels: None,
+        };
+
+        assert!(perms.can_send_messages);
+        assert!(perms.can_send_embeds);
+        assert!(perms.can_use_external_resources);
+        assert!(perms.can_manage_messages);
+    }
+
+    #[test]
+    fn test_bot_permissions_restricted_channels() {
+        let channel1 = Uuid::new_v4();
+        let channel2 = Uuid::new_v4();
+
+        let perms = BotPermissions {
+            can_send_messages: true,
+            can_send_embeds: false,
+            can_use_external_resources: false,
+            can_manage_messages: false,
+            allowed_channels: Some(vec![channel1, channel2]),
+        };
+
+        assert_eq!(perms.allowed_channels.as_ref().unwrap().len(), 2);
+        assert!(perms.allowed_channels.as_ref().unwrap().contains(&channel1));
+    }
+
+    #[test]
+    fn test_route_command_to_allowed_channel() {
+        let mut manager = BotManager::new();
+        let channel_id = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: Some(vec![channel_id]),
+            },
+            public_key: vec![0u8; 32],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        let bot_id = bot.bot_id;
+        manager.register_bot(bot).unwrap();
+
+        let command = BotCommand {
+            command_id: Uuid::new_v4(),
+            bot_id,
+            channel_id,
+            user_id: Uuid::new_v4(),
+            command_prefix: "/test".to_string(),
+            encrypted_arguments: vec![],
+            timestamp: chrono::Utc::now(),
+        };
+
+        let result = manager.route_command(command);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_route_command_to_forbidden_channel() {
+        let mut manager = BotManager::new();
+        let allowed_channel = Uuid::new_v4();
+        let forbidden_channel = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: Some(vec![allowed_channel]),
+            },
+            public_key: vec![0u8; 32],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        let bot_id = bot.bot_id;
+        manager.register_bot(bot).unwrap();
+
+        let command = BotCommand {
+            command_id: Uuid::new_v4(),
+            bot_id,
+            channel_id: forbidden_channel,
+            user_id: Uuid::new_v4(),
+            command_prefix: "/test".to_string(),
+            encrypted_arguments: vec![],
+            timestamp: chrono::Utc::now(),
+        };
+
+        let result = manager.route_command(command);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_route_command_bot_not_found() {
+        let mut manager = BotManager::new();
+
+        let command = BotCommand {
+            command_id: Uuid::new_v4(),
+            bot_id: Uuid::new_v4(), // Non-existent bot
+            channel_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            command_prefix: "/test".to_string(),
+            encrypted_arguments: vec![],
+            timestamp: chrono::Utc::now(),
+        };
+
+        let result = manager.route_command(command);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_interaction_tracking() {
+        let mut manager = BotManager::new();
+        let bot_id = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id,
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![0u8; 32],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        let command = BotCommand {
+            command_id: Uuid::new_v4(),
+            bot_id,
+            channel_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            command_prefix: "/test".to_string(),
+            encrypted_arguments: vec![],
+            timestamp: chrono::Utc::now(),
+        };
+
+        manager.route_command(command).unwrap();
+
+        assert_eq!(manager.interactions.len(), 1);
+        assert_eq!(manager.interactions[0].bot_id, bot_id);
+    }
+
+    #[test]
+    fn test_max_interactions_enforcement() {
+        let mut manager = BotManager::new();
+        let bot_id = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id,
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test command".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![0u8; 32],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        // Fill interactions to max
+        for _ in 0..MAX_INTERACTIONS {
+            manager.interactions.push(BotInteraction {
+                interaction_id: Uuid::new_v4(),
+                bot_id,
+                user_id: Uuid::new_v4(),
+                channel_id: Uuid::new_v4(),
+                interaction_type: InteractionType::Command,
+                timestamp: chrono::Utc::now(),
+            });
+        }
+
+        // Verify we're at max
+        assert_eq!(manager.interactions.len(), MAX_INTERACTIONS);
+
+        // Add one more via route_command
+        let command = BotCommand {
+            command_id: Uuid::new_v4(),
+            bot_id,
+            channel_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            command_prefix: "/test".to_string(),
+            encrypted_arguments: vec![],
+            timestamp: chrono::Utc::now(),
+        };
+
+        manager.route_command(command).unwrap();
+
+        // Should drain old interactions to stay under MAX_INTERACTIONS
+        // When at MAX_INTERACTIONS + 1, drains 2 items, leaving MAX_INTERACTIONS - 1
+        assert_eq!(manager.interactions.len(), MAX_INTERACTIONS - 1);
+    }
+
+    #[test]
+    fn test_embedded_button() {
+        let button = EmbeddedElement::Button {
+            id: "btn1".to_string(),
+            label: "Click Me".to_string(),
+            style: ButtonStyle::Primary,
+            action: EmbeddedAction::Command {
+                command: "/action".to_string(),
+            },
+        };
+
+        match button {
+            EmbeddedElement::Button { id, label, .. } => {
+                assert_eq!(id, "btn1");
+                assert_eq!(label, "Click Me");
+            }
+            _ => panic!("Expected Button"),
+        }
+    }
+
+    #[test]
+    fn test_button_styles() {
+        let styles = vec![
+            ButtonStyle::Primary,
+            ButtonStyle::Secondary,
+            ButtonStyle::Success,
+            ButtonStyle::Danger,
+        ];
+
+        assert_eq!(styles.len(), 4);
+    }
+
+    #[test]
+    fn test_embedded_select_menu() {
+        let options = vec![
+            SelectOption {
+                label: "Option 1".to_string(),
+                value: "opt1".to_string(),
+                description: Some("First option".to_string()),
+            },
+            SelectOption {
+                label: "Option 2".to_string(),
+                value: "opt2".to_string(),
+                description: None,
+            },
+        ];
+
+        let select = EmbeddedElement::SelectMenu {
+            id: "menu1".to_string(),
+            placeholder: "Choose an option".to_string(),
+            options: options.clone(),
+            action: EmbeddedAction::None,
+        };
+
+        match select {
+            EmbeddedElement::SelectMenu { options: opts, .. } => {
+                assert_eq!(opts.len(), 2);
+            }
+            _ => panic!("Expected SelectMenu"),
+        }
+    }
+
+    #[test]
+    fn test_embedded_text_input() {
+        let input = EmbeddedElement::TextInput {
+            id: "input1".to_string(),
+            label: "Enter text".to_string(),
+            placeholder: "Type here...".to_string(),
+            required: true,
+            action: EmbeddedAction::None,
+        };
+
+        match input {
+            EmbeddedElement::TextInput { required, .. } => {
+                assert!(required);
+            }
+            _ => panic!("Expected TextInput"),
+        }
+    }
+
+    #[test]
+    fn test_embedded_embed() {
+        let fields = vec![
+            EmbedField {
+                name: "Field 1".to_string(),
+                value: "Value 1".to_string(),
+                inline: true,
+            },
+            EmbedField {
+                name: "Field 2".to_string(),
+                value: "Value 2".to_string(),
+                inline: false,
+            },
+        ];
+
+        let embed = EmbeddedElement::Embed {
+            title: Some("Title".to_string()),
+            description: Some("Description".to_string()),
+            fields: fields.clone(),
+            color: Some(0xFF0000),
+        };
+
+        match embed {
+            EmbeddedElement::Embed { fields: f, .. } => {
+                assert_eq!(f.len(), 2);
+            }
+            _ => panic!("Expected Embed"),
+        }
+    }
+
+    #[test]
+    fn test_embedded_action_command() {
+        let action = EmbeddedAction::Command {
+            command: "/help".to_string(),
+        };
+
+        match action {
+            EmbeddedAction::Command { command } => {
+                assert_eq!(command, "/help");
+            }
+            _ => panic!("Expected Command action"),
+        }
+    }
+
+    #[test]
+    fn test_embedded_action_update_message() {
+        let action = EmbeddedAction::UpdateMessage {
+            new_content: "Updated!".to_string(),
+        };
+
+        match action {
+            EmbeddedAction::UpdateMessage { new_content } => {
+                assert_eq!(new_content, "Updated!");
+            }
+            _ => panic!("Expected UpdateMessage action"),
+        }
+    }
+
+    #[test]
+    fn test_embedded_action_open_modal() {
+        let action = EmbeddedAction::OpenModal {
+            title: "Modal Title".to_string(),
+            fields: vec![],
+        };
+
+        match action {
+            EmbeddedAction::OpenModal { title, .. } => {
+                assert_eq!(title, "Modal Title");
+            }
+            _ => panic!("Expected OpenModal action"),
+        }
+    }
+
+    #[test]
+    fn test_validate_embedded_element_button() {
+        let manager = BotManager::new();
+
+        let button = EmbeddedElement::Button {
+            id: "btn1".to_string(),
+            label: "Click".to_string(),
+            style: ButtonStyle::Primary,
+            action: EmbeddedAction::Command {
+                command: "/valid".to_string(),
+            },
+        };
+
+        let result = manager.validate_embedded_element(&button);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_embedded_element_invalid_command() {
+        let manager = BotManager::new();
+
+        let button = EmbeddedElement::Button {
+            id: "btn1".to_string(),
+            label: "Click".to_string(),
+            style: ButtonStyle::Primary,
+            action: EmbeddedAction::Command {
+                command: "invalid".to_string(), // Missing /
+            },
+        };
+
+        let result = manager.validate_embedded_element(&button);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_embedded_element_embed() {
+        let manager = BotManager::new();
+
+        let embed = EmbeddedElement::Embed {
+            title: Some("Title".to_string()),
+            description: None,
+            fields: vec![],
+            color: None,
+        };
+
+        let result = manager.validate_embedded_element(&embed);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bot_response_text() {
+        let response = BotResponse {
+            response_id: Uuid::new_v4(),
+            command_id: Uuid::new_v4(),
+            response_type: BotResponseType::Text,
+            encrypted_content: vec![1, 2, 3],
+            embedded_elements: vec![],
+        };
+
+        assert_eq!(response.response_type, BotResponseType::Text);
+    }
+
+    #[test]
+    fn test_bot_response_embed() {
+        let response = BotResponse {
+            response_id: Uuid::new_v4(),
+            command_id: Uuid::new_v4(),
+            response_type: BotResponseType::Embed,
+            encrypted_content: vec![],
+            embedded_elements: vec![],
+        };
+
+        assert_eq!(response.response_type, BotResponseType::Embed);
+    }
+
+    #[test]
+    fn test_bot_response_interactive() {
+        let response = BotResponse {
+            response_id: Uuid::new_v4(),
+            command_id: Uuid::new_v4(),
+            response_type: BotResponseType::Interactive,
+            encrypted_content: vec![],
+            embedded_elements: vec![],
+        };
+
+        assert_eq!(response.response_type, BotResponseType::Interactive);
+    }
+
+    #[test]
+    fn test_bot_response_media() {
+        let response = BotResponse {
+            response_id: Uuid::new_v4(),
+            command_id: Uuid::new_v4(),
+            response_type: BotResponseType::Media,
+            encrypted_content: vec![],
+            embedded_elements: vec![],
+        };
+
+        assert_eq!(response.response_type, BotResponseType::Media);
+    }
+
+    #[test]
+    fn test_handle_bot_response() {
+        let mut manager = BotManager::new();
+
+        // Create and route a command first
+        let bot_id = Uuid::new_v4();
+        let bot = Bot {
+            bot_id,
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: true,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        let command_id = Uuid::new_v4();
+        let command = BotCommand {
+            command_id,
+            bot_id,
+            channel_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            command_prefix: "/test".to_string(),
+            encrypted_arguments: vec![],
+            timestamp: chrono::Utc::now(),
+        };
+
+        manager.route_command(command).unwrap();
+
+        // Create a response
+        let response = BotResponse {
+            response_id: Uuid::new_v4(),
+            command_id,
+            response_type: BotResponseType::Text,
+            encrypted_content: vec![],
+            embedded_elements: vec![],
+        };
+
+        let result = manager.handle_bot_response(response);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_bot_response_command_not_found() {
+        let mut manager = BotManager::new();
+
+        let response = BotResponse {
+            response_id: Uuid::new_v4(),
+            command_id: Uuid::new_v4(), // Non-existent command
+            response_type: BotResponseType::Text,
+            encrypted_content: vec![],
+            embedded_elements: vec![],
+        };
+
+        let result = manager.handle_bot_response(response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_available_commands_all_channels() {
+        let mut manager = BotManager::new();
+
+        let bot = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![
+                BotCommandDefinition {
+                    command: "cmd1".to_string(),
+                    description: "Command 1".to_string(),
+                    parameters: vec![],
+                    requires_permissions: vec![],
+                },
+                BotCommandDefinition {
+                    command: "cmd2".to_string(),
+                    description: "Command 2".to_string(),
+                    parameters: vec![],
+                    requires_permissions: vec![],
+                },
+            ],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        let commands = manager.get_available_commands(Uuid::new_v4());
+        assert_eq!(commands.len(), 2);
+    }
+
+    #[test]
+    fn test_get_available_commands_restricted() {
+        let mut manager = BotManager::new();
+        let allowed_channel = Uuid::new_v4();
+        let forbidden_channel = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: Some(vec![allowed_channel]),
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        // Should get commands in allowed channel
+        let commands = manager.get_available_commands(allowed_channel);
+        assert_eq!(commands.len(), 1);
+
+        // Should not get commands in forbidden channel
+        let commands = manager.get_available_commands(forbidden_channel);
+        assert_eq!(commands.len(), 0);
+    }
+
+    #[test]
+    fn test_get_bot() {
+        let mut manager = BotManager::new();
+        let bot_id = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id,
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        let retrieved = manager.get_bot(bot_id);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().name, "Test Bot");
+    }
+
+    #[test]
+    fn test_get_bot_not_found() {
+        let manager = BotManager::new();
+        let result = manager.get_bot(Uuid::new_v4());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_remove_bot() {
+        let mut manager = BotManager::new();
+        let bot_id = Uuid::new_v4();
+
+        let bot = Bot {
+            bot_id,
+            name: "Test Bot".to_string(),
+            description: "Test".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "test".to_string(),
+                description: "Test".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot).unwrap();
+
+        // Verify bot exists
+        assert!(manager.bots.contains_key(&bot_id));
+        assert!(manager.command_mappings.contains_key("/test"));
+
+        // Remove bot
+        manager.remove_bot(bot_id).unwrap();
+
+        // Verify bot and commands are removed
+        assert!(!manager.bots.contains_key(&bot_id));
+        assert!(!manager.command_mappings.contains_key("/test"));
+    }
+
+    #[test]
+    fn test_remove_nonexistent_bot() {
+        let mut manager = BotManager::new();
+        let result = manager.remove_bot(Uuid::new_v4());
+        assert!(result.is_ok()); // Should not error
+    }
+
+    #[test]
+    fn test_interaction_types() {
+        let types = vec![
+            InteractionType::Command,
+            InteractionType::ButtonClick,
+            InteractionType::MenuSelect,
+            InteractionType::TextInput,
+        ];
+
+        assert_eq!(types.len(), 4);
+    }
+
+    #[test]
+    fn test_handle_embedded_interaction() {
+        let mut manager = BotManager::new();
+
+        let result = manager.handle_embedded_interaction(
+            "element_id".to_string(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "interaction_data".to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(manager.interactions.len(), 1);
+    }
+
+    #[test]
+    fn test_command_not_extracted_without_prefix() {
+        let manager = BotManager::new();
+
+        let command = manager.extract_bot_command(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "regular message without command",
+            b"encrypted_data",
+        );
+
+        assert!(command.is_none());
+    }
+
+    #[test]
+    fn test_multiple_bots_different_commands() {
+        let mut manager = BotManager::new();
+
+        let bot1 = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Bot 1".to_string(),
+            description: "First bot".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "cmd1".to_string(),
+                description: "Command 1".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        let bot2 = Bot {
+            bot_id: Uuid::new_v4(),
+            name: "Bot 2".to_string(),
+            description: "Second bot".to_string(),
+            commands: vec![BotCommandDefinition {
+                command: "cmd2".to_string(),
+                description: "Command 2".to_string(),
+                parameters: vec![],
+                requires_permissions: vec![],
+            }],
+            permissions: BotPermissions {
+                can_send_messages: true,
+                can_send_embeds: false,
+                can_use_external_resources: false,
+                can_manage_messages: false,
+                allowed_channels: None,
+            },
+            public_key: vec![],
+            created_at: chrono::Utc::now(),
+            owner_id: Uuid::new_v4(),
+        };
+
+        manager.register_bot(bot1).unwrap();
+        manager.register_bot(bot2).unwrap();
+
+        assert_eq!(manager.bots.len(), 2);
+        assert_eq!(manager.command_mappings.len(), 2);
+    }
+
+    #[test]
+    fn test_command_requires_permissions() {
+        let cmd_def = BotCommandDefinition {
+            command: "admin".to_string(),
+            description: "Admin command".to_string(),
+            parameters: vec![],
+            requires_permissions: vec!["ADMINISTRATOR".to_string(), "MANAGE_GUILD".to_string()],
+        };
+
+        assert_eq!(cmd_def.requires_permissions.len(), 2);
+        assert!(cmd_def
+            .requires_permissions
+            .contains(&"ADMINISTRATOR".to_string()));
+    }
 }

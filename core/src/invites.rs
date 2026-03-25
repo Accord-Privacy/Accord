@@ -612,4 +612,971 @@ mod tests {
             .unwrap();
         assert!(matches!(usage.approval_status, ApprovalStatus::Approved));
     }
+
+    #[test]
+    fn test_invite_code_generation() {
+        let manager = InviteManager::new();
+        let code = manager.generate_invite_code();
+
+        // Code should be 8 characters long
+        assert_eq!(code.len(), 8);
+
+        // Code should only contain allowed characters
+        let allowed_chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        assert!(code.chars().all(|c| allowed_chars.contains(c)));
+    }
+
+    #[test]
+    fn test_invite_code_uniqueness() {
+        let mut manager = InviteManager::new();
+        let mut codes = Vec::new();
+
+        // Create 10 invites and ensure codes are unique
+        for _ in 0..10 {
+            let config = InviteConfig {
+                expiry_duration: None,
+                max_uses: None,
+                invite_type: InviteType::Server,
+                access_level: AccessLevel::Member,
+                quality_gates: QualityGates::default(),
+                custom_message: None,
+            };
+
+            let code = manager
+                .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+                .unwrap();
+
+            assert!(!codes.contains(&code), "Duplicate invite code generated");
+            codes.push(code);
+        }
+    }
+
+    #[test]
+    fn test_invite_expiration() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: Some(Duration::seconds(-1)), // Already expired
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let validation = manager.validate_invite(&invite_code, &user_info);
+        assert!(matches!(validation, InviteValidation::Expired));
+    }
+
+    #[test]
+    fn test_max_uses_reached() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: Some(1),
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "user1".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        // First use should succeed
+        manager
+            .use_invite(&invite_code, Uuid::new_v4(), user_info.clone())
+            .unwrap();
+
+        // Second use should fail
+        let validation = manager.validate_invite(&invite_code, &user_info);
+        assert!(matches!(validation, InviteValidation::MaxUsesReached));
+    }
+
+    #[test]
+    fn test_quality_gate_account_age() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            min_account_age_days: Some(30),
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        // Too young account
+        let young_user = UserInfo {
+            username: "younguser".to_string(),
+            account_created: Utc::now() - Duration::days(10),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let validation = manager.validate_invite(&invite_code, &young_user);
+        match validation {
+            InviteValidation::QualityGatesFailed { reasons } => {
+                assert!(!reasons.is_empty());
+                assert!(reasons[0].contains("30 days old"));
+            }
+            _ => panic!("Expected QualityGatesFailed"),
+        }
+    }
+
+    #[test]
+    fn test_quality_gate_verification_required() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            require_verification: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        // Unverified user
+        let unverified_user = UserInfo {
+            username: "unverified".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::Unverified,
+        };
+
+        let validation = manager.validate_invite(&invite_code, &unverified_user);
+        match validation {
+            InviteValidation::QualityGatesFailed { reasons } => {
+                assert!(!reasons.is_empty());
+                assert!(reasons[0].contains("verification required"));
+            }
+            _ => panic!("Expected QualityGatesFailed"),
+        }
+
+        // Verified user should pass
+        let verified_user = UserInfo {
+            username: "verified".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::EmailVerified,
+        };
+
+        let validation = manager.validate_invite(&invite_code, &verified_user);
+        assert!(matches!(validation, InviteValidation::Valid));
+    }
+
+    #[test]
+    fn test_invite_type_onetime() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::OneTime,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        // Use the invite
+        manager
+            .use_invite(&invite_code, Uuid::new_v4(), user_info.clone())
+            .unwrap();
+
+        // Invite should be revoked (not found)
+        let validation = manager.validate_invite(&invite_code, &user_info);
+        assert!(matches!(validation, InviteValidation::NotFound));
+    }
+
+    #[test]
+    fn test_invite_type_channel() {
+        let channel_id = Uuid::new_v4();
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Channel { channel_id },
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.invite_type, InviteType::Channel { channel_id });
+    }
+
+    #[test]
+    fn test_invite_type_temporary() {
+        let config = InviteConfig {
+            expiry_duration: Some(Duration::hours(1)),
+            max_uses: None,
+            invite_type: InviteType::Temporary,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.invite_type, InviteType::Temporary);
+    }
+
+    #[test]
+    fn test_access_level_moderator() {
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Moderator,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.access_level, AccessLevel::Moderator);
+    }
+
+    #[test]
+    fn test_access_level_admin() {
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Admin,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.access_level, AccessLevel::Admin);
+    }
+
+    #[test]
+    fn test_access_level_custom_role() {
+        let role_ids = vec!["role1".to_string(), "role2".to_string()];
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::CustomRole {
+                role_ids: role_ids.clone(),
+            },
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.access_level, AccessLevel::CustomRole { role_ids });
+    }
+
+    #[test]
+    fn test_custom_message() {
+        let message = "Welcome to our community!".to_string();
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: Some(message.clone()),
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.custom_message, Some(message));
+    }
+
+    #[test]
+    fn test_invite_not_found() {
+        let manager = InviteManager::new();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let validation = manager.validate_invite("NOTFOUND", &user_info);
+        assert!(matches!(validation, InviteValidation::NotFound));
+    }
+
+    #[test]
+    fn test_revoke_invite() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        // Revoke the invite
+        manager.revoke_invite(&invite_code).unwrap();
+
+        // Should not be found
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let validation = manager.validate_invite(&invite_code, &user_info);
+        assert!(matches!(validation, InviteValidation::NotFound));
+    }
+
+    #[test]
+    fn test_revoke_nonexistent_invite() {
+        let mut manager = InviteManager::new();
+        let result = manager.revoke_invite("NOTFOUND");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_invite_info() {
+        let mut manager = InviteManager::new();
+        let server_id = Uuid::new_v4();
+
+        let config = InviteConfig {
+            expiry_duration: Some(Duration::days(7)),
+            max_uses: Some(10),
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: Some("Test message".to_string()),
+        };
+
+        let invite_code = manager
+            .create_invite(server_id, Uuid::new_v4(), config)
+            .unwrap();
+
+        let info = manager.get_invite_info(&invite_code).unwrap();
+        assert_eq!(info.server_id, server_id);
+        assert!(info.expires_at.is_some());
+        assert_eq!(info.invite_type, InviteType::Server);
+        assert_eq!(info.custom_message, Some("Test message".to_string()));
+        assert!(!info.requires_approval);
+    }
+
+    #[test]
+    fn test_get_invite_info_not_found() {
+        let manager = InviteManager::new();
+        let info = manager.get_invite_info("NOTFOUND");
+        assert!(info.is_none());
+    }
+
+    #[test]
+    fn test_usage_tracking() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        // Use invite twice
+        let user1 = UserInfo {
+            username: "user1".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let user2 = UserInfo {
+            username: "user2".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        manager
+            .use_invite(&invite_code, Uuid::new_v4(), user1)
+            .unwrap();
+        manager
+            .use_invite(&invite_code, Uuid::new_v4(), user2)
+            .unwrap();
+
+        let usage_list = manager.get_invite_usage(&invite_code);
+        assert_eq!(usage_list.len(), 2);
+    }
+
+    #[test]
+    fn test_current_uses_increment() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        // Initial uses should be 0
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.current_uses, 0);
+
+        // Use invite
+        manager
+            .use_invite(&invite_code, Uuid::new_v4(), user_info)
+            .unwrap();
+
+        // Current uses should be 1
+        let invite = manager.invites.get(&invite_code).unwrap();
+        assert_eq!(invite.current_uses, 1);
+    }
+
+    #[test]
+    fn test_pending_join_creation() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let answers = HashMap::new();
+        let request_id = manager
+            .create_pending_join(&invite_code, Uuid::new_v4(), user_info, answers)
+            .unwrap();
+
+        assert!(manager.pending_joins.contains_key(&request_id));
+    }
+
+    #[test]
+    fn test_pending_join_without_approval_required() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let result =
+            manager.create_pending_join(&invite_code, Uuid::new_v4(), user_info, HashMap::new());
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reject_pending_join() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let request_id = manager
+            .create_pending_join(&invite_code, Uuid::new_v4(), user_info, HashMap::new())
+            .unwrap();
+
+        let reason = "Does not meet community standards".to_string();
+        manager
+            .reject_pending_join(request_id, reason.clone())
+            .unwrap();
+
+        // Pending join should be removed
+        assert!(!manager.pending_joins.contains_key(&request_id));
+
+        // Should have a rejection record in usage history
+        let last_usage = manager.usage_history.last().unwrap();
+        match &last_usage.approval_status {
+            ApprovalStatus::Rejected { reason: r } => assert_eq!(r, &reason),
+            _ => panic!("Expected Rejected status"),
+        }
+    }
+
+    #[test]
+    fn test_approve_pending_join_wrong_approver() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let creator_id = Uuid::new_v4();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), creator_id, config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let request_id = manager
+            .create_pending_join(&invite_code, Uuid::new_v4(), user_info, HashMap::new())
+            .unwrap();
+
+        // Try to approve with wrong approver ID
+        let wrong_approver = Uuid::new_v4();
+        let result = manager.approve_pending_join(request_id, wrong_approver);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_pending_joins_for_server() {
+        let mut manager = InviteManager::new();
+        let server_id = Uuid::new_v4();
+
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(server_id, Uuid::new_v4(), config)
+            .unwrap();
+
+        // Create two pending joins
+        let user1 = UserInfo {
+            username: "user1".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let user2 = UserInfo {
+            username: "user2".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        manager
+            .create_pending_join(&invite_code, Uuid::new_v4(), user1, HashMap::new())
+            .unwrap();
+        manager
+            .create_pending_join(&invite_code, Uuid::new_v4(), user2, HashMap::new())
+            .unwrap();
+
+        let pending = manager.get_pending_joins(server_id);
+        assert_eq!(pending.len(), 2);
+    }
+
+    #[test]
+    fn test_cleanup_expired_invites() {
+        let mut manager = InviteManager::new();
+
+        // Create expired invite
+        let config_expired = InviteConfig {
+            expiry_duration: Some(Duration::seconds(-1)),
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let expired_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config_expired)
+            .unwrap();
+
+        // Create valid invite
+        let config_valid = InviteConfig {
+            expiry_duration: Some(Duration::days(7)),
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let valid_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config_valid)
+            .unwrap();
+
+        manager.cleanup_expired();
+
+        // Expired should be removed
+        assert!(!manager.invites.contains_key(&expired_code));
+        // Valid should still exist
+        assert!(manager.invites.contains_key(&valid_code));
+    }
+
+    #[test]
+    fn test_cleanup_old_pending_joins() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        let request_id = manager
+            .create_pending_join(&invite_code, Uuid::new_v4(), user_info, HashMap::new())
+            .unwrap();
+
+        // Manually set the requested_at to 8 days ago
+        if let Some(pending) = manager.pending_joins.get_mut(&request_id) {
+            pending.requested_at = Utc::now() - Duration::days(8);
+        }
+
+        manager.cleanup_expired();
+
+        // Old pending join should be removed
+        assert!(!manager.pending_joins.contains_key(&request_id));
+    }
+
+    #[test]
+    fn test_verification_questions() {
+        let questions = vec![
+            VerificationQuestion {
+                question: "Why do you want to join?".to_string(),
+                expected_type: AnswerType::Text,
+                required: true,
+            },
+            VerificationQuestion {
+                question: "Are you over 18?".to_string(),
+                expected_type: AnswerType::Boolean,
+                required: true,
+            },
+        ];
+
+        let quality_gates = QualityGates {
+            verification_questions: questions.clone(),
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let mut manager = InviteManager::new();
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let info = manager.get_invite_info(&invite_code).unwrap();
+        assert_eq!(info.verification_questions.len(), 2);
+        assert_eq!(info.verification_questions, questions);
+    }
+
+    #[test]
+    fn test_answer_type_multiple_choice() {
+        let answer_type = AnswerType::MultipleChoice {
+            options: vec!["Option A".to_string(), "Option B".to_string()],
+        };
+
+        match answer_type {
+            AnswerType::MultipleChoice { options } => {
+                assert_eq!(options.len(), 2);
+            }
+            _ => panic!("Expected MultipleChoice"),
+        }
+    }
+
+    #[test]
+    fn test_verification_status_levels() {
+        let statuses = vec![
+            VerificationStatus::Unverified,
+            VerificationStatus::EmailVerified,
+            VerificationStatus::PhoneVerified,
+            VerificationStatus::FullyVerified,
+        ];
+
+        // All statuses should be unique
+        assert_eq!(statuses.len(), 4);
+    }
+
+    #[test]
+    fn test_invite_manager_default() {
+        let manager = InviteManager::default();
+        assert_eq!(manager.invites.len(), 0);
+        assert_eq!(manager.usage_history.len(), 0);
+        assert_eq!(manager.pending_joins.len(), 0);
+    }
+
+    #[test]
+    fn test_quality_gates_default() {
+        let gates = QualityGates::default();
+        assert_eq!(gates.min_account_age_days, None);
+        assert!(!gates.require_verification);
+        assert!(!gates.require_approval);
+        assert_eq!(gates.require_referral, None);
+        assert_eq!(gates.verification_questions.len(), 0);
+    }
+
+    #[test]
+    fn test_max_uses_zero() {
+        let mut manager = InviteManager::new();
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: Some(0),
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates: QualityGates::default(),
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(60),
+            verification_status: VerificationStatus::FullyVerified,
+        };
+
+        // Should immediately be maxed out
+        let validation = manager.validate_invite(&invite_code, &user_info);
+        assert!(matches!(validation, InviteValidation::MaxUsesReached));
+    }
+
+    #[test]
+    fn test_multiple_quality_gates_failing() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            min_account_age_days: Some(30),
+            require_verification: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        // User fails both checks
+        let user_info = UserInfo {
+            username: "testuser".to_string(),
+            account_created: Utc::now() - Duration::days(10),
+            verification_status: VerificationStatus::Unverified,
+        };
+
+        let validation = manager.validate_invite(&invite_code, &user_info);
+        match validation {
+            InviteValidation::QualityGatesFailed { reasons } => {
+                assert_eq!(reasons.len(), 2);
+            }
+            _ => panic!("Expected QualityGatesFailed"),
+        }
+    }
+
+    #[test]
+    fn test_invite_info_with_approval() {
+        let mut manager = InviteManager::new();
+
+        let quality_gates = QualityGates {
+            require_approval: true,
+            ..Default::default()
+        };
+
+        let config = InviteConfig {
+            expiry_duration: None,
+            max_uses: None,
+            invite_type: InviteType::Server,
+            access_level: AccessLevel::Member,
+            quality_gates,
+            custom_message: None,
+        };
+
+        let invite_code = manager
+            .create_invite(Uuid::new_v4(), Uuid::new_v4(), config)
+            .unwrap();
+
+        let info = manager.get_invite_info(&invite_code).unwrap();
+        assert!(info.requires_approval);
+    }
 }
