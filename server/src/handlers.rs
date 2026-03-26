@@ -1,7 +1,7 @@
 //! HTTP and WebSocket handlers for the Accord relay server
 
 /// Sanitize a display name for safe relay (strip HTML-sensitive chars, limit length)
-fn sanitize_display_name(name: &str) -> String {
+pub fn sanitize_display_name(name: &str) -> String {
     let stripped: String = name
         .chars()
         .filter(|c| *c != '<' && *c != '>' && *c != '&')
@@ -117,7 +117,7 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
 }
 
 /// Extract client IP from X-Forwarded-For header or fall back to "unknown"
-fn extract_client_ip(headers: &HeaderMap) -> String {
+pub fn extract_client_ip(headers: &HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
@@ -2821,7 +2821,7 @@ async fn check_node_permission(
 
 const MAX_ICON_SIZE: usize = 256 * 1024; // 256 KB
 
-fn validate_image_content_type(ct: &str) -> Option<&'static str> {
+pub fn validate_image_content_type(ct: &str) -> Option<&'static str> {
     match ct {
         "image/png" => Some("image/png"),
         "image/jpeg" | "image/jpg" => Some("image/jpeg"),
@@ -2831,7 +2831,7 @@ fn validate_image_content_type(ct: &str) -> Option<&'static str> {
     }
 }
 
-fn content_type_to_ext(ct: &str) -> &'static str {
+pub fn content_type_to_ext(ct: &str) -> &'static str {
     match ct {
         "image/png" => "png",
         "image/jpeg" | "image/jpg" => "jpg",
@@ -2841,7 +2841,7 @@ fn content_type_to_ext(ct: &str) -> &'static str {
     }
 }
 
-fn detect_content_type(data: &[u8]) -> Option<&'static str> {
+pub fn detect_content_type(data: &[u8]) -> Option<&'static str> {
     if data.len() < 4 {
         return None;
     }
@@ -8743,7 +8743,7 @@ pub struct ImportTemplateSummary {
 }
 
 /// Discord permission bit names for bits we do NOT support (for the import summary).
-fn discord_bit_name(bit: u32) -> &'static str {
+pub fn discord_bit_name(bit: u32) -> &'static str {
     match bit {
         7 => "Use Application Commands (bit 7)",
         8 => "View Audit Log (bit 8)",
@@ -9412,7 +9412,7 @@ pub async fn link_preview_handler(
 }
 
 /// Find all <meta ...> tags in HTML
-fn find_meta_tags(html: &str) -> Vec<String> {
+pub fn find_meta_tags(html: &str) -> Vec<String> {
     let mut tags = Vec::new();
     let lower = html.to_lowercase();
     let mut search_from = 0;
@@ -9429,7 +9429,7 @@ fn find_meta_tags(html: &str) -> Vec<String> {
 }
 
 /// Extract content="..." from a meta tag
-fn extract_content(tag: &str) -> Option<String> {
+pub fn extract_content(tag: &str) -> Option<String> {
     let lower = tag.to_lowercase();
     let idx = lower.find("content=")?;
     let after = &tag[idx + 8..];
@@ -9955,7 +9955,7 @@ pub async fn get_emoji_image_handler(
 }
 
 /// Basic HTML entity decoding
-fn html_decode(s: &str) -> String {
+pub fn html_decode(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
