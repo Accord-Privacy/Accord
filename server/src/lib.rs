@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 pub mod admin;
+pub mod backup;
 pub mod batch_handlers;
 pub mod bot_api;
 pub mod db;

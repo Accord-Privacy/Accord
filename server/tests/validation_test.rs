@@ -850,7 +850,10 @@ fn sanitize_preserves_unicode() {
 
 #[test]
 fn sanitize_preserves_spaces() {
-    assert_eq!(sanitize_text("   lots   of   spaces   "), "   lots   of   spaces   ");
+    assert_eq!(
+        sanitize_text("   lots   of   spaces   "),
+        "   lots   of   spaces   "
+    );
 }
 
 #[test]
