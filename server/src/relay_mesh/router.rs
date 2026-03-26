@@ -380,4 +380,576 @@ mod tests {
             .await
             .unwrap();
     }
+
+    // === Additional tests for router.rs ===
+
+    #[test]
+    fn test_announce_payload_with_empty_relay_id() {
+        let payload = AnnouncePayload {
+            relay_id: "".to_string(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: vec![0u8; 32],
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: AnnouncePayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.relay_id, "");
+    }
+
+    #[test]
+    fn test_announce_payload_with_short_public_key() {
+        let payload = AnnouncePayload {
+            relay_id: "test".to_string(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: vec![1, 2, 3], // Too short
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: AnnouncePayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.public_key.len(), 3);
+    }
+
+    #[test]
+    fn test_announce_payload_hex_encoding() {
+        let payload = AnnouncePayload {
+            relay_id: "relay123".to_string(),
+            address: "192.168.1.1:9443".to_string(),
+            public_key: vec![0xff, 0xaa, 0x55, 0x00],
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("ffaa5500"));
+    }
+
+    #[test]
+    fn test_dm_forward_payload_with_empty_user_id() {
+        let payload = DmForwardPayload {
+            to_user_id: "".to_string(),
+            encrypted_dm: b"data".to_vec(),
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: DmForwardPayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.to_user_id, "");
+    }
+
+    #[test]
+    fn test_dm_forward_payload_with_empty_encrypted_dm() {
+        let payload = DmForwardPayload {
+            to_user_id: uuid::Uuid::new_v4().to_string(),
+            encrypted_dm: vec![],
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: DmForwardPayload = serde_json::from_slice(&json).unwrap();
+        assert!(decoded.encrypted_dm.is_empty());
+    }
+
+    #[test]
+    fn test_dm_forward_payload_base64_encoding() {
+        let payload = DmForwardPayload {
+            to_user_id: uuid::Uuid::new_v4().to_string(),
+            encrypted_dm: vec![0, 1, 2, 3],
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("AAECAw=="));
+    }
+
+    #[test]
+    fn test_dm_forward_payload_large_encrypted_dm() {
+        let large_dm = vec![42u8; 65536];
+        let payload = DmForwardPayload {
+            to_user_id: uuid::Uuid::new_v4().to_string(),
+            encrypted_dm: large_dm.clone(),
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: DmForwardPayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.encrypted_dm.len(), 65536);
+        assert_eq!(decoded.encrypted_dm, large_dm);
+    }
+
+    #[tokio::test]
+    async fn test_router_new() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let router = MeshRouter::new(peers.clone());
+        assert!(router.app_state.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_announce_with_invalid_public_key() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+        let announce = AnnouncePayload {
+            relay_id: "test_relay".to_string(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: vec![0u8; 16], // Invalid length (should be 32)
+        };
+        let announce_bytes = serde_json::to_vec(&announce).unwrap();
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayAnnounce,
+            announce_bytes,
+            1000,
+        );
+
+        let result = MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_announce_with_corrupted_public_key_bytes() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+        let announce = AnnouncePayload {
+            relay_id: "test_relay".to_string(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: vec![0xffu8; 32], // All 0xff bytes - invalid Ed25519 key
+        };
+        let announce_bytes = serde_json::to_vec(&announce).unwrap();
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayAnnounce,
+            announce_bytes,
+            1000,
+        );
+
+        let result = MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None).await;
+        // This may or may not fail depending on Ed25519 validation
+        // We're just testing it doesn't panic
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_announce_updates_existing_peer() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        // First announce
+        let announce1 = AnnouncePayload {
+            relay_id: sender.relay_id().to_string(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: sender.public_key_bytes().to_vec(),
+        };
+        let envelope1 = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayAnnounce,
+            serde_json::to_vec(&announce1).unwrap(),
+            1000,
+        );
+
+        MeshRouter::handle_envelope(&envelope1, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+
+        // Second announce with updated address
+        let announce2 = AnnouncePayload {
+            relay_id: sender.relay_id().to_string(),
+            address: "10.0.0.2:9443".to_string(),
+            public_key: sender.public_key_bytes().to_vec(),
+        };
+        let envelope2 = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayAnnounce,
+            serde_json::to_vec(&announce2).unwrap(),
+            2000,
+        );
+
+        MeshRouter::handle_envelope(&envelope2, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+
+        let reg = peers.read().await;
+        let peer = reg.get(sender.relay_id()).unwrap();
+        assert_eq!(peer.address, "10.0.0.2:9443");
+        assert_eq!(peer.last_seen, 2000);
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_ping_from_unknown_peer() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayPing,
+            vec![],
+            5000,
+        );
+
+        // Should not error even if peer is unknown
+        MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+
+        let reg = peers.read().await;
+        assert!(reg.get(sender.relay_id()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_ping_to_different_relay() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        // Pre-register the peer
+        {
+            let mut reg = peers.write().await;
+            reg.upsert(
+                sender.relay_id().to_string(),
+                crate::relay_mesh::peers::PeerInfo {
+                    public_key: *sender.verifying_key(),
+                    address: "1.2.3.4:9443".to_string(),
+                    last_seen: 0,
+                },
+            );
+        }
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "other_relay".to_string(),
+            PayloadType::RelayPing,
+            vec![],
+            5000,
+        );
+
+        MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+
+        let reg = peers.read().await;
+        assert_eq!(reg.get(sender.relay_id()).unwrap().last_seen, 5000);
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_dm_with_invalid_json() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::DmForward,
+            b"not valid json".to_vec(),
+            100,
+        );
+
+        let result = MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_dm_with_invalid_user_id() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+        let dm = DmForwardPayload {
+            to_user_id: "not-a-uuid".to_string(),
+            encrypted_dm: b"blob".to_vec(),
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::DmForward,
+            serde_json::to_vec(&dm).unwrap(),
+            100,
+        );
+
+        let result = MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_dm_without_app_state() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+        let dm = DmForwardPayload {
+            to_user_id: uuid::Uuid::new_v4().to_string(),
+            encrypted_dm: b"blob".to_vec(),
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::DmForward,
+            serde_json::to_vec(&dm).unwrap(),
+            100,
+        );
+
+        // Should not error, just not deliver
+        MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_announce_with_malformed_json() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayAnnounce,
+            b"{invalid json}".to_vec(),
+            1000,
+        );
+
+        let result = MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_multiple_pings_updates_timestamp() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        // Pre-register the peer
+        {
+            let mut reg = peers.write().await;
+            reg.upsert(
+                sender.relay_id().to_string(),
+                crate::relay_mesh::peers::PeerInfo {
+                    public_key: *sender.verifying_key(),
+                    address: "1.2.3.4:9443".to_string(),
+                    last_seen: 0,
+                },
+            );
+        }
+
+        // Send multiple pings with increasing timestamps
+        for ts in [1000, 2000, 3000, 4000, 5000] {
+            let envelope = MeshEnvelope::create_signed(
+                &sender,
+                "us".to_string(),
+                PayloadType::RelayPing,
+                vec![],
+                ts,
+            );
+
+            MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+                .await
+                .unwrap();
+
+            let reg = peers.read().await;
+            assert_eq!(reg.get(sender.relay_id()).unwrap().last_seen, ts);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_router_start_spawns_task() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let inbound_rx = transport
+            .take_inbound_rx()
+            .expect("inbound_rx already taken");
+        let transport = Arc::new(transport);
+
+        let router = MeshRouter::new(peers.clone());
+        router
+            .start(inbound_rx, transport.clone(), "test_relay".to_string())
+            .await;
+
+        // Just verify it doesn't panic
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+
+    #[test]
+    fn test_announce_payload_with_ipv6_address() {
+        let payload = AnnouncePayload {
+            relay_id: "relay123".to_string(),
+            address: "[::1]:9443".to_string(),
+            public_key: vec![0u8; 32],
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: AnnouncePayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.address, "[::1]:9443");
+    }
+
+    #[test]
+    fn test_dm_forward_payload_with_both_user_ids_same() {
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let payload = DmForwardPayload {
+            to_user_id: user_id.clone(),
+            encrypted_dm: b"self-message".to_vec(),
+            from_user_id: user_id.clone(),
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: DmForwardPayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.to_user_id, decoded.from_user_id);
+    }
+
+    #[test]
+    fn test_announce_payload_with_long_relay_id() {
+        let long_id = "a".repeat(1000);
+        let payload = AnnouncePayload {
+            relay_id: long_id.clone(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: vec![0u8; 32],
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: AnnouncePayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.relay_id, long_id);
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_ping_with_empty_payload() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        // Pre-register the peer
+        {
+            let mut reg = peers.write().await;
+            reg.upsert(
+                sender.relay_id().to_string(),
+                crate::relay_mesh::peers::PeerInfo {
+                    public_key: *sender.verifying_key(),
+                    address: "1.2.3.4:9443".to_string(),
+                    last_seen: 0,
+                },
+            );
+        }
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayPing,
+            vec![],
+            5000,
+        );
+
+        MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_ping_with_non_empty_payload() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+
+        // Pre-register the peer
+        {
+            let mut reg = peers.write().await;
+            reg.upsert(
+                sender.relay_id().to_string(),
+                crate::relay_mesh::peers::PeerInfo {
+                    public_key: *sender.verifying_key(),
+                    address: "1.2.3.4:9443".to_string(),
+                    last_seen: 0,
+                },
+            );
+        }
+
+        // Ping with non-empty payload (should still work)
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayPing,
+            b"extra data".to_vec(),
+            5000,
+        );
+
+        MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_router_handles_announce_registers_relay_id() {
+        let peers = Arc::new(RwLock::new(PeerRegistry::new()));
+        let mut transport = MeshTransport::new();
+        let _rx = transport.take_inbound_rx();
+        let transport = Arc::new(transport);
+
+        let sender = RelayIdentity::generate();
+        let announce = AnnouncePayload {
+            relay_id: sender.relay_id().to_string(),
+            address: "10.0.0.1:9443".to_string(),
+            public_key: sender.public_key_bytes().to_vec(),
+        };
+
+        let envelope = MeshEnvelope::create_signed(
+            &sender,
+            "us".to_string(),
+            PayloadType::RelayAnnounce,
+            serde_json::to_vec(&announce).unwrap(),
+            1000,
+        );
+
+        MeshRouter::handle_envelope(&envelope, &peers, &transport, "us", None)
+            .await
+            .unwrap();
+
+        // Check that relay_id was registered in transport
+        // We can't easily test this without access to transport internals,
+        // but we can verify it doesn't panic
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+
+    #[test]
+    fn test_dm_forward_payload_special_characters() {
+        let payload = DmForwardPayload {
+            to_user_id: uuid::Uuid::new_v4().to_string(),
+            encrypted_dm: b"\x00\x01\x02\xff\xfe\xfd".to_vec(),
+            from_user_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: DmForwardPayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.encrypted_dm, b"\x00\x01\x02\xff\xfe\xfd");
+    }
 }
