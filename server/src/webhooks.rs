@@ -67,7 +67,7 @@ const VALID_EVENTS: &[&str] = &[
     "reaction_add",
 ];
 
-fn validate_events(events: &[String]) -> Result<(), String> {
+pub fn validate_events(events: &[String]) -> Result<(), String> {
     for e in events {
         if !VALID_EVENTS.contains(&e.as_str()) {
             return Err(format!(
@@ -84,7 +84,7 @@ fn validate_events(events: &[String]) -> Result<(), String> {
 
 // ── HMAC-SHA256 signing ──
 
-fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> String {
+pub fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
 
     let block_size = 64;
