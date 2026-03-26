@@ -463,6 +463,8 @@ impl VoiceProcessor {
 mod tests {
     use super::*;
 
+    // ── AudioQuality presets ──────────────────────────────────────────────────
+
     #[test]
     fn test_audio_quality_frame_size() {
         let quality = AudioQuality::standard();
@@ -470,6 +472,72 @@ mod tests {
 
         // Standard: 48kHz, mono, 20ms = 48000 * 1 * 0.02 * 2 = 1920 bytes
         assert_eq!(frame_size, 1920);
+    }
+
+    #[test]
+    fn test_audio_quality_high_quality_fields() {
+        let q = AudioQuality::high_quality();
+        assert_eq!(q.sample_rate, 48000);
+        assert_eq!(q.bitrate, 128000);
+        assert_eq!(q.channels, 2);
+        assert_eq!(q.frame_duration, 20);
+    }
+
+    #[test]
+    fn test_audio_quality_standard_fields() {
+        let q = AudioQuality::standard();
+        assert_eq!(q.sample_rate, 48000);
+        assert_eq!(q.bitrate, 64000);
+        assert_eq!(q.channels, 1);
+        assert_eq!(q.frame_duration, 20);
+    }
+
+    #[test]
+    fn test_audio_quality_low_bandwidth_fields() {
+        let q = AudioQuality::low_bandwidth();
+        assert_eq!(q.sample_rate, 16000);
+        assert_eq!(q.bitrate, 32000);
+        assert_eq!(q.channels, 1);
+        assert_eq!(q.frame_duration, 40);
+    }
+
+    #[test]
+    fn test_audio_quality_frame_size_high_quality() {
+        // 48000 * 2 channels * 20ms / 1000 * 2 bytes = 3840
+        assert_eq!(AudioQuality::high_quality().frame_size_bytes(), 3840);
+    }
+
+    #[test]
+    fn test_audio_quality_frame_size_standard() {
+        // 48000 * 1 * 20 / 1000 * 2 = 1920
+        assert_eq!(AudioQuality::standard().frame_size_bytes(), 1920);
+    }
+
+    #[test]
+    fn test_audio_quality_frame_size_low_bandwidth() {
+        // 16000 * 1 * 40 / 1000 * 2 = 1280
+        assert_eq!(AudioQuality::low_bandwidth().frame_size_bytes(), 1280);
+    }
+
+    // ── VoiceActivityDetector ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_vad_initial_state() {
+        let vad = VoiceActivityDetector::new();
+        assert!(!vad.is_speaking);
+        assert_eq!(vad.current_hangover, 0);
+        assert_eq!(vad.hangover_frames, 20);
+        // threshold is private-ish but default is 0.01
+        assert!(vad.threshold > 0.0);
+    }
+
+    #[test]
+    fn test_vad_default_matches_new() {
+        let a = VoiceActivityDetector::new();
+        let b = VoiceActivityDetector::default();
+        assert_eq!(a.is_speaking, b.is_speaking);
+        assert_eq!(a.threshold, b.threshold);
+        assert_eq!(a.hangover_frames, b.hangover_frames);
     }
 
     #[test]
@@ -484,6 +552,84 @@ mod tests {
         let loud = vec![1000i16; 960];
         assert!(vad.detect_activity(&loud));
     }
+
+    #[test]
+    fn test_vad_silence_all_zeros() {
+        let mut vad = VoiceActivityDetector::new();
+        let silence = vec![0i16; 480];
+        assert!(!vad.detect_activity(&silence));
+        assert!(!vad.is_speaking);
+    }
+
+    #[test]
+    fn test_vad_loud_audio_triggers() {
+        let mut vad = VoiceActivityDetector::new();
+        // i16::MAX amplitude → energy near 1.0, well above threshold 0.01
+        let loud = vec![i16::MAX; 960];
+        assert!(vad.detect_activity(&loud));
+        assert!(vad.is_speaking);
+    }
+
+    #[test]
+    fn test_vad_threshold_boundary_below() {
+        let mut vad = VoiceActivityDetector::new();
+        // threshold is 0.01; energy of a single sample `s` ≈ s / i16::MAX
+        // Pick amplitude clearly below threshold: 100 / 32767 ≈ 0.003
+        let quiet = vec![100i16; 960];
+        assert!(!vad.detect_activity(&quiet));
+    }
+
+    #[test]
+    fn test_vad_threshold_boundary_above() {
+        let mut vad = VoiceActivityDetector::new();
+        // 500 / 32767 ≈ 0.015 — above 0.01 threshold
+        let medium = vec![500i16; 960];
+        assert!(vad.detect_activity(&medium));
+    }
+
+    #[test]
+    fn test_vad_very_short_sample() {
+        let mut vad = VoiceActivityDetector::new();
+        // Single sample — should not panic; silence shouldn't trigger
+        assert!(!vad.detect_activity(&[0i16]));
+        // Single loud sample
+        assert!(vad.detect_activity(&[i16::MAX]));
+    }
+
+    #[test]
+    fn test_vad_empty_sample() {
+        let mut vad = VoiceActivityDetector::new();
+        // Empty slice → energy 0.0 → no activity
+        assert!(!vad.detect_activity(&[]));
+    }
+
+    #[test]
+    fn test_vad_hangover_keeps_speaking_after_silence() {
+        let mut vad = VoiceActivityDetector::new();
+        // Trigger speaking
+        vad.detect_activity(&vec![i16::MAX; 960]);
+        assert!(vad.is_speaking);
+        // Feed silence — should stay speaking due to hangover_frames
+        let result = vad.detect_activity(&vec![0i16; 960]);
+        assert!(
+            result,
+            "hangover should keep is_speaking true immediately after loud frame"
+        );
+    }
+
+    // ── VoiceProcessor::new ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_voice_processor_new_initial_state() {
+        let user_id = Uuid::new_v4();
+        let processor = VoiceProcessor::new(user_id);
+        assert_eq!(processor.local_user_id, user_id);
+        assert!(processor.channels.is_empty());
+        assert!(processor.voice_keys.is_empty());
+        assert!(!processor.vad.is_speaking);
+    }
+
+    // ── VoiceProcessor::create_voice_channel ─────────────────────────────────
 
     #[test]
     fn test_voice_channel_creation() {
@@ -501,6 +647,343 @@ mod tests {
     }
 
     #[test]
+    fn test_create_voice_channel_fields() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let quality = AudioQuality::high_quality();
+        let channel_id = processor.create_voice_channel(
+            "Music Room".to_string(),
+            VoiceChannelType::Private,
+            quality.clone(),
+        );
+
+        let ch = processor.get_channel(channel_id).unwrap();
+        assert_eq!(ch.channel_id, channel_id);
+        assert_eq!(ch.name, "Music Room");
+        assert!(ch.max_participants.is_none());
+        assert_eq!(ch.quality_settings, quality);
+        assert_eq!(ch.channel_type, VoiceChannelType::Private);
+        assert_eq!(ch.encryption_mode, EncryptionMode::EndToEnd);
+        assert!(ch.participants.is_empty());
+    }
+
+    #[test]
+    fn test_create_voice_channel_unique_ids() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let id1 = processor.create_voice_channel(
+            "A".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        let id2 = processor.create_voice_channel(
+            "B".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        assert_ne!(id1, id2);
+    }
+
+    // ── VoiceProcessor::join_channel ─────────────────────────────────────────
+
+    #[test]
+    fn test_join_channel_success() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "Chat".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+
+        processor.join_channel(channel_id).unwrap();
+
+        let ch = processor.get_channel(channel_id).unwrap();
+        assert!(ch.participants.contains_key(&user_id));
+        assert!(processor.voice_keys.contains_key(&(channel_id, user_id)));
+    }
+
+    #[test]
+    fn test_join_nonexistent_channel_errors() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let result = processor.join_channel(Uuid::new_v4());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_join_channel_full_errors() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "Full".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+
+        // Set max to 1 and add a different participant manually to fill the slot
+        {
+            let ch = processor.channels.get_mut(&channel_id).unwrap();
+            ch.max_participants = Some(1);
+            ch.participants.insert(
+                Uuid::new_v4(),
+                VoiceParticipant {
+                    user_id: Uuid::new_v4(),
+                    joined_at: chrono::Utc::now(),
+                    is_speaking: false,
+                    is_muted: false,
+                    is_deafened: false,
+                    volume: 1.0,
+                    voice_key: None,
+                },
+            );
+        }
+
+        let result = processor.join_channel(channel_id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("full"));
+    }
+
+    // ── VoiceProcessor::leave_channel ────────────────────────────────────────
+
+    #[test]
+    fn test_leave_channel_success() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "Chat".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+        assert!(processor.voice_keys.contains_key(&(channel_id, user_id)));
+
+        processor.leave_channel(channel_id).unwrap();
+
+        let ch = processor.get_channel(channel_id).unwrap();
+        assert!(!ch.participants.contains_key(&user_id));
+        assert!(!processor.voice_keys.contains_key(&(channel_id, user_id)));
+    }
+
+    #[test]
+    fn test_leave_nonexistent_channel_ok() {
+        // leave_channel silently succeeds when channel doesn't exist
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let result = processor.leave_channel(Uuid::new_v4());
+        assert!(result.is_ok());
+    }
+
+    // ── VoiceProcessor::process_outgoing_audio ───────────────────────────────
+
+    #[test]
+    fn test_process_outgoing_audio_no_key_errors() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        // Never joined — no voice key
+        let result = processor.process_outgoing_audio(channel_id, &[100i16; 480]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_outgoing_audio_returns_packet() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        // Use loud audio so VAD triggers and packet type is Audio
+        let packet = processor
+            .process_outgoing_audio(channel_id, &vec![1000i16; 960])
+            .unwrap();
+
+        assert_eq!(packet.user_id, user_id);
+        assert_eq!(packet.channel_id, channel_id);
+        assert_eq!(packet.packet_type, VoicePacketType::Audio);
+        assert!(!packet.encrypted_audio.is_empty());
+    }
+
+    #[test]
+    fn test_process_outgoing_audio_silence_produces_speaking_state_packet() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        let packet = processor
+            .process_outgoing_audio(channel_id, &vec![0i16; 960])
+            .unwrap();
+
+        assert_eq!(
+            packet.packet_type,
+            VoicePacketType::SpeakingState { is_speaking: false }
+        );
+        // No encrypted payload for silence
+        assert!(packet.encrypted_audio.is_empty());
+    }
+
+    // ── VoiceProcessor::process_incoming_packet ──────────────────────────────
+
+    #[test]
+    fn test_process_incoming_packet_no_key_errors() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+
+        let sender_id = Uuid::new_v4();
+        let packet = VoicePacket {
+            packet_id: 0,
+            user_id: sender_id,
+            channel_id,
+            timestamp: 0,
+            sequence: 0,
+            encrypted_audio: vec![],
+            packet_type: VoicePacketType::Audio,
+        };
+
+        let result = processor.process_incoming_packet(packet);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_incoming_packet_silence_returns_none() {
+        let local_user = Uuid::new_v4();
+        let sender_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(local_user);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        // Register a voice key for the sender so we don't get a "no key" error
+        let sender_key = processor.crypto.generate_voice_key().unwrap();
+        processor
+            .voice_keys
+            .insert((channel_id, sender_id), sender_key);
+
+        let packet = VoicePacket {
+            packet_id: 0,
+            user_id: sender_id,
+            channel_id,
+            timestamp: 0,
+            sequence: 0,
+            encrypted_audio: vec![],
+            packet_type: VoicePacketType::Silence,
+        };
+
+        let result = processor.process_incoming_packet(packet).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_process_incoming_packet_speaking_state_returns_none() {
+        let local_user = Uuid::new_v4();
+        let sender_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(local_user);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        let sender_key = processor.crypto.generate_voice_key().unwrap();
+        processor
+            .voice_keys
+            .insert((channel_id, sender_id), sender_key);
+        // Add sender as participant so speaking state can be updated
+        processor
+            .channels
+            .get_mut(&channel_id)
+            .unwrap()
+            .participants
+            .insert(
+                sender_id,
+                VoiceParticipant {
+                    user_id: sender_id,
+                    joined_at: chrono::Utc::now(),
+                    is_speaking: false,
+                    is_muted: false,
+                    is_deafened: false,
+                    volume: 1.0,
+                    voice_key: None,
+                },
+            );
+
+        let packet = VoicePacket {
+            packet_id: 0,
+            user_id: sender_id,
+            channel_id,
+            timestamp: 0,
+            sequence: 0,
+            encrypted_audio: vec![],
+            packet_type: VoicePacketType::SpeakingState { is_speaking: true },
+        };
+
+        let result = processor.process_incoming_packet(packet).unwrap();
+        assert!(result.is_none());
+        // Participant speaking state should be updated
+        let ch = processor.get_channel(channel_id).unwrap();
+        assert!(ch.participants[&sender_id].is_speaking);
+    }
+
+    #[test]
+    fn test_process_incoming_audio_packet_decodes() {
+        let local_user = Uuid::new_v4();
+        let sender_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(local_user);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+
+        // Generate a voice key for sender, encrypt some audio with it
+        let mut sender_key = processor.crypto.generate_voice_key().unwrap();
+        let samples: Vec<i16> = vec![100, 200, 300, -100];
+        let audio_bytes: Vec<u8> = samples
+            .iter()
+            .flat_map(|&s| s.to_le_bytes().to_vec())
+            .collect();
+        let encrypted = processor
+            .crypto
+            .encrypt_voice_packet(&mut sender_key, &audio_bytes)
+            .unwrap();
+        let seq = sender_key.sequence;
+
+        // Store key AFTER encryption so sequence matches
+        processor
+            .voice_keys
+            .insert((channel_id, sender_id), sender_key);
+
+        let packet = VoicePacket {
+            packet_id: seq,
+            user_id: sender_id,
+            channel_id,
+            timestamp: 0,
+            sequence: seq,
+            encrypted_audio: encrypted,
+            packet_type: VoicePacketType::Audio,
+        };
+
+        let decoded = processor.process_incoming_packet(packet).unwrap().unwrap();
+        assert_eq!(decoded, samples);
+    }
+
+    // ── VoiceProcessor::mix_audio_streams ────────────────────────────────────
+
+    #[test]
     fn test_audio_mixing() {
         let processor = VoiceProcessor::new(Uuid::new_v4());
 
@@ -509,5 +992,230 @@ mod tests {
 
         let mixed = processor.mix_audio_streams(vec![stream1, stream2]);
         assert_eq!(mixed, vec![150i16, 300i16, 450i16]);
+    }
+
+    #[test]
+    fn test_mix_audio_empty_streams() {
+        let processor = VoiceProcessor::new(Uuid::new_v4());
+        let result = processor.mix_audio_streams(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_mix_audio_single_stream() {
+        let processor = VoiceProcessor::new(Uuid::new_v4());
+        let stream = vec![10i16, 20i16, 30i16];
+        let result = processor.mix_audio_streams(vec![stream.clone()]);
+        assert_eq!(result, stream);
+    }
+
+    #[test]
+    fn test_mix_audio_clips_at_i16_max() {
+        let processor = VoiceProcessor::new(Uuid::new_v4());
+        let s1 = vec![i16::MAX];
+        let s2 = vec![i16::MAX];
+        let result = processor.mix_audio_streams(vec![s1, s2]);
+        assert_eq!(result, vec![i16::MAX]);
+    }
+
+    #[test]
+    fn test_mix_audio_clips_at_i16_min() {
+        let processor = VoiceProcessor::new(Uuid::new_v4());
+        let s1 = vec![i16::MIN];
+        let s2 = vec![i16::MIN];
+        let result = processor.mix_audio_streams(vec![s1, s2]);
+        assert_eq!(result, vec![i16::MIN]);
+    }
+
+    #[test]
+    fn test_mix_audio_streams_unequal_lengths() {
+        let processor = VoiceProcessor::new(Uuid::new_v4());
+        let long_stream = vec![10i16, 20i16, 30i16];
+        let short_stream = vec![5i16];
+        let result = processor.mix_audio_streams(vec![long_stream, short_stream]);
+        // short stream only contributes to first sample
+        assert_eq!(result, vec![15i16, 20i16, 30i16]);
+    }
+
+    // ── VoiceProcessor::set_muted / set_deafened ─────────────────────────────
+
+    #[test]
+    fn test_set_muted_success() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        processor.set_muted(channel_id, true).unwrap();
+        assert!(processor.get_channel(channel_id).unwrap().participants[&user_id].is_muted);
+
+        processor.set_muted(channel_id, false).unwrap();
+        assert!(!processor.get_channel(channel_id).unwrap().participants[&user_id].is_muted);
+    }
+
+    #[test]
+    fn test_set_muted_nonexistent_channel_errors() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let result = processor.set_muted(Uuid::new_v4(), true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_deafened_success() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        processor.set_deafened(channel_id, true).unwrap();
+        assert!(processor.get_channel(channel_id).unwrap().participants[&user_id].is_deafened);
+
+        processor.set_deafened(channel_id, false).unwrap();
+        assert!(!processor.get_channel(channel_id).unwrap().participants[&user_id].is_deafened);
+    }
+
+    #[test]
+    fn test_set_deafened_nonexistent_channel_errors() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let result = processor.set_deafened(Uuid::new_v4(), true);
+        assert!(result.is_err());
+    }
+
+    // ── VoiceProcessor::rotate_voice_key ─────────────────────────────────────
+
+    #[test]
+    fn test_rotate_voice_key_success() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        let old_key = processor
+            .voice_keys
+            .get(&(channel_id, user_id))
+            .unwrap()
+            .aes_key;
+
+        let new_key = processor.rotate_voice_key(channel_id).unwrap();
+        // New key should be a valid VoiceKey and replace the old one
+        let stored_key = processor
+            .voice_keys
+            .get(&(channel_id, user_id))
+            .unwrap()
+            .aes_key;
+        assert_eq!(new_key.aes_key, stored_key);
+        // With overwhelming probability, a freshly generated key differs from the old one
+        assert_ne!(old_key, new_key.aes_key);
+    }
+
+    #[test]
+    fn test_rotate_voice_key_not_in_channel_still_inserts() {
+        // rotate_voice_key inserts a new key regardless of channel membership;
+        // it only errors if the key retrieval after insert fails (which shouldn't happen).
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        // Do NOT join — no prior key
+        let result = processor.rotate_voice_key(channel_id);
+        // rotate_voice_key generates and inserts unconditionally, so this succeeds
+        assert!(result.is_ok());
+    }
+
+    // ── VoiceProcessor::should_rotate_key ────────────────────────────────────
+
+    #[test]
+    fn test_should_rotate_key_not_in_channel_returns_false() {
+        let processor = VoiceProcessor::new(Uuid::new_v4());
+        assert!(!processor.should_rotate_key(Uuid::new_v4()));
+    }
+
+    #[test]
+    fn test_should_rotate_key_fresh_channel_returns_false() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+        // Freshly generated key has sequence 0, well below 100_000 threshold
+        assert!(!processor.should_rotate_key(channel_id));
+    }
+
+    // ── VoiceProcessor::set_user_volume ──────────────────────────────────────
+
+    #[test]
+    fn test_set_user_volume_success() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        processor.set_user_volume(channel_id, user_id, 0.5).unwrap();
+        let vol = processor.get_channel(channel_id).unwrap().participants[&user_id].volume;
+        assert!((vol - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_set_user_volume_clamps_above_max() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        // Values above 2.0 should clamp to 2.0
+        processor.set_user_volume(channel_id, user_id, 5.0).unwrap();
+        let vol = processor.get_channel(channel_id).unwrap().participants[&user_id].volume;
+        assert!((vol - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_set_user_volume_clamps_below_min() {
+        let user_id = Uuid::new_v4();
+        let mut processor = VoiceProcessor::new(user_id);
+        let channel_id = processor.create_voice_channel(
+            "C".to_string(),
+            VoiceChannelType::Lobby,
+            AudioQuality::standard(),
+        );
+        processor.join_channel(channel_id).unwrap();
+
+        processor
+            .set_user_volume(channel_id, user_id, -1.0)
+            .unwrap();
+        let vol = processor.get_channel(channel_id).unwrap().participants[&user_id].volume;
+        assert!((vol - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_set_user_volume_nonexistent_channel_errors() {
+        let mut processor = VoiceProcessor::new(Uuid::new_v4());
+        let result = processor.set_user_volume(Uuid::new_v4(), Uuid::new_v4(), 0.5);
+        assert!(result.is_err());
     }
 }
