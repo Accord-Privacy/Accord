@@ -726,6 +726,33 @@ mod tests {
     use super::*;
     use std::ffi::CString;
 
+    // ─── AccordBuffer ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_buffer_free_null_no_crash() {
+        // Must not crash when passed null
+        unsafe {
+            accord_buffer_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_buffer_lifecycle() {
+        // Create a buffer via keymaterial and verify we can read then free it
+        unsafe {
+            let km = accord_keymaterial_generate(1);
+            assert!(!km.is_null());
+            let buf = accord_keymaterial_identity_key(km);
+            assert!(!buf.is_null());
+            assert_eq!((*buf).len, 32);
+            assert!(!(*buf).data.is_null());
+            accord_buffer_free(buf);
+            accord_keymaterial_free(km);
+        }
+    }
+
+    // ─── AccordKeyMaterial ───────────────────────────────────────────────────
+
     #[test]
     fn test_keymaterial_roundtrip() {
         unsafe {
@@ -748,6 +775,154 @@ mod tests {
             accord_buffer_free(spk);
             accord_buffer_free(bundle);
             accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_generate_returns_nonnull() {
+        unsafe {
+            let km = accord_keymaterial_generate(0);
+            assert!(!km.is_null());
+            accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_generate_produces_unique_keys() {
+        unsafe {
+            let km1 = accord_keymaterial_generate(5);
+            let km2 = accord_keymaterial_generate(5);
+            assert!(!km1.is_null());
+            assert!(!km2.is_null());
+
+            let ik1 = accord_keymaterial_identity_key(km1);
+            let ik2 = accord_keymaterial_identity_key(km2);
+            assert!(!ik1.is_null());
+            assert!(!ik2.is_null());
+
+            let bytes1 = slice::from_raw_parts((*ik1).data, (*ik1).len);
+            let bytes2 = slice::from_raw_parts((*ik2).data, (*ik2).len);
+            // Two independently generated identity keys must differ
+            assert_ne!(bytes1, bytes2);
+
+            accord_buffer_free(ik1);
+            accord_buffer_free(ik2);
+            accord_keymaterial_free(km1);
+            accord_keymaterial_free(km2);
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_identity_key_is_32_bytes() {
+        unsafe {
+            let km = accord_keymaterial_generate(3);
+            let buf = accord_keymaterial_identity_key(km);
+            assert!(!buf.is_null());
+            assert_eq!((*buf).len, 32);
+            accord_buffer_free(buf);
+            accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_signed_prekey_is_32_bytes() {
+        unsafe {
+            let km = accord_keymaterial_generate(3);
+            let buf = accord_keymaterial_signed_prekey(km);
+            assert!(!buf.is_null());
+            assert_eq!((*buf).len, 32);
+            accord_buffer_free(buf);
+            accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_publishable_bundle_nonempty() {
+        unsafe {
+            let km = accord_keymaterial_generate(5);
+            let buf = accord_keymaterial_publishable_bundle(km);
+            assert!(!buf.is_null());
+            assert!((*buf).len > 0);
+            accord_buffer_free(buf);
+            accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_free_null_no_crash() {
+        unsafe {
+            accord_keymaterial_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_keymaterial_null_ptr_returns_null_buffers() {
+        unsafe {
+            assert!(accord_keymaterial_identity_key(ptr::null()).is_null());
+            assert!(accord_keymaterial_signed_prekey(ptr::null()).is_null());
+            assert!(accord_keymaterial_publishable_bundle(ptr::null()).is_null());
+        }
+    }
+
+    // ─── AccordSessionManager ────────────────────────────────────────────────
+
+    #[test]
+    fn test_session_manager_lifecycle() {
+        unsafe {
+            let mgr = accord_session_manager_new();
+            assert!(!mgr.is_null());
+            accord_session_manager_free(mgr);
+        }
+    }
+
+    #[test]
+    fn test_session_manager_free_null_no_crash() {
+        unsafe {
+            accord_session_manager_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_session_manager_has_session_unknown_returns_zero() {
+        unsafe {
+            let mgr = accord_session_manager_new();
+            let peer = CString::new("unknown_peer").unwrap();
+            let channel = CString::new("unknown_channel").unwrap();
+            let result = accord_session_manager_has_session(mgr, peer.as_ptr(), channel.as_ptr());
+            assert_eq!(result, 0);
+            accord_session_manager_free(mgr);
+        }
+    }
+
+    #[test]
+    fn test_session_manager_has_session_null_mgr() {
+        unsafe {
+            let peer = CString::new("bob").unwrap();
+            let channel = CString::new("general").unwrap();
+            assert_eq!(
+                accord_session_manager_has_session(ptr::null(), peer.as_ptr(), channel.as_ptr()),
+                ACCORD_ERR_NULL_PTR
+            );
+        }
+    }
+
+    #[test]
+    fn test_session_manager_has_session_null_strings() {
+        unsafe {
+            let mgr = accord_session_manager_new();
+            // null peer_user_id → ACCORD_ERR_INVALID_UTF8
+            let channel = CString::new("general").unwrap();
+            assert_eq!(
+                accord_session_manager_has_session(mgr, ptr::null(), channel.as_ptr()),
+                ACCORD_ERR_INVALID_UTF8
+            );
+            // null channel_id → ACCORD_ERR_INVALID_UTF8
+            let peer = CString::new("bob").unwrap();
+            assert_eq!(
+                accord_session_manager_has_session(mgr, peer.as_ptr(), ptr::null()),
+                ACCORD_ERR_INVALID_UTF8
+            );
+            accord_session_manager_free(mgr);
         }
     }
 
@@ -826,6 +1001,16 @@ mod tests {
             let dec2 = slice::from_raw_parts((*dec2_buf).data, (*dec2_buf).len);
             assert_eq!(dec2, b"Hello Alice!");
 
+            // After handshake, both sides should have a session
+            assert_eq!(
+                accord_session_manager_has_session(alice_mgr, peer_bob.as_ptr(), channel.as_ptr()),
+                1
+            );
+            assert_eq!(
+                accord_session_manager_has_session(bob_mgr, peer_alice.as_ptr(), channel.as_ptr()),
+                1
+            );
+
             // Cleanup
             accord_buffer_free(bob_ik_buf);
             accord_buffer_free(bob_spk_buf);
@@ -840,6 +1025,401 @@ mod tests {
             accord_keymaterial_free(bob_km);
         }
     }
+
+    #[test]
+    fn test_session_manager_encrypt_null_mgr_returns_null() {
+        unsafe {
+            let peer = CString::new("bob").unwrap();
+            let channel = CString::new("general").unwrap();
+            let msg = b"hi";
+            let result = accord_session_manager_encrypt(
+                ptr::null_mut(),
+                peer.as_ptr(),
+                channel.as_ptr(),
+                msg.as_ptr(),
+                msg.len(),
+            );
+            assert!(result.is_null());
+        }
+    }
+
+    #[test]
+    fn test_session_manager_decrypt_null_mgr_returns_null() {
+        unsafe {
+            let peer = CString::new("bob").unwrap();
+            let channel = CString::new("general").unwrap();
+            let data = b"garbage";
+            let result = accord_session_manager_decrypt(
+                ptr::null_mut(),
+                peer.as_ptr(),
+                channel.as_ptr(),
+                data.as_ptr(),
+                data.len(),
+            );
+            assert!(result.is_null());
+        }
+    }
+
+    #[test]
+    fn test_session_manager_initiate_null_mgr_returns_null() {
+        unsafe {
+            let km = accord_keymaterial_generate(1);
+            let peer = CString::new("bob").unwrap();
+            let channel = CString::new("ch").unwrap();
+            let dummy = [0u8; 8];
+            let result = accord_session_manager_initiate(
+                ptr::null_mut(),
+                km,
+                peer.as_ptr(),
+                channel.as_ptr(),
+                dummy.as_ptr(),
+                dummy.len(),
+                dummy.as_ptr(),
+                dummy.len(),
+            );
+            assert!(result.is_null());
+            accord_keymaterial_free(km);
+        }
+    }
+
+    #[test]
+    fn test_session_manager_receive_initial_null_mgr_returns_null() {
+        unsafe {
+            let km = accord_keymaterial_generate(1);
+            let peer = CString::new("alice").unwrap();
+            let channel = CString::new("ch").unwrap();
+            let dummy = [0u8; 8];
+            let result = accord_session_manager_receive_initial(
+                ptr::null_mut(),
+                km,
+                peer.as_ptr(),
+                channel.as_ptr(),
+                dummy.as_ptr(),
+                dummy.len(),
+            );
+            assert!(result.is_null());
+            accord_keymaterial_free(km);
+        }
+    }
+
+    // ─── AccordBackgroundVoice ───────────────────────────────────────────────
+
+    #[test]
+    fn test_background_voice_lifecycle() {
+        unsafe {
+            let voice = accord_background_voice_new();
+            assert!(!voice.is_null());
+            accord_background_voice_free(voice);
+        }
+    }
+
+    #[test]
+    fn test_background_voice_free_null_no_crash() {
+        unsafe {
+            accord_background_voice_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_voice_is_active_initially_true() {
+        // A freshly created session starts in Active state → is_active() == 1
+        unsafe {
+            let voice = accord_background_voice_new();
+            assert!(!voice.is_null());
+            let active = accord_voice_is_active(voice);
+            assert_eq!(active, 1);
+            accord_background_voice_free(voice);
+        }
+    }
+
+    #[test]
+    fn test_voice_is_active_null_returns_error() {
+        unsafe {
+            let result = accord_voice_is_active(ptr::null());
+            assert_eq!(result, ACCORD_ERR_NULL_PTR);
+        }
+    }
+
+    #[test]
+    fn test_voice_enter_background_foreground_transitions() {
+        unsafe {
+            let voice = accord_background_voice_new();
+            assert!(!voice.is_null());
+
+            // Enter background
+            let rc = accord_voice_enter_background(voice, 1000);
+            assert_eq!(rc, ACCORD_OK);
+
+            // Enter foreground
+            let rc = accord_voice_enter_foreground(voice, 5000);
+            assert_eq!(rc, ACCORD_OK);
+
+            // After returning to foreground, session should be active again
+            assert_eq!(accord_voice_is_active(voice), 1);
+
+            accord_background_voice_free(voice);
+        }
+    }
+
+    #[test]
+    fn test_voice_enter_background_null_returns_error() {
+        unsafe {
+            assert_eq!(
+                accord_voice_enter_background(ptr::null_mut(), 0),
+                ACCORD_ERR_NULL_PTR
+            );
+        }
+    }
+
+    #[test]
+    fn test_voice_enter_foreground_null_returns_error() {
+        unsafe {
+            assert_eq!(
+                accord_voice_enter_foreground(ptr::null_mut(), 0),
+                ACCORD_ERR_NULL_PTR
+            );
+        }
+    }
+
+    #[test]
+    fn test_voice_get_stats_valid() {
+        unsafe {
+            let voice = accord_background_voice_new();
+            assert!(!voice.is_null());
+
+            let mut stats = AccordVoiceStats {
+                total_background_ms: 0,
+                packets_received_in_background: 0,
+                keepalives_sent: 0,
+                reconnection_count: 0,
+                failed_reconnections: 0,
+                frames_dropped: 0,
+                current_state: -1,
+            };
+
+            let rc = accord_voice_get_stats(voice, &mut stats as *mut AccordVoiceStats);
+            assert_eq!(rc, ACCORD_OK);
+            // Fresh session is in Active state (int 0)
+            assert_eq!(stats.current_state, 0);
+
+            accord_background_voice_free(voice);
+        }
+    }
+
+    #[test]
+    fn test_voice_get_stats_null_handle_returns_error() {
+        unsafe {
+            let mut stats = AccordVoiceStats {
+                total_background_ms: 0,
+                packets_received_in_background: 0,
+                keepalives_sent: 0,
+                reconnection_count: 0,
+                failed_reconnections: 0,
+                frames_dropped: 0,
+                current_state: -1,
+            };
+            let rc = accord_voice_get_stats(ptr::null(), &mut stats as *mut AccordVoiceStats);
+            assert_eq!(rc, ACCORD_ERR_NULL_PTR);
+        }
+    }
+
+    #[test]
+    fn test_voice_get_stats_null_out_returns_error() {
+        unsafe {
+            let voice = accord_background_voice_new();
+            let rc = accord_voice_get_stats(voice, ptr::null_mut());
+            assert_eq!(rc, ACCORD_ERR_NULL_PTR);
+            accord_background_voice_free(voice);
+        }
+    }
+
+    #[test]
+    fn test_voice_stats_after_background_cycle() {
+        unsafe {
+            let voice = accord_background_voice_new();
+
+            accord_voice_enter_background(voice, 1000);
+            accord_voice_enter_foreground(voice, 6000);
+
+            let mut stats = AccordVoiceStats {
+                total_background_ms: 0,
+                packets_received_in_background: 0,
+                keepalives_sent: 0,
+                reconnection_count: 0,
+                failed_reconnections: 0,
+                frames_dropped: 0,
+                current_state: -1,
+            };
+            let rc = accord_voice_get_stats(voice, &mut stats as *mut AccordVoiceStats);
+            assert_eq!(rc, ACCORD_OK);
+            // At least 5000 ms should have been tracked as background time
+            assert!(stats.total_background_ms >= 5000);
+
+            accord_background_voice_free(voice);
+        }
+    }
+
+    // ─── SenderKeyStore ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sender_key_store_lifecycle() {
+        unsafe {
+            let store = accord_sender_key_store_create();
+            assert!(!store.is_null());
+            accord_sender_key_store_free(store);
+        }
+    }
+
+    #[test]
+    fn test_sender_key_store_free_null_no_crash() {
+        unsafe {
+            accord_sender_key_store_free(ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn test_sender_key_distribution_roundtrip() {
+        unsafe {
+            let sender_store = accord_sender_key_store_create();
+            let receiver_store = accord_sender_key_store_create();
+
+            let channel = CString::new("room-1").unwrap();
+            let sender_id = CString::new("alice").unwrap();
+
+            // Create distribution
+            let dist_buf = accord_sender_key_create_distribution(sender_store, channel.as_ptr());
+            assert!(!dist_buf.is_null());
+            assert!((*dist_buf).len > 0);
+
+            // Convert buffer to a C string for process_distribution
+            let dist_json =
+                std::str::from_utf8(slice::from_raw_parts((*dist_buf).data, (*dist_buf).len))
+                    .expect("distribution JSON must be valid UTF-8");
+            let dist_cstring = CString::new(dist_json).expect("no null bytes in JSON");
+
+            let rc = accord_sender_key_process_distribution(
+                receiver_store,
+                channel.as_ptr(),
+                sender_id.as_ptr(),
+                dist_cstring.as_ptr(),
+            );
+            assert_eq!(rc, ACCORD_OK);
+
+            accord_buffer_free(dist_buf);
+            accord_sender_key_store_free(sender_store);
+            accord_sender_key_store_free(receiver_store);
+        }
+    }
+
+    #[test]
+    fn test_sender_key_encrypt_decrypt_roundtrip() {
+        unsafe {
+            let sender_store = accord_sender_key_store_create();
+            let receiver_store = accord_sender_key_store_create();
+
+            let channel = CString::new("room-1").unwrap();
+            let sender_id = CString::new("alice").unwrap();
+            let plaintext = b"secret message";
+
+            // Share distribution so receiver knows the sender key
+            let dist_buf = accord_sender_key_create_distribution(sender_store, channel.as_ptr());
+            assert!(!dist_buf.is_null());
+            let dist_json =
+                std::str::from_utf8(slice::from_raw_parts((*dist_buf).data, (*dist_buf).len))
+                    .unwrap();
+            let dist_cstring = CString::new(dist_json).unwrap();
+            let rc = accord_sender_key_process_distribution(
+                receiver_store,
+                channel.as_ptr(),
+                sender_id.as_ptr(),
+                dist_cstring.as_ptr(),
+            );
+            assert_eq!(rc, ACCORD_OK);
+
+            // Encrypt
+            let enc_buf = accord_sender_key_encrypt(
+                sender_store,
+                channel.as_ptr(),
+                plaintext.as_ptr(),
+                plaintext.len(),
+            );
+            assert!(!enc_buf.is_null());
+            assert!((*enc_buf).len > 0);
+
+            // The envelope is JSON — convert to CString for decrypt
+            let envelope_json =
+                std::str::from_utf8(slice::from_raw_parts((*enc_buf).data, (*enc_buf).len))
+                    .expect("envelope must be valid UTF-8");
+            let envelope_cstring = CString::new(envelope_json).expect("no null bytes in envelope");
+
+            // Decrypt
+            let dec_buf = accord_sender_key_decrypt(
+                receiver_store,
+                channel.as_ptr(),
+                sender_id.as_ptr(),
+                envelope_cstring.as_ptr(),
+            );
+            assert!(!dec_buf.is_null());
+            let recovered = slice::from_raw_parts((*dec_buf).data, (*dec_buf).len);
+            assert_eq!(recovered, plaintext);
+
+            accord_buffer_free(dist_buf);
+            accord_buffer_free(enc_buf);
+            accord_buffer_free(dec_buf);
+            accord_sender_key_store_free(sender_store);
+            accord_sender_key_store_free(receiver_store);
+        }
+    }
+
+    #[test]
+    fn test_sender_key_null_safety() {
+        unsafe {
+            let channel = CString::new("ch").unwrap();
+            let sender = CString::new("alice").unwrap();
+            let dist = CString::new("{}").unwrap();
+            let msg = b"hi";
+
+            // create_distribution with null store
+            assert!(
+                accord_sender_key_create_distribution(ptr::null_mut(), channel.as_ptr()).is_null()
+            );
+            // create_distribution with null channel
+            let store = accord_sender_key_store_create();
+            assert!(accord_sender_key_create_distribution(store, ptr::null()).is_null());
+            accord_sender_key_store_free(store);
+
+            // process_distribution with null store
+            assert_eq!(
+                accord_sender_key_process_distribution(
+                    ptr::null_mut(),
+                    channel.as_ptr(),
+                    sender.as_ptr(),
+                    dist.as_ptr()
+                ),
+                ACCORD_ERR_NULL_PTR
+            );
+
+            // encrypt with null store
+            assert!(accord_sender_key_encrypt(
+                ptr::null_mut(),
+                channel.as_ptr(),
+                msg.as_ptr(),
+                msg.len()
+            )
+            .is_null());
+
+            // decrypt with null store
+            assert!(accord_sender_key_decrypt(
+                ptr::null_mut(),
+                channel.as_ptr(),
+                sender.as_ptr(),
+                dist.as_ptr()
+            )
+            .is_null());
+        }
+    }
+
+    // ─── Legacy null safety (kept for regression) ────────────────────────────
 
     #[test]
     fn test_null_safety() {
