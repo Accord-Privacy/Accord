@@ -196,12 +196,18 @@ fn bench_srtp(c: &mut Criterion) {
             &payload,
             |b, payload| {
                 let vk = voice_key();
-                let mut enc = VoiceEncryptor::new(12345, vk.clone());
-                let mut dec = VoiceDecryptor::new(12345, vk);
-                b.iter(|| {
-                    let pkt = enc.encrypt_packet(black_box(payload)).unwrap();
-                    black_box(dec.decrypt_packet(&pkt).unwrap());
-                });
+                b.iter_batched(
+                    || {
+                        let enc = VoiceEncryptor::new(12345, vk.clone());
+                        let dec = VoiceDecryptor::new(12345, vk.clone());
+                        (enc, dec)
+                    },
+                    |(mut enc, mut dec)| {
+                        let pkt = enc.encrypt_packet(black_box(payload)).unwrap();
+                        black_box(dec.decrypt_packet(&pkt).unwrap());
+                    },
+                    criterion::BatchSize::SmallInput,
+                );
             },
         );
     }

@@ -19,6 +19,11 @@ use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 use accord_server::state::AppState;
+use sha2::{Digest, Sha256};
+
+fn pkh(public_key: &str) -> String {
+    hex::encode(Sha256::digest(public_key.as_bytes()))
+}
 
 fn rt() -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
@@ -67,14 +72,16 @@ fn bench_authentication(c: &mut Criterion) {
     let state = rt.block_on(AppState::new_in_memory()).unwrap();
     rt.block_on(state.register_user("pubkey".into(), "bench_password".into()))
         .unwrap();
+    let pkh = pkh("pubkey");
 
     c.bench_function("user/authenticate", |b| {
         b.to_async(&rt).iter(|| {
             let state_ref = &state;
+            let pkh_ref = &pkh;
             async move {
                 black_box(
                     state_ref
-                        .authenticate_user("bench_user".into(), "bench_password".into())
+                        .authenticate_user(pkh_ref.clone(), "bench_password".into())
                         .await,
                 )
             }
@@ -89,8 +96,9 @@ fn bench_token_validation(c: &mut Criterion) {
     let state = rt.block_on(AppState::new_in_memory()).unwrap();
     rt.block_on(state.register_user("pk".into(), "pw".into()))
         .unwrap();
+    let pkh = pkh("pk");
     let auth = rt
-        .block_on(state.authenticate_user("tv_user".into(), "pw".into()))
+        .block_on(state.authenticate_user(pkh, "pw".into()))
         .unwrap();
     let token = auth.token.clone();
 
@@ -134,17 +142,12 @@ fn bench_node_operations(c: &mut Criterion) {
         .unwrap();
 
     group.bench_function("join", |b| {
-        let mut counter = 0u64;
         b.to_async(&rt).iter(|| {
-            counter += 1;
-            let _username = format!("joiner_{}", counter);
+            let pk = Uuid::new_v4().to_string();
             let state_ref = &state;
             let node_id = node.id;
             async move {
-                let uid = state_ref
-                    .register_user("pk".into(), "".into())
-                    .await
-                    .unwrap();
+                let uid = state_ref.register_user(pk, "".into()).await.unwrap();
                 state_ref.join_node(uid, node_id).await.unwrap();
                 black_box(());
             }
@@ -217,9 +220,9 @@ fn bench_broadcast(c: &mut Criterion) {
                     .unwrap();
 
                 // Register users and add WebSocket connections (broadcast senders)
-                for _ in 0..n {
+                for i in 0..n {
                     let uid = rt
-                        .block_on(state.register_user("pk".into(), "".into()))
+                        .block_on(state.register_user(format!("bc_pk_{i}"), "".into()))
                         .unwrap();
                     rt.block_on(state.join_node(uid, node.id)).unwrap();
                     rt.block_on(state.join_channel(uid, channel.id)).unwrap();
