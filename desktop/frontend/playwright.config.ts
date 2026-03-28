@@ -10,6 +10,12 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
+  webServer: {
+    command: "npm run dev",
+    port: 1420,
+    timeout: 120_000,
+    reuseExistingServer: !process.env.CI,
+  },
   projects: [
     {
       name: "chromium",
