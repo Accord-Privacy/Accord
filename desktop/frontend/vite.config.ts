@@ -44,11 +44,21 @@ export default defineConfig({
     chunkSizeWarningLimit: 650,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-qr': ['qrcode', 'jsqr'],
-          'vendor-crypto': ['@noble/ciphers', '@noble/curves', '@noble/hashes'],
-          'vendor-markdown': ['marked', 'dompurify'],
+        manualChunks: (id) => {
+          if (id.includes('node_modules')) {
+            if (id.includes('react') || id.includes('react-dom')) {
+              return 'vendor-react';
+            }
+            if (id.includes('qrcode') || id.includes('jsqr')) {
+              return 'vendor-qr';
+            }
+            if (id.includes('@noble/ciphers') || id.includes('@noble/curves') || id.includes('@noble/hashes')) {
+              return 'vendor-crypto';
+            }
+            if (id.includes('marked') || id.includes('dompurify')) {
+              return 'vendor-markdown';
+            }
+          }
         },
       },
     },
