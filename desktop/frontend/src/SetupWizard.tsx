@@ -9,6 +9,8 @@ import {
   setActiveIdentity,
   loadKeyWithPassword,
   hasStoredKeyPair,
+  getRawPrivateKey,
+  entropyToMnemonic,
 } from "./crypto";
 
 export interface SetupResult {
@@ -100,7 +102,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         console.error("Invalid mnemonic generated, length:", phrase?.length, "words:", phrase?.trim().split(/\s+/).length);
         // Fallback: extract raw bytes and try again
         try {
-          const { getRawPrivateKey, entropyToMnemonic } = await import("./crypto");
           const raw = await getRawPrivateKey(kp);
           phrase = entropyToMnemonic(raw);
         } catch (fallbackErr) {

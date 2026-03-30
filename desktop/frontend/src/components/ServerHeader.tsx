@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
+import { api } from "../api";
 
 export const ServerHeader: React.FC = () => {
   const ctx = useAppContext();
@@ -52,7 +53,6 @@ export const ServerHeader: React.FC = () => {
   const handleLeaveNode = useCallback(async () => {
     if (!ctx.selectedNodeId || !ctx.appState.token) return;
     try {
-      const { api } = await import("../api");
       await api.leaveNode(ctx.selectedNodeId, ctx.appState.token);
       setDropdownOpen(false);
       setShowLeaveConfirm(false);

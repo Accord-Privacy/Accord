@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay } from "./api";
+import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay, probeServerUrl } from "./api";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry, PresenceStatus } from "./types";
-import { 
-  generateKeyPair, 
-  exportPublicKey, 
-  saveKeyToStorage, 
-  loadKeyFromStorage, 
-  getChannelKey, 
-  encryptMessage, 
-  decryptMessage, 
+import {
+  generateKeyPair,
+  exportPublicKey,
+  saveKeyToStorage,
+  loadKeyFromStorage,
+  getChannelKey,
+  encryptMessage,
+  decryptMessage,
   clearChannelKeyCache,
   isCryptoSupported,
   sha256Hex,
@@ -20,6 +20,8 @@ import {
   hasStoredKeyPair,
   getStoredPublicKey,
   setActiveIdentity,
+  encryptFile,
+  encryptFilename,
 } from "./crypto";
 import { storeToken as _storeToken, getToken, clearToken } from "./tokenStorage";
 
@@ -2196,7 +2198,6 @@ function App() {
       // Probe both HTTP and HTTPS to find the working scheme
       let workingUrl: string;
       try {
-        const { probeServerUrl } = await import("./api");
         workingUrl = await probeServerUrl(parsed.relayUrl);
       } catch {
         workingUrl = parsed.relayUrl;
@@ -2728,10 +2729,9 @@ function App() {
           if (encryptionEnabled && keyPair) {
             try {
               const channelKey = await getChannelKey(keyPair.privateKey, channelForUpload);
-              const { encryptFile: ef, encryptFilename: efn } = await import('./crypto');
               const fileBuffer = await sf.file.arrayBuffer();
-              const encryptedBuffer = await ef(channelKey, fileBuffer);
-              encryptedFilename = await efn(channelKey, sf.file.name);
+              const encryptedBuffer = await encryptFile(channelKey, fileBuffer);
+              encryptedFilename = await encryptFilename(channelKey, sf.file.name);
               fileToUpload = new File([encryptedBuffer], 'encrypted_file', { type: 'application/octet-stream' });
             } catch (error) {
               console.warn('Failed to encrypt file, uploading plaintext:', error);

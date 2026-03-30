@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { getChannelKey, decryptFile } from "../crypto";
 import type { FileMetadata } from "../types";
 
 function isImageFilename(filename: string): boolean {
@@ -35,8 +36,6 @@ export function ImageGrid({ files, token, channelId, keyPair, encryptionEnabled,
           let finalBuffer = buffer;
           if (encryptionEnabled && keyPair) {
             try {
-              // Dynamic import to avoid circular deps
-              const { getChannelKey, decryptFile } = await import('../crypto');
               const channelKey = await getChannelKey(keyPair.privateKey, channelId);
               finalBuffer = await decryptFile(channelKey, buffer);
             } catch { /* use raw */ }

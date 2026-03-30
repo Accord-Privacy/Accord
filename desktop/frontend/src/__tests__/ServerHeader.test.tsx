@@ -6,12 +6,15 @@ import type { AppContextType } from '../components/AppContext';
 import type { Node } from '../types';
 
 // Mock the api module
-const mockLeaveNode = vi.fn();
 vi.mock('../api', () => ({
   api: {
-    leaveNode: mockLeaveNode,
+    leaveNode: vi.fn(),
   },
 }));
+
+// Get the mock after the module is mocked
+const { api } = await import('../api');
+const mockLeaveNode = vi.mocked(api.leaveNode);
 
 const mockNode: Node = {
   id: 'node-1',
@@ -343,7 +346,7 @@ describe('ServerHeader', () => {
   });
 
   it('calls leaveNode API when Leave is confirmed', async () => {
-    mockLeaveNode.mockResolvedValue({});
+    mockLeaveNode.mockResolvedValue({ status: 'ok', node_id: 'node-1' });
     const loadNodes = vi.fn();
     const ctx = createMockContext({
       selectedNodeId: 'node-1',
