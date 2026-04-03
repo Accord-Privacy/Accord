@@ -6,6 +6,10 @@
 // Federation and Bot API modules are scaffolding — allow unused until fully integrated.
 #![allow(dead_code)]
 
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod admin;
 mod backup;
 mod batch_handlers;
@@ -1077,6 +1081,18 @@ async fn main() -> Result<()> {
                 if removed > 0 {
                     info!("Cleaned up {} expired auth tokens", removed);
                 }
+            }
+        });
+    }
+
+    // Spawn periodic stale-state cleanup task (memory leak prevention)
+    {
+        let stale_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // every 5 min
+            loop {
+                interval.tick().await;
+                stale_state.cleanup_stale_state().await;
             }
         });
     }

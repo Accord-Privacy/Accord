@@ -1576,6 +1576,51 @@ impl AppState {
         }
     }
 
+    /// Clean up stale in-memory state to prevent unbounded growth.
+    ///
+    /// 1. Removes `slow_mode_cooldowns` entries older than 1 hour.
+    /// 2. Removes `last_activity` entries for users no longer connected.
+    /// 3. Evicts `link_preview_cache` entries older than 1 hour (TTL-based;
+    ///    the 1000-entry hard cap in the handler remains as a safety valve).
+    pub async fn cleanup_stale_state(&self) {
+        let current_time = now();
+        let one_hour_ago = current_time.saturating_sub(3600);
+
+        // 1. Evict slow-mode cooldown entries older than 1 hour.
+        {
+            let mut cooldowns = self.slow_mode_cooldowns.write().await;
+            let before = cooldowns.len();
+            cooldowns.retain(|_, ts| *ts >= one_hour_ago);
+            let removed = before - cooldowns.len();
+            if removed > 0 {
+                tracing::debug!("Cleaned {} stale slow_mode_cooldown entries", removed);
+            }
+        }
+
+        // 2. Remove last_activity entries for disconnected users.
+        {
+            let connections = self.connections.read().await;
+            let mut activity = self.last_activity.write().await;
+            let before = activity.len();
+            activity.retain(|user_id, _| connections.contains_key(user_id));
+            let removed = before - activity.len();
+            if removed > 0 {
+                tracing::debug!("Cleaned {} stale last_activity entries", removed);
+            }
+        }
+
+        // 3. TTL-evict link_preview_cache entries older than 1 hour.
+        {
+            let mut cache = self.link_preview_cache.write().await;
+            let before = cache.len();
+            cache.retain(|_, (_, fetched_at)| *fetched_at >= one_hour_ago);
+            let removed = before - cache.len();
+            if removed > 0 {
+                tracing::debug!("Evicted {} stale link_preview_cache entries", removed);
+            }
+        }
+    }
+
     /// Remove expired auth tokens from memory and database (H3: token cleanup)
     pub async fn cleanup_expired_tokens(&self) -> usize {
         let current_time = now();
