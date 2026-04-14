@@ -81,7 +81,13 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
     let database_ok = state.db.count_users().await.is_ok();
 
     // WebSocket connection count
-    let websocket_connections: usize = state.connections.read().await.values().map(|d| d.len()).sum();
+    let websocket_connections: usize = state
+        .connections
+        .read()
+        .await
+        .values()
+        .map(|d| d.len())
+        .sum();
 
     // Memory usage (RSS from /proc/self/statm on Linux, fallback 0)
     let memory_usage_bytes = {
@@ -171,7 +177,7 @@ pub async fn register_handler(
     }
 
     // Route between v2 (username) and v1 (public_key) registration flows
-    let is_v2 = !request.username.is_empty() && request.device_fingerprint_hash.is_some();
+    let is_v2 = !request.username.is_empty();
 
     if is_v2 {
         // ── V2 flow: username + password + device key ──

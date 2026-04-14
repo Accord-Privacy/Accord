@@ -600,11 +600,10 @@ impl RelayDatabase {
 
     /// Check if a username is taken
     pub async fn username_exists(&self, username: &str) -> Result<bool> {
-        let row =
-            sqlx::query("SELECT COUNT(*) as count FROM users WHERE username = ?")
-                .bind(username)
-                .fetch_one(&self.pool)
-                .await?;
+        let row = sqlx::query("SELECT COUNT(*) as count FROM users WHERE username = ?")
+            .bind(username)
+            .fetch_one(&self.pool)
+            .await?;
         Ok(row.get::<i64, _>("count") > 0)
     }
 

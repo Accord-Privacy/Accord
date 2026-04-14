@@ -350,9 +350,7 @@ impl AppState {
                 .await
             {
                 Ok(count) if count >= 5 => {
-                    return Err(
-                        "Maximum accounts per device reached (5)".to_string()
-                    );
+                    return Err("Maximum accounts per device reached (5)".to_string());
                 }
                 Err(e) => return Err(format!("Database error: {}", e)),
                 _ => {}
@@ -398,15 +396,7 @@ impl AppState {
         if self.metadata_mode == MetadataMode::Minimal {
             let _ = self
                 .db
-                .update_user_profile(
-                    user.id,
-                    Some("[redacted]"),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
+                .update_user_profile(user.id, Some("[redacted]"), None, None, None, None, None)
                 .await;
         }
 

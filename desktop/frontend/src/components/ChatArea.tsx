@@ -272,6 +272,9 @@ export const ChatArea: React.FC = () => {
                     );
                   })()}
                 </div>
+                {previewError && (
+                  <p className="welcome-error">{previewError}</p>
+                )}
                 <div className="welcome-card-actions">
                   <button
                     className="btn btn-outline btn-auto-width"
@@ -281,17 +284,14 @@ export const ChatArea: React.FC = () => {
                   </button>
                   <button
                     className="btn btn-primary btn-auto-width"
+                    disabled={previewLoading}
                     onClick={async () => {
-                      setInvitePreview(null);
-                      // Use handleJoinNode which handles same-relay join properly
-                      if (ctx.joinInviteCode !== undefined) {
-                        // joinInviteCode is already set from inviteLinkInput
-                      }
-                      // Directly join via the parsed invite
                       const input = ctx.inviteLinkInput?.trim();
                       if (!input) return;
                       const parsed = parseInviteLink(input);
                       const code = parsed ? parsed.inviteCode : input;
+                      setPreviewLoading(true);
+                      setPreviewError("");
                       try {
                         let token = ctx.appState.token;
                         if (!token) {
@@ -300,15 +300,18 @@ export const ChatArea: React.FC = () => {
                         }
                         api.setToken(token);
                         await api.joinNodeByInvite(code, token);
+                        // Success — clear everything
+                        setInvitePreview(null);
                         ctx.setInviteLinkInput('');
-                        // Reload nodes
                         if (ctx.loadNodes) ctx.loadNodes();
                       } catch (e: any) {
                         setPreviewError(e.message || "Failed to join node");
+                      } finally {
+                        setPreviewLoading(false);
                       }
                     }}
                   >
-                    Join
+                    {previewLoading ? 'Joining...' : 'Join'}
                   </button>
                 </div>
               </>

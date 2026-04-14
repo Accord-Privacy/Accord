@@ -42,6 +42,7 @@ export interface WsEvents {
   voice_peer_left: (data: any) => void;
   voice_participants: (data: any) => void;
   voice_speaking_state: (data: any) => void;
+  voice_key_exchange: (data: any) => void;
   p2p_signal: (data: any) => void;
   reaction_add: (data: any) => void;
   reaction_remove: (data: any) => void;
@@ -473,6 +474,18 @@ export class AccordWebSocket {
 
   setVoiceMode(channelId: string, mode: string): void {
     this.sendMessage({ SetVoiceMode: { channel_id: channelId, mode } });
+  }
+
+  sendVoiceKeyExchange(channelId: string, wrappedKey: string, targetUserId: string | null, senderSsrc: number, keyGeneration: number): void {
+    this.sendMessage({
+      VoiceKeyExchange: {
+        channel_id: channelId,
+        wrapped_key: wrappedKey,
+        target_user_id: targetUserId,
+        sender_ssrc: senderSsrc,
+        key_generation: keyGeneration,
+      },
+    });
   }
 
   sendP2PSignal(channelId: string, targetUserId: string, signalData: string): void {

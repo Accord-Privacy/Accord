@@ -98,6 +98,29 @@ export class AudioManager {
     return devices.filter(d => d.kind === 'audiooutput');
   }
 
+  /** Check if a gain node exists for a user. */
+  hasUser(userId: string): boolean {
+    return this.userGains.has(userId);
+  }
+
+  /** Create a gain node for relay-mode playback (no MediaStream needed). */
+  createRelayUserGain(userId: string): GainNode | null {
+    if (!this.audioContext || this.audioContext.state === 'closed') return null;
+    const existing = this.userGains.get(userId);
+    if (existing) return existing.gainNode;
+
+    const gainNode = this.audioContext.createGain();
+    gainNode.gain.value = this.isDeafened ? 0 : this.masterVolume;
+    gainNode.connect(this.audioContext.destination);
+    this.userGains.set(userId, { gainNode, volume: 1.0 });
+    return gainNode;
+  }
+
+  /** Get the gain node for a user (used by relay playback). */
+  getUserGainNode(userId: string): GainNode | null {
+    return this.userGains.get(userId)?.gainNode ?? null;
+  }
+
   /** Remove a user's audio output. */
   removeUser(userId: string): void {
     const entry = this.userGains.get(userId);

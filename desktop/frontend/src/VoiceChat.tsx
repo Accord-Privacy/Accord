@@ -12,6 +12,7 @@ import { AccordWebSocket } from './ws';
 import { VoiceConnection } from './voice/webrtc';
 import { RelayVoiceConnection } from './voice/relay';
 import { AudioManager } from './voice/audio';
+import { ScreenShareManager } from './voice/screenshare';
 
 interface VoiceChatProps {
   ws: AccordWebSocket | null;
@@ -47,9 +48,12 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
   const [peers, setPeers] = useState<Map<string, PeerInfo>>(new Map());
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>('relay');
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [remoteScreenStreams, setRemoteScreenStreams] = useState<Map<string, MediaStream>>(new Map());
 
   const voiceConnRef = useRef<VoiceConnection | RelayVoiceConnection | null>(null);
   const audioManagerRef = useRef<AudioManager | null>(null);
+  const screenShareRef = useRef<ScreenShareManager | null>(null);
 
   // Connect to voice on mount
   useEffect(() => {
@@ -159,6 +163,34 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     };
     ws.on('voice_channel_joined' as any, onChannelJoined);
 
+    // Screen share manager
+    const sm = new ScreenShareManager(ws, channelId, currentUserId);
+    screenShareRef.current = sm;
+    sm.onLocalStateChange = (active) => setIsScreenSharing(active);
+    sm.onRemoteStream = (userId, stream) => {
+      setRemoteScreenStreams(prev => {
+        const next = new Map(prev);
+        if (stream) {
+          next.set(userId, stream);
+        } else {
+          next.delete(userId);
+        }
+        return next;
+      });
+    };
+
+    // Forward peer join/leave to screen share manager
+    const onPeerJoinedScreen = (data: any) => {
+      if (data.channel_id !== channelId || data.user_id === currentUserId) return;
+      sm.addParticipant(data.user_id);
+    };
+    const onPeerLeftScreen = (data: any) => {
+      if (data.channel_id !== channelId || data.user_id === currentUserId) return;
+      sm.removeParticipant(data.user_id);
+    };
+    ws.on('voice_peer_joined' as any, onPeerJoinedScreen);
+    ws.on('voice_peer_left' as any, onPeerLeftScreen);
+
     // Connect
     vc.connect().catch(err => {
       console.error('Voice connection failed:', err);
@@ -166,6 +198,10 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     });
 
     return () => {
+      sm.destroy();
+      screenShareRef.current = null;
+      setIsScreenSharing(false);
+      setRemoteScreenStreams(new Map());
       vc.disconnect();
       audioManager.destroy();
       voiceConnRef.current = null;
@@ -175,6 +211,8 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
       ws.off('voice_channel_joined' as any, onChannelJoined);
       ws.off('voice_mode_changed' as any, onModeChanged);
       ws.off('voice_mode' as any, onModeChanged);
+      ws.off('voice_peer_joined' as any, onPeerJoinedScreen);
+      ws.off('voice_peer_left' as any, onPeerLeftScreen);
     };
   }, [ws, channelId, currentUserId, voiceMode]);
 
@@ -215,6 +253,19 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     ws.setVoiceMode(channelId, newMode);
     // Mode will update via voice_mode_changed event, which triggers reconnect via useEffect
   }, [ws, channelId, voiceMode]);
+
+  const toggleScreenShare = useCallback(() => {
+    const sm = screenShareRef.current;
+    if (!sm) return;
+    if (sm.isSharing) {
+      sm.stopSharing();
+    } else {
+      const participantIds = Array.from(peers.keys());
+      sm.startSharing(participantIds).catch(err => {
+        console.error('Screen share failed:', err);
+      });
+    }
+  }, [peers]);
 
   const peerList = Array.from(peers.values());
 
@@ -305,6 +356,14 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
             <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={16} />
           </button>
 
+          <button
+            onClick={toggleScreenShare}
+            className={`voice-ctrl-round ${isScreenSharing ? 'active' : 'neutral'}`}
+            title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
+          >
+            <Icon name={isScreenSharing ? 'screen-off' : 'screen-share'} size={16} />
+          </button>
+
           <div className="voice-volume-control">
             <span className="voice-volume-label">Vol</span>
             <input
@@ -317,6 +376,38 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Screen share viewers */}
+      {remoteScreenStreams.size > 0 && (
+        <div className="voice-screenshare-viewers">
+          {Array.from(remoteScreenStreams.entries()).map(([userId, stream]) => (
+            <ScreenShareViewer key={userId} userId={userId} stream={stream} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Remote screen share video element. */
+const ScreenShareViewer: React.FC<{ userId: string; stream: MediaStream }> = ({ userId, stream }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (el) {
+      el.srcObject = stream;
+      el.play().catch(() => {});
+    }
+    return () => {
+      if (el) el.srcObject = null;
+    };
+  }, [stream]);
+
+  return (
+    <div className="voice-screenshare-viewer">
+      <div className="voice-screenshare-label">{userId.slice(0, 8)}'s screen</div>
+      <video ref={videoRef} autoPlay playsInline muted className="voice-screenshare-video" />
     </div>
   );
 };

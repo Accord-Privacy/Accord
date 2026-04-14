@@ -331,6 +331,36 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Screen Share Viewers */
+.voice-screenshare-viewers {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.voice-screenshare-viewer {
+  background: var(--bg-darkest);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.voice-screenshare-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  background: var(--bg-active);
+}
+
+.voice-screenshare-video {
+  width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
 /* Voice channel hover tooltip */
 .channel .voice-channel-label {
   cursor: pointer;

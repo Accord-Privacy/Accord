@@ -160,6 +160,7 @@ export type WsMessageType =
   | { VoicePacket: { channel_id: string; encrypted_audio: number[]; sequence: number } }
   | { VoiceSpeakingState: { channel_id: string; user_id: string; speaking: boolean } }
   | { SetVoiceMode: { channel_id: string; mode: string } }
+  | { VoiceKeyExchange: { channel_id: string; wrapped_key: string; target_user_id: string | null; sender_ssrc: number; key_generation: number } }
   | { P2PSignal: { channel_id: string; target_user_id: string; signal_data: string } }
   | 'Ping'
   | 'Pong';

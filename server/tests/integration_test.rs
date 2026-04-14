@@ -228,6 +228,7 @@ async fn test_user_registration_success() {
         .post(&server.url("/register"))
         .json(&json!({
             "username": "testuser",
+            "password": "TestPassword123!",
             "public_key": "fake_public_key_123"
         }))
         .send()

@@ -77,6 +77,7 @@ use handlers::{
     upload_user_avatar_handler, use_invite_handler, ws_handler,
 };
 use serde::Deserialize;
+use sqlx::Row;
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -567,8 +568,15 @@ async fn main() -> Result<()> {
 
     // Bootstrap: create Management Node on first boot (empty DB)
     {
-        let node_count = app_state.db.count_nodes().await.unwrap_or(0);
-        if node_count == 0 {
+        let real_node_count =
+            match sqlx::query("SELECT COUNT(*) as count FROM nodes WHERE name != '__dm_system__'")
+                .fetch_one(app_state.db.pool())
+                .await
+            {
+                Ok(row) => row.get::<i64, _>("count") as u64,
+                Err(_) => 0,
+            };
+        if real_node_count == 0 {
             info!("First boot detected — creating Management Node...");
             // Use a fixed system UUID as placeholder owner (will be transferred to first admin)
             let system_user_id =
@@ -590,20 +598,47 @@ async fn main() -> Result<()> {
                 .await
             {
                 Ok(node) => {
-                    // Generate a bootstrap invite code
-                    let invite_code = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .encode(uuid::Uuid::new_v4().as_bytes());
+                    // Generate a bootstrap invite code (8-char alphanumeric, same as normal invites)
+                    let invite_code: String = {
+                        use rand::{distributions::Alphanumeric, Rng};
+                        rand::thread_rng()
+                            .sample_iter(&Alphanumeric)
+                            .take(8)
+                            .map(char::from)
+                            .collect()
+                    };
                     match app_state
                         .db
                         .create_node_invite(node.id, system_user_id, &invite_code, Some(1), None)
                         .await
                     {
                         Ok(_) => {
-                            info!("╔══════════════════════════════════════════════════════╗");
-                            info!("║  MANAGEMENT NODE CREATED                             ║");
-                            info!("║  Invite code: {:<39} ║", invite_code);
-                            info!("║  First user to join becomes server admin.             ║");
-                            info!("╚══════════════════════════════════════════════════════╝");
+                            let host_port = format!("{}:{}", args.host, args.port);
+                            let encoded_host = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                                .encode(host_port.as_bytes());
+                            let invite_url = format!("accord://{}/{}", encoded_host, invite_code);
+                            let http_url = format!(
+                                "http://{}:{}/invite/{}",
+                                args.host, args.port, invite_code
+                            );
+                            info!(
+                                "╔══════════════════════════════════════════════════════════════╗"
+                            );
+                            info!(
+                                "║  MANAGEMENT NODE CREATED                                     ║"
+                            );
+                            info!(
+                                "║  First user to join becomes server admin.                     ║"
+                            );
+                            info!(
+                                "╠══════════════════════════════════════════════════════════════╣"
+                            );
+                            info!("║  Invite code: {}", invite_code);
+                            info!("║  Invite URL:  {}", invite_url);
+                            info!("║  HTTP URL:    {}", http_url);
+                            info!(
+                                "╚══════════════════════════════════════════════════════════════╝"
+                            );
                         }
                         Err(e) => error!("Failed to create bootstrap invite: {}", e),
                     }

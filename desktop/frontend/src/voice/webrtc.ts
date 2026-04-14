@@ -79,8 +79,8 @@ export class VoiceConnection {
       },
     });
 
-    // Start muted by default
-    this.setMuted(true);
+    // Start with mic enabled (unmuted) — user controls via UI
+    this.setMuted(false);
 
     // Setup VAD
     this.setupVAD();
