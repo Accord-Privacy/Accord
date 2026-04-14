@@ -25,6 +25,7 @@ export interface RegisterRequest {
 export interface RegisterResponse {
   user_id: string;
   message: string;
+  device_id?: string;
 }
 
 export interface AuthRequest {
@@ -36,6 +37,31 @@ export interface AuthResponse {
   token: string;
   user_id: string;
   expires_at: number;
+  device_id?: string;
+}
+
+/** Device identity from Tauri hardware fingerprint */
+export interface DeviceIdentity {
+  device_fingerprint_hash: string;
+  device_public_key: string;
+  device_label: string;
+}
+
+/** V2 registration request — username + password + device */
+export interface RegisterRequestV2 {
+  username: string;
+  password: string;
+  display_name?: string;
+  device_fingerprint_hash?: string;
+  device_public_key?: string;
+  device_label?: string;
+}
+
+/** V2 auth request — username + password */
+export interface AuthRequestV2 {
+  username: string;
+  password: string;
+  device_fingerprint_hash?: string;
 }
 
 // Node types

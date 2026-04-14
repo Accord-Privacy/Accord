@@ -179,8 +179,9 @@ pub struct AppState {
     pub file_handler: FileHandler,
     /// Active authentication tokens (in-memory for performance)
     pub auth_tokens: RwLock<HashMap<String, AuthToken>>,
-    /// Active WebSocket connections indexed by user ID
-    pub connections: RwLock<HashMap<Uuid, broadcast::Sender<String>>>,
+    /// Active WebSocket connections: user_id -> { device_id -> sender }
+    /// Supports multiple devices per user for multi-device connectivity.
+    pub connections: RwLock<HashMap<Uuid, HashMap<Uuid, broadcast::Sender<String>>>>,
     /// Voice channels state (channel_id -> set of user_ids)
     pub voice_channels: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
     /// Voice mode per channel: true = relay (default), false = p2p
@@ -307,8 +308,185 @@ impl AppState {
         }
     }
 
-    /// Authenticate by public_key_hash (or public_key) + password.
-    /// For backward compat, also accepts username-based lookups (will be removed).
+    /// Register a user with username + password (v2 flow).
+    /// Optionally registers a device key and enforces per-device alt limits.
+    pub async fn register_user_v2(
+        &self,
+        username: String,
+        password: String,
+        device_fingerprint_hash: Option<String>,
+        device_public_key: Option<String>,
+        device_label: Option<String>,
+    ) -> Result<(Uuid, Option<Uuid>), String> {
+        // Validate username
+        let username = username.trim().to_string();
+        if username.is_empty() || username.len() < 3 || username.len() > 32 {
+            return Err("Username must be 3-32 characters".to_string());
+        }
+        if !username
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err(
+                "Username may only contain letters, numbers, underscores, and hyphens".to_string(),
+            );
+        }
+        if password.is_empty() {
+            return Err("Password is required for username-based registration".to_string());
+        }
+
+        // Check username uniqueness
+        match self.db.username_exists(&username).await {
+            Ok(true) => return Err("Username already taken".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+            _ => {}
+        }
+
+        // Check device alt limit (max 5 accounts per device)
+        if let Some(ref fingerprint) = device_fingerprint_hash {
+            match self
+                .db
+                .count_registrations_for_fingerprint(fingerprint)
+                .await
+            {
+                Ok(count) if count >= 5 => {
+                    return Err(
+                        "Maximum accounts per device reached (5)".to_string()
+                    );
+                }
+                Err(e) => return Err(format!("Database error: {}", e)),
+                _ => {}
+            }
+        }
+
+        // Hash password with Argon2
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
+        let password_hash = argon2
+            .hash_password(password.as_bytes(), &salt)
+            .map_err(|e| format!("Failed to hash password: {}", e))?
+            .to_string();
+
+        // Create user
+        let user = self
+            .db
+            .create_user_with_username(&username, &password_hash)
+            .await
+            .map_err(|e| format!("Failed to create user: {}", e))?;
+
+        // Register device key if provided
+        let device_id = if let Some(ref fingerprint) = device_fingerprint_hash {
+            let pk = device_public_key.as_deref().unwrap_or("");
+            let label = device_label.as_deref().unwrap_or("Unknown");
+            let device_id = self
+                .db
+                .create_device_key(user.id, fingerprint, pk, label, false)
+                .await
+                .map_err(|e| format!("Failed to create device key: {}", e))?;
+
+            // Record device registration for anti-alt tracking
+            let _ = self
+                .db
+                .record_device_registration(fingerprint, user.id)
+                .await;
+
+            Some(device_id)
+        } else {
+            None
+        };
+
+        if self.metadata_mode == MetadataMode::Minimal {
+            let _ = self
+                .db
+                .update_user_profile(
+                    user.id,
+                    Some("[redacted]"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+        }
+
+        Ok((user.id, device_id))
+    }
+
+    /// Authenticate by username + password (v2 flow).
+    pub async fn authenticate_user_by_username(
+        &self,
+        username: String,
+        password: String,
+        device_fingerprint_hash: Option<String>,
+    ) -> Result<(AuthToken, Option<Uuid>), String> {
+        let user = match self.db.get_user_by_username(&username).await {
+            Ok(Some(user)) => user,
+            Ok(None) => return Err("User not found".to_string()),
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
+
+        // Verify password
+        let stored_hash = self
+            .db
+            .get_user_password_hash_by_username(&username)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?
+            .unwrap_or_default();
+
+        if stored_hash.is_empty() {
+            return Err("This account has no password set".to_string());
+        }
+
+        let parsed_hash = PasswordHash::new(&stored_hash)
+            .map_err(|e| format!("Invalid stored password hash: {}", e))?;
+        Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .map_err(|_| "Invalid password".to_string())?;
+
+        // Handle device key tracking
+        let device_id = if let Some(ref fingerprint) = device_fingerprint_hash {
+            match self
+                .db
+                .get_device_key_by_fingerprint(user.id, fingerprint)
+                .await
+            {
+                Ok(Some(did)) => {
+                    let _ = self.db.touch_device_key(did).await;
+                    Some(did)
+                }
+                _ => None, // Device not registered yet — client can register it later
+            }
+        } else {
+            None
+        };
+
+        let token = format!("tok_{}", Uuid::new_v4().simple());
+        let expires_at = now() + 86400;
+
+        let auth_token = AuthToken {
+            token: token.clone(),
+            user_id: user.id,
+            expires_at,
+        };
+
+        self.auth_tokens
+            .write()
+            .await
+            .insert(token, auth_token.clone());
+
+        if let Err(e) = self
+            .db
+            .save_auth_token(&auth_token.token, auth_token.user_id, auth_token.expires_at)
+            .await
+        {
+            tracing::warn!("Failed to persist auth token: {}", e);
+        }
+
+        Ok((auth_token, device_id))
+    }
+
+    /// Authenticate by public_key_hash (or public_key) + password (legacy v1 flow).
     pub async fn authenticate_user(
         &self,
         public_key_hash: String,
@@ -1019,13 +1197,39 @@ impl AppState {
 
     // ── Connection management ──
 
-    pub async fn add_connection(&self, user_id: Uuid, sender: broadcast::Sender<String>) {
-        self.connections.write().await.insert(user_id, sender);
+    /// Register a device connection. Returns the device_id used (caller
+    /// needs it later for `remove_connection`).
+    pub async fn add_connection(
+        &self,
+        user_id: Uuid,
+        device_id: Option<Uuid>,
+        sender: broadcast::Sender<String>,
+    ) -> Uuid {
+        let did = device_id.unwrap_or_else(Uuid::new_v4);
+        self.connections
+            .write()
+            .await
+            .entry(user_id)
+            .or_default()
+            .insert(did, sender);
+        did
     }
 
-    pub async fn remove_connection(&self, user_id: Uuid) {
-        self.connections.write().await.remove(&user_id);
-        self.client_build_hashes.write().await.remove(&user_id);
+    /// Remove a single device connection. If the user has no remaining
+    /// devices, their entry is cleaned up entirely.
+    pub async fn remove_connection(&self, user_id: Uuid, device_id: Uuid) {
+        let mut conns = self.connections.write().await;
+        if let Some(devices) = conns.get_mut(&user_id) {
+            devices.remove(&device_id);
+            if devices.is_empty() {
+                conns.remove(&user_id);
+            }
+        }
+        drop(conns);
+        // Only remove build hash when ALL devices of this user are gone
+        if !self.connections.read().await.contains_key(&user_id) {
+            self.client_build_hashes.write().await.remove(&user_id);
+        }
     }
 
     /// Store the client's build hash for later allowlist checks.
@@ -1102,10 +1306,10 @@ impl AppState {
 
     pub async fn send_to_user(&self, user_id: Uuid, message: String) -> Result<(), String> {
         let connections = self.connections.read().await;
-        if let Some(sender) = connections.get(&user_id) {
-            sender
-                .send(message)
-                .map_err(|e| format!("Failed to send: {}", e))?;
+        if let Some(devices) = connections.get(&user_id) {
+            for sender in devices.values() {
+                let _ = sender.send(message.clone());
+            }
         }
         Ok(())
     }
@@ -1114,8 +1318,10 @@ impl AppState {
         let members = self.get_channel_members(channel_id).await;
         let connections = self.connections.read().await;
         for user_id in members {
-            if let Some(sender) = connections.get(&user_id) {
-                let _ = sender.send(message.clone());
+            if let Some(devices) = connections.get(&user_id) {
+                for sender in devices.values() {
+                    let _ = sender.send(message.clone());
+                }
             }
         }
         Ok(())
@@ -1294,8 +1500,8 @@ impl AppState {
             .map_err(|e| e.to_string())?;
 
         let connections = self.connections.read().await;
-        let sender = match connections.get(&user_id) {
-            Some(s) => s.clone(),
+        let devices = match connections.get(&user_id) {
+            Some(d) => d.values().cloned().collect::<Vec<_>>(),
             None => return Ok(()),
         };
         drop(connections);
@@ -1306,8 +1512,11 @@ impl AppState {
                 "type": "presence_bulk",
                 "node_id": node.id,
                 "members": presence,
-            });
-            let _ = sender.send(msg.to_string());
+            })
+            .to_string();
+            for sender in &devices {
+                let _ = sender.send(msg.clone());
+            }
         }
 
         Ok(())
@@ -1354,9 +1563,10 @@ impl AppState {
             let connections = self.connections.read().await;
             for member in members {
                 if member.user_id != user_id {
-                    // Don't send to self
-                    if let Some(sender) = connections.get(&member.user_id) {
-                        let _ = sender.send(presence_message.clone());
+                    if let Some(devices) = connections.get(&member.user_id) {
+                        for sender in devices.values() {
+                            let _ = sender.send(presence_message.clone());
+                        }
                     }
                 }
             }
@@ -1453,11 +1663,13 @@ impl AppState {
         if let Some(participants) = voice_channels.get(&channel_id) {
             let connections = self.connections.read().await;
 
-            // Send to all participants except the sender
+            // Send to all participants except the sender (all their devices)
             for &user_id in participants.iter() {
                 if user_id != sender_id {
-                    if let Some(sender) = connections.get(&user_id) {
-                        let _ = sender.send(message.clone());
+                    if let Some(devices) = connections.get(&user_id) {
+                        for sender in devices.values() {
+                            let _ = sender.send(message.clone());
+                        }
                     }
                 }
             }
@@ -2677,10 +2889,10 @@ mod tests {
         let user = Uuid::new_v4();
         let (sender, _) = broadcast::channel(16);
 
-        state.add_connection(user, sender).await;
+        let device_id = state.add_connection(user, None, sender).await;
         assert!(state.connections.read().await.contains_key(&user));
 
-        state.remove_connection(user).await;
+        state.remove_connection(user, device_id).await;
         assert!(!state.connections.read().await.contains_key(&user));
     }
 

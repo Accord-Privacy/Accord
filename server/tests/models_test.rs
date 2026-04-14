@@ -908,6 +908,7 @@ fn auth_response_serialize() {
         token: "tok123".to_string(),
         user_id: id,
         expires_at: 1_700_000_000,
+        device_id: None,
     };
     let json = serde_json::to_string(&resp).unwrap();
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();

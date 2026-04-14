@@ -1154,11 +1154,15 @@ async fn main() -> Result<()> {
                 "message": "Server is shutting down"
             })
             .to_string();
-            for (user_id, sender) in connections.iter() {
-                let _ = sender.send(close_msg.clone());
+            let mut total = 0usize;
+            for (user_id, devices) in connections.iter() {
+                for sender in devices.values() {
+                    let _ = sender.send(close_msg.clone());
+                    total += 1;
+                }
                 tracing::debug!("Sent shutdown notice to user {}", user_id);
             }
-            info!("Shutdown: notified {} WebSocket clients", connections.len());
+            info!("Shutdown: notified {} WebSocket clients", total);
         }
 
         // Wait briefly for in-flight requests to complete (up to 10s)

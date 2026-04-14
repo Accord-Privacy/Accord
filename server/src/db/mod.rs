@@ -665,6 +665,69 @@ impl Database {
             .await
             .ok();
 
+        // Migration: unique index on username (partial — excludes empty usernames)
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (username) WHERE username != ''",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
+        // Device keys — each physical device has a deterministic keypair
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS device_keys (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT NOT NULL,
+                device_fingerprint_hash TEXT NOT NULL,
+                public_key TEXT NOT NULL,
+                device_label TEXT NOT NULL DEFAULT '',
+                is_browser INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                UNIQUE(user_id, device_fingerprint_hash)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create device_keys table")?;
+
+        // Device registrations — anti-alt tracking (max 5 accounts per device per relay)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS device_registrations (
+                device_fingerprint_hash TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (device_fingerprint_hash, user_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create device_registrations table")?;
+
+        // Device key bundles — per-device E2EE key bundles for multi-device support
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS device_key_bundles (
+                user_id TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                identity_key BLOB NOT NULL,
+                signed_prekey BLOB NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, device_id),
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                FOREIGN KEY (device_id) REFERENCES device_keys (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create device_key_bundles table")?;
+
         // Node-level user profiles (encrypted, opaque to relay)
         sqlx::query(
             r#"
@@ -1298,6 +1361,201 @@ impl Database {
             .fetch_one(&self.pool)
             .await?;
         Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    // ── Username & device key operations (v2 auth) ──
+
+    /// Look up a user by username (v2 auth flow)
+    pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            "SELECT id, public_key_hash, public_key, created_at FROM users WHERE username = ?",
+        )
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query user by username")?;
+        row.map(|r| parse_user(&r)).transpose()
+    }
+
+    /// Get password hash by username (v2 auth flow)
+    pub async fn get_user_password_hash_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT password_hash FROM users WHERE username = ?")
+            .bind(username)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to query user password hash by username")?;
+        Ok(row.map(|r| r.get::<String, _>("password_hash")))
+    }
+
+    /// Check if a username is taken
+    pub async fn username_exists(&self, username: &str) -> Result<bool> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM users WHERE username = ?")
+            .bind(username)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.get::<i64, _>("count") > 0)
+    }
+
+    /// Create a user with username (v2 registration flow)
+    pub async fn create_user_with_username(
+        &self,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<User> {
+        let user_id = Uuid::new_v4();
+        let created_at = now();
+        // v2 users don't have a meaningful public_key at relay level —
+        // the device key serves that purpose. Use a placeholder.
+        let placeholder_pk = format!("v2-user-{}", user_id);
+        let public_key_hash = compute_public_key_hash(&placeholder_pk);
+
+        sqlx::query(
+            "INSERT INTO users (id, public_key_hash, public_key, password_hash, username, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(&public_key_hash)
+        .bind(&placeholder_pk)
+        .bind(password_hash)
+        .bind(username)
+        .bind(created_at as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert user with username")?;
+
+        // Create default user profile with username as display name
+        self.create_user_profile(user_id, username).await?;
+
+        Ok(User {
+            id: user_id,
+            public_key_hash,
+            public_key: placeholder_pk,
+            created_at,
+        })
+    }
+
+    /// Register a device key for a user
+    pub async fn create_device_key(
+        &self,
+        user_id: Uuid,
+        device_fingerprint_hash: &str,
+        public_key: &str,
+        device_label: &str,
+        is_browser: bool,
+    ) -> Result<Uuid> {
+        let device_id = Uuid::new_v4();
+        let now_ts = now();
+
+        sqlx::query(
+            r#"INSERT INTO device_keys (id, user_id, device_fingerprint_hash, public_key, device_label, is_browser, created_at, last_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(device_id.to_string())
+        .bind(user_id.to_string())
+        .bind(device_fingerprint_hash)
+        .bind(public_key)
+        .bind(device_label)
+        .bind(is_browser as i64)
+        .bind(now_ts as i64)
+        .bind(now_ts as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to insert device key")?;
+
+        Ok(device_id)
+    }
+
+    /// Get all device keys for a user
+    pub async fn get_device_keys_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<crate::models::DeviceKey>> {
+        use crate::models::DeviceKey;
+
+        let rows = sqlx::query(
+            "SELECT id, user_id, device_fingerprint_hash, public_key, device_label, is_browser, created_at, last_seen_at FROM device_keys WHERE user_id = ?",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query device keys")?;
+
+        rows.into_iter()
+            .map(|r| {
+                Ok(DeviceKey {
+                    id: r.get::<String, _>("id").parse()?,
+                    user_id: r.get::<String, _>("user_id").parse()?,
+                    device_fingerprint_hash: r.get("device_fingerprint_hash"),
+                    public_key: r.get("public_key"),
+                    device_label: r.get("device_label"),
+                    is_browser: r.get::<i64, _>("is_browser") != 0,
+                    created_at: r.get::<i64, _>("created_at") as u64,
+                    last_seen_at: r.get::<i64, _>("last_seen_at") as u64,
+                })
+            })
+            .collect()
+    }
+
+    /// Get device key by fingerprint hash for a specific user
+    pub async fn get_device_key_by_fingerprint(
+        &self,
+        user_id: Uuid,
+        device_fingerprint_hash: &str,
+    ) -> Result<Option<Uuid>> {
+        let row = sqlx::query(
+            "SELECT id FROM device_keys WHERE user_id = ? AND device_fingerprint_hash = ?",
+        )
+        .bind(user_id.to_string())
+        .bind(device_fingerprint_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query device key by fingerprint")?;
+        Ok(row.map(|r| r.get::<String, _>("id").parse().unwrap()))
+    }
+
+    /// Update last_seen_at for a device key
+    pub async fn touch_device_key(&self, device_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE device_keys SET last_seen_at = ? WHERE id = ?")
+            .bind(now() as i64)
+            .bind(device_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("Failed to update device key last_seen_at")?;
+        Ok(())
+    }
+
+    /// Count how many distinct users have registered with this device fingerprint
+    pub async fn count_registrations_for_fingerprint(
+        &self,
+        device_fingerprint_hash: &str,
+    ) -> Result<u64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM device_registrations WHERE device_fingerprint_hash = ?",
+        )
+        .bind(device_fingerprint_hash)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.get::<i64, _>("count") as u64)
+    }
+
+    /// Record a device-to-user registration (anti-alt tracking)
+    pub async fn record_device_registration(
+        &self,
+        device_fingerprint_hash: &str,
+        user_id: Uuid,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO device_registrations (device_fingerprint_hash, user_id, created_at) VALUES (?, ?, ?)",
+        )
+        .bind(device_fingerprint_hash)
+        .bind(user_id.to_string())
+        .bind(now() as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to record device registration")?;
+        Ok(())
     }
 
     // ── Node ban operations ──

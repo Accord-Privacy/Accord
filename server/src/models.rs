@@ -318,6 +318,23 @@ pub struct User {
     pub created_at: u64,
 }
 
+/// A registered device with a deterministic keypair derived from hardware fingerprint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceKey {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    /// SHA-256 of hardware fingerprint signals (machine-id, etc.)
+    pub device_fingerprint_hash: String,
+    /// X25519 public key (hex-encoded)
+    pub public_key: String,
+    /// Human-readable label (e.g. "MacBook", "Desktop")
+    pub device_label: String,
+    /// True if this is a browser client (no hardware fingerprint)
+    pub is_browser: bool,
+    pub created_at: u64,
+    pub last_seen_at: u64,
+}
+
 /// Per-Node user profile (encrypted, stored on the relay but opaque to it)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeUserProfile {
@@ -612,18 +629,29 @@ pub struct WsMessage {
     pub timestamp: u64,
 }
 
-/// Registration request — keypair-only, no username at relay level
+/// Registration request — username + password (v2) or public_key + password (legacy)
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    /// Deprecated: ignored by the relay. Kept for backward API compat.
+    /// Username for the account (v2 flow — required for new registrations)
     #[serde(default)]
     pub username: String,
+    /// Legacy: public key for keypair-only registration (backward compat)
+    #[serde(default)]
     pub public_key: String,
     #[serde(default)]
     pub password: String,
     /// Optional display name to set during registration
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Device fingerprint hash — SHA-256 of hardware signals (v2 flow)
+    #[serde(default)]
+    pub device_fingerprint_hash: Option<String>,
+    /// Device X25519 public key, hex-encoded (v2 flow)
+    #[serde(default)]
+    pub device_public_key: Option<String>,
+    /// Human-readable device label (v2 flow)
+    #[serde(default)]
+    pub device_label: Option<String>,
 }
 
 /// Registration response
@@ -631,21 +659,27 @@ pub struct RegisterRequest {
 pub struct RegisterResponse {
     pub user_id: Uuid,
     pub message: String,
+    /// Device ID (present in v2 flow)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<Uuid>,
 }
 
-/// Authentication request — authenticate by public_key (or public_key_hash) + password
+/// Authentication request — username + password (v2) or public_key/hash + password (legacy)
 #[derive(Debug, Deserialize)]
 pub struct AuthRequest {
-    /// Deprecated: use public_key or public_key_hash instead. Kept for backward compat.
+    /// Username (v2 flow — if non-empty, used for lookup instead of public_key)
     #[serde(default)]
     pub username: String,
     pub password: String,
-    /// The user's public key — relay will compute SHA-256 hash to look up the user.
+    /// Legacy: public key for keypair-based auth
     #[serde(default)]
     pub public_key: Option<String>,
-    /// Alternatively, provide the hex-encoded SHA-256 hash directly.
+    /// Legacy: hex-encoded SHA-256 hash of public key
     #[serde(default)]
     pub public_key_hash: Option<String>,
+    /// Device fingerprint hash — for device key tracking (v2 flow)
+    #[serde(default)]
+    pub device_fingerprint_hash: Option<String>,
 }
 
 /// Authentication response
@@ -654,6 +688,9 @@ pub struct AuthResponse {
     pub token: String,
     pub user_id: Uuid,
     pub expires_at: u64,
+    /// Device ID (present in v2 flow)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<Uuid>,
 }
 
 /// Create Node request (REST)

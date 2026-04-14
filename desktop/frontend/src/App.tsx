@@ -34,6 +34,7 @@ import { getRelayManager, RelayManager } from "./RelayManager";
 import { StagedFile } from "./FileManager";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import type { SetupResult } from "./SetupWizard";
+import { getDeviceInfo } from "./deviceIdentity";
 const SetupWizard = React.lazy(() => import("./SetupWizard").then(m => ({ default: m.SetupWizard })));
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
@@ -3745,20 +3746,47 @@ function App() {
           setServerUrl(relayUrl);
 
           // Register on the relay (may already exist from previous session)
-          try {
-            await api.register(result.publicKey, result.password, result.displayName);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (!msg.includes('already') && !msg.includes('409')) {
-              if (msg.includes('429') || msg.toLowerCase().includes('rate')) {
-                setError('Registration rate-limited by server. Please try again later.');
-              } else {
-                setError(`Registration failed: ${msg}`);
+          let response: { token: string; user_id: string };
+          const deviceInfo = result.username ? await getDeviceInfo() : null;
+
+          if (result.username) {
+            // V2 flow: username + password + device identity
+            try {
+              await api.registerV2(
+                result.username,
+                result.password,
+                deviceInfo ? { fingerprint_hash: deviceInfo.fingerprint_hash, public_key: deviceInfo.public_key, label: deviceInfo.label } : undefined,
+                result.displayName,
+              );
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (!msg.includes('already') && !msg.includes('409')) {
+                if (msg.includes('429') || msg.toLowerCase().includes('rate')) {
+                  setError('Registration rate-limited by server. Please try again later.');
+                } else {
+                  setError(`Registration failed: ${msg}`);
+                }
+                return;
               }
-              return;
             }
+            response = await api.loginV2(result.username, result.password, deviceInfo?.fingerprint_hash);
+          } else {
+            // Legacy v1 flow: public_key + password
+            try {
+              await api.register(result.publicKey, result.password, result.displayName);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (!msg.includes('already') && !msg.includes('409')) {
+                if (msg.includes('429') || msg.toLowerCase().includes('rate')) {
+                  setError('Registration rate-limited by server. Please try again later.');
+                } else {
+                  setError(`Registration failed: ${msg}`);
+                }
+                return;
+              }
+            }
+            response = await api.login(result.publicKey, result.password);
           }
-          const response = await api.login(result.publicKey, result.password);
           storeToken(response.token);
           localStorage.setItem('accord_user_id', response.user_id);
 
@@ -3805,13 +3833,34 @@ function App() {
           }
           if (detectedRelay && await api.testConnection()) {
             try {
-              await api.register(result.publicKey, result.password, result.displayName);
-              const response = await api.login(result.publicKey, result.password);
-              storeToken(response.token);
-              localStorage.setItem('accord_user_id', response.user_id);
+              const fallbackDeviceInfo = result.username ? await getDeviceInfo() : null;
+              let fallbackResponse: { token: string; user_id: string };
+
+              if (result.username) {
+                // V2: username + password + device
+                try {
+                  await api.registerV2(
+                    result.username,
+                    result.password,
+                    fallbackDeviceInfo ? { fingerprint_hash: fallbackDeviceInfo.fingerprint_hash, public_key: fallbackDeviceInfo.public_key, label: fallbackDeviceInfo.label } : undefined,
+                    result.displayName,
+                  );
+                } catch (regErr) {
+                  const regMsg = regErr instanceof Error ? regErr.message : String(regErr);
+                  if (!regMsg.includes('already') && !regMsg.includes('409')) throw regErr;
+                }
+                fallbackResponse = await api.loginV2(result.username, result.password, fallbackDeviceInfo?.fingerprint_hash);
+              } else {
+                // Legacy v1
+                await api.register(result.publicKey, result.password, result.displayName);
+                fallbackResponse = await api.login(result.publicKey, result.password);
+              }
+
+              storeToken(fallbackResponse.token);
+              localStorage.setItem('accord_user_id', fallbackResponse.user_id);
 
               if (result.displayName) {
-                try { await api.updateProfile({ display_name: result.displayName }, response.token); } catch {}
+                try { await api.updateProfile({ display_name: result.displayName }, fallbackResponse.token); } catch {}
               }
 
               // Save to session-based slots too (used by loadKeyFromStorage on refresh)
@@ -3821,15 +3870,15 @@ function App() {
               setAppState(prev => ({
                 ...prev,
                 isAuthenticated: true,
-                token: response.token,
-                user: { id: response.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
+                token: fallbackResponse.token,
+                user: { id: fallbackResponse.user_id, public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName }
               }));
               setIsAuthenticated(true);
               setServerAvailable(true);
 
               // Connect WebSocket
               const wsBaseUrl = detectedRelay.replace(/^http/, 'ws');
-              connectSocket(response.token, wsBaseUrl);
+              connectSocket(fallbackResponse.token, wsBaseUrl);
 
               setTimeout(() => { loadNodes(); loadDmChannels(); }, 100);
             } catch (err) {

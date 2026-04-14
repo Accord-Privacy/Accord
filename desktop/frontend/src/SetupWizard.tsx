@@ -24,6 +24,8 @@ export interface SetupResult {
   meshEnabled?: boolean;
   displayName?: string;
   isRecovery?: boolean;
+  /** Username for v2 auth flow */
+  username?: string;
 }
 
 interface SetupWizardProps {
@@ -33,10 +35,14 @@ interface SetupWizardProps {
 type WizardMode = "choose" | "login" | "create" | "recover";
 type CreateStep = "identity" | "mnemonic";
 
+// Re-export for backward compat
+export { getDeviceInfo } from "./deviceIdentity";
+
 export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
   const [mode, setMode] = useState<WizardMode>("choose");
 
   // Shared state
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -55,6 +61,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
   const [mnemonic, setMnemonic] = useState("");
 
   const resetState = () => {
+    setUsername("");
     setPassword("");
     setConfirmPassword("");
     setDisplayName("");
@@ -76,6 +83,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
   // === CREATE ACCOUNT: Step 1 - Generate identity ===
   const handleCreateIdentity = useCallback(async () => {
+    if (!username.trim() || username.trim().length < 3) {
+      setError("Username must be at least 3 characters");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(username.trim())) {
+      setError("Username may only contain letters, numbers, underscores, and hyphens");
+      return;
+    }
     if (password.length < 8) {
       setError("Password must be at least 8 characters");
       return;
@@ -100,7 +115,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
       if (!phrase || phrase.trim().split(/\s+/).length < 24) {
         console.error("Invalid mnemonic generated, length:", phrase?.length, "words:", phrase?.trim().split(/\s+/).length);
-        // Fallback: extract raw bytes and try again
         try {
           const raw = await getRawPrivateKey(kp);
           phrase = entropyToMnemonic(raw);
@@ -112,6 +126,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       setActiveIdentity(pkHash);
       await saveKeyWithPassword(kp, password, pkHash);
 
+      // Store username locally for future logins
+      localStorage.setItem("accord_username", username.trim());
+
       setKeyPair(kp);
       setPublicKey(pk);
       setPublicKeyHash(pkHash);
@@ -122,7 +139,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     } finally {
       setLoading(false);
     }
-  }, [password, confirmPassword]);
+  }, [username, password, confirmPassword]);
 
   // === CREATE ACCOUNT: Step 2 - Complete after mnemonic backup ===
   const handleCreateComplete = useCallback(() => {
@@ -134,8 +151,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
       password,
       mnemonic: generatedMnemonic,
       displayName: displayName.trim() || undefined,
+      username: username.trim(),
     });
-  }, [keyPair, publicKey, publicKeyHash, password, generatedMnemonic, displayName, onComplete]);
+  }, [keyPair, publicKey, publicKeyHash, password, generatedMnemonic, displayName, username, onComplete]);
 
   // === RECOVER ACCOUNT ===
   const handleRecover = useCallback(async () => {
@@ -165,15 +183,20 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         password,
         mnemonic: mnemonic.trim(),
         isRecovery: true,
+        username: username.trim() || undefined,
       });
     } catch (e: any) {
       setError(e.message || "Recovery failed");
       setLoading(false);
     }
-  }, [mnemonic, password, onComplete]);
+  }, [mnemonic, password, username, onComplete]);
 
   // === LOGIN ===
   const handleLogin = useCallback(async () => {
+    if (!username.trim()) {
+      setError("Username is required");
+      return;
+    }
     if (password.length < 8) {
       setError("Password must be at least 8 characters");
       return;
@@ -182,30 +205,46 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     setLoading(true);
     setError("");
     try {
+      // Try to load stored keypair for E2EE (optional — might not exist on this device)
+      let kp: CryptoKeyPair | null = null;
+      let pk = "";
+      let pkHash = "";
+
       let storedPkHash = localStorage.getItem("accord_active_identity");
-      // Fallback: check identity index
       if (!storedPkHash) {
         try {
           const idx = JSON.parse(localStorage.getItem("accord_identity_index") || "[]");
           if (idx.length > 0) storedPkHash = idx[idx.length - 1];
         } catch {}
       }
-      // Fallback: check legacy public key hash
       if (!storedPkHash) {
         storedPkHash = localStorage.getItem("accord_public_key_hash");
       }
-      if (!storedPkHash) {
-        setError("No stored identity found. Try 'Create Identity' or 'Recover Identity' instead.");
-        setLoading(false);
-        return;
+
+      if (storedPkHash) {
+        try {
+          kp = await loadKeyWithPassword(password, storedPkHash);
+          if (kp) {
+            pk = await exportPublicKey(kp.publicKey);
+            pkHash = await sha256Hex(pk);
+          }
+        } catch (e) {
+          console.warn("Could not load stored keypair:", e);
+        }
       }
 
-      const kp = await loadKeyWithPassword(password, storedPkHash);
-      if (!kp) { setError("Failed to unlock identity — wrong password?"); setLoading(false); return; }
-      const pk = await exportPublicKey(kp.publicKey);
-      const pkHash = await sha256Hex(pk);
+      // If no local keypair, generate a fresh one for E2EE on this device
+      if (!kp) {
+        kp = await generateKeyPair();
+        pk = await exportPublicKey(kp.publicKey);
+        pkHash = await sha256Hex(pk);
+        setActiveIdentity(pkHash);
+        await saveKeyWithPassword(kp, password, pkHash);
+      }
 
-      // Check if there's an existing relay URL (backward compat)
+      // Store username for future logins
+      localStorage.setItem("accord_username", username.trim());
+
       const existingRelayUrl = localStorage.getItem("accord_server_url") || undefined;
 
       onComplete({
@@ -215,19 +254,19 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
         password,
         mnemonic: "",
         relayUrl: existingRelayUrl,
-        isRecovery: true, // existing account — don't prompt for display name
+        isRecovery: true,
+        username: username.trim(),
       });
     } catch (e: any) {
-      setError(e.message || "Login failed — wrong password?");
+      setError(e.message || "Login failed");
       setLoading(false);
     }
-  }, [password, onComplete]);
+  }, [username, password, onComplete]);
 
   const handleCopyMnemonic = async () => {
     try {
       await navigator.clipboard.writeText(generatedMnemonic);
     } catch {
-      // Fallback for non-HTTPS contexts
       const ta = document.createElement('textarea');
       ta.value = generatedMnemonic;
       ta.style.position = 'fixed';
@@ -256,6 +295,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     </div>
   );
 
+  const storedUsername = localStorage.getItem("accord_username") || "";
+
   return (
     <div className="app">
       <div className="auth-page">
@@ -273,13 +314,16 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 without trusting a central server with your data. Your keys, your messages.
               </div>
               <div className="auth-buttons-stack" style={{ marginTop: 16 }}>
-                {hasStoredKeyPair() && (
-                  <button className="btn btn-primary" onClick={() => setMode("login")}>
-                    Log In
+                {(hasStoredKeyPair() || storedUsername) && (
+                  <button className="btn btn-primary" onClick={() => {
+                    if (storedUsername) setUsername(storedUsername);
+                    setMode("login");
+                  }}>
+                    Log In{storedUsername ? ` as ${storedUsername}` : ""}
                   </button>
                 )}
-                <button className={`btn ${hasStoredKeyPair() ? 'btn-outline' : 'btn-primary'}`} onClick={() => setMode("create")}>
-                  Create Identity
+                <button className={`btn ${(hasStoredKeyPair() || storedUsername) ? 'btn-outline' : 'btn-primary'}`} onClick={() => setMode("create")}>
+                  Create Account
                 </button>
                 <button className="btn btn-outline" onClick={() => setMode("recover")}>
                   Recover Identity
@@ -293,14 +337,18 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
             <>
               <button onClick={goBack} className="auth-back-btn">← Back</button>
               <h2 className="auth-title">Log In</h2>
-              <p className="auth-subtitle">Enter your password to unlock your identity</p>
+              <p className="auth-subtitle">Enter your username and password</p>
 
-              <div className="auth-info-box" style={{ marginTop: 16, marginBottom: 12 }}>
-                {hasStoredKeyPair() ? (
-                  <span style={{ color: 'var(--green, #43b581)' }}>Identity keypair found on this device</span>
-                ) : (
-                  <span style={{ color: 'var(--yellow, #faa61a)' }}>⚠️ No identity found — try Create or Recover instead</span>
-                )}
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label">Username</label>
+                <input
+                  type="text"
+                  placeholder="Your username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="form-input"
+                  autoComplete="username"
+                />
               </div>
 
               <div className="form-group">
@@ -312,6 +360,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                   onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleLogin(); }}
                   className="form-input"
+                  autoComplete="current-password"
                 />
               </div>
 
@@ -319,7 +368,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
               <button
                 className="btn btn-primary"
-                disabled={loading || password.length < 8}
+                disabled={loading || password.length < 8 || !username.trim()}
                 onClick={handleLogin}
               >
                 {loading ? "Logging in..." : "Log In"}
@@ -327,12 +376,25 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
             </>
           )}
 
-          {/* === CREATE IDENTITY: Password & Identity === */}
+          {/* === CREATE ACCOUNT: Username, Password & Identity === */}
           {mode === "create" && createStep === "identity" && (
             <>
               <button onClick={goBack} className="auth-back-btn">← Back</button>
-              <h2 className="auth-title">Create Your Identity</h2>
-              <p className="auth-subtitle">Choose a password to protect your keypair. No server connection needed.</p>
+              <h2 className="auth-title">Create Account</h2>
+              <p className="auth-subtitle">Choose a username and password. Your device keypair is generated automatically.</p>
+
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label">Username</label>
+                <input
+                  type="text"
+                  placeholder="Choose a username (3-32 chars)"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="form-input"
+                  maxLength={32}
+                  autoComplete="username"
+                />
+              </div>
 
               {renderDisplayNameField()}
 
@@ -340,10 +402,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 <label className="form-label">Password (min 8 characters)</label>
                 <input
                   type="password"
-                  placeholder="Choose a password to protect your key"
+                  placeholder="Choose a password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="form-input"
+                  autoComplete="new-password"
                 />
               </div>
               <div className="form-group">
@@ -355,6 +418,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleCreateIdentity(); }}
                   className="form-input"
+                  autoComplete="new-password"
                 />
               </div>
 
@@ -362,15 +426,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
 
               <button
                 className="btn btn-green"
-                disabled={loading || password.length < 8}
+                disabled={loading || password.length < 8 || username.trim().length < 3}
                 onClick={handleCreateIdentity}
               >
-                {loading ? "Generating keypair..." : "Generate Identity"}
+                {loading ? "Creating account..." : "Create Account"}
               </button>
             </>
           )}
 
-          {/* === CREATE IDENTITY: Mnemonic Backup === */}
+          {/* === CREATE ACCOUNT: Mnemonic Backup === */}
           {mode === "create" && createStep === "mnemonic" && (
             <>
               <h2 className="auth-title">Backup Your Recovery Phrase</h2>
@@ -385,10 +449,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 style={{ marginTop: 12 }}
                 onClick={handleCopyMnemonic}
               >
-                {mnemonicCopied ? "✓ Copied!" : "Copy to clipboard"}
+                {mnemonicCopied ? "Copied!" : "Copy to clipboard"}
               </button>
               <div className="auth-info-box" style={{ marginTop: 12 }}>
-                <span className="warning">⚠️ Never share this phrase. Anyone with it can access your identity.</span>
+                <span className="warning">Never share this phrase. Anyone with it can access your identity.</span>
               </div>
 
               {error && <div className="auth-error" style={{ marginTop: 12 }}>{error}</div>}
@@ -399,7 +463,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
                 disabled={loading}
                 onClick={handleCreateComplete}
               >
-                I've saved my recovery phrase — Continue →
+                I've saved my recovery phrase — Continue
               </button>
             </>
           )}
@@ -412,6 +476,18 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
               <p className="auth-subtitle">Restore your identity with your recovery phrase</p>
 
               <div className="form-group" style={{ marginTop: 16 }}>
+                <label className="form-label">Username (if you want to re-register)</label>
+                <input
+                  type="text"
+                  placeholder="Your username (optional)"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="form-input"
+                  maxLength={32}
+                />
+              </div>
+
+              <div className="form-group" style={{ marginTop: 12 }}>
                 <label className="form-label">Recovery Phrase (24 words)</label>
                 <textarea
                   placeholder="Enter your 24-word recovery phrase..."

@@ -81,7 +81,7 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
     let database_ok = state.db.count_users().await.is_ok();
 
     // WebSocket connection count
-    let websocket_connections = state.connections.read().await.len();
+    let websocket_connections: usize = state.connections.read().await.values().map(|d| d.len()).sum();
 
     // Memory usage (RSS from /proc/self/statm on Linux, fallback 0)
     let memory_usage_bytes = {
@@ -157,16 +157,6 @@ pub async fn register_handler(
         ));
     }
 
-    if request.public_key.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Public key cannot be empty".into(),
-                code: 400,
-            }),
-        ));
-    }
-
     let display_name = request.display_name.clone();
     if let Some(ref name) = display_name {
         crate::validation::validate_display_name(name.trim()).map_err(|e| {
@@ -179,48 +169,134 @@ pub async fn register_handler(
             )
         })?;
     }
-    match state
-        .register_user(request.public_key, request.password)
-        .await
-    {
-        Ok(user_id) => {
-            // Set display name in user profile if provided
-            if let Some(ref name) = display_name {
-                let trimmed = name.trim();
-                if !trimmed.is_empty() {
-                    let _ = state
-                        .update_user_profile(user_id, Some(trimmed), None, None, None, None, None)
-                        .await;
+
+    // Route between v2 (username) and v1 (public_key) registration flows
+    let is_v2 = !request.username.is_empty() && request.device_fingerprint_hash.is_some();
+
+    if is_v2 {
+        // ── V2 flow: username + password + device key ──
+        match state
+            .register_user_v2(
+                request.username,
+                request.password,
+                request.device_fingerprint_hash,
+                request.device_public_key,
+                request.device_label,
+            )
+            .await
+        {
+            Ok((user_id, device_id)) => {
+                if let Some(ref name) = display_name {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        let _ = state
+                            .update_user_profile(
+                                user_id,
+                                Some(trimmed),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )
+                            .await;
+                    }
                 }
-            }
-            info!("Registered new user: {}", user_id);
+                info!("Registered new user (v2): {}", user_id);
+                let _ = state
+                    .db
+                    .log_audit_event_with_ip(
+                        Uuid::nil(),
+                        user_id,
+                        "user_register",
+                        "user",
+                        Some(user_id),
+                        Some(
+                            &serde_json::json!({"display_name": display_name, "flow": "v2"})
+                                .to_string(),
+                        ),
+                        Some(&client_ip),
+                    )
+                    .await;
 
-            // Log audit event for registration (relay-level, use nil node_id)
-            let _ = state
-                .db
-                .log_audit_event_with_ip(
-                    Uuid::nil(),
+                Ok(Json(RegisterResponse {
                     user_id,
-                    "user_register",
-                    "user",
-                    Some(user_id),
-                    Some(&serde_json::json!({"display_name": display_name}).to_string()),
-                    Some(&client_ip),
-                )
-                .await;
-
-            Ok(Json(RegisterResponse {
-                user_id,
-                message: "User registered successfully".into(),
-            }))
+                    message: "User registered successfully".into(),
+                    device_id,
+                }))
+            }
+            Err(err) => Err((
+                StatusCode::CONFLICT,
+                Json(ErrorResponse {
+                    error: err,
+                    code: 409,
+                }),
+            )),
         }
-        Err(err) => Err((
-            StatusCode::CONFLICT,
-            Json(ErrorResponse {
-                error: err,
-                code: 409,
-            }),
-        )),
+    } else {
+        // ── V1 flow: public_key + password (legacy) ──
+        if request.public_key.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Public key cannot be empty".into(),
+                    code: 400,
+                }),
+            ));
+        }
+
+        match state
+            .register_user(request.public_key, request.password)
+            .await
+        {
+            Ok(user_id) => {
+                if let Some(ref name) = display_name {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        let _ = state
+                            .update_user_profile(
+                                user_id,
+                                Some(trimmed),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )
+                            .await;
+                    }
+                }
+                info!("Registered new user (v1/legacy): {}", user_id);
+                let _ = state
+                    .db
+                    .log_audit_event_with_ip(
+                        Uuid::nil(),
+                        user_id,
+                        "user_register",
+                        "user",
+                        Some(user_id),
+                        Some(
+                            &serde_json::json!({"display_name": display_name, "flow": "v1"})
+                                .to_string(),
+                        ),
+                        Some(&client_ip),
+                    )
+                    .await;
+
+                Ok(Json(RegisterResponse {
+                    user_id,
+                    message: "User registered successfully".into(),
+                    device_id: None,
+                }))
+            }
+            Err(err) => Err((
+                StatusCode::CONFLICT,
+                Json(ErrorResponse {
+                    error: err,
+                    code: 409,
+                }),
+            )),
+        }
     }
 }
 
@@ -261,59 +337,105 @@ pub async fn auth_handler(
         ));
     }
 
-    // Determine the public_key_hash to authenticate with
-    let public_key_hash = if let Some(ref pkh) = request.public_key_hash {
-        pkh.clone()
-    } else if let Some(ref pk) = request.public_key {
-        crate::db::compute_public_key_hash(pk)
-    } else if !request.username.is_empty() {
-        // Backward compat: treat username as public_key for old clients
-        // (they used to send the public key as "username" in some flows)
-        crate::db::compute_public_key_hash(&request.username)
-    } else {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Must provide public_key or public_key_hash".into(),
-                code: 400,
-            }),
-        ));
-    };
+    // Route between v2 (username) and v1 (public_key) auth flows.
+    // V2: username is non-empty AND no public_key/public_key_hash provided.
+    let is_v2 = !request.username.is_empty()
+        && request.public_key.is_none()
+        && request.public_key_hash.is_none();
 
-    match state
-        .authenticate_user(public_key_hash, request.password)
-        .await
-    {
-        Ok(auth_token) => {
-            info!("User authenticated: {}", auth_token.user_id);
+    if is_v2 {
+        // ── V2 flow: username + password ──
+        match state
+            .authenticate_user_by_username(
+                request.username,
+                request.password,
+                request.device_fingerprint_hash,
+            )
+            .await
+        {
+            Ok((auth_token, device_id)) => {
+                info!("User authenticated (v2): {}", auth_token.user_id);
+                let _ = state
+                    .db
+                    .log_audit_event_with_ip(
+                        Uuid::nil(),
+                        auth_token.user_id,
+                        "user_login",
+                        "user",
+                        Some(auth_token.user_id),
+                        Some(&serde_json::json!({"flow": "v2"}).to_string()),
+                        Some(&client_ip),
+                    )
+                    .await;
 
-            // Log audit event for login
-            let _ = state
-                .db
-                .log_audit_event_with_ip(
-                    Uuid::nil(),
-                    auth_token.user_id,
-                    "user_login",
-                    "user",
-                    Some(auth_token.user_id),
-                    None,
-                    Some(&client_ip),
-                )
-                .await;
-
-            Ok(Json(AuthResponse {
-                token: auth_token.token,
-                user_id: auth_token.user_id,
-                expires_at: auth_token.expires_at,
-            }))
+                Ok(Json(AuthResponse {
+                    token: auth_token.token,
+                    user_id: auth_token.user_id,
+                    expires_at: auth_token.expires_at,
+                    device_id,
+                }))
+            }
+            Err(err) => Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: err,
+                    code: 401,
+                }),
+            )),
         }
-        Err(err) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: err,
-                code: 401,
-            }),
-        )),
+    } else {
+        // ── V1 flow: public_key/public_key_hash + password (legacy) ──
+        let public_key_hash = if let Some(ref pkh) = request.public_key_hash {
+            pkh.clone()
+        } else if let Some(ref pk) = request.public_key {
+            crate::db::compute_public_key_hash(pk)
+        } else if !request.username.is_empty() {
+            // Backward compat: treat username as public_key for old clients
+            crate::db::compute_public_key_hash(&request.username)
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Must provide username, public_key, or public_key_hash".into(),
+                    code: 400,
+                }),
+            ));
+        };
+
+        match state
+            .authenticate_user(public_key_hash, request.password)
+            .await
+        {
+            Ok(auth_token) => {
+                info!("User authenticated (v1/legacy): {}", auth_token.user_id);
+                let _ = state
+                    .db
+                    .log_audit_event_with_ip(
+                        Uuid::nil(),
+                        auth_token.user_id,
+                        "user_login",
+                        "user",
+                        Some(auth_token.user_id),
+                        None,
+                        Some(&client_ip),
+                    )
+                    .await;
+
+                Ok(Json(AuthResponse {
+                    token: auth_token.token,
+                    user_id: auth_token.user_id,
+                    expires_at: auth_token.expires_at,
+                    device_id: None,
+                }))
+            }
+            Err(err) => Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: err,
+                    code: 401,
+                }),
+            )),
+        }
     }
 }
 
@@ -4161,7 +4283,8 @@ async fn websocket_handler_inner(
     }
     let (tx, mut rx) = broadcast::channel::<String>(100);
 
-    state.add_connection(user_id, tx.clone()).await;
+    // TODO: pass real device_id from auth response when available
+    let ws_device_id = state.add_connection(user_id, None, tx.clone()).await;
 
     // Send welcome message with server build info for mutual verification
     {
@@ -4231,7 +4354,7 @@ async fn websocket_handler_inner(
         }
     }
 
-    state.remove_connection(user_id).await;
+    state.remove_connection(user_id, ws_device_id).await;
 
     // Auto-leave all voice channels on disconnect
     let left_channels = state.leave_all_voice_channels(user_id).await;
@@ -10034,6 +10157,9 @@ mod tests {
             public_key: "".into(),
             password: "".into(),
             display_name: None,
+            device_fingerprint_hash: None,
+            device_public_key: None,
+            device_label: None,
         };
 
         let result = register_handler(State(state), no_auth_header(), Json(request)).await;
@@ -10058,6 +10184,9 @@ mod tests {
             public_key: "valid_public_key_abc123".into(),
             password: "".into(),
             display_name: Some(long_name),
+            device_fingerprint_hash: None,
+            device_public_key: None,
+            device_label: None,
         };
 
         let result = register_handler(State(state), no_auth_header(), Json(request)).await;
@@ -10078,14 +10207,15 @@ mod tests {
             password: "pass".into(),
             public_key: None,
             public_key_hash: None,
+            device_fingerprint_hash: None,
         };
 
         let result = auth_handler(State(state), no_auth_header(), Json(request)).await;
         let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(
-            err.error.contains("public_key"),
-            "Expected mention of public_key, got: {}",
+            err.error.contains("username"),
+            "Expected mention of username, got: {}",
             err.error
         );
     }
@@ -10099,6 +10229,7 @@ mod tests {
             password: "".into(),
             public_key: None,
             public_key_hash: Some("deadbeef_nonexistent_hash".into()),
+            device_fingerprint_hash: None,
         };
 
         let result = auth_handler(State(state), no_auth_header(), Json(request)).await;

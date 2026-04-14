@@ -60,6 +60,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hmac",
+ "hostname",
  "jni",
  "quinn",
  "rand 0.8.5",

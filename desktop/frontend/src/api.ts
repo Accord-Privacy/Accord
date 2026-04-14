@@ -161,7 +161,7 @@ export class AccordApi {
     return this.request<HealthResponse>('/health');
   }
 
-  // User registration — keypair-only, no username
+  // User registration — keypair-only, no username (legacy v1)
   async register(publicKey: string, password: string, displayName?: string): Promise<RegisterResponse> {
     return this.request<RegisterResponse>('/register', {
       method: 'POST',
@@ -173,13 +173,53 @@ export class AccordApi {
     });
   }
 
-  // User authentication — by public_key + password
+  // User registration — username + password + device (v2)
+  async registerV2(
+    username: string,
+    password: string,
+    deviceInfo?: { fingerprint_hash: string; public_key: string; label: string },
+    displayName?: string,
+  ): Promise<RegisterResponse> {
+    return this.request<RegisterResponse>('/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        username,
+        password,
+        ...(displayName ? { display_name: displayName } : {}),
+        ...(deviceInfo
+          ? {
+              device_fingerprint_hash: deviceInfo.fingerprint_hash,
+              device_public_key: deviceInfo.public_key,
+              device_label: deviceInfo.label,
+            }
+          : {}),
+      }),
+    });
+  }
+
+  // User authentication — by public_key + password (legacy v1)
   async login(publicKey: string, password: string): Promise<AuthResponse> {
     return this.request<AuthResponse>('/auth', {
       method: 'POST',
       body: JSON.stringify({
         public_key: publicKey,
         password: password,
+      }),
+    });
+  }
+
+  // User authentication — by username + password (v2)
+  async loginV2(
+    username: string,
+    password: string,
+    deviceFingerprintHash?: string,
+  ): Promise<AuthResponse> {
+    return this.request<AuthResponse>('/auth', {
+      method: 'POST',
+      body: JSON.stringify({
+        username,
+        password,
+        ...(deviceFingerprintHash ? { device_fingerprint_hash: deviceFingerprintHash } : {}),
       }),
     });
   }

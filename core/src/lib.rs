@@ -14,6 +14,7 @@ pub mod build_hash;
 pub mod channels;
 pub mod crypto;
 pub mod device_fingerprint;
+pub mod device_identity;
 pub mod double_ratchet;
 pub mod ffi;
 pub mod friendship_privacy;

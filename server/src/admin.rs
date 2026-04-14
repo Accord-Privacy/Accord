@@ -98,7 +98,7 @@ pub async fn admin_stats_handler(
     let user_count = state.db.count_users().await.unwrap_or(0);
     let node_count = state.db.count_nodes().await.unwrap_or(0);
     let message_count = state.db.count_messages().await.unwrap_or(0);
-    let connection_count = state.connections.read().await.len();
+    let connection_count: usize = state.connections.read().await.values().map(|d| d.len()).sum();
     let uptime = state.uptime();
     let version = env!("CARGO_PKG_VERSION");
 
@@ -1018,7 +1018,7 @@ mod tests {
         let state = make_test_state().await;
         let fake_id = uuid::Uuid::new_v4();
         let (tx, _rx) = broadcast::channel(1);
-        state.connections.write().await.insert(fake_id, tx);
+        state.connections.write().await.entry(fake_id).or_default().insert(uuid::Uuid::new_v4(), tx);
 
         let result = admin_stats_handler(
             State(state),

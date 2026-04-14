@@ -235,6 +235,26 @@ fn save_identity_index(hashes: &[String]) {
     }
 }
 
+/// Device identity response for the frontend
+#[derive(Serialize)]
+struct DeviceIdentityResponse {
+    device_fingerprint_hash: String,
+    device_public_key: String,
+    device_label: String,
+}
+
+/// Get deterministic device identity derived from hardware signals.
+/// Same device always returns the same keypair and fingerprint.
+#[tauri::command]
+fn get_device_identity() -> Result<DeviceIdentityResponse, String> {
+    let identity = accord_core::device_identity::derive_device_identity()?;
+    Ok(DeviceIdentityResponse {
+        device_fingerprint_hash: identity.fingerprint_hash,
+        device_public_key: identity.public_key_hex,
+        device_label: identity.device_label,
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -262,6 +282,7 @@ fn main() {
             load_identity,
             delete_identity,
             list_identities,
+            get_device_identity,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
