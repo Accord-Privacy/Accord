@@ -27,12 +27,17 @@
       "endpoints": [
         "https://github.com/Accord-Privacy/Accord/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzOENBNENFN0VBNjZFNzYKUldSMmJxWit6cVNNVTZGNmF4aDFoVlpOWFZTWWRyaWFaT2g0Z0pqaEowWXduaTFDSU55a2RMcHAK"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "deb", "appimage"],
+    "targets": [
+      "nsis",
+      "msi",
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -56,7 +61,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ],
         "section": "net",
         "priority": "optional"
       },
@@ -68,6 +76,7 @@
     "longDescription": "Accord — Discord's features with Signal's security. End-to-end encrypted messaging, voice, and community features.",
     "category": "SocialNetworking",
     "copyright": "© 2025 Accord",
-    "publisher": "Accord"
+    "publisher": "Accord",
+    "createUpdaterArtifacts": true
   }
 }
