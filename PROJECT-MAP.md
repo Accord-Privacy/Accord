@@ -63,19 +63,19 @@ What's missing — three precise gaps in `desktop/frontend/src/App.tsx`:
 
 </details>
 
-### 🟠 B. Metadata encryption (NMK) not wired into the client — IN PROGRESS
+### ✅ B. Metadata encryption (NMK) not wired into the client — CLOSED
 
-**Half closed 2026-07-12** (`8956c45`): relay now exposes
-`GET/PUT /api/nodes/:id/metadata/encrypted` (opaque blob storage, member
-read / admin write, node isolation tested), and the client has
-`e2ee/metadata.ts` (NodeMetadataKey mirroring `core/src/metadata_crypto.rs`,
-cross-impl vectors locked both sides) plus `api.ts` endpoints.
-
-**Still open:** App.tsx wiring — derive NMK on node create, encrypt on
-create/rename, prefer decrypted names in UI — and NMK distribution to joiners
-over Double Ratchet (design in `docs/metadata-privacy.md`). Until that lands,
-names remain plaintext on the relay; if it slips the beta, amend the README
-"relay sees" table instead of shipping overclaimed privacy.
+**Closed 2026-07-12** (`8956c45` + `67bd09a`, verified two-client): relay
+exposes `GET/PUT /api/nodes/:id/metadata/encrypted` (opaque blob storage,
+member read / admin write, node isolation tested); client derives the NMK on
+node create, publishes encrypted name/description/channel-name blobs, shares
+the NMK with joiners over Double Ratchet (piggybacked on sender-key
+distributions), and prefers decrypted names in the UI. Cross-impl vectors
+locked between `core/src/metadata_crypto.rs` and `e2ee/metadata.ts`.
+`e2e/metadata-privacy.spec.ts` proves the relay rows hold only AES-GCM blobs
+and the joiner can decrypt. Plaintext columns still exist during Phase 2
+(compatibility); Phase 3 drops them — until then the README "relay sees"
+table should note metadata encryption is client-optional.
 
 ### 🟠 C. Security-audit items still open (verified in code)
 
@@ -128,11 +128,11 @@ added with M2. Remaining smaller gap: voice stack / `useVoice` (open issue #3).
 4. ✅ Session recovery tests (+ Double Ratchet decrypt-rollback fix in Rust core and TS, found by these tests)
 5. ⏳ Exit criteria: `e2e/sender-keys.spec.ts` written, needs a green run (two fresh clients; kick test)
 
-### 🔶 M2 — Metadata privacy Phase 2 — IN PROGRESS (`8956c45`)
+### ✅ M2 — Metadata privacy Phase 2 — DONE (`8956c45`, `67bd09a`; verified two-client)
 1. ✅ Relay blob storage + `GET/PUT /api/nodes/:id/metadata/encrypted`; NMK client crypto (`e2ee/metadata.ts`) with cross-impl vectors
-2. ⏳ App.tsx wiring: derive NMK on node create, encrypt on create/rename, prefer decrypted names
-3. ⏳ NMK distribution to joiners over the DR channel (design in `docs/metadata-privacy.md`)
-4. If this slips: amend README/SECURITY "relay sees" tables — don't ship a beta with overclaimed privacy
+2. ✅ App.tsx wiring: NMK derived on node create, encrypted names published on create, decrypted names preferred in UI
+3. ✅ NMK distribution to joiners over DR (piggybacked on sender-key distributions); `e2e/metadata-privacy.spec.ts` green
+4. Remaining honesty note: plaintext columns persist through Phase 2 — README "relay sees" table should say metadata encryption is active for new nodes, plaintext fallback until Phase 3
 
 ### 🔶 M3 — Security hardening — MOSTLY DONE
 1. ✅ CSP middleware (full security-header stack in `main.rs`)
@@ -156,14 +156,15 @@ Mobile store releases · federation/relay-mesh hardening + cross-relay DMs · on
 ## 4. Sequencing Logic
 
 ```
-M0 ✅ ──► M1 ✅(e2e pending) ────┐
-  └──► M2 🔶 (in progress) ─────┼──► M3 🔶 (mostly done) ──► M4 (packaging) ──► BETA
+M0 ✅ ──► M1 ✅ (verified) ──────┐
+  └──► M2 ✅ (verified) ────────┼──► M3 🔶 (mostly done) ──► M4 (packaging) ──► BETA
                                  │
         M5 deferred ─────────────┘
 ```
 
 M1 is the only truly serial dependency: **the product's core claim is false until it lands.** Everything else is polish, honesty, or armor around that claim.
 
-**Critical path remaining to beta (2026-07-12):** M1 e2e green run → M2 client
-wiring + NMK distribution → L3 error-string sweep → M4 packaging & beta program
-(untouched).
+**Critical path remaining to beta (2026-07-12):** L3 error-string sweep +
+web-client residual-risk doc (last M3 items) → M4 packaging & beta program
+(untouched). Housekeeping: 4 `test/*` branches, stale ROADMAP/SECURITY docs,
+README "relay sees" honesty note.
