@@ -291,6 +291,19 @@ export class DoubleRatchetSession {
    * 4. Derive message key and decrypt
    */
   decrypt(msg: DoubleRatchetMessage): Uint8Array {
+    // Per the Signal spec, decryption failure must discard all state changes:
+    // otherwise a replayed or tampered message advances the receive chain and
+    // desyncs the session for every subsequent legitimate message.
+    const snapshot = this.serialize();
+    try {
+      return this.decryptInner(msg);
+    } catch (err) {
+      this.restore(snapshot);
+      throw err;
+    }
+  }
+
+  private decryptInner(msg: DoubleRatchetMessage): Uint8Array {
     const theirPubHex = msg.header.dhPublicKey;
     const theirPub = fromHex(theirPubHex);
 
@@ -401,6 +414,23 @@ export class DoubleRatchetSession {
       previousChainLength: this.previousChainLength,
       skippedKeys: skipped,
     };
+  }
+
+  /** Restore this session's state in place (rollback after a failed decrypt) */
+  private restore(state: RatchetSessionState): void {
+    this.dhPrivateKey = fromHex(state.dhPrivateKey);
+    this.dhPublicKey = fromHex(state.dhPublicKey);
+    this.dhRemote = state.dhRemote ? fromHex(state.dhRemote) : null;
+    this.rootKey = fromHex(state.rootKey);
+    this.chainKeySend = state.chainKeySend ? fromHex(state.chainKeySend) : null;
+    this.chainKeyRecv = state.chainKeyRecv ? fromHex(state.chainKeyRecv) : null;
+    this.sendN = state.sendN;
+    this.recvN = state.recvN;
+    this.previousChainLength = state.previousChainLength;
+    this.skippedKeys = new Map();
+    for (const { dhPub, n, mk } of state.skippedKeys) {
+      this.skippedKeys.set(`${dhPub}:${n}`, fromHex(mk));
+    }
   }
 
   /** Restore session from serialized state */

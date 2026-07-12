@@ -314,7 +314,36 @@ impl DoubleRatchetSession {
     }
 
     /// Decrypt a received message, performing DH ratchet if needed.
+    ///
+    /// Per the Signal spec, a failed decryption must discard all state
+    /// changes: otherwise a replayed or tampered message advances the receive
+    /// chain (or consumes a skipped key) and desyncs the session for every
+    /// subsequent legitimate message. Decryption is attempted on a copy of
+    /// the state, which is committed only on success.
     pub fn decrypt(&mut self, msg: &DoubleRatchetMessage) -> Result<Vec<u8>> {
+        let mut trial = self.snapshot();
+        let plaintext = trial.decrypt_inner(msg)?;
+        *self = trial;
+        Ok(plaintext)
+    }
+
+    /// Copy of the full session state for trial decryption.
+    fn snapshot(&self) -> Self {
+        Self {
+            dh_secret: self.dh_secret.clone(),
+            dh_public: self.dh_public,
+            dh_remote: self.dh_remote,
+            root_key: self.root_key.clone(),
+            chain_key_send: self.chain_key_send.clone(),
+            chain_key_recv: self.chain_key_recv.clone(),
+            send_n: self.send_n,
+            recv_n: self.recv_n,
+            previous_chain_length: self.previous_chain_length,
+            skipped_keys: self.skipped_keys.clone(),
+        }
+    }
+
+    fn decrypt_inner(&mut self, msg: &DoubleRatchetMessage) -> Result<Vec<u8>> {
         // Try skipped keys first
         let skip_key = (msg.header.dh_public_key, msg.header.message_number);
         if let Some(mk) = self.skipped_keys.remove(&skip_key) {
@@ -1215,5 +1244,57 @@ mod tests {
         // Alice sends again (previous_chain_length should be 7)
         let a_msg = alice.encrypt(b"after").unwrap();
         assert_eq!(a_msg.header.previous_chain_length, 7);
+    }
+
+    #[test]
+    fn test_replayed_message_does_not_desync_session() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let m1 = alice.encrypt(b"one").unwrap();
+        assert_eq!(bob.decrypt(&m1).unwrap(), b"one");
+
+        // Replaying m1 must fail without advancing Bob's receive chain
+        assert!(bob.decrypt(&m1).is_err());
+
+        let m2 = alice.encrypt(b"two").unwrap();
+        assert_eq!(bob.decrypt(&m2).unwrap(), b"two");
+    }
+
+    #[test]
+    fn test_tampered_message_does_not_desync_session() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let mut tampered = alice.encrypt(b"one").unwrap();
+        tampered.ciphertext[0] ^= 0xFF;
+        assert!(bob.decrypt(&tampered).is_err());
+
+        // The untampered original must still decrypt afterwards
+        let original = DoubleRatchetMessage {
+            header: tampered.header.clone(),
+            ciphertext: {
+                let mut c = tampered.ciphertext.clone();
+                c[0] ^= 0xFF;
+                c
+            },
+        };
+        assert_eq!(bob.decrypt(&original).unwrap(), b"one");
+    }
+
+    #[test]
+    fn test_tampered_message_does_not_consume_skipped_key() {
+        let (mut alice, mut bob) = setup_sessions();
+
+        let m1 = alice.encrypt(b"first").unwrap();
+        let m2 = alice.encrypt(b"second").unwrap();
+
+        // Out-of-order: m2 first, so m1's key is stored as a skipped key
+        assert_eq!(bob.decrypt(&m2).unwrap(), b"second");
+
+        // A tampered copy of m1 must not consume the stored skipped key
+        let mut tampered = m1.clone();
+        tampered.ciphertext[0] ^= 0xFF;
+        assert!(bob.decrypt(&tampered).is_err());
+
+        assert_eq!(bob.decrypt(&m1).unwrap(), b"first");
     }
 }
