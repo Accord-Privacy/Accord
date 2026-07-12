@@ -19,6 +19,15 @@ ignore = [
     # Confirmed: `cargo tree --target all | grep rsa` shows nothing.
     # No attack surface — code never compiled into our binary.
     "RUSTSEC-2023-0071",
+
+    # quick-xml 0.38.x: NsReader memory-exhaustion DoS + quadratic attribute check
+    # (RUSTSEC-2026-0195, RUSTSEC-2026-0194). Patched in quick-xml >=0.41, but we
+    # are held back by plist 1.8 -> tauri 2.x (macOS .plist parsing only).
+    # Not reachable from the relay server; desktop-only, and only on macOS targets,
+    # parsing local trusted plists — no attacker-controlled XML flows through it.
+    # TRACKING: remove when plist/tauri bump quick-xml to >=0.41.
+    "RUSTSEC-2026-0195",
+    "RUSTSEC-2026-0194",
 ]
 
 # Don't fail on unmaintained crates (Tauri's GTK3 bindings — resolves with GTK4 migration)

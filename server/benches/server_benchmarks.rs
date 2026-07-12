@@ -227,7 +227,7 @@ fn bench_broadcast(c: &mut Criterion) {
                     rt.block_on(state.join_node(uid, node.id)).unwrap();
                     rt.block_on(state.join_channel(uid, channel.id)).unwrap();
                     let (tx, _rx) = tokio::sync::broadcast::channel(16);
-                    rt.block_on(state.add_connection(uid, tx));
+                    rt.block_on(state.add_connection(uid, None, tx));
                 }
 
                 let msg = r#"{"type":"message","content":"benchmark"}"#.to_string();
