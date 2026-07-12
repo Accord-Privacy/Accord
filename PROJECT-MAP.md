@@ -141,12 +141,12 @@ added with M2. Remaining smaller gap: voice stack / `useVoice` (open issue #3).
 4. ✅ P1 unit tests: `files.rs` (36), `db/encryption.rs` (22), `federation.rs` (35), `webhooks.rs` (26)
 5. ✅ Rate-limit edge-case tests (34 tests in `rate_limit.rs`)
 
-### M4 — Beta packaging & program *(~1–2 weeks)*
-1. `cargo tauri build` artifacts for Linux/Windows + GitHub Releases with reproducible-build hashes (HASHES.json flow exists)
-2. One-command relay deploy verified (`docker-compose up`) + web client serving (`--frontend dist`)
-3. Wire `UpdateChecker` to the releases feed
-4. Screenshots, beta signup/feedback via GitHub Discussions, website donate link resolution
-5. Run the full Playwright suite + load scripts against a staged relay; fix fallout
+### 🔶 M4 — Beta packaging & program — IN PROGRESS (2026-07-12)
+1. ✅ Linux artifacts built + signed (.deb 4MB, .AppImage 107MB + minisign .sig); `scripts/release.sh` = QA gate → build → latest.json + HASHES.json → gh release. ⏳ Windows nsis/msi: CI needed
+2. ✅ Web client serving verified (`--frontend dist`); ⏳ `docker-compose up` unverified (no docker on dev machine)
+3. ✅ Updater wired: signing keypair generated (private key OUTSIDE repo — `~/.tauri/accord-updater.key`, BACK IT UP), pubkey + createUpdaterArtifacts in tauri.conf.json, endpoint → releases/latest/download/latest.json, release.sh emits latest.json
+4. ⏳ Screenshots, beta signup/feedback (GitHub Discussions), donate link
+5. ✅ Full Playwright suite green against local relay (14/14 chromium); ⏳ load scripts against staged relay
 
 ### M5 — Post-beta (explicitly out of scope for first beta)
 Mobile store releases · federation/relay-mesh hardening + cross-relay DMs · onion routing · post-quantum hybrid KEX · external security firm audit (Phase 7)
