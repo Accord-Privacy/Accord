@@ -55,6 +55,10 @@ Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'
 
 **Mitigation already in place:** DOMPurify sanitization on all rendered markdown content reduces XSS risk significantly.
 
+**Status:** ✅ Fixed for desktop 2026-07-12 — `tokenStorage.ts` stores tokens via Tauri plugin-store (OS keychain) with migration from localStorage.
+
+**Residual risk (web client, documented):** the browser build has no OS keychain and falls back to localStorage with a console warning. If an XSS vector bypasses DOMPurify + the CSP header, tokens are exfiltratable. Mitigations in effect: strict CSP (`default-src 'self'`, `frame-ancestors 'none'`), DOMPurify on all rendered markdown, 24h token expiry, rate limiting. Accepted for beta; self-hosters who need stronger web-session guarantees should front the relay with httpOnly-cookie session termination (reverse proxy) or use the desktop app. E2EE identity keys are unaffected — they are stored encrypted with the user's password, never plaintext.
+
 **Recommendation:** For the web path, consider httpOnly cookies for session tokens. For Tauri, migrate tokens to the OS keyring (similar to what `identityStorage.ts` does for identity keys).
 
 ---

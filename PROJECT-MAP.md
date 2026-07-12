@@ -134,9 +134,9 @@ added with M2. Remaining smaller gap: voice stack / `useVoice` (open issue #3).
 3. ✅ NMK distribution to joiners over DR (piggybacked on sender-key distributions); `e2e/metadata-privacy.spec.ts` green
 4. Remaining honesty note: plaintext columns persist through Phase 2 — README "relay sees" table should say metadata encryption is active for new nodes, plaintext fallback until Phase 3
 
-### 🔶 M3 — Security hardening — MOSTLY DONE
+### ✅ M3 — Security hardening — DONE
 1. ✅ CSP middleware (full security-header stack in `main.rs`)
-2. ✅ Tauri OS-keyring token storage (`tokenStorage.ts`); ⏳ document web-client residual risk
+2. ✅ Tauri OS-keyring token storage (`tokenStorage.ts`); web-client residual risk documented in SECURITY-AUDIT.md
 3. ✅ Sanitize client-facing error strings (L3) — 54 sites swept
 4. ✅ P1 unit tests: `files.rs` (36), `db/encryption.rs` (22), `federation.rs` (35), `webhooks.rs` (26)
 5. ✅ Rate-limit edge-case tests (34 tests in `rate_limit.rs`)
@@ -157,13 +157,12 @@ Mobile store releases · federation/relay-mesh hardening + cross-relay DMs · on
 
 ```
 M0 ✅ ──► M1 ✅ (verified) ──────┐
-  └──► M2 ✅ (verified) ────────┼──► M3 🔶 (mostly done) ──► M4 (packaging) ──► BETA
+  └──► M2 ✅ (verified) ────────┼──► M3 ✅ ──► M4 (packaging) ──► BETA
                                  │
         M5 deferred ─────────────┘
 ```
 
 M1 is the only truly serial dependency: **the product's core claim is false until it lands.** Everything else is polish, honesty, or armor around that claim.
 
-**Critical path remaining to beta (2026-07-12):** web-client residual-risk doc
-(last M3 item) → M4 packaging & beta program (untouched). Housekeeping: 4 `test/*` branches, stale ROADMAP/SECURITY docs,
+**Critical path remaining to beta (2026-07-12):** M4 packaging & beta program only. Housekeeping: 4 `test/*` branches, stale ROADMAP/SECURITY docs,
 README "relay sees" honesty note.
