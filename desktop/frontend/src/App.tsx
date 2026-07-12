@@ -39,6 +39,7 @@ const SetupWizard = React.lazy(() => import("./SetupWizard").then(m => ({ defaul
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, saveOwnMessages, loadOwnMessages, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
+import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, type DecryptedMetadata } from "./e2ee/metadata";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -112,6 +113,16 @@ function fromWirePayload(s: string): string {
   } catch {
     return s; // backward compat: pre-base64 payloads
   }
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
+}
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 function App() {
@@ -387,6 +398,14 @@ function App() {
   // messageId → plaintext of our own sent messages. We can't decrypt our own
   // sender-key envelopes, so this (persisted encrypted) keeps history readable.
   const ownMessagesRef = useRef<Map<string, string>>(new Map());
+  // nodeId → Node Metadata Key. Creator derives it; members receive it over DR.
+  const nmkStoreRef = useRef<Map<string, NodeMetadataKey>>(new Map());
+  // Raw identity private key bytes — the NMK derivation input for nodes we create
+  const identityKeyMaterialRef = useRef<Uint8Array | null>(null);
+  // Bumped when an NMK arrives over DR, so decryption effects re-run
+  const [nmkVersion, setNmkVersion] = useState(0);
+  // nodeId → decrypted metadata bundle (names the relay only sees encrypted)
+  const [decryptedMeta, setDecryptedMeta] = useState<Map<string, DecryptedMetadata>>(new Map());
 
   // Presence state (extracted to usePresence hook)
   const {
@@ -562,6 +581,7 @@ function App() {
           storedKeys.signedPreKey,
           storedKeys.oneTimePreKeys,
         );
+        identityKeyMaterialRef.current = storedKeys.identityKeyPair.privateKey;
         console.log('E2EE initialized from persisted identity keys');
       } else {
         // Fresh registration — generate keys explicitly so we can persist them
@@ -570,6 +590,7 @@ function App() {
         const oneTimePreKeys = generateOneTimePreKeys(10);
 
         manager.initializeWithKeys(identityKeyPair, signedPreKey, oneTimePreKeys);
+        identityKeyMaterialRef.current = identityKeyPair.privateKey;
 
         // Persist for future logins
         if (password && userId) {
@@ -598,6 +619,12 @@ function App() {
         }
         // Load own-message plaintext cache (for reading our own history)
         ownMessagesRef.current = loadOwnMessages(userId, password);
+        // Load persisted Node Metadata Keys
+        const loadedNmks = loadNmkStore(userId, password);
+        if (loadedNmks) {
+          nmkStoreRef.current = loadedNmks;
+          setNmkVersion(v => v + 1);
+        }
       }
       setE2eeReady(true);
     } catch (error) {
@@ -643,6 +670,23 @@ function App() {
     }
   }, []);
 
+  // Persist the NMK store (encrypted with the user's password).
+  const persistNmkStore = useCallback(() => {
+    const userId = localStorage.getItem('accord_user_id') || '';
+    const password = passwordRef.current;
+    if (password && userId) {
+      saveNmkStore(userId, nmkStoreRef.current, password);
+    }
+  }, []);
+
+  // Store an NMK received over Double Ratchet (or derived locally) and
+  // trigger metadata re-decryption.
+  const acceptNmk = useCallback((nodeId: string, key: NodeMetadataKey) => {
+    nmkStoreRef.current.set(nodeId, key);
+    persistNmkStore();
+    setNmkVersion(v => v + 1);
+  }, [persistNmkStore]);
+
   // DR-encrypt my sender key for one member and queue it on the relay.
   const sendSenderKeyTo = useCallback(async (
     socket: AccordWebSocket,
@@ -664,6 +708,16 @@ function App() {
       let sent = sentSenderKeyToRef.current.get(channelId);
       if (!sent) { sent = new Set(); sentSenderKeyToRef.current.set(channelId, sent); }
       sent.add(memberId);
+      // Piggyback the Node Metadata Key if we hold it, so the member can
+      // decrypt node/channel names (metadata privacy Phase 2). Rides the same
+      // DR-encrypted distribution queue; the session now exists.
+      const nodeId = channelsRef.current.find(c => c.id === channelId)?.node_id;
+      const nmk = nodeId ? nmkStoreRef.current.get(nodeId) : undefined;
+      if (nodeId && nmk) {
+        const nmkMsg = { type: 'nmk', node: nodeId, key: bytesToBase64(nmk.asBytes()) };
+        const encNmk = manager.encryptEnvelope(memberId, JSON.stringify(nmkMsg));
+        socket.storeSenderKey(channelId, memberId, toWirePayload(encNmk));
+      }
       return true;
     } catch (err) {
       console.warn(`Failed to distribute sender key to ${memberId}:`, err);
@@ -741,6 +795,53 @@ function App() {
     if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) return;
     bootstrapChannelSenderKeys(ws, selectedChannelId);
   }, [ws, selectedChannelId, members, encryptionEnabled, e2eeReady, bootstrapChannelSenderKeys]);
+
+  // ── Metadata privacy (NMK) ──
+
+  // Fetch + decrypt the selected node's encrypted metadata whenever we hold
+  // its NMK (on select, and again when an NMK arrives over Double Ratchet).
+  useEffect(() => {
+    if (!selectedNodeId || !e2eeReady || !appState.token) return;
+    const nmk = nmkStoreRef.current.get(selectedNodeId);
+    if (!nmk) return;
+    let cancelled = false;
+    api.fetchEncryptedMetadata(selectedNodeId)
+      .then(bundle => {
+        if (cancelled) return;
+        const dec = decryptMetadataBundle(bundle, nmk);
+        setDecryptedMeta(prev => new Map(prev).set(selectedNodeId, dec));
+      })
+      .catch(e => console.warn('Failed to fetch encrypted metadata:', e));
+    return () => { cancelled = true; };
+  }, [selectedNodeId, e2eeReady, nmkVersion, appState.token]);
+
+  // Prefer decrypted names over the relay's plaintext columns (which become
+  // placeholders in minimal-metadata mode / Phase 3). No-op when nothing
+  // differs, so this can safely re-run after every channel/node reload.
+  useEffect(() => {
+    const dec = selectedNodeId ? decryptedMeta.get(selectedNodeId) : undefined;
+    if (!dec) return;
+    if (dec.channelNames.size > 0) {
+      setChannels(prev => {
+        let changed = false;
+        const next = prev.map(c => {
+          const name = dec.channelNames.get(c.id);
+          if (name && name !== c.name) { changed = true; return { ...c, name }; }
+          return c;
+        });
+        return changed ? next : prev;
+      });
+    }
+    if (dec.nodeName) {
+      setNodes(prev => {
+        const idx = prev.findIndex(n => n.id === selectedNodeId);
+        if (idx === -1 || prev[idx].name === dec.nodeName) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], name: dec.nodeName! };
+        return next;
+      });
+    }
+  }, [decryptedMeta, selectedNodeId, channels, nodes]);
 
   // Register API token refresher for automatic re-auth on 401
   useEffect(() => {
@@ -1301,6 +1402,10 @@ function App() {
           // Reciprocate: send my key back over the now-established session so
           // the initiator can decrypt my messages too.
           reciprocateSenderKey(socket, distMsg.ch, data.from_user_id);
+        } else if (distMsg.type === 'nmk' && distMsg.node && distMsg.key) {
+          // Node Metadata Key shared by an existing member — lets us decrypt
+          // node/channel names (metadata privacy Phase 2)
+          acceptNmk(distMsg.node, NodeMetadataKey.fromBytes(base64ToBytes(distMsg.key)));
         }
         // ACK the distribution
         if (data.distribution_id) {
@@ -1362,6 +1467,8 @@ function App() {
             const { state } = parseDistributionMessage(distMsg);
             senderKeyStoreRef.current.setPeerKey(distMsg.ch, dist.from_user_id, state);
             reciprocateSenderKey(socket, distMsg.ch, dist.from_user_id);
+          } else if (distMsg.type === 'nmk' && distMsg.node && distMsg.key) {
+            acceptNmk(distMsg.node, NodeMetadataKey.fromBytes(base64ToBytes(distMsg.key)));
           }
           ackIds.push(dist.id);
         } catch (err) {
@@ -1374,7 +1481,7 @@ function App() {
       }
     });
 
-  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, reciprocateSenderKey, persistSenderKeyStore]);
+  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, reciprocateSenderKey, persistSenderKeyStore, acceptNmk]);
 
   // Centralized WebSocket connection — disconnects any existing socket before creating a new one.
   // ALL code paths that need a WebSocket MUST use this instead of `new AccordWebSocket` directly.
@@ -2116,12 +2223,21 @@ function App() {
     if (!selectedNodeId || !appState.token || !newChannelName.trim()) return;
     
     try {
-      await api.createChannel(selectedNodeId, newChannelName.trim(), newChannelType, appState.token, newChannelTopic.trim() || undefined, newChannelCategoryId || undefined);
+      const channelName = newChannelName.trim();
+      const created = await api.createChannel(selectedNodeId, channelName, newChannelType, appState.token, newChannelTopic.trim() || undefined, newChannelCategoryId || undefined);
       setShowCreateChannelForm(false);
       setNewChannelName("");
       setNewChannelType("text");
       setNewChannelTopic("");
       setNewChannelCategoryId("");
+      // Metadata privacy: publish the encrypted channel name if we hold this
+      // node's NMK (best-effort — plaintext fallback still exists in Phase 2)
+      const nmk = nmkStoreRef.current.get(selectedNodeId);
+      if (nmk && created?.id) {
+        api.updateEncryptedMetadata(selectedNodeId, {
+          channels: { [created.id]: nmk.encryptToBase64(channelName) },
+        }).catch(e => console.warn('Failed to publish encrypted channel name:', e));
+      }
       // Reload channels
       await loadChannels(selectedNodeId);
     } catch (error) {
@@ -2301,7 +2417,9 @@ function App() {
     creatingNodeRef.current = true;
     setCreatingNode(true);
     try {
-      const newNode = await api.createNode(newNodeName.trim(), appState.token, newNodeDescription.trim() || undefined);
+      const nodeName = newNodeName.trim();
+      const nodeDesc = newNodeDescription.trim() || undefined;
+      const newNode = await api.createNode(nodeName, appState.token, nodeDesc);
       // Close modal immediately on success
       setShowJoinNodeModal(false);
       setShowCreateNodeModal(false);
@@ -2316,6 +2434,29 @@ function App() {
         }
       } catch (e) {
         console.warn('Failed to check/create #general channel:', e);
+      }
+      // Metadata privacy: derive this node's NMK from our identity key and
+      // publish encrypted name/description/channel-names. The relay keeps the
+      // plaintext columns during Phase 2, but NMK holders read the encrypted
+      // ones — and Phase 3 drops plaintext entirely.
+      try {
+        const ikm = identityKeyMaterialRef.current;
+        if (ikm) {
+          const nmk = NodeMetadataKey.derive(ikm, newNode.id);
+          acceptNmk(newNode.id, nmk);
+          const nodeChannels = await api.getNodeChannels(newNode.id, appState.token);
+          await api.updateEncryptedMetadata(newNode.id, {
+            node: {
+              encrypted_name: nmk.encryptToBase64(nodeName),
+              encrypted_description: nodeDesc ? nmk.encryptToBase64(nodeDesc) : undefined,
+            },
+            channels: Object.fromEntries(
+              (Array.isArray(nodeChannels) ? nodeChannels : []).map(c => [c.id, nmk.encryptToBase64(c.name)]),
+            ),
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to publish encrypted node metadata:', e);
       }
       // Reload nodes and auto-select the new one
       await loadNodes();

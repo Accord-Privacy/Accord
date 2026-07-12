@@ -125,6 +125,73 @@ export class NodeMetadataKey {
 }
 
 // ---------------------------------------------------------------------------
+// NMK store persistence
+// ---------------------------------------------------------------------------
+// Mirrors the sender-key store pattern in ./persistence.ts: AES-256-GCM with a
+// key derived from SHA-256(password || domain), stored per user in localStorage.
+
+const NMK_STORAGE_PREFIX = 'accord_e2ee_nmk_';
+const NMK_DOMAIN = 'accord-e2ee-nmk-storage';
+
+function deriveStorageKey(password: string): Uint8Array {
+  const passBytes = new TextEncoder().encode(password);
+  const domainBytes = new TextEncoder().encode(NMK_DOMAIN);
+  const material = new Uint8Array(passBytes.length + domainBytes.length);
+  material.set(passBytes, 0);
+  material.set(domainBytes, passBytes.length);
+  return sha256(material);
+}
+
+/** Persist a map of nodeId → NodeMetadataKey, encrypted with the user's password. */
+export function saveNmkStore(
+  userId: string,
+  store: Map<string, NodeMetadataKey>,
+  password: string,
+): void {
+  try {
+    const entries: Record<string, string> = {};
+    for (const [nodeId, key] of store) {
+      entries[nodeId] = toBase64(key.asBytes());
+    }
+    const key = deriveStorageKey(password);
+    const nonce = randomBytes(NONCE_SIZE);
+    const plaintext = new TextEncoder().encode(JSON.stringify(entries));
+    const ciphertext = gcm(key, nonce).encrypt(plaintext);
+    const combined = new Uint8Array(NONCE_SIZE + ciphertext.length);
+    combined.set(nonce, 0);
+    combined.set(ciphertext, NONCE_SIZE);
+    localStorage.setItem(`${NMK_STORAGE_PREFIX}${userId}`, toBase64(combined));
+  } catch (e) {
+    console.warn('Failed to persist NMK store:', e);
+  }
+}
+
+/** Load a persisted NMK store. Returns null if absent or undecryptable. */
+export function loadNmkStore(
+  userId: string,
+  password: string,
+): Map<string, NodeMetadataKey> | null {
+  try {
+    const stored = localStorage.getItem(`${NMK_STORAGE_PREFIX}${userId}`);
+    if (!stored) return null;
+    const combined = fromBase64(stored);
+    const key = deriveStorageKey(password);
+    const nonce = combined.slice(0, NONCE_SIZE);
+    const ciphertext = combined.slice(NONCE_SIZE);
+    const plaintext = gcm(key, nonce).decrypt(ciphertext);
+    const entries: Record<string, string> = JSON.parse(new TextDecoder().decode(plaintext));
+    const store = new Map<string, NodeMetadataKey>();
+    for (const [nodeId, b64] of Object.entries(entries)) {
+      store.set(nodeId, NodeMetadataKey.fromBytes(fromBase64(b64)));
+    }
+    return store;
+  } catch (e) {
+    console.warn('Failed to load NMK store:', e);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // API bundle helpers
 // ---------------------------------------------------------------------------
 

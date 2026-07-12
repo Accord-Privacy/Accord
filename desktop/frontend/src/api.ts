@@ -836,7 +836,7 @@ export class AccordApi {
   async fetchEncryptedMetadata(
     nodeId: string,
   ): Promise<import('./e2ee/metadata').EncryptedMetadataBundle> {
-    return this.request(`/nodes/${nodeId}/metadata/encrypted`);
+    return this.request(`/api/nodes/${nodeId}/metadata/encrypted`);
   }
 
   // Bulk-update a node's encrypted metadata (admin/moderator only).
@@ -849,7 +849,7 @@ export class AccordApi {
       categories?: Record<string, string>;
     },
   ): Promise<{ success: boolean }> {
-    return this.request(`/nodes/${nodeId}/metadata/encrypted`, {
+    return this.request(`/api/nodes/${nodeId}/metadata/encrypted`, {
       method: 'PUT',
       body: JSON.stringify(update),
     });
