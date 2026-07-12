@@ -564,15 +564,11 @@ impl MessageValidator {
 
         // Validate payload-specific constraints
         match &message.payload {
-            MessagePayload::TextMessage(text) => {
-                if text.content.is_empty() {
-                    return Err(anyhow::anyhow!("Empty text message"));
-                }
+            MessagePayload::TextMessage(text) if text.content.is_empty() => {
+                return Err(anyhow::anyhow!("Empty text message"));
             }
-            MessagePayload::FileChunk(chunk) => {
-                if chunk.encrypted_data.is_empty() {
-                    return Err(anyhow::anyhow!("Empty file chunk"));
-                }
+            MessagePayload::FileChunk(chunk) if chunk.encrypted_data.is_empty() => {
+                return Err(anyhow::anyhow!("Empty file chunk"));
             }
             _ => {} // Other message types don't need special validation
         }
