@@ -830,6 +830,31 @@ export class AccordApi {
     return this.request(`/keys/bundle/${targetUserId}`);
   }
 
+  // ── Encrypted metadata (NMK blobs — relay stores opaquely) ──
+
+  // Fetch a node's encrypted metadata bundle (member only)
+  async fetchEncryptedMetadata(
+    nodeId: string,
+  ): Promise<import('./e2ee/metadata').EncryptedMetadataBundle> {
+    return this.request(`/nodes/${nodeId}/metadata/encrypted`);
+  }
+
+  // Bulk-update a node's encrypted metadata (admin/moderator only).
+  // Values are base64 NMK blobs from NodeMetadataKey.encryptToBase64().
+  async updateEncryptedMetadata(
+    nodeId: string,
+    update: {
+      node?: { encrypted_name?: string; encrypted_description?: string };
+      channels?: Record<string, string>;
+      categories?: Record<string, string>;
+    },
+  ): Promise<{ success: boolean }> {
+    return this.request(`/nodes/${nodeId}/metadata/encrypted`, {
+      method: 'PUT',
+      body: JSON.stringify(update),
+    });
+  }
+
   // ── Moderation endpoints ──
 
   // Set slow mode for a channel

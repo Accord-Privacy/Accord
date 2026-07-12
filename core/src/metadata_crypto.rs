@@ -664,6 +664,23 @@ mod tests {
     }
 
     #[test]
+    fn test_cross_impl_derivation_vector() {
+        // Locked vector shared with the TypeScript client
+        // (desktop/frontend/src/e2ee/metadata.test.ts) — if this changes,
+        // deployed clients can no longer decrypt each other's metadata.
+        let key = NodeMetadataKey::derive(
+            b"accord-test-identity-key-material",
+            b"c0ffee00-1234-5678-9abc-def012345678",
+        )
+        .unwrap();
+        let hex: String = key.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "5da864d1749010774d971235b7ae530a60606638301bec301e7162afdd95c0f6"
+        );
+    }
+
+    #[test]
     fn test_each_encryption_unique() {
         // Nonce randomization means same plaintext → different ciphertext
         let key = NodeMetadataKey::derive(b"test-key", b"test-node").unwrap();

@@ -700,6 +700,39 @@ pub struct CreateNodeRequest {
     pub description: Option<String>,
 }
 
+/// Encrypted node-level metadata fields.
+/// Base64 NMK blobs — the relay stores these opaquely and never decrypts them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EncryptedNodeFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_description: Option<String>,
+}
+
+/// Bulk encrypted-metadata update for a node (PUT /nodes/:id/metadata/encrypted)
+#[derive(Debug, Deserialize)]
+pub struct UpdateEncryptedMetadataRequest {
+    #[serde(default)]
+    pub node: Option<EncryptedNodeFields>,
+    /// channel_id → base64 encrypted name blob
+    #[serde(default)]
+    pub channels: Option<std::collections::HashMap<Uuid, String>>,
+    /// category_id → base64 encrypted name blob
+    #[serde(default)]
+    pub categories: Option<std::collections::HashMap<Uuid, String>>,
+}
+
+/// Full encrypted-metadata bundle for a node (GET /nodes/:id/metadata/encrypted)
+#[derive(Debug, Serialize)]
+pub struct EncryptedMetadataBundle {
+    pub node: EncryptedNodeFields,
+    /// channel_id → base64 encrypted name blob
+    pub channels: std::collections::HashMap<Uuid, String>,
+    /// category_id → base64 encrypted name blob
+    pub categories: std::collections::HashMap<Uuid, String>,
+}
+
 /// Create channel category request (REST)
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelCategoryRequest {

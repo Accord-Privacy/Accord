@@ -2251,6 +2251,129 @@ impl Database {
         Ok(row.get::<i64, _>("count") > 0)
     }
 
+    // ── Encrypted metadata (opaque NMK blobs — the relay stores, never decrypts) ──
+
+    pub async fn set_node_encrypted_metadata(
+        &self,
+        node_id: Uuid,
+        encrypted_name: Option<&[u8]>,
+        encrypted_description: Option<&[u8]>,
+    ) -> Result<()> {
+        if let Some(name) = encrypted_name {
+            sqlx::query("UPDATE nodes SET encrypted_name = ? WHERE id = ?")
+                .bind(name)
+                .bind(node_id.to_string())
+                .execute(&self.pool)
+                .await
+                .context("Failed to set node encrypted_name")?;
+        }
+        if let Some(desc) = encrypted_description {
+            sqlx::query("UPDATE nodes SET encrypted_description = ? WHERE id = ?")
+                .bind(desc)
+                .bind(node_id.to_string())
+                .execute(&self.pool)
+                .await
+                .context("Failed to set node encrypted_description")?;
+        }
+        Ok(())
+    }
+
+    /// Returns false if the channel does not belong to the node.
+    pub async fn set_channel_encrypted_name(
+        &self,
+        node_id: Uuid,
+        channel_id: Uuid,
+        blob: &[u8],
+    ) -> Result<bool> {
+        let res =
+            sqlx::query("UPDATE channels SET encrypted_name = ? WHERE id = ? AND node_id = ?")
+                .bind(blob)
+                .bind(channel_id.to_string())
+                .bind(node_id.to_string())
+                .execute(&self.pool)
+                .await
+                .context("Failed to set channel encrypted_name")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Returns false if the category does not belong to the node.
+    pub async fn set_category_encrypted_name(
+        &self,
+        node_id: Uuid,
+        category_id: Uuid,
+        blob: &[u8],
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE channel_categories SET encrypted_name = ? WHERE id = ? AND node_id = ?",
+        )
+        .bind(blob)
+        .bind(category_id.to_string())
+        .bind(node_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to set category encrypted_name")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Raw encrypted metadata for a node: (node name blob, node description blob,
+    /// per-channel name blobs, per-category name blobs).
+    #[allow(clippy::type_complexity)]
+    pub async fn get_node_encrypted_metadata(
+        &self,
+        node_id: Uuid,
+    ) -> Result<(
+        Option<Vec<u8>>,
+        Option<Vec<u8>>,
+        Vec<(Uuid, Vec<u8>)>,
+        Vec<(Uuid, Vec<u8>)>,
+    )> {
+        let node_row =
+            sqlx::query("SELECT encrypted_name, encrypted_description FROM nodes WHERE id = ?")
+                .bind(node_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .context("Failed to query node encrypted metadata")?;
+        let (enc_name, enc_desc) = match node_row {
+            Some(row) => (
+                row.try_get::<Option<Vec<u8>>, _>("encrypted_name")?,
+                row.try_get::<Option<Vec<u8>>, _>("encrypted_description")?,
+            ),
+            None => (None, None),
+        };
+
+        let channel_rows = sqlx::query(
+            "SELECT id, encrypted_name FROM channels WHERE node_id = ? AND encrypted_name IS NOT NULL",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query channel encrypted names")?;
+        let mut channels = Vec::with_capacity(channel_rows.len());
+        for row in channel_rows {
+            channels.push((
+                Uuid::parse_str(&row.get::<String, _>("id"))?,
+                row.get::<Vec<u8>, _>("encrypted_name"),
+            ));
+        }
+
+        let category_rows = sqlx::query(
+            "SELECT id, encrypted_name FROM channel_categories WHERE node_id = ? AND encrypted_name IS NOT NULL",
+        )
+        .bind(node_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query category encrypted names")?;
+        let mut categories = Vec::with_capacity(category_rows.len());
+        for row in category_rows {
+            categories.push((
+                Uuid::parse_str(&row.get::<String, _>("id"))?,
+                row.get::<Vec<u8>, _>("encrypted_name"),
+            ));
+        }
+
+        Ok((enc_name, enc_desc, channels, categories))
+    }
+
     pub async fn get_user_nodes(&self, user_id: Uuid) -> Result<Vec<Node>> {
         let rows = sqlx::query(
             "SELECT n.id, n.name, n.owner_id, n.description, n.created_at, n.icon_hash FROM nodes n JOIN node_members nm ON n.id = nm.node_id WHERE nm.user_id = ?"
@@ -6530,6 +6653,66 @@ mod tests {
         // Remove member
         db.remove_node_member(node.id, user2.id).await.unwrap();
         assert!(!db.is_node_member(node.id, user2.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_encrypted_metadata_roundtrip() {
+        let db = Database::new(":memory:").await.unwrap();
+        let user = db.create_user("key", "").await.unwrap();
+        let node = db.create_node("Node", user.id, None).await.unwrap();
+        let channels = db.get_node_channels(node.id).await.unwrap();
+        let channel_id = channels[0].id;
+        let category = db.create_channel_category(node.id, "cat").await.unwrap();
+
+        // Nothing set yet
+        let (name, desc, chans, cats) = db.get_node_encrypted_metadata(node.id).await.unwrap();
+        assert!(name.is_none() && desc.is_none());
+        assert!(chans.is_empty() && cats.is_empty());
+
+        // Set node blobs (opaque bytes — relay never interprets them)
+        db.set_node_encrypted_metadata(node.id, Some(&[1u8; 40]), Some(&[2u8; 60]))
+            .await
+            .unwrap();
+        assert!(db
+            .set_channel_encrypted_name(node.id, channel_id, &[3u8; 40])
+            .await
+            .unwrap());
+        assert!(db
+            .set_category_encrypted_name(node.id, category.id, &[4u8; 40])
+            .await
+            .unwrap());
+
+        let (name, desc, chans, cats) = db.get_node_encrypted_metadata(node.id).await.unwrap();
+        assert_eq!(name.unwrap(), vec![1u8; 40]);
+        assert_eq!(desc.unwrap(), vec![2u8; 60]);
+        assert_eq!(chans, vec![(channel_id, vec![3u8; 40])]);
+        assert_eq!(cats, vec![(category.id, vec![4u8; 40])]);
+
+        // Partial update: only description
+        db.set_node_encrypted_metadata(node.id, None, Some(&[9u8; 30]))
+            .await
+            .unwrap();
+        let (name, desc, _, _) = db.get_node_encrypted_metadata(node.id).await.unwrap();
+        assert_eq!(name.unwrap(), vec![1u8; 40]);
+        assert_eq!(desc.unwrap(), vec![9u8; 30]);
+    }
+
+    #[tokio::test]
+    async fn test_encrypted_metadata_node_isolation() {
+        let db = Database::new(":memory:").await.unwrap();
+        let user = db.create_user("key", "").await.unwrap();
+        let node_a = db.create_node("A", user.id, None).await.unwrap();
+        let node_b = db.create_node("B", user.id, None).await.unwrap();
+        let b_channels = db.get_node_channels(node_b.id).await.unwrap();
+
+        // Updating node B's channel through node A must be rejected
+        assert!(!db
+            .set_channel_encrypted_name(node_a.id, b_channels[0].id, &[1u8; 40])
+            .await
+            .unwrap());
+        // And B's bundle stays empty
+        let (_, _, chans, _) = db.get_node_encrypted_metadata(node_b.id).await.unwrap();
+        assert!(chans.is_empty());
     }
 
     #[tokio::test]

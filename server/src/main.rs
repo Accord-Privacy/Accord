@@ -950,6 +950,12 @@ async fn main() -> Result<()> {
             "/api/nodes/:node_id/overview",
             get(batch_handlers::node_overview_handler),
         )
+        // Encrypted metadata (opaque NMK blobs — relay never decrypts)
+        .route(
+            "/api/nodes/:node_id/metadata/encrypted",
+            get(metadata::get_encrypted_metadata_handler)
+                .put(metadata::update_encrypted_metadata_handler),
+        )
         // Bot API v2 endpoints (airgapped command architecture)
         .route(
             "/api/nodes/:node_id/bots",
