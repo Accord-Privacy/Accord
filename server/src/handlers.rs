@@ -750,6 +750,7 @@ pub async fn join_node_handler(
                     .set_member_device_fingerprint(node_id, user_id, fph)
                     .await;
             }
+            broadcast_member_joined(&state, node_id, user_id).await;
             Ok(Json(
                 serde_json::json!({ "status": "joined", "node_id": node_id }),
             ))
@@ -1240,6 +1241,51 @@ pub async fn invite_preview_handler(
 }
 
 /// Use an invite code to join a Node (POST /invites/:code/join)
+/// Notify existing channel members that a user joined a node, so they send their
+/// sender keys to the new member, and broadcast `member_joined` for member lists.
+/// Must be called from every join path (WS JoinNode and REST invite/join), or
+/// channel group E2EE never bootstraps for the newcomer.
+pub async fn broadcast_member_joined(state: &SharedState, node_id: Uuid, user_id: Uuid) {
+    let display_name = state
+        .db
+        .get_user_profile(user_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|p| p.display_name)
+        .unwrap_or_default();
+    let pk_hash = state
+        .db
+        .get_user_public_key_hash(user_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if let Ok(channels) = state.db.get_node_channels(node_id).await {
+        for channel in &channels {
+            let join_event = serde_json::json!({
+                "type": "sender_key_new_member",
+                "channel_id": channel.id,
+                "new_user_id": user_id,
+            });
+            let _ = state
+                .send_to_channel(channel.id, join_event.to_string())
+                .await;
+
+            let member_event = serde_json::json!({
+                "type": "member_joined",
+                "node_id": node_id,
+                "user_id": user_id,
+                "display_name": display_name,
+                "public_key_hash": pk_hash,
+            });
+            let _ = state
+                .send_to_channel(channel.id, member_event.to_string())
+                .await;
+        }
+    }
+}
+
 pub async fn use_invite_handler(
     State(state): State<SharedState>,
     Path(invite_code): Path<String>,
@@ -1265,6 +1311,7 @@ pub async fn use_invite_handler(
                 "Invite used: {} by {} to join node {}",
                 invite_code, user_id, node_id
             );
+            broadcast_member_joined(&state, node_id, user_id).await;
             Ok(Json(UseInviteResponse {
                 status: "joined".to_string(),
                 node_id,
@@ -4413,47 +4460,9 @@ async fn handle_ws_message(
                 .await?;
             state.join_node(sender_user_id, node_id).await?;
 
-            // Notify existing channel members that a new member joined
-            // (so they can send their sender keys to the new member)
-            // Also broadcast member_joined so clients update their member lists
-            let display_name = state
-                .db
-                .get_user_profile(sender_user_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|p| p.display_name)
-                .unwrap_or_default();
-            let pk_hash = state
-                .db
-                .get_user_public_key_hash(sender_user_id)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            if let Ok(channels) = state.db.get_node_channels(node_id).await {
-                for channel in &channels {
-                    let join_event = serde_json::json!({
-                        "type": "sender_key_new_member",
-                        "channel_id": channel.id,
-                        "new_user_id": sender_user_id,
-                    });
-                    let _ = state
-                        .send_to_channel(channel.id, join_event.to_string())
-                        .await;
-
-                    let member_event = serde_json::json!({
-                        "type": "member_joined",
-                        "node_id": node_id,
-                        "user_id": sender_user_id,
-                        "display_name": display_name,
-                        "public_key_hash": pk_hash,
-                    });
-                    let _ = state
-                        .send_to_channel(channel.id, member_event.to_string())
-                        .await;
-                }
-            }
+            // Notify existing channel members so they send sender keys to the
+            // newcomer, and broadcast member_joined for member lists.
+            broadcast_member_joined(state, node_id, sender_user_id).await;
 
             let resp = serde_json::json!({ "type": "node_joined", "node_id": node_id });
             state.send_to_user(sender_user_id, resp.to_string()).await?;

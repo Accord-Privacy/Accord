@@ -2,6 +2,7 @@ import { test, expect, Page } from "@playwright/test";
 
 // Unique suffix per run to avoid collisions
 const RUN_ID = Date.now().toString(36);
+const USERNAME = `testuser${RUN_ID}`;
 const DISPLAY_NAME = `TestUser-${RUN_ID}`;
 const PASSWORD = "testpass1234";
 const NODE_NAME = `TestNode-${RUN_ID}`;
@@ -26,26 +27,27 @@ test.describe.serial("Accord Full Flow", () => {
     // Skip onboarding tour in tests
     await page.evaluate(() => localStorage.setItem("accord-onboarding-complete", "true"));
 
-    // Should see the SetupWizard with "Create Identity" button
+    // Should see the SetupWizard with "Create Account" button
     await expect(page.locator(".brand-accent")).toBeVisible({ timeout: 10_000 });
-    await page.click("button:has-text('Create Identity')");
+    await page.click("button:has-text('Create Account')");
 
-    // Fill in display name, password, confirm password
+    // Fill in username, display name, password, confirm password
+    await page.fill('input[placeholder*="Choose a username"]', USERNAME);
     await page.fill('input[placeholder*="How others will see you"]', DISPLAY_NAME);
     await page.fill('input[placeholder*="Choose a password"]', PASSWORD);
     await page.fill('input[placeholder*="Confirm your password"]', PASSWORD);
 
-    // Click generate identity
-    await page.click("button:has-text('Generate Identity')");
+    // Submit account creation (the green form button, not the mode chooser)
+    await page.click("button.btn-green:has-text('Create Account')");
 
     // Should show mnemonic step
     await expect(page.locator("text=Backup Your Recovery Phrase")).toBeVisible({ timeout: 15_000 });
 
-    // Capture mnemonic
+    // Capture mnemonic (BIP39 — 12 words minimum)
     const mnemonicBox = page.locator(".auth-info-box").first();
     const mnemonicText = await mnemonicBox.textContent();
     expect(mnemonicText).toBeTruthy();
-    expect(mnemonicText!.trim().split(/\s+/).length).toBeGreaterThanOrEqual(24);
+    expect(mnemonicText!.trim().split(/\s+/).length).toBeGreaterThanOrEqual(12);
     mnemonic = mnemonicText!.trim();
 
     // Continue past mnemonic
@@ -55,7 +57,7 @@ test.describe.serial("Accord Full Flow", () => {
     // The app may show the main interface or a welcome/empty state
     await expect(page.locator(".app")).toBeVisible({ timeout: 15_000 });
     // Should no longer show the SetupWizard auth page
-    await expect(page.locator("text=Create Identity")).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.locator("button:has-text('Create Account')")).not.toBeVisible({ timeout: 5_000 });
   });
 
   test("2 - Node creation", async () => {

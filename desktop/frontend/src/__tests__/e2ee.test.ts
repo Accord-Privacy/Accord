@@ -9,6 +9,7 @@ import {
 } from '../e2ee/keys';
 import { x3dhInitiate, x3dhRespond } from '../e2ee/x3dh';
 import { DoubleRatchetSession } from '../e2ee/ratchet';
+import { E2EEManager } from '../e2ee';
 import {
   saveIdentityKeys,
   loadIdentityKeys,
@@ -228,5 +229,66 @@ describe('hasStoredKeyPair', () => {
     const hash = 'abcdef0123456789abcdef0123456789';
     localStorage.setItem(`accord_public_key_pwd_${hash.slice(0, 16)}`, 'encrypted-key');
     expect(hasStoredKeyPair(hash)).toBe(true);
+  });
+});
+
+// ─── E2EEManager envelope handshake (X3DH bootstrap over the wire) ────────────
+
+describe('E2EEManager envelope handshake', () => {
+  function freshManager(): E2EEManager {
+    const m = new E2EEManager();
+    m.initializeWithKeys(
+      generateIdentityKeyPair(),
+      generateSignedPreKey(),
+      generateOneTimePreKeys(4),
+    );
+    return m;
+  }
+
+  it('establishes a responder session from the first envelope (no prior contact)', () => {
+    const alice = freshManager();
+    const bob = freshManager();
+    const bobBundle = bob.getPreKeyBundle();
+
+    // Alice has never contacted Bob — first envelope must carry the handshake.
+    const env1 = alice.encryptEnvelope('bob', 'hello bob', bobBundle);
+    expect(JSON.parse(env1).t).toBe('x3dh');
+    expect(bob.hasSession('alice')).toBe(false);
+
+    // Bob decrypts, establishing his responder session from the embedded X3DH.
+    expect(bob.decryptEnvelope('alice', env1)).toBe('hello bob');
+    expect(bob.hasSession('alice')).toBe(true);
+
+    // Bob can now reply; Alice decrypts it.
+    const reply = bob.encryptEnvelope('alice', 'hi alice');
+    expect(alice.decryptEnvelope('bob', reply)).toBe('hi alice');
+  });
+
+  it('downgrades to plain dr envelopes once the peer has replied', () => {
+    const alice = freshManager();
+    const bob = freshManager();
+    const bobBundle = bob.getPreKeyBundle();
+
+    const env1 = alice.encryptEnvelope('bob', 'm1', bobBundle);
+    bob.decryptEnvelope('alice', env1);
+    const reply = bob.encryptEnvelope('alice', 'r1');
+    alice.decryptEnvelope('bob', reply); // Alice now sees Bob has established
+
+    const env2 = alice.encryptEnvelope('bob', 'm2');
+    expect(JSON.parse(env2).t).toBe('dr');
+    expect(bob.decryptEnvelope('alice', env2)).toBe('m2');
+  });
+
+  it('resends the handshake until the peer replies (lost first message)', () => {
+    const alice = freshManager();
+    const bob = freshManager();
+    const bobBundle = bob.getPreKeyBundle();
+
+    // First envelope "lost" — Bob never sees it.
+    alice.encryptEnvelope('bob', 'lost', bobBundle);
+    // Second still carries the handshake so Bob can establish from it.
+    const env2 = alice.encryptEnvelope('bob', 'delivered');
+    expect(JSON.parse(env2).t).toBe('x3dh');
+    expect(bob.decryptEnvelope('alice', env2)).toBe('delivered');
   });
 });

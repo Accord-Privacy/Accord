@@ -1052,7 +1052,8 @@ async fn main() -> Result<()> {
                 let effective_cors = args.cors_origins.clone().unwrap_or_else(|| {
                     if args.no_tls {
                         // Dev mode: allow common local dev origins
-                        "http://localhost:3000,http://localhost:5173,http://localhost:8080"
+                        // (1420 = Vite/Tauri dev server for desktop/frontend)
+                        "http://localhost:1420,http://localhost:3000,http://localhost:5173,http://localhost:8080"
                             .to_string()
                     } else {
                         // Production: same-origin only (no extra origins)

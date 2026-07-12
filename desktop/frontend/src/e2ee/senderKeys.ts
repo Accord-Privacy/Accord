@@ -301,19 +301,33 @@ export function parseDistributionMessage(
 // Envelope detection
 // ---------------------------------------------------------------------------
 
-/** Check if a message content string is a sender key envelope. */
+/**
+ * Normalize wire content to the envelope JSON string.
+ * The relay requires message payloads to be base64, so envelopes are sent as
+ * base64(JSON). Raw JSON is still accepted for backward compatibility.
+ */
+function normalizeEnvelopeContent(content: string): string {
+  if (content.startsWith('{')) return content;
+  try {
+    return atob(content);
+  } catch {
+    return content;
+  }
+}
+
+/** Check if a message content string is a sender key envelope (raw or base64 JSON). */
 export function isSenderKeyEnvelope(content: string): boolean {
   try {
-    const obj = JSON.parse(content);
+    const obj = JSON.parse(normalizeEnvelopeContent(content));
     return obj && obj.v === 1 && typeof obj.sk === 'string' && typeof obj.i === 'number';
   } catch {
     return false;
   }
 }
 
-/** Parse a sender key envelope from a message content string. */
+/** Parse a sender key envelope from a message content string (raw or base64 JSON). */
 export function parseSenderKeyEnvelope(content: string): SenderKeyEnvelope {
-  const obj = JSON.parse(content);
+  const obj = JSON.parse(normalizeEnvelopeContent(content));
   if (obj.v !== 1) throw new Error(`Unknown sender key envelope version: ${obj.v}`);
   return obj as SenderKeyEnvelope;
 }
@@ -492,7 +506,8 @@ export class SenderKeyStore {
 
 /**
  * Encrypt a channel message using sender keys.
- * Returns the JSON envelope string and the updated sender key.
+ * Returns the base64-wrapped JSON envelope (the relay rejects non-base64
+ * message payloads) and updates the sender key chain in the store.
  */
 export function encryptChannelMessage(
   store: SenderKeyStore,
@@ -504,7 +519,7 @@ export function encryptChannelMessage(
       const data = new TextEncoder().encode(plaintext);
       const { envelope, updatedKey } = senderKeyEncrypt(sk, data);
       store.updateMyKey(channelId, updatedKey);
-      return JSON.stringify(envelope);
+      return btoa(JSON.stringify(envelope));
     },
   };
 }

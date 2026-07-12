@@ -38,7 +38,7 @@ import { getDeviceInfo } from "./deviceIdentity";
 const SetupWizard = React.lazy(() => import("./SetupWizard").then(m => ({ default: m.SetupWizard })));
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
-import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
+import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, saveOwnMessages, loadOwnMessages, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -101,6 +101,17 @@ initTheme();
 // compatibility opt-in for channels with old clients.
 function legacyChannelCryptoEnabled(): boolean {
   return localStorage.getItem('accord_legacy_channel_crypto') === '1';
+}
+
+// The relay requires opaque payloads (messages, sender key distributions)
+// to be base64 on the wire.
+const toWirePayload = (s: string) => btoa(s);
+function fromWirePayload(s: string): string {
+  try {
+    return atob(s);
+  } catch {
+    return s; // backward compat: pre-base64 payloads
+  }
 }
 
 function App() {
@@ -370,6 +381,12 @@ function App() {
   const [e2eeReady, setE2eeReady] = useState(false);
   // Current auth token, readable from stable callbacks/WS handlers
   const tokenRef = useRef<string | null>(null);
+  // channelId → set of peer userIds we've already sent our sender key to.
+  // Prevents infinite reciprocation and redundant re-sends.
+  const sentSenderKeyToRef = useRef<Map<string, Set<string>>>(new Map());
+  // messageId → plaintext of our own sent messages. We can't decrypt our own
+  // sender-key envelopes, so this (persisted encrypted) keeps history readable.
+  const ownMessagesRef = useRef<Map<string, string>>(new Map());
 
   // Presence state (extracted to usePresence hook)
   const {
@@ -579,6 +596,8 @@ function App() {
           senderKeyStoreRef.current = loadedStore;
           console.log('Sender key store loaded from persistence');
         }
+        // Load own-message plaintext cache (for reading our own history)
+        ownMessagesRef.current = loadOwnMessages(userId, password);
       }
       setE2eeReady(true);
     } catch (error) {
@@ -586,35 +605,30 @@ function App() {
     }
   }, []);
 
-  // Fetch a peer's prekey bundle and initiate E2EE session
-  const ensureE2EESession = useCallback(async (peerId: string, token: string): Promise<boolean> => {
-    const manager = e2eeManagerRef.current;
-    if (!manager?.isInitialized) return false;
-    if (manager.hasSession(peerId)) return true;
-
+  // Fetch (and cache) a peer's prekey bundle WITHOUT initiating a session.
+  // Used by the envelope encrypt path, which initiates lazily and embeds the
+  // X3DH handshake in the first message so the recipient can establish too.
+  const getPeerBundle = useCallback(async (peerId: string, token: string): Promise<PreKeyBundle | undefined> => {
+    const cached = prekeyBundleCacheRef.current.get(peerId);
+    if (cached) return cached;
     try {
-      // Check cache first
-      let bundle = prekeyBundleCacheRef.current.get(peerId);
-      if (!bundle) {
-        const resp = await api.fetchKeyBundle(peerId, token);
-        const fromBase64 = (b64: string) => {
-          const binary = atob(b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          return bytes;
-        };
-        bundle = {
-          identityKey: fromBase64(resp.identity_key),
-          signedPrekey: fromBase64(resp.signed_prekey),
-          oneTimePrekey: resp.one_time_prekey ? fromBase64(resp.one_time_prekey) : undefined,
-        };
-        prekeyBundleCacheRef.current.set(peerId, bundle);
-      }
-      manager.initiateSession(peerId, bundle);
-      return true;
+      const resp = await api.fetchKeyBundle(peerId, token);
+      const fromBase64 = (b64: string) => {
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+      };
+      const bundle: PreKeyBundle = {
+        identityKey: fromBase64(resp.identity_key),
+        signedPrekey: fromBase64(resp.signed_prekey),
+        oneTimePrekey: resp.one_time_prekey ? fromBase64(resp.one_time_prekey) : undefined,
+      };
+      prekeyBundleCacheRef.current.set(peerId, bundle);
+      return bundle;
     } catch (error) {
-      console.warn('Failed to establish E2EE session with peer:', peerId, error);
-      return false;
+      console.warn('Failed to fetch prekey bundle for peer:', peerId, error);
+      return undefined;
     }
   }, []);
 
@@ -639,45 +653,81 @@ function App() {
     const manager = e2eeManagerRef.current;
     const token = tokenRef.current;
     if (!manager?.isInitialized || !token) return false;
-    if (!(await ensureE2EESession(memberId, token))) return false;
     try {
+      // Bundle needed only if we don't yet have a session; envelope embeds the
+      // X3DH handshake so the recipient can establish their responder session.
+      const bundle = manager.hasSession(memberId) ? undefined : await getPeerBundle(memberId, token);
       const distMsg = buildDistributionMessage(channelId, sk);
-      const encrypted = manager.encrypt(memberId, JSON.stringify(distMsg));
-      socket.storeSenderKey(channelId, memberId, encrypted);
+      const encrypted = manager.encryptEnvelope(memberId, JSON.stringify(distMsg), bundle);
+      socket.storeSenderKey(channelId, memberId, toWirePayload(encrypted));
+      // Record so we don't reciprocate/re-send our key to this peer again.
+      let sent = sentSenderKeyToRef.current.get(channelId);
+      if (!sent) { sent = new Set(); sentSenderKeyToRef.current.set(channelId, sent); }
+      sent.add(memberId);
       return true;
     } catch (err) {
       console.warn(`Failed to distribute sender key to ${memberId}:`, err);
       return false;
     }
-  }, [ensureE2EESession]);
+  }, [getPeerBundle]);
 
-  // Distribute my sender key for a channel to every current member (except self/excluded).
+  // Send my sender key back to a peer who just sent me theirs, if I haven't
+  // already sent mine. This is the responder half of the single-initiator
+  // protocol: the lower-userId peer initiates (below), the higher one
+  // reciprocates over the now-established session. Guarded to avoid loops.
+  const reciprocateSenderKey = useCallback((
+    socket: AccordWebSocket,
+    channelId: string,
+    peerId: string,
+  ) => {
+    const myId = localStorage.getItem('accord_user_id');
+    if (!myId || peerId === myId) return;
+    const sk = senderKeyStoreRef.current.getMyKey(channelId);
+    if (!sk) return;
+    if (sentSenderKeyToRef.current.get(channelId)?.has(peerId)) return;
+    void sendSenderKeyTo(socket, channelId, sk, peerId);
+  }, [sendSenderKeyTo]);
+
+  // Proactively distribute my sender key. To avoid two peers both initiating an
+  // X3DH session to each other (which yields two incompatible half-sessions),
+  // only the lower-userId peer initiates; the higher one receives and
+  // reciprocates. Full coverage of every pair comes from initiate + reciprocate.
   const distributeSenderKeyToMembers = useCallback(async (
     socket: AccordWebSocket,
     channelId: string,
     sk: SenderKeyPrivate,
     excludeUserId?: string,
   ) => {
+    const manager = e2eeManagerRef.current;
     const myId = localStorage.getItem('accord_user_id');
+    if (!manager || !myId) return;
     const targets = membersRef.current
       .map(m => m.user_id)
-      .filter((id): id is string => !!id && id !== myId && id !== excludeUserId);
+      .filter((id): id is string =>
+        !!id && id !== myId && id !== excludeUserId &&
+        // Send if a session already exists (safe 'dr'), or if I'm the designated
+        // initiator for first contact (lower userId). Otherwise the peer
+        // initiates and I reciprocate on receive.
+        (manager.hasSession(id) || myId < id));
     await Promise.all(targets.map(id => sendSenderKeyTo(socket, channelId, sk, id)));
   }, [sendSenderKeyTo]);
 
-  // Create my sender key for a channel (if missing) and distribute it to members.
-  // This is the bootstrap that activates group E2EE for a channel.
-  const bootstrapChannelSenderKeys = useCallback(async (
+  // Ensure my sender key for a channel exists, activating group E2EE.
+  // Key creation is synchronous so sending can proceed immediately; the
+  // (network-bound) distribution to members runs in the background so a slow
+  // or unreachable peer never blocks the local send/echo.
+  const bootstrapChannelSenderKeys = useCallback((
     socket: AccordWebSocket,
     channelId: string,
-  ): Promise<boolean> => {
+  ): boolean => {
     const manager = e2eeManagerRef.current;
     if (!manager?.isInitialized) return false;
     const store = senderKeyStoreRef.current;
     if (!store.hasChannelKeys(channelId)) {
       const sk = store.getOrCreateMyKey(channelId);
-      await distributeSenderKeyToMembers(socket, channelId, sk);
       persistSenderKeyStore();
+      // Fire-and-forget distribution — members also pull via /sender-keys/pending.
+      void distributeSenderKeyToMembers(socket, channelId, sk);
     }
     return true;
   }, [distributeSenderKeyToMembers, persistSenderKeyStore]);
@@ -830,9 +880,9 @@ function App() {
       const isIncomingDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
 
       if (isIncomingDm && e2eeManagerRef.current?.isInitialized && data.from) {
-        // DM: try Double Ratchet E2EE decryption
+        // DM: try Double Ratchet E2EE decryption (base64 on the wire)
         try {
-          content = e2eeManagerRef.current.decrypt(data.from, data.encrypted_data);
+          content = e2eeManagerRef.current.decryptEnvelope(data.from, fromWirePayload(data.encrypted_data));
           isEncrypted = true;
           e2eeType = 'double-ratchet';
         } catch (error) {
@@ -957,13 +1007,31 @@ function App() {
             return prev;
           }
           if (isOwnMessage) {
-            // Replace the oldest optimistic temp message with the real server message
+            // Replace the oldest optimistic temp message with the real server message.
+            // Keep the locally-known plaintext: with sender keys the author cannot
+            // decrypt their own broadcast envelope (own key lives in myKeys, not
+            // peerKeys), so newMessage.content here is undecryptable ciphertext.
             const tempIdx = prev.messages.findIndex(
               m => m.id.startsWith('temp_') && m.channel_id === data.channel_id && m.sender_id === currentUserId
             );
             if (tempIdx !== -1) {
               const updated = [...prev.messages];
-              updated[tempIdx] = newMessage;
+              const localTemp = updated[tempIdx];
+              updated[tempIdx] = {
+                ...newMessage,
+                content: localTemp.content,
+                isEncrypted: localTemp.isEncrypted,
+                e2eeType: localTemp.e2eeType,
+                _status: 'sent',
+              };
+              // Cache our own plaintext under the real message id so history
+              // renders after re-login (we can't decrypt our own SK envelopes).
+              if (data.message_id && localTemp.e2eeType === 'sender-keys') {
+                ownMessagesRef.current.set(data.message_id, localTemp.content);
+                const uid = localStorage.getItem('accord_user_id');
+                const pwd = passwordRef.current;
+                if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
+              }
               return { ...prev, messages: updated };
             }
             // No temp message found — might be from another tab/device, add it
@@ -1224,13 +1292,15 @@ function App() {
     socket.on('sender_key_distribution' as any, async (data: any) => {
       if (!e2eeManagerRef.current?.isInitialized || !data.payload || !data.from_user_id) return;
       try {
-        // Decrypt the DR-encrypted payload
-        const decrypted = e2eeManagerRef.current.decrypt(data.from_user_id, data.payload);
+        // Decrypt the DR-encrypted payload (base64 on the wire)
+        const decrypted = e2eeManagerRef.current.decryptEnvelope(data.from_user_id, fromWirePayload(data.payload));
         const distMsg = JSON.parse(decrypted);
         if (distMsg.type === 'skdm') {
           const { state } = parseDistributionMessage(distMsg);
           senderKeyStoreRef.current.setPeerKey(distMsg.ch, data.from_user_id, state);
-          console.log(`Stored sender key from ${data.from_user_id} for channel ${distMsg.ch}`);
+          // Reciprocate: send my key back over the now-established session so
+          // the initiator can decrypt my messages too.
+          reciprocateSenderKey(socket, distMsg.ch, data.from_user_id);
         }
         // ACK the distribution
         if (data.distribution_id) {
@@ -1249,17 +1319,24 @@ function App() {
       // Remove the departed user's key
       senderKeyStoreRef.current.removePeerKey(channelId, data.removed_user_id);
       // Rotate our own key and redistribute to remaining members so the
-      // departed member cannot decrypt anything sent from now on.
+      // departed member cannot decrypt anything sent from now on. Clear the
+      // "already sent" set so the rotated key reaches everyone (sessions
+      // already exist, so this is a plain resend, not a re-initiation).
       if (senderKeyStoreRef.current.hasChannelKeys(channelId)) {
+        sentSenderKeyToRef.current.delete(channelId);
         const newKey = senderKeyStoreRef.current.rotateMyKey(channelId);
         await distributeSenderKeyToMembers(socket, channelId, newKey, data.removed_user_id);
       }
       persistSenderKeyStore();
     });
 
-    // A new member joined — send them our sender key (establishing a DR session first if needed)
+    // A new member joined. Under the single-initiator rule the lower-userId side
+    // initiates: if that's me, send my key now (establishing the session); if the
+    // newcomer is lower, they initiate and I reciprocate on receive.
     socket.on('sender_key_new_member' as any, async (data: any) => {
       if (!data.channel_id || !data.new_user_id) return;
+      const myId = localStorage.getItem('accord_user_id');
+      if (!myId || data.new_user_id === myId || !(myId < data.new_user_id)) return;
       const sk = senderKeyStoreRef.current.getMyKey(data.channel_id);
       if (sk) {
         await sendSenderKeyTo(socket, data.channel_id, sk, data.new_user_id);
@@ -1279,11 +1356,12 @@ function App() {
       const ackIds: string[] = [];
       for (const dist of sorted) {
         try {
-          const decrypted = e2eeManagerRef.current.decrypt(dist.from_user_id, dist.encrypted_payload);
+          const decrypted = e2eeManagerRef.current.decryptEnvelope(dist.from_user_id, fromWirePayload(dist.encrypted_payload));
           const distMsg = JSON.parse(decrypted);
           if (distMsg.type === 'skdm') {
             const { state } = parseDistributionMessage(distMsg);
             senderKeyStoreRef.current.setPeerKey(distMsg.ch, dist.from_user_id, state);
+            reciprocateSenderKey(socket, distMsg.ch, dist.from_user_id);
           }
           ackIds.push(dist.id);
         } catch (err) {
@@ -1296,7 +1374,7 @@ function App() {
       }
     });
 
-  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, persistSenderKeyStore]);
+  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, reciprocateSenderKey, persistSenderKeyStore]);
 
   // Centralized WebSocket connection — disconnects any existing socket before creating a new one.
   // ALL code paths that need a WebSocket MUST use this instead of `new AccordWebSocket` directly.
@@ -1493,8 +1571,15 @@ function App() {
   }, [selectedNodeId, appState.token]);
 
   // Decrypt a message's encrypted_payload using sender keys or symmetric channel key
-  const decryptPayload = useCallback(async (encrypted: string, channelId: string, senderId?: string): Promise<{ content: string; isEncrypted: boolean }> => {
+  const decryptPayload = useCallback(async (encrypted: string, channelId: string, senderId?: string, messageId?: string): Promise<{ content: string; isEncrypted: boolean }> => {
     if (encryptionEnabled && keyPair && channelId) {
+      // Own messages: we can't decrypt our own sender-key envelope, so read the
+      // plaintext from our local cache (keyed by message id).
+      const myId = localStorage.getItem('accord_user_id');
+      if (messageId && senderId && senderId === myId) {
+        const cached = ownMessagesRef.current.get(messageId);
+        if (cached !== undefined) return { content: cached, isEncrypted: true };
+      }
       // Try sender keys first if it looks like a sender key envelope
       if (senderId && isSenderKeyEnvelope(encrypted)) {
         try {
@@ -1522,7 +1607,7 @@ function App() {
     const ts = (msg.created_at || msg.timestamp || 0) * (msg.created_at ? 1000 : 1); // created_at is seconds, timestamp might already be ms
     const payload = msg.encrypted_payload || msg.content || '';
     const senderId = msg.sender_id || msg.from || '';
-    const { content, isEncrypted } = await decryptPayload(payload, channelId, senderId);
+    const { content, isEncrypted } = await decryptPayload(payload, channelId, senderId, msg.id);
     const detectedSK = isEncrypted && isSenderKeyEnvelope(payload);
     
     return {
@@ -2872,11 +2957,12 @@ function App() {
         // Encrypt: use E2EE (Double Ratchet) for DMs, symmetric for channels
         const isDmSend = !!selectedDmChannel;
         if (isDmSend && e2eeManagerRef.current?.isInitialized && appState.token) {
-          // DM: use Double Ratchet E2EE
+          // DM: use Double Ratchet E2EE (envelope embeds X3DH handshake on first contact)
           try {
             const recipientId = selectedDmChannel!.other_user.id;
-            await ensureE2EESession(recipientId, appState.token);
-            messageToSend = e2eeManagerRef.current.encrypt(recipientId, msgText);
+            const mgr = e2eeManagerRef.current;
+            const bundle = mgr.hasSession(recipientId) ? undefined : await getPeerBundle(recipientId, appState.token);
+            messageToSend = toWirePayload(mgr.encryptEnvelope(recipientId, msgText, bundle));
             isEncrypted = true;
             e2eeType = 'double-ratchet';
           } catch (error) {
@@ -2889,7 +2975,7 @@ function App() {
           // Channel group E2EE via sender keys. Bootstrap on demand if this
           // channel doesn't have keys yet (e.g. first message ever sent here).
           if (!senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
-            await bootstrapChannelSenderKeys(ws, channelToUse);
+            bootstrapChannelSenderKeys(ws, channelToUse);
           }
           if (senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
             try {
@@ -3056,7 +3142,7 @@ function App() {
       if (encryptionEnabled && keyPair && selectedChannelId) {
         let editEncrypted = false;
         if (!senderKeyStoreRef.current.hasChannelKeys(selectedChannelId) && ws) {
-          await bootstrapChannelSenderKeys(ws, selectedChannelId);
+          bootstrapChannelSenderKeys(ws, selectedChannelId);
         }
         if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) {
           try {

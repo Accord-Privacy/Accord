@@ -74,14 +74,27 @@ export {
   loadIdentityKeys,
   saveSenderKeyStore,
   loadSenderKeyStore,
+  saveOwnMessages,
+  loadOwnMessages,
 } from './persistence';
 
 export type { StoredIdentityKeys } from './persistence';
 
 import type { IdentityKeyPair, SignedPreKeyPair, OneTimePreKeyPair, PreKeyBundle } from './keys';
-import { generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from './keys';
+import { generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle, keyToHex, hexToKey } from './keys';
 import { x3dhInitiate, x3dhRespond } from './x3dh';
 import { SessionManager } from './session';
+
+/** Self-describing wire envelope for Double Ratchet payloads. On first contact
+ *  the initiator embeds its X3DH handshake so the responder can establish the
+ *  session; `t:'dr'` once a session exists. */
+interface DrEnvelope {
+  t: 'x3dh' | 'dr';
+  ct: string;
+  ik?: string;   // initiator identity public key (hex)
+  ek?: string;   // initiator ephemeral public key (hex)
+  opk?: string | null; // responder one-time prekey public used (hex), if any
+}
 
 /**
  * High-level E2EE manager.
@@ -94,6 +107,9 @@ export class E2EEManager {
   private signedPreKey: SignedPreKeyPair | null = null;
   private oneTimePreKeys: OneTimePreKeyPair[] = [];
   private sessionManager: SessionManager | null = null;
+  /** X3DH handshake headers to resend to a peer until they reply (proving the
+   *  session was established on their side). Keyed by peerId. */
+  private pendingHandshakes = new Map<string, { ik: string; ek: string; opk: string | null }>();
 
   /** Whether the manager has been initialized with keys */
   get isInitialized(): boolean {
@@ -203,6 +219,52 @@ export class E2EEManager {
     return this.sessionManager!.decrypt(peerId, ciphertext);
   }
 
+  /**
+   * Encrypt for a peer, producing a self-describing envelope. On first contact
+   * (no session yet) this initiates X3DH as Alice and embeds the handshake so
+   * the recipient can establish the responder session; `peerBundle` is required
+   * in that case. Subsequent messages carry the handshake only until the peer
+   * replies (see decryptEnvelope), then downgrade to plain `dr` envelopes.
+   */
+  encryptEnvelope(peerId: string, plaintext: string, peerBundle?: PreKeyBundle): string {
+    this.ensureInitialized();
+    if (!this.sessionManager!.hasSession(peerId)) {
+      if (!peerBundle) {
+        throw new Error(`No session with ${peerId} and no prekey bundle to start one`);
+      }
+      const ephemeralPublicKey = this.initiateSession(peerId, peerBundle);
+      this.pendingHandshakes.set(peerId, {
+        ik: keyToHex(this.identityKeyPair!.publicKey),
+        ek: keyToHex(ephemeralPublicKey),
+        opk: peerBundle.oneTimePrekey ? keyToHex(peerBundle.oneTimePrekey) : null,
+      });
+    }
+    const ct = this.sessionManager!.encrypt(peerId, plaintext);
+    const hs = this.pendingHandshakes.get(peerId);
+    const env: DrEnvelope = hs ? { t: 'x3dh', ...hs, ct } : { t: 'dr', ct };
+    return JSON.stringify(env);
+  }
+
+  /**
+   * Decrypt a self-describing envelope from a peer, establishing the responder
+   * session from the embedded X3DH handshake on first contact.
+   */
+  decryptEnvelope(peerId: string, envelopeStr: string): string {
+    this.ensureInitialized();
+    const env = JSON.parse(envelopeStr) as DrEnvelope;
+    if (env.t === 'x3dh' && !this.sessionManager!.hasSession(peerId) && env.ik && env.ek) {
+      let otpkIndex: number | undefined;
+      if (env.opk) {
+        const i = this.oneTimePreKeys.findIndex(k => keyToHex(k.publicKey) === env.opk);
+        otpkIndex = i >= 0 ? i : undefined;
+      }
+      this.acceptSession(peerId, hexToKey(env.ik), hexToKey(env.ek), otpkIndex);
+    }
+    // Any message from the peer proves our handshake landed — stop resending it.
+    this.pendingHandshakes.delete(peerId);
+    return this.sessionManager!.decrypt(peerId, env.ct);
+  }
+
   /** Check if we have a session with a peer */
   hasSession(peerId: string): boolean {
     return this.sessionManager?.hasSession(peerId) ?? false;
@@ -211,6 +273,12 @@ export class E2EEManager {
   /** Get identity public key */
   getIdentityPublicKey(): Uint8Array | null {
     return this.identityKeyPair?.publicKey ?? null;
+  }
+
+  /** Build the prekey bundle to publish for others to initiate X3DH with us. */
+  getPreKeyBundle(): PreKeyBundle {
+    this.ensureInitialized();
+    return buildPreKeyBundle(this.identityKeyPair!, this.signedPreKey!, this.oneTimePreKeys[0]);
   }
 
   private ensureInitialized(): void {

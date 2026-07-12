@@ -19,8 +19,10 @@ import { SenderKeyStore } from './senderKeys';
 
 const IDENTITY_STORAGE_PREFIX = 'accord_e2ee_identity_';
 const SENDERKEYS_STORAGE_PREFIX = 'accord_e2ee_senderkeys_';
+const OWNMSGS_STORAGE_PREFIX = 'accord_e2ee_ownmsgs_';
 const IDENTITY_DOMAIN = 'accord-e2ee-identity-storage';
 const SENDERKEYS_DOMAIN = 'accord-e2ee-senderkeys-storage';
+const OWNMSGS_DOMAIN = 'accord-e2ee-ownmsgs-storage';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -86,6 +88,10 @@ function identityStorageKey(userId: string): string {
 
 function senderKeysStorageKey(userId: string): string {
   return `${SENDERKEYS_STORAGE_PREFIX}${userId}`;
+}
+
+function ownMessagesStorageKey(userId: string): string {
+  return `${OWNMSGS_STORAGE_PREFIX}${userId}`;
 }
 
 /**
@@ -185,5 +191,42 @@ export function loadSenderKeyStore(
   } catch (e) {
     console.warn('Failed to load sender key store:', e);
     return null;
+  }
+}
+
+// ─── Own-message plaintext cache ──────────────────────────────────────────────
+// With sender keys, the author cannot decrypt their own channel messages (their
+// key lives in `myKeys`, not `peerKeys`, and the chain has ratcheted forward).
+// We keep the plaintext of our own sent messages, encrypted at rest with the
+// user's password, so history renders correctly after re-login.
+
+/** Persist the own-message plaintext cache (messageId → plaintext). */
+export function saveOwnMessages(
+  userId: string,
+  messages: Map<string, string>,
+  password: string,
+): void {
+  try {
+    const obj = Object.fromEntries(messages);
+    const encrypted = encryptData(JSON.stringify(obj), password, OWNMSGS_DOMAIN);
+    localStorage.setItem(ownMessagesStorageKey(userId), encrypted);
+  } catch (e) {
+    console.warn('Failed to save own-message cache:', e);
+  }
+}
+
+/** Load the own-message plaintext cache. Returns an empty map if none/failed. */
+export function loadOwnMessages(
+  userId: string,
+  password: string,
+): Map<string, string> {
+  try {
+    const encrypted = localStorage.getItem(ownMessagesStorageKey(userId));
+    if (!encrypted) return new Map();
+    const json = decryptData(encrypted, password, OWNMSGS_DOMAIN);
+    return new Map(Object.entries(JSON.parse(json)));
+  } catch (e) {
+    console.warn('Failed to load own-message cache:', e);
+    return new Map();
   }
 }
