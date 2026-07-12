@@ -1,6 +1,7 @@
 # Accord — Project Map to First Public Beta
 
 **Generated:** 2026-07-12 · **Basis:** full codebase audit at commit `48c8c0d`
+**Updated:** 2026-07-12 (post-M0/M1; M2 in progress — statuses below reflect the working tree, not the original audit)
 **Goal:** first running beta with the full advertised featureset (desktop + web client, self-hostable relay, true E2EE for DMs *and* channels).
 
 ---
@@ -34,7 +35,19 @@
 
 ## 2. Core Sections Missing — Ranked
 
-### 🔴 A. Channel E2EE never actually activates (THE beta blocker)
+### ✅ A. Channel E2EE never actually activates (THE beta blocker) — CLOSED
+
+**Resolved 2026-07-12** (`f4d11cb` + follow-ups): sender key bootstrap on channel
+select and on-demand before send/edit, real rotation redistribution on member
+removal, pending-distribution drain/ack on connect, and fail-closed sends (legacy
+symmetric crypto is an explicit `accord_legacy_channel_crypto` opt-in, badged in
+the UI). Bonus fix found by the new tests: Double Ratchet decrypt in both Rust
+core and the TS client mutated state before AES-GCM verification — a replayed or
+tampered message permanently desynced the session (`4c40935`). Exit criteria
+(two fresh clients, server provably can't decrypt; kick test) pending the new
+`e2e/sender-keys.spec.ts` run. Original finding preserved below.
+
+<details><summary>Original finding</summary>
 
 The flagship promise ("relay can never read messages") is currently only true for DMs.
 
@@ -48,25 +61,40 @@ What's missing — three precise gaps in `desktop/frontend/src/App.tsx`:
 2. **Rotation redistribution is a stub.** `distributeSenderKeyToChannel()` (App.tsx:99) only `console.log`s. On member removal the client rotates its key locally but never sends the new key to remaining members — messages after a kick become undecryptable or silently downgrade.
 3. **Silent downgrade chain.** Send path falls back: sender keys → deterministic symmetric key (`SHA-256(channelId + fixed salt)` — server-derivable, audit finding M3) → **plaintext** on error, with only a console.warn. Beta needs a policy (fail closed) and a visible per-message encryption indicator (`e2eeType` field already exists).
 
-### 🔴 B. Metadata encryption (NMK) not wired into the client
+</details>
 
-`core/src/metadata_crypto.rs` (28 tests) and the nullable `encrypted_name` DB columns exist, but the frontend contains **zero** references to NMK or `encrypted_name`. Node names, channel names, and display names are stored in plaintext on the relay — directly contradicting the README's "What the Relay Sees" table. Either ship metadata-privacy Phase 2 (client encrypts) or correct the public claims before beta.
+### 🟠 B. Metadata encryption (NMK) not wired into the client — IN PROGRESS
+
+**Half closed 2026-07-12** (`8956c45`): relay now exposes
+`GET/PUT /api/nodes/:id/metadata/encrypted` (opaque blob storage, member
+read / admin write, node isolation tested), and the client has
+`e2ee/metadata.ts` (NodeMetadataKey mirroring `core/src/metadata_crypto.rs`,
+cross-impl vectors locked both sides) plus `api.ts` endpoints.
+
+**Still open:** App.tsx wiring — derive NMK on node create, encrypt on
+create/rename, prefer decrypted names in UI — and NMK distribution to joiners
+over Double Ratchet (design in `docs/metadata-privacy.md`). Until that lands,
+names remain plaintext on the relay; if it slips the beta, amend the README
+"relay sees" table instead of shipping overclaimed privacy.
 
 ### 🟠 C. Security-audit items still open (verified in code)
 
-| Item | Status now |
+| Item | Status now (2026-07-12) |
 |---|---|
 | H1 admin token in URL | ✅ Fixed |
 | L2 non-constant-time admin token compare | ✅ Fixed (test exists) |
-| M4 rate-limiting gaps | ~80% fixed — HTTP middleware covers messages/files/invites/DMs/profile/node-create; WS path checks at `main.rs:140`; needs edge-case tests (open issue #6) |
-| M1 no CSP header | ❌ Still missing (`grep` confirms zero CSP references in server) |
-| M2 auth tokens in localStorage | ❌ Unchanged; Tauri keyring migration recommended |
+| M4 rate-limiting gaps | ✅ HTTP middleware + WS checks; `rate_limit.rs` now has 34 tests incl. edge cases |
+| M1 no CSP header | ✅ Fixed — full security-header stack in `main.rs` (CSP, nosniff, frame-ancestors, referrer, permissions-policy) |
+| M2 auth tokens in localStorage | ✅ Fixed — `tokenStorage.ts` uses Tauri plugin-store (OS keychain) with localStorage web fallback + migration |
 | L1 weak session key-wrap passphrase | ❌ Document-only fix pending |
-| L3 error messages leak internals | ❌ Unverified/unaddressed |
+| L3 error messages leak internals | ❌ Unverified — sweep client-facing error strings before beta |
 
-### 🟠 D. Test coverage holes at security boundaries
+### ✅ D. Test coverage holes at security boundaries — CLOSED
 
-Per the coverage audit (and still true): `server/src/files.rs`, `db/encryption.rs`, `federation.rs`, `webhooks.rs` have **0 unit tests**; frontend `ws.ts`, voice stack, and `e2ee/session.ts` untested. Federation (1,095 LOC, live routes, background maintenance task) is an untested trust boundary — **either test it or feature-flag it off for beta.**
+All four server boundary files now tested (`files.rs` 36, `db/encryption.rs` 22,
+`federation.rs` 35, `webhooks.rs` 26). Frontend: `ws.test.ts` exists,
+`e2ee/session.test.ts` added 2026-07-12 (`e12bc24`), `e2ee/metadata.test.ts`
+added with M2. Remaining smaller gap: voice stack / `useVoice` (open issue #3).
 
 ### 🟡 E. Beta program infrastructure (Phase 6 checklist, all unstarted)
 
@@ -75,42 +103,43 @@ Per the coverage audit (and still true): `server/src/files.rs`, `db/encryption.r
 - `UpdateChecker.tsx` exists but no release channel to check against
 - Mobile apps functional but unpackaged (recommend: **explicitly out of scope for first beta**; desktop + web only)
 
-### 🟡 F. Repo/CI hygiene
+### 🟡 F. Repo/CI hygiene — MOSTLY CLOSED
 
-- Broken bench target (see §1); QA gate lacks `--all-targets`, `cargo audit`, and any bench compile
-- 5 stale remote test branches to merge or close
-- Docs (ROADMAP, SECURITY-AUDIT, TEST-COVERAGE-AUDIT) 4 months stale relative to code
+- ✅ Bench fixed; QA gate hardened (`--all-targets`, `cargo audit`, mandatory frontend checks) — `4d850a8`
+- Remaining: 4 remote `test/*` branches still carry unmerged commits (`frontend-component-tests`, `state-and-push-tests`, `rate-limit-edge-cases`, `frontend-hook-tests`) — merge or close
+- Remaining: ROADMAP/SECURITY-AUDIT/TEST-COVERAGE docs still describe Feb–Mar 2026 state
+- Note: full `pre-push-qa.sh` needs `webkit2gtk-4.1`/`javascriptcoregtk-4.1` system libs for the desktop crate; without them run clippy/check with `--workspace --exclude accord-desktop`
 
 ---
 
 ## 3. Milestone Plan to Beta
 
-### M0 — Foundation & hygiene *(~1 week)*
-1. Fix `server_benchmarks.rs:230` (pass `None` for the new param)
-2. Harden `pre-push-qa.sh`: add `--all-targets`, `cargo audit`, fail if Node missing
-3. Merge or close the 5 remote `test/*` branches
-4. Dev env: install Node 20+, `webkit2gtk`/`javascriptcoregtk-4.1`, `cargo-audit`
-5. Refresh stale docs to match code reality
+### ✅ M0 — Foundation & hygiene — DONE (`4d850a8`)
+1. ✅ Fix `server_benchmarks.rs:230`
+2. ✅ Harden `pre-push-qa.sh` (`--all-targets`, `cargo audit`, fail if Node missing)
+3. ⏳ Merge or close remote `test/*` branches (4 still carry unmerged commits)
+4. ✅ Node 20+ and `cargo-audit` installed; ❌ `webkit2gtk-4.1` still missing (desktop crate can't compile locally)
+5. ⏳ Stale docs refresh (this file updated; ROADMAP/SECURITY-AUDIT/TEST-COVERAGE still pending)
 
-### M1 — Close the E2EE loop *(the critical path, ~2–3 weeks)*
-1. **Bootstrap:** on channel join/select, `getOrCreateMyKey()` + distribute to every member via existing Double Ratchet sessions + `POST /channels/:id/sender-keys`; fetch `/sender-keys/pending` + ack on every connect
-2. **Real rotation:** replace the `distributeSenderKeyToChannel` stub with actual member iteration + redistribution
-3. **Fail-closed policy:** remove plaintext fallback; gate symmetric fallback behind an explicit "compatibility mode"; surface `e2eeType` as a per-message/per-channel UI badge
-4. **Session recovery tests:** unit tests for `e2ee/session.ts` (missing bundle, stale session) — this flow now carries group security
-5. Exit criteria: two fresh clients in one channel exchange messages the server provably cannot decrypt; kick a member → remaining members still decrypt
+### ✅ M1 — Close the E2EE loop — DONE pending e2e verification (`f4d11cb`, `4c40935`, `e12bc24`)
+1. ✅ Bootstrap on channel select + on-demand before send/edit; pending distributions drained/acked on connect
+2. ✅ Real rotation redistribution (stub replaced); join paths broadcast `sender_key_new_member`
+3. ✅ Fail closed; legacy symmetric = explicit opt-in; per-message badge differentiates DR / sender keys / legacy
+4. ✅ Session recovery tests (+ Double Ratchet decrypt-rollback fix in Rust core and TS, found by these tests)
+5. ⏳ Exit criteria: `e2e/sender-keys.spec.ts` written, needs a green run (two fresh clients; kick test)
 
-### M2 — Metadata privacy Phase 2 *(~1–2 weeks, parallelizable with M1)*
-1. Client derives NMK on node create, sends `encrypted_name`/`encrypted_description` alongside plaintext
-2. NMK distribution to joiners over the DR channel (design already in `docs/metadata-privacy.md`)
-3. Client prefers decrypted names, falls back to plaintext
+### 🔶 M2 — Metadata privacy Phase 2 — IN PROGRESS (`8956c45`)
+1. ✅ Relay blob storage + `GET/PUT /api/nodes/:id/metadata/encrypted`; NMK client crypto (`e2ee/metadata.ts`) with cross-impl vectors
+2. ⏳ App.tsx wiring: derive NMK on node create, encrypt on create/rename, prefer decrypted names
+3. ⏳ NMK distribution to joiners over the DR channel (design in `docs/metadata-privacy.md`)
 4. If this slips: amend README/SECURITY "relay sees" tables — don't ship a beta with overclaimed privacy
 
-### M3 — Security hardening *(~1–2 weeks)*
-1. CSP middleware (audit M1) — one axum layer, spec already written in SECURITY-AUDIT.md
-2. Tauri: move tokens/identity to OS keyring (M2); document web-client residual risk
-3. Sanitize client-facing error strings (L3)
-4. P1 unit tests: `files.rs`, `db/encryption.rs`, `federation.rs` — or feature-flag federation off for beta
-5. Rate-limit edge-case tests (open issue #6)
+### 🔶 M3 — Security hardening — MOSTLY DONE
+1. ✅ CSP middleware (full security-header stack in `main.rs`)
+2. ✅ Tauri OS-keyring token storage (`tokenStorage.ts`); ⏳ document web-client residual risk
+3. ⏳ Sanitize client-facing error strings (L3) — sweep still needed
+4. ✅ P1 unit tests: `files.rs` (36), `db/encryption.rs` (22), `federation.rs` (35), `webhooks.rs` (26)
+5. ✅ Rate-limit edge-case tests (34 tests in `rate_limit.rs`)
 
 ### M4 — Beta packaging & program *(~1–2 weeks)*
 1. `cargo tauri build` artifacts for Linux/Windows + GitHub Releases with reproducible-build hashes (HASHES.json flow exists)
@@ -127,10 +156,14 @@ Mobile store releases · federation/relay-mesh hardening + cross-relay DMs · on
 ## 4. Sequencing Logic
 
 ```
-M0 ──► M1 (E2EE loop) ──────────┐
-  └──► M2 (metadata, parallel) ─┼──► M3 (hardening) ──► M4 (packaging) ──► BETA
+M0 ✅ ──► M1 ✅(e2e pending) ────┐
+  └──► M2 🔶 (in progress) ─────┼──► M3 🔶 (mostly done) ──► M4 (packaging) ──► BETA
                                  │
         M5 deferred ─────────────┘
 ```
 
 M1 is the only truly serial dependency: **the product's core claim is false until it lands.** Everything else is polish, honesty, or armor around that claim.
+
+**Critical path remaining to beta (2026-07-12):** M1 e2e green run → M2 client
+wiring + NMK distribution → L3 error-string sweep → M4 packaging & beta program
+(untouched).
