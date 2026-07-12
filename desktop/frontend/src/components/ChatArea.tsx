@@ -682,11 +682,19 @@ export const ChatArea: React.FC = () => {
                             <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                           )}
                           {msg.isEncrypted && (
-                            <span className="message-encrypted-badge" title={
-                              msg.e2eeType === 'double-ratchet'
-                                ? 'End-to-end encrypted (Double Ratchet)'
-                                : 'Transport encrypted (placeholder — not E2EE)'
-                            }><Icon name="lock" size={12} /></span>
+                            <span
+                              className={
+                                'message-encrypted-badge' +
+                                (msg.e2eeType === 'symmetric' ? ' message-encrypted-badge--legacy' : '')
+                              }
+                              title={
+                                msg.e2eeType === 'double-ratchet'
+                                  ? 'End-to-end encrypted (Double Ratchet)'
+                                  : msg.e2eeType === 'sender-keys'
+                                    ? 'End-to-end encrypted (Sender Keys)'
+                                    : 'Legacy channel encryption — NOT end-to-end, the relay can derive this key'
+                              }
+                            ><Icon name="lock" size={12} /></span>
                           )}
                           {msg.pinned_at && (
                             <span className="message-pinned-badge" title={`Pinned ${new Date(msg.pinned_at).toLocaleString()}`}><Icon name="pin" size={12} /></span>

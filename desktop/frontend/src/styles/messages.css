@@ -232,6 +232,11 @@
   margin-left: 2px;
 }
 
+/* Legacy (non-E2EE) channel crypto — relay-derivable key, shown as a warning */
+.message-encrypted-badge--legacy {
+  color: var(--yellow);
+}
+
 .message-pinned-badge {
   font-size: var(--font-sm);
   color: var(--yellow);

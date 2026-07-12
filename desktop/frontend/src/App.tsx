@@ -38,7 +38,7 @@ import { getDeviceInfo } from "./deviceIdentity";
 const SetupWizard = React.lazy(() => import("./SetupWizard").then(m => ({ default: m.SetupWizard })));
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
-import { E2EEManager, type PreKeyBundle, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
+import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -96,18 +96,11 @@ function fingerprint(publicKeyHash: string): string {
 initTheme();
 
 /** Distribute a sender key to all channel members via WS. */
-function distributeSenderKeyToChannel(
-  _ws: AccordWebSocket,
-  channelId: string,
-  _sk: import('./e2ee/senderKeys').SenderKeyPrivate,
-  excludeUserId?: string,
-) {
-  // This is called in the context of the App component where e2eeManagerRef is available.
-  // We pass the ws and use a global reference pattern.
-  // Note: actual member list iteration happens inside App via the membersRef.
-  // This is a simplified version — in production you'd iterate channel members.
-  // For now we rely on the server's sender_key_new_member events for distribution.
-  console.log(`Sender key rotated for channel ${channelId}, excluding ${excludeUserId}`);
+// Legacy (pre-Sender-Keys) channel crypto derives the key from the channel ID,
+// which the relay also knows — it is NOT E2EE. Only allowed as an explicit
+// compatibility opt-in for channels with old clients.
+function legacyChannelCryptoEnabled(): boolean {
+  return localStorage.getItem('accord_legacy_channel_crypto') === '1';
 }
 
 function App() {
@@ -373,6 +366,10 @@ function App() {
   const senderKeyStoreRef = useRef<SenderKeyStore>(new SenderKeyStore());
   // Cache of fetched prekey bundles by user ID
   const prekeyBundleCacheRef = useRef<Map<string, PreKeyBundle>>(new Map());
+  // Flips true once the E2EE manager is initialized — retriggers sender key bootstrap
+  const [e2eeReady, setE2eeReady] = useState(false);
+  // Current auth token, readable from stable callbacks/WS handlers
+  const tokenRef = useRef<string | null>(null);
 
   // Presence state (extracted to usePresence hook)
   const {
@@ -583,6 +580,7 @@ function App() {
           console.log('Sender key store loaded from persistence');
         }
       }
+      setE2eeReady(true);
     } catch (error) {
       console.error('Failed to initialize E2EE:', error);
     }
@@ -619,6 +617,80 @@ function App() {
       return false;
     }
   }, []);
+
+  // ── Sender key lifecycle (channel group E2EE) ──
+
+  // Persist the sender key store (encrypted with the user's password).
+  const persistSenderKeyStore = useCallback(() => {
+    const userId = localStorage.getItem('accord_user_id') || '';
+    const password = passwordRef.current;
+    if (password && userId) {
+      saveSenderKeyStore(userId, senderKeyStoreRef.current, password);
+    }
+  }, []);
+
+  // DR-encrypt my sender key for one member and queue it on the relay.
+  const sendSenderKeyTo = useCallback(async (
+    socket: AccordWebSocket,
+    channelId: string,
+    sk: SenderKeyPrivate,
+    memberId: string,
+  ): Promise<boolean> => {
+    const manager = e2eeManagerRef.current;
+    const token = tokenRef.current;
+    if (!manager?.isInitialized || !token) return false;
+    if (!(await ensureE2EESession(memberId, token))) return false;
+    try {
+      const distMsg = buildDistributionMessage(channelId, sk);
+      const encrypted = manager.encrypt(memberId, JSON.stringify(distMsg));
+      socket.storeSenderKey(channelId, memberId, encrypted);
+      return true;
+    } catch (err) {
+      console.warn(`Failed to distribute sender key to ${memberId}:`, err);
+      return false;
+    }
+  }, [ensureE2EESession]);
+
+  // Distribute my sender key for a channel to every current member (except self/excluded).
+  const distributeSenderKeyToMembers = useCallback(async (
+    socket: AccordWebSocket,
+    channelId: string,
+    sk: SenderKeyPrivate,
+    excludeUserId?: string,
+  ) => {
+    const myId = localStorage.getItem('accord_user_id');
+    const targets = membersRef.current
+      .map(m => m.user_id)
+      .filter((id): id is string => !!id && id !== myId && id !== excludeUserId);
+    await Promise.all(targets.map(id => sendSenderKeyTo(socket, channelId, sk, id)));
+  }, [sendSenderKeyTo]);
+
+  // Create my sender key for a channel (if missing) and distribute it to members.
+  // This is the bootstrap that activates group E2EE for a channel.
+  const bootstrapChannelSenderKeys = useCallback(async (
+    socket: AccordWebSocket,
+    channelId: string,
+  ): Promise<boolean> => {
+    const manager = e2eeManagerRef.current;
+    if (!manager?.isInitialized) return false;
+    const store = senderKeyStoreRef.current;
+    if (!store.hasChannelKeys(channelId)) {
+      const sk = store.getOrCreateMyKey(channelId);
+      await distributeSenderKeyToMembers(socket, channelId, sk);
+      persistSenderKeyStore();
+    }
+    return true;
+  }, [distributeSenderKeyToMembers, persistSenderKeyStore]);
+
+  // Bootstrap channel group E2EE: once E2EE is ready and members are known,
+  // create + distribute a sender key for the selected channel if we don't
+  // have one yet. Without this, sender keys never activate for fresh accounts.
+  useEffect(() => {
+    if (!ws || !selectedChannelId || !encryptionEnabled || !e2eeReady) return;
+    if (members.length === 0) return;
+    if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) return;
+    bootstrapChannelSenderKeys(ws, selectedChannelId);
+  }, [ws, selectedChannelId, members, encryptionEnabled, e2eeReady, bootstrapChannelSenderKeys]);
 
   // Register API token refresher for automatic re-auth on 401
   useEffect(() => {
@@ -680,6 +752,7 @@ function App() {
 
   // Keep refs in sync for WebSocket handler closure
   useEffect(() => { membersRef.current = members; }, [members]);
+  useEffect(() => { tokenRef.current = appState.token ?? null; }, [appState.token]);
   useEffect(() => { dmChannelsRef.current = dmChannels; }, [dmChannels]);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { channelsRef.current = channels; }, [channels]);
@@ -1163,6 +1236,7 @@ function App() {
         if (data.distribution_id) {
           socket.ackSenderKeys([data.distribution_id]);
         }
+        persistSenderKeyStore();
       } catch (err) {
         console.warn('Failed to process sender key distribution:', err);
       }
@@ -1174,31 +1248,55 @@ function App() {
       const channelId = data.channel_id;
       // Remove the departed user's key
       senderKeyStoreRef.current.removePeerKey(channelId, data.removed_user_id);
-      // Rotate our own key and redistribute to remaining members
+      // Rotate our own key and redistribute to remaining members so the
+      // departed member cannot decrypt anything sent from now on.
       if (senderKeyStoreRef.current.hasChannelKeys(channelId)) {
         const newKey = senderKeyStoreRef.current.rotateMyKey(channelId);
-        // Distribute new key to all channel members (async, best-effort)
-        distributeSenderKeyToChannel(socket, channelId, newKey, data.removed_user_id);
+        await distributeSenderKeyToMembers(socket, channelId, newKey, data.removed_user_id);
       }
+      persistSenderKeyStore();
     });
 
-    // A new member joined — send them our sender key
+    // A new member joined — send them our sender key (establishing a DR session first if needed)
     socket.on('sender_key_new_member' as any, async (data: any) => {
       if (!data.channel_id || !data.new_user_id) return;
-      const channelId = data.channel_id;
-      const sk = senderKeyStoreRef.current.getMyKey(channelId);
-      if (sk && e2eeManagerRef.current?.isInitialized) {
-        const distMsg = buildDistributionMessage(channelId, sk);
-        try {
-          const encrypted = e2eeManagerRef.current.encrypt(data.new_user_id, JSON.stringify(distMsg));
-          socket.storeSenderKey(channelId, data.new_user_id, encrypted);
-        } catch (err) {
-          console.warn(`Failed to send sender key to new member ${data.new_user_id}:`, err);
-        }
+      const sk = senderKeyStoreRef.current.getMyKey(data.channel_id);
+      if (sk) {
+        await sendSenderKeyTo(socket, data.channel_id, sk, data.new_user_id);
       }
     });
 
-  }, [encryptionEnabled]);
+    // On (re)connect, drain sender key distributions queued while we were offline
+    socket.on('authenticated' as any, () => {
+      socket.getPendingSenderKeys();
+    });
+
+    socket.on('pending_sender_keys' as any, async (data: any) => {
+      if (!e2eeManagerRef.current?.isInitialized || !Array.isArray(data.distributions)) return;
+      // Process oldest-first so Double Ratchet state advances in order
+      const sorted = [...data.distributions].sort(
+        (a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
+      const ackIds: string[] = [];
+      for (const dist of sorted) {
+        try {
+          const decrypted = e2eeManagerRef.current.decrypt(dist.from_user_id, dist.encrypted_payload);
+          const distMsg = JSON.parse(decrypted);
+          if (distMsg.type === 'skdm') {
+            const { state } = parseDistributionMessage(distMsg);
+            senderKeyStoreRef.current.setPeerKey(distMsg.ch, dist.from_user_id, state);
+          }
+          ackIds.push(dist.id);
+        } catch (err) {
+          console.warn('Failed to process pending sender key distribution:', err);
+        }
+      }
+      if (ackIds.length > 0) {
+        socket.ackSenderKeys(ackIds);
+        persistSenderKeyStore();
+      }
+    });
+
+  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, persistSenderKeyStore]);
 
   // Centralized WebSocket connection — disconnects any existing socket before creating a new one.
   // ALL code paths that need a WebSocket MUST use this instead of `new AccordWebSocket` directly.
@@ -2782,21 +2880,17 @@ function App() {
             isEncrypted = true;
             e2eeType = 'double-ratchet';
           } catch (error) {
-            console.warn('E2EE encrypt failed, falling back to symmetric:', error);
-            // Fallback to symmetric encryption
-            if (encryptionEnabled && keyPair) {
-              try {
-                const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
-                messageToSend = await encryptMessage(channelKey, msgText);
-                isEncrypted = true;
-                e2eeType = 'symmetric';
-              } catch (e2) {
-                console.warn('Symmetric encrypt also failed, sending plaintext:', e2);
-              }
-            }
+            // Fail closed: never silently downgrade a DM below Double Ratchet.
+            console.error('E2EE encrypt failed for DM:', error);
+            setError('Message not sent: could not establish end-to-end encryption with this user');
+            return;
           }
         } else if (encryptionEnabled && keyPair && channelToUse) {
-          // Channel: try sender keys first, fall back to symmetric
+          // Channel group E2EE via sender keys. Bootstrap on demand if this
+          // channel doesn't have keys yet (e.g. first message ever sent here).
+          if (!senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
+            await bootstrapChannelSenderKeys(ws, channelToUse);
+          }
           if (senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
             try {
               const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, channelToUse);
@@ -2804,19 +2898,24 @@ function App() {
               isEncrypted = true;
               e2eeType = 'sender-keys';
             } catch (skError) {
-              console.warn('Sender key encrypt failed, falling back to symmetric:', skError);
+              console.error('Sender key encrypt failed:', skError);
             }
           }
-          if (!isEncrypted) {
-            // Symmetric fallback
+          if (!isEncrypted && legacyChannelCryptoEnabled()) {
+            // Explicit compatibility opt-in only: relay-derivable key, NOT E2EE.
             try {
               const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
               messageToSend = await encryptMessage(channelKey, msgText);
               isEncrypted = true;
               e2eeType = 'symmetric';
             } catch (error) {
-              console.warn('Failed to encrypt message, sending plaintext:', error);
+              console.error('Legacy channel encrypt failed:', error);
             }
+          }
+          if (!isEncrypted) {
+            // Fail closed: never send channel plaintext.
+            setError('Message not sent: end-to-end encryption is unavailable for this channel');
+            return;
           }
         }
 
@@ -2955,31 +3054,33 @@ function App() {
 
       // Encrypt message if encryption is enabled and we have keys
       if (encryptionEnabled && keyPair && selectedChannelId) {
-        // Try sender keys first
+        let editEncrypted = false;
+        if (!senderKeyStoreRef.current.hasChannelKeys(selectedChannelId) && ws) {
+          await bootstrapChannelSenderKeys(ws, selectedChannelId);
+        }
         if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) {
           try {
             const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, selectedChannelId);
             messageToSend = encryptFn(editingContent);
+            editEncrypted = true;
           } catch (skError) {
-            console.warn('Sender key encrypt failed for edit, falling back:', skError);
-            try {
-              const channelKey = await getChannelKey(keyPair.privateKey, selectedChannelId);
-              messageToSend = await encryptMessage(channelKey, editingContent);
-            } catch (error) {
-              console.warn('Failed to encrypt edited message:', error);
-              setError('Failed to encrypt message');
-              return;
-            }
+            console.error('Sender key encrypt failed for edit:', skError);
           }
-        } else {
+        }
+        if (!editEncrypted && legacyChannelCryptoEnabled()) {
+          // Explicit compatibility opt-in only: relay-derivable key, NOT E2EE.
           try {
             const channelKey = await getChannelKey(keyPair.privateKey, selectedChannelId);
             messageToSend = await encryptMessage(channelKey, editingContent);
+            editEncrypted = true;
           } catch (error) {
-            console.warn('Failed to encrypt edited message:', error);
-            setError('Failed to encrypt message');
-            return;
+            console.error('Legacy channel encrypt failed for edit:', error);
           }
+        }
+        if (!editEncrypted) {
+          // Fail closed: never send channel plaintext.
+          setError('Edit not saved: end-to-end encryption is unavailable for this channel');
+          return;
         }
       }
 
