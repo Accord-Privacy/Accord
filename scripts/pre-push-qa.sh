@@ -42,7 +42,9 @@ echo "  ✅ Workspace compiles (all targets)"
 echo ""
 
 echo "[5/6] cargo audit"
-if ! command -v cargo-audit >/dev/null 2>&1; then
+# cargo finds subcommands in $CARGO_HOME/bin even when it's not on PATH,
+# so probe via cargo itself rather than command -v.
+if ! cargo audit --version >/dev/null 2>&1; then
     echo "  ❌ cargo-audit not installed. Install with: cargo install cargo-audit --locked"
     exit 1
 fi
