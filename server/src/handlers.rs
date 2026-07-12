@@ -5415,7 +5415,10 @@ async fn handle_ws_message(
                     .db
                     .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)
                     .await
-                    .map_err(|e| format!("Permission compute error: {}", e))?;
+                    .map_err(|e| {
+                        tracing::error!("Permission compute error: {}", e);
+                        "Permission compute error".to_string()
+                    })?;
                 if perms & crate::models::permission_bits::CONNECT == 0 {
                     return Err("Missing CONNECT permission for this voice channel".to_string());
                 }

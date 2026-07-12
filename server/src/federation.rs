@@ -111,7 +111,10 @@ pub async fn list_relays_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorBody {
-                error: format!("Database error: {}", e),
+                error: {
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                },
             }),
         )
     })?;
@@ -145,7 +148,10 @@ pub async fn register_relay_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorBody {
-                    error: format!("Database error: {}", e),
+                    error: {
+                        tracing::error!("Database error: {}", e);
+                        "Database error".to_string()
+                    },
                 }),
             )
         })?;
@@ -186,7 +192,10 @@ pub async fn heartbeat_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorBody {
-                    error: format!("Database error: {}", e),
+                    error: {
+                        tracing::error!("Database error: {}", e);
+                        "Database error".to_string()
+                    },
                 }),
             )
         })?;

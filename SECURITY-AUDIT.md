@@ -113,6 +113,8 @@ The following sensitive endpoints have **no rate limiting**:
 
 **Recommendation:** Return generic error messages to clients; log detailed errors server-side only.
 
+**Status:** ✅ Fixed 2026-07-12 — 54 sites across `state.rs`, `batch_handlers.rs`, `federation.rs`, `bot_api.rs`, `handlers.rs` now log the detailed error via `tracing::error!` and return only the message category to clients (no `{e}` internals). Client-input validation messages (bad base64, invalid pubkey) intentionally keep their detail.
+
 ---
 
 ### I1 — XSS Protection: DOMPurify Properly Applied

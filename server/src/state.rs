@@ -269,7 +269,12 @@ impl AppState {
         let public_key_hash = crate::db::compute_public_key_hash(&public_key);
         match self.db.public_key_hash_exists(&public_key_hash).await {
             Ok(true) => return Err("Public key already registered".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
             _ => {}
         }
 
@@ -281,7 +286,10 @@ impl AppState {
             let argon2 = Argon2::default();
             argon2
                 .hash_password(password.as_bytes(), &salt)
-                .map_err(|e| format!("Failed to hash password: {}", e))?
+                .map_err(|e| {
+                    tracing::error!("Failed to hash password: {}", e);
+                    "Failed to hash password".to_string()
+                })?
                 .to_string()
         };
 
@@ -304,7 +312,10 @@ impl AppState {
                 }
                 Ok(user.id)
             }
-            Err(e) => Err(format!("Failed to create user: {}", e)),
+            Err(e) => Err({
+                tracing::error!("Failed to create user: {}", e);
+                "Failed to create user".to_string()
+            }),
         }
     }
 
@@ -338,7 +349,12 @@ impl AppState {
         // Check username uniqueness
         match self.db.username_exists(&username).await {
             Ok(true) => return Err("Username already taken".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
             _ => {}
         }
 
@@ -352,7 +368,12 @@ impl AppState {
                 Ok(count) if count >= 5 => {
                     return Err("Maximum accounts per device reached (5)".to_string());
                 }
-                Err(e) => return Err(format!("Database error: {}", e)),
+                Err(e) => {
+                    return Err({
+                        tracing::error!("Database error: {}", e);
+                        "Database error".to_string()
+                    })
+                }
                 _ => {}
             }
         }
@@ -362,7 +383,10 @@ impl AppState {
         let argon2 = Argon2::default();
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| format!("Failed to hash password: {}", e))?
+            .map_err(|e| {
+                tracing::error!("Failed to hash password: {}", e);
+                "Failed to hash password".to_string()
+            })?
             .to_string();
 
         // Create user
@@ -370,7 +394,10 @@ impl AppState {
             .db
             .create_user_with_username(&username, &password_hash)
             .await
-            .map_err(|e| format!("Failed to create user: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Failed to create user: {}", e);
+                "Failed to create user".to_string()
+            })?;
 
         // Register device key if provided
         let device_id = if let Some(ref fingerprint) = device_fingerprint_hash {
@@ -380,7 +407,10 @@ impl AppState {
                 .db
                 .create_device_key(user.id, fingerprint, pk, label, false)
                 .await
-                .map_err(|e| format!("Failed to create device key: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("Failed to create device key: {}", e);
+                    "Failed to create device key".to_string()
+                })?;
 
             // Record device registration for anti-alt tracking
             let _ = self
@@ -413,7 +443,12 @@ impl AppState {
         let user = match self.db.get_user_by_username(&username).await {
             Ok(Some(user)) => user,
             Ok(None) => return Err("User not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         };
 
         // Verify password
@@ -421,15 +456,20 @@ impl AppState {
             .db
             .get_user_password_hash_by_username(&username)
             .await
-            .map_err(|e| format!("Database error: {}", e))?
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })?
             .unwrap_or_default();
 
         if stored_hash.is_empty() {
             return Err("This account has no password set".to_string());
         }
 
-        let parsed_hash = PasswordHash::new(&stored_hash)
-            .map_err(|e| format!("Invalid stored password hash: {}", e))?;
+        let parsed_hash = PasswordHash::new(&stored_hash).map_err(|e| {
+            tracing::error!("Invalid stored password hash: {}", e);
+            "Invalid stored password hash".to_string()
+        })?;
         Argon2::default()
             .verify_password(password.as_bytes(), &parsed_hash)
             .map_err(|_| "Invalid password".to_string())?;
@@ -485,7 +525,12 @@ impl AppState {
         let user = match self.db.get_user_by_public_key_hash(&public_key_hash).await {
             Ok(Some(user)) => user,
             Ok(None) => return Err("User not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         };
 
         // Verify password
@@ -493,7 +538,10 @@ impl AppState {
             .db
             .get_user_password_hash_by_pkh(&public_key_hash)
             .await
-            .map_err(|e| format!("Database error: {}", e))?
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })?
             .unwrap_or_default();
 
         if stored_hash.is_empty() {
@@ -503,8 +551,10 @@ impl AppState {
             // Legacy keyless user — allow through
         } else {
             // Normal password verification with Argon2
-            let parsed_hash = PasswordHash::new(&stored_hash)
-                .map_err(|e| format!("Invalid stored password hash: {}", e))?;
+            let parsed_hash = PasswordHash::new(&stored_hash).map_err(|e| {
+                tracing::error!("Invalid stored password hash: {}", e);
+                "Invalid stored password hash".to_string()
+            })?;
             Argon2::default()
                 .verify_password(password.as_bytes(), &parsed_hash)
                 .map_err(|_| "Invalid password".to_string())?;
@@ -576,7 +626,10 @@ impl AppState {
             .await
         {
             Ok(node) => Ok(node),
-            Err(e) => Err(format!("Failed to create node: {}", e)),
+            Err(e) => Err({
+                tracing::error!("Failed to create node: {}", e);
+                "Failed to create node".to_string()
+            }),
         }
     }
 
@@ -584,7 +637,12 @@ impl AppState {
         let node = match self.db.get_node(node_id).await {
             Ok(Some(n)) => n,
             Ok(None) => return Err("Node not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         };
         let members = self
             .db
@@ -631,7 +689,12 @@ impl AppState {
         match self.db.get_node(node_id).await {
             Ok(Some(_)) => {}
             Ok(None) => return Err("Node not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         }
 
         // Check ban status
@@ -639,7 +702,10 @@ impl AppState {
             .db
             .get_user_public_key_hash(user_id)
             .await
-            .map_err(|e| format!("Database error: {}", e))?
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })?
             .ok_or_else(|| "User not found".to_string())?;
 
         if self
@@ -680,7 +746,12 @@ impl AppState {
         let node = match self.db.get_node(node_id).await {
             Ok(Some(n)) => n,
             Ok(None) => return Err("Node not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         };
         if node.owner_id == user_id {
             return Err("Node owner cannot leave their own node".to_string());
@@ -801,7 +872,10 @@ impl AppState {
             .db
             .get_user_public_key_hash(user_id)
             .await
-            .map_err(|e| format!("Database error: {}", e))?
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })?
             .ok_or_else(|| "User not found".to_string())?;
 
         if self
@@ -972,7 +1046,12 @@ impl AppState {
         let channel = match self.db.get_channel(channel_id).await {
             Ok(Some(c)) => c,
             Ok(None) => return Err("Channel not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         };
         if !self
             .db
@@ -1027,7 +1106,12 @@ impl AppState {
         let channel = match self.db.get_channel(channel_id).await {
             Ok(Some(c)) => c,
             Ok(None) => return Err("Channel not found".to_string()),
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                return Err({
+                    tracing::error!("Database error: {}", e);
+                    "Database error".to_string()
+                })
+            }
         };
 
         // Check if user has permission to delete channels
@@ -1248,7 +1332,10 @@ impl AppState {
             .db
             .get_relay_build_hash_allowlist()
             .await
-            .map_err(|e| format!("Failed to check relay build allowlist: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Failed to check relay build allowlist: {}", e);
+                "Failed to check relay build allowlist".to_string()
+            })?;
         if allowlist.is_empty() {
             return Ok(());
         }
@@ -1290,7 +1377,10 @@ impl AppState {
         match self.db.is_build_hash_allowed(node_id, hash_str).await {
             Ok(true) => Ok(()),
             Ok(false) => Err("Build not allowed by Node admin".to_string()),
-            Err(e) => Err(format!("Failed to check build allowlist: {}", e)),
+            Err(e) => Err({
+                tracing::error!("Failed to check build allowlist: {}", e);
+                "Failed to check build allowlist".to_string()
+            }),
         }
     }
 
@@ -1680,7 +1770,10 @@ impl AppState {
         self.db
             .get_channel_messages_paginated(channel_id, limit, before_id)
             .await
-            .map_err(|e| format!("Database error: {}", e))
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })
     }
 
     /// Search messages within a Node by metadata
@@ -1706,7 +1799,10 @@ impl AppState {
                 limit,
             )
             .await
-            .map_err(|e| format!("Database error: {}", e))
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })
     }
 
     /// Check if user can access a specific channel (must be node member and channel member)
@@ -1716,11 +1812,10 @@ impl AppState {
         channel_id: Uuid,
     ) -> Result<bool, String> {
         // Get channel info to find the node
-        let channel = self
-            .db
-            .get_channel(channel_id)
-            .await
-            .map_err(|e| format!("Database error: {}", e))?;
+        let channel = self.db.get_channel(channel_id).await.map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            "Database error".to_string()
+        })?;
 
         let channel = channel.ok_or_else(|| "Channel not found".to_string())?;
 
@@ -1729,7 +1824,10 @@ impl AppState {
             .db
             .is_node_member(channel.node_id, user_id)
             .await
-            .map_err(|e| format!("Database error: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Database error: {}", e);
+                "Database error".to_string()
+            })?;
 
         if !is_node_member {
             return Ok(false);
@@ -1740,17 +1838,20 @@ impl AppState {
             .db
             .compute_channel_permissions(channel.node_id, user_id, channel_id)
             .await
-            .map_err(|e| format!("Permission compute error: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("Permission compute error: {}", e);
+                "Permission compute error".to_string()
+            })?;
 
         Ok(perms & crate::models::permission_bits::VIEW_CHANNEL != 0)
     }
 
     /// Check if user is a member of a node
     pub async fn is_node_member(&self, user_id: Uuid, node_id: Uuid) -> Result<bool, String> {
-        self.db
-            .is_node_member(node_id, user_id)
-            .await
-            .map_err(|e| format!("Database error: {}", e))
+        self.db.is_node_member(node_id, user_id).await.map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            "Database error".to_string()
+        })
     }
 
     /// Load persisted auth tokens from database (call on startup)

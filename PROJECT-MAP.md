@@ -87,7 +87,7 @@ table should note metadata encryption is client-optional.
 | M1 no CSP header | ✅ Fixed — full security-header stack in `main.rs` (CSP, nosniff, frame-ancestors, referrer, permissions-policy) |
 | M2 auth tokens in localStorage | ✅ Fixed — `tokenStorage.ts` uses Tauri plugin-store (OS keychain) with localStorage web fallback + migration |
 | L1 weak session key-wrap passphrase | ❌ Document-only fix pending |
-| L3 error messages leak internals | ❌ Unverified — sweep client-facing error strings before beta |
+| L3 error messages leak internals | ✅ Fixed — 54 sites log detail server-side, return category only |
 
 ### ✅ D. Test coverage holes at security boundaries — CLOSED
 
@@ -137,7 +137,7 @@ added with M2. Remaining smaller gap: voice stack / `useVoice` (open issue #3).
 ### 🔶 M3 — Security hardening — MOSTLY DONE
 1. ✅ CSP middleware (full security-header stack in `main.rs`)
 2. ✅ Tauri OS-keyring token storage (`tokenStorage.ts`); ⏳ document web-client residual risk
-3. ⏳ Sanitize client-facing error strings (L3) — sweep still needed
+3. ✅ Sanitize client-facing error strings (L3) — 54 sites swept
 4. ✅ P1 unit tests: `files.rs` (36), `db/encryption.rs` (22), `federation.rs` (35), `webhooks.rs` (26)
 5. ✅ Rate-limit edge-case tests (34 tests in `rate_limit.rs`)
 
@@ -164,7 +164,6 @@ M0 ✅ ──► M1 ✅ (verified) ──────┐
 
 M1 is the only truly serial dependency: **the product's core claim is false until it lands.** Everything else is polish, honesty, or armor around that claim.
 
-**Critical path remaining to beta (2026-07-12):** L3 error-string sweep +
-web-client residual-risk doc (last M3 items) → M4 packaging & beta program
-(untouched). Housekeeping: 4 `test/*` branches, stale ROADMAP/SECURITY docs,
+**Critical path remaining to beta (2026-07-12):** web-client residual-risk doc
+(last M3 item) → M4 packaging & beta program (untouched). Housekeeping: 4 `test/*` branches, stale ROADMAP/SECURITY docs,
 README "relay sees" honesty note.

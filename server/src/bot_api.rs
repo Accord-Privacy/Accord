@@ -325,14 +325,18 @@ fn perform_key_exchange(bot_x25519_pubkey_bytes: &[u8; 32]) -> ([u8; 32], [u8; 3
 
 /// Encrypt a payload with AES-256-GCM. Returns nonce + ciphertext (includes tag).
 fn encrypt_payload(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("AES key error: {}", e))?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
+        tracing::error!("AES key error: {}", e);
+        "AES key error".to_string()
+    })?;
     let mut nonce_bytes = [0u8; 12];
     use rand::RngCore;
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|e| format!("Encryption failed: {}", e))?;
+    let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|e| {
+        tracing::error!("Encryption failed: {}", e);
+        "Encryption failed".to_string()
+    })?;
     let mut result = Vec::with_capacity(12 + ciphertext.len());
     result.extend_from_slice(&nonce_bytes);
     result.extend_from_slice(&ciphertext);
@@ -344,11 +348,15 @@ fn decrypt_payload(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < 12 {
         return Err("Encrypted data too short".into());
     }
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| format!("AES key error: {}", e))?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| {
+        tracing::error!("AES key error: {}", e);
+        "AES key error".to_string()
+    })?;
     let nonce = Nonce::from_slice(&data[..12]);
-    cipher
-        .decrypt(nonce, &data[12..])
-        .map_err(|e| format!("Decryption failed: {}", e))
+    cipher.decrypt(nonce, &data[12..]).map_err(|e| {
+        tracing::error!("Decryption failed: {}", e);
+        "Decryption failed".to_string()
+    })
 }
 
 /// Sign data with Ed25519
@@ -447,7 +455,10 @@ async fn require_node_admin(
             (
                 StatusCode::FORBIDDEN,
                 Json(ErrorResponse {
-                    error: format!("Not a member of this node: {}", e),
+                    error: {
+                        tracing::error!("Not a member of this node: {}", e);
+                        "Not a member of this node".to_string()
+                    },
                     code: 403,
                 }),
             )
@@ -608,7 +619,10 @@ pub async fn install_bot_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to install bot: {}", e),
+                    error: {
+                        tracing::error!("Failed to install bot: {}", e);
+                        "Failed to install bot".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -623,7 +637,10 @@ pub async fn install_bot_handler(
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ErrorResponse {
-                        error: format!("Failed to store bot crypto: {}", e),
+                        error: {
+                            tracing::error!("Failed to store bot crypto: {}", e);
+                            "Failed to store bot crypto".to_string()
+                        },
                         code: 500,
                     }),
                 )
@@ -671,7 +688,10 @@ pub async fn uninstall_bot_handler(
         (
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
-                error: format!("Bot not found or failed to uninstall: {}", e),
+                error: {
+                    tracing::error!("Bot not found or failed to uninstall: {}", e);
+                    "Bot not found or failed to uninstall".to_string()
+                },
                 code: 404,
             }),
         )
@@ -705,7 +725,10 @@ pub async fn list_bots_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to list bots: {}", e),
+                error: {
+                    tracing::error!("Failed to list bots: {}", e);
+                    "Failed to list bots".to_string()
+                },
                 code: 500,
             }),
         )
@@ -732,7 +755,10 @@ pub async fn get_bot_commands_handler(
             (
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
-                    error: format!("Bot not found: {}", e),
+                    error: {
+                        tracing::error!("Bot not found: {}", e);
+                        "Bot not found".to_string()
+                    },
                     code: 404,
                 }),
             )
@@ -761,7 +787,10 @@ pub async fn invoke_command_handler(
             (
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
-                    error: format!("Bot not found: {}", e),
+                    error: {
+                        tracing::error!("Bot not found: {}", e);
+                        "Bot not found".to_string()
+                    },
                     code: 404,
                 }),
             )
@@ -790,7 +819,10 @@ pub async fn invoke_command_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to create invocation: {}", e),
+                    error: {
+                        tracing::error!("Failed to create invocation: {}", e);
+                        "Failed to create invocation".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -814,7 +846,10 @@ pub async fn invoke_command_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get bot crypto info: {}", e),
+                    error: {
+                        tracing::error!("Failed to get bot crypto info: {}", e);
+                        "Failed to get bot crypto info".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -1085,7 +1120,10 @@ pub async fn bot_respond_handler(
             (
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
-                    error: format!("Invocation not found: {}", e),
+                    error: {
+                        tracing::error!("Invocation not found: {}", e);
+                        "Invocation not found".to_string()
+                    },
                     code: 404,
                 }),
             )

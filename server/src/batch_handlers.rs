@@ -57,7 +57,10 @@ pub async fn batch_members_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get members: {}", e),
+                    error: {
+                        tracing::error!("Failed to get members: {}", e);
+                        "Failed to get members".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -68,7 +71,10 @@ pub async fn batch_members_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get roles: {}", e),
+                error: {
+                    tracing::error!("Failed to get roles: {}", e);
+                    "Failed to get roles".to_string()
+                },
                 code: 500,
             }),
         )
@@ -153,7 +159,10 @@ pub async fn batch_channels_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get channels: {}", e),
+                    error: {
+                        tracing::error!("Failed to get channels: {}", e);
+                        "Failed to get channels".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -234,7 +243,10 @@ pub async fn node_overview_handler(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Failed to get roles: {}", e),
+                error: {
+                    tracing::error!("Failed to get roles: {}", e);
+                    "Failed to get roles".to_string()
+                },
                 code: 500,
             }),
         )
@@ -248,7 +260,10 @@ pub async fn node_overview_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get members: {}", e),
+                    error: {
+                        tracing::error!("Failed to get members: {}", e);
+                        "Failed to get members".to_string()
+                    },
                     code: 500,
                 }),
             )
@@ -263,7 +278,10 @@ pub async fn node_overview_handler(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to get channels: {}", e),
+                    error: {
+                        tracing::error!("Failed to get channels: {}", e);
+                        "Failed to get channels".to_string()
+                    },
                     code: 500,
                 }),
             )
