@@ -16,6 +16,7 @@ const nodeKey = (nodeId: string) => `accord_retention_node_${nodeId}`;
 const channelKey = (channelId: string) => `accord_retention_chan_${channelId}`;
 const ssNodeKey = (nodeId: string) => `accord_ssprotect_node_${nodeId}`;
 const ssChannelKey = (channelId: string) => `accord_ssprotect_chan_${channelId}`;
+const automodKey = (nodeId: string) => `accord_automod_node_${nodeId}`;
 
 /** Retention choices offered in the UI. `secs === 0` means "keep forever". */
 export const RETENTION_PRESETS: ReadonlyArray<{ label: string; secs: number }> = [
@@ -147,15 +148,76 @@ export function effectiveScreenshotProtect(
 }
 
 // ---------------------------------------------------------------------------
-// Distribution: serialize the whole node policy (retention + screenshot) for the
-// NMK-encrypted metadata blob, and apply a received one so every member's client
-// behaves the same. The relay only ever stores the encrypted form.
+// Auto-moderation word filter — a node-wide list the owner defines, enforced
+// entirely CLIENT-SIDE. The relay never sees it: because messages are E2EE the
+// relay could never match plaintext words against ciphertext anyway, and holding
+// a node's moderation policy in relay plaintext would violate "relay blind to
+// nodes". So the list rides the NMK-encrypted settings blob like the other
+// policies, and each member's client checks outgoing/incoming text locally.
+//
+// This is client-cooperative, not enforced: a member running a modified client
+// can bypass it. That matches Accord's model — moderation is the node owner's
+// duty within a trusted membership, not something the infrastructure guarantees.
+// ---------------------------------------------------------------------------
+
+export type AutoModAction = "block" | "warn";
+export interface AutoModEntry {
+  word: string;
+  action: AutoModAction;
+}
+
+export function getNodeAutoMod(nodeId: string): AutoModEntry[] {
+  const raw = localStorage.getItem(automodKey(nodeId));
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is AutoModEntry =>
+        e && typeof e.word === "string" && (e.action === "block" || e.action === "warn")
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function setNodeAutoMod(nodeId: string, entries: AutoModEntry[]): void {
+  // Normalize: lowercase, trim, dedupe by word, cap length like the old relay path.
+  const seen = new Set<string>();
+  const clean: AutoModEntry[] = [];
+  for (const e of entries) {
+    const word = e.word.trim().toLowerCase();
+    if (!word || word.length > 100 || seen.has(word)) continue;
+    seen.add(word);
+    clean.push({ word, action: e.action === "warn" ? "warn" : "block" });
+  }
+  localStorage.setItem(automodKey(nodeId), JSON.stringify(clean));
+}
+
+/**
+ * First auto-mod entry whose word appears in `text` (case-insensitive), or null.
+ * Callers decide what "block" vs "warn" does at send/receive time.
+ */
+export function checkAutoMod(nodeId: string, text: string): AutoModEntry | null {
+  const lower = text.toLowerCase();
+  for (const e of getNodeAutoMod(nodeId)) {
+    if (lower.includes(e.word)) return e;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Distribution: serialize the whole node policy (retention + screenshot +
+// auto-mod) for the NMK-encrypted metadata blob, and apply a received one so
+// every member's client behaves the same. The relay only ever stores the
+// encrypted form.
 // ---------------------------------------------------------------------------
 
 interface SerializedSettings {
   v: 1;
   retention: { node: number; channels: Record<string, number> };
   screenshot: { node: boolean; channels: Record<string, boolean> };
+  automod: AutoModEntry[];
 }
 
 /** Serialize a node's disappearing + screenshot policy (defaults + overrides among `channelIds`). */
@@ -172,6 +234,7 @@ export function serializeNodeSettings(nodeId: string, channelIds: string[]): str
     v: 1,
     retention: { node: getNodeRetention(nodeId), channels: retChannels },
     screenshot: { node: getNodeScreenshotProtect(nodeId), channels: ssChannels },
+    automod: getNodeAutoMod(nodeId),
   };
   return JSON.stringify(payload);
 }
@@ -218,6 +281,12 @@ export function applyNodeSettings(nodeId: string, json: string): boolean {
         setChannelScreenshotProtect(cid, on);
       }
     }
+  }
+
+  if (Array.isArray(payload.automod)) {
+    const incoming = JSON.stringify(payload.automod);
+    if (JSON.stringify(getNodeAutoMod(nodeId)) !== incoming) changed = true;
+    setNodeAutoMod(nodeId, payload.automod);
   }
   return changed;
 }

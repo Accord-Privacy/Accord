@@ -42,30 +42,29 @@ use axum::{
 use base64::Engine;
 use clap::Parser;
 use handlers::{
-    accept_friend_request_handler, ack_sender_keys_handler, add_auto_mod_word_handler,
-    add_build_allowlist_handler, add_reaction_handler, assign_member_role_handler, auth_handler,
-    ban_check_handler, ban_user_handler, block_user_handler, build_info_handler,
-    create_channel_category_handler, create_channel_handler, create_dm_channel_handler,
-    create_invite_handler, create_node_handler, create_role_handler,
-    delete_channel_category_handler, delete_channel_handler, delete_channel_overwrite_handler,
-    delete_custom_emoji_handler, delete_file_handler, delete_message_handler, delete_role_handler,
-    deregister_push_token_handler, download_file_handler, edit_message_handler,
-    fetch_key_bundle_handler, get_blocked_users_handler, get_build_allowlist_handler,
-    get_channel_messages_handler, get_channel_threads_handler, get_dm_channels_handler,
-    get_effective_permissions_handler, get_emoji_image_handler, get_member_roles_handler,
-    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
-    get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
+    accept_friend_request_handler, ack_sender_keys_handler, add_build_allowlist_handler,
+    add_reaction_handler, assign_member_role_handler, auth_handler, ban_check_handler,
+    ban_user_handler, block_user_handler, build_info_handler, create_channel_category_handler,
+    create_channel_handler, create_dm_channel_handler, create_invite_handler, create_node_handler,
+    create_role_handler, delete_channel_category_handler, delete_channel_handler,
+    delete_channel_overwrite_handler, delete_custom_emoji_handler, delete_file_handler,
+    delete_message_handler, delete_role_handler, deregister_push_token_handler,
+    download_file_handler, edit_message_handler, fetch_key_bundle_handler,
+    get_blocked_users_handler, get_build_allowlist_handler, get_channel_messages_handler,
+    get_channel_threads_handler, get_dm_channels_handler, get_effective_permissions_handler,
+    get_emoji_image_handler, get_member_roles_handler, get_message_reactions_handler,
+    get_message_thread_handler, get_node_audit_log_handler, get_node_handler,
+    get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
     get_node_user_profiles_handler, get_pending_sender_keys_handler, get_pinned_messages_handler,
     get_prekey_messages_handler, get_slow_mode_handler, get_user_avatar_handler,
     get_user_profile_handler, health_handler, import_discord_template_handler,
     invite_preview_handler, join_node_handler, kick_user_handler, leave_node_handler,
-    link_preview_handler, list_auto_mod_words_handler, list_bans_handler,
-    list_channel_files_handler, list_channel_overwrites_handler, list_custom_emojis_handler,
-    list_friend_requests_handler, list_friends_handler, list_invites_handler,
-    list_node_channels_handler, list_roles_handler, list_user_nodes_handler,
-    mark_channel_read_handler, pin_message_handler, publish_key_bundle_handler,
-    purge_channel_before_handler, register_handler, register_push_token_handler,
-    reject_friend_request_handler, remove_auto_mod_word_handler, remove_build_allowlist_handler,
+    link_preview_handler, list_bans_handler, list_channel_files_handler,
+    list_channel_overwrites_handler, list_custom_emojis_handler, list_friend_requests_handler,
+    list_friends_handler, list_invites_handler, list_node_channels_handler, list_roles_handler,
+    list_user_nodes_handler, mark_channel_read_handler, pin_message_handler,
+    publish_key_bundle_handler, purge_channel_before_handler, register_handler,
+    register_push_token_handler, reject_friend_request_handler, remove_build_allowlist_handler,
     remove_friend_handler, remove_member_role_handler, remove_reaction_handler,
     reorder_channels_handler, reorder_roles_handler, revoke_invite_handler,
     search_messages_handler, send_friend_request_handler, set_build_allowlist_handler,
@@ -837,15 +836,7 @@ async fn main() -> Result<()> {
             delete(delete_custom_emoji_handler),
         )
         .route("/api/emojis/:content_hash", get(get_emoji_image_handler))
-        // Auto-mod endpoints
-        .route(
-            "/nodes/:id/auto-mod/words",
-            get(list_auto_mod_words_handler).post(add_auto_mod_word_handler),
-        )
-        .route(
-            "/nodes/:id/auto-mod/words/:word",
-            delete(remove_auto_mod_word_handler),
-        )
+        // Auto-mod is client-side (relay blind to node policy) — no relay endpoints.
         // Channel endpoints
         .route(
             "/nodes/:id/channels/reorder",

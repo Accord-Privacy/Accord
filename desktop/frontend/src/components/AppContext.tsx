@@ -89,6 +89,10 @@ export interface AppContextType {
   replyingTo: Message | null;
   setReplyingTo: React.Dispatch<React.SetStateAction<Message | null>>;
 
+  // Per-message disappearing/read-gated retention chosen in the composer
+  messageGate: import('./RetentionPopover').MessageGate | null;
+  setMessageGate: React.Dispatch<React.SetStateAction<import('./RetentionPopover').MessageGate | null>>;
+
   // Data
   nodes: Node[];
   channels: Channel[];

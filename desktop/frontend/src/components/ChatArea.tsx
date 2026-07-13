@@ -25,6 +25,7 @@ import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { SavedMessagesPanel } from "./SavedMessagesPanel";
 import { MessagePreview } from "./MessagePreview";
+import { RetentionPopover } from "./RetentionPopover";
 import { useBookmarks } from "../hooks/useBookmarks";
 import type { InstalledBot, BotCommand } from "../types";
 const VoiceChat = React.lazy(() => import("../VoiceChat").then(m => ({ default: m.VoiceChat })));
@@ -681,6 +682,19 @@ export const ChatArea: React.FC = () => {
                           {msg.edited_at && (
                             <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
                           )}
+                          {(msg.read_gated || msg.expires_at) && (
+                            <span
+                              className={`message-ephemeral-badge${msg.read_gated ? ' message-ephemeral-badge--gated' : ''}`}
+                              title={
+                                msg.read_gated
+                                  ? 'Disappears once the intended readers have seen it'
+                                  : `Disappears ${new Date((msg.expires_at || 0) * 1000).toLocaleString()}`
+                              }
+                              aria-label="Disappearing message"
+                            >
+                              <Icon name="clock" size={11} />
+                            </span>
+                          )}
                           {msg.isEncrypted && (
                             <span
                               className={
@@ -1199,6 +1213,12 @@ export const ChatArea: React.FC = () => {
                 encryptionEnabled={ctx.encryptionEnabled}
               />
             )}
+            <RetentionPopover
+              gate={ctx.messageGate}
+              onChange={ctx.setMessageGate}
+              members={ctx.members}
+              roles={ctx.nodeRoles}
+            />
             <button
               className={`send-btn${ctx.slowModeCooldown > 0 ? ' send-btn-cooldown' : ''}`}
               disabled={ctx.slowModeCooldown > 0 || !ctx.message.trim()}

@@ -925,25 +925,8 @@ export class AccordApi {
     return this.request(`/channels/${channelId}/slow-mode`);
   }
 
-  // Add auto-mod word
-  async addAutoModWord(nodeId: string, word: string, action: string, _token: string): Promise<any> {
-    return this.request(`/nodes/${nodeId}/auto-mod/words`, {
-      method: 'POST',
-      body: JSON.stringify({ word, action }),
-    });
-  }
-
-  // Remove auto-mod word
-  async removeAutoModWord(nodeId: string, word: string, _token: string): Promise<any> {
-    return this.request(`/nodes/${nodeId}/auto-mod/words/${encodeURIComponent(word)}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // List auto-mod words
-  async getAutoModWords(nodeId: string, _token: string): Promise<{ words: Array<{ word: string; action: string; created_at: number }> }> {
-    return this.request(`/nodes/${nodeId}/auto-mod/words`);
-  }
+  // Auto-mod word filtering is client-side (see retention.ts) and distributed via
+  // the NMK-encrypted node settings blob — the relay has no auto-mod endpoints.
 
   // ── Bot API v2 ──
 

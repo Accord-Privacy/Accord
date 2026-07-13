@@ -418,8 +418,24 @@ export class AccordWebSocket {
     throw new Error('DirectMessage is deprecated. Use DM channels with sendChannelMessage instead.');
   }
 
-  sendChannelMessage(channelId: string, encryptedData: string, replyTo?: string, expiresAt?: number): void {
-    this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData, reply_to: replyTo, expires_at: expiresAt } });
+  sendChannelMessage(
+    channelId: string,
+    encryptedData: string,
+    replyTo?: string,
+    expiresAt?: number,
+    gate?: { users?: string[]; roles?: string[]; ttlSecs: number },
+  ): void {
+    this.sendMessage({
+      ChannelMessage: {
+        channel_id: channelId,
+        encrypted_data: encryptedData,
+        reply_to: replyTo,
+        expires_at: expiresAt,
+        gate_users: gate?.users && gate.users.length ? gate.users : undefined,
+        gate_roles: gate?.roles && gate.roles.length ? gate.roles : undefined,
+        gate_ttl_secs: gate?.ttlSecs,
+      },
+    });
   }
 
   sendEditMessage(messageId: string, encryptedData: string): void {

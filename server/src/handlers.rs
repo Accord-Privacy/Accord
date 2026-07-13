@@ -3910,188 +3910,6 @@ pub async fn get_slow_mode_handler(
     ))
 }
 
-/// Add auto-mod word (POST /nodes/:id/auto-mod/words)
-pub async fn add_auto_mod_word_handler(
-    State(state): State<SharedState>,
-    Path(node_id): Path<Uuid>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-    Json(request): Json<crate::models::AddAutoModWordRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    let user_role = state
-        .get_user_role_in_node(user_id, node_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e,
-                    code: 500,
-                }),
-            )
-        })?;
-    if !has_permission(user_role, Permission::ManageNode) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Insufficient permissions".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    if !matches!(request.action.as_str(), "block" | "warn") {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Action must be 'block' or 'warn'".into(),
-                code: 400,
-            }),
-        ));
-    }
-
-    let word = request.word.trim().to_lowercase();
-    if word.is_empty() || word.len() > 100 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Word must be 1-100 characters".into(),
-                code: 400,
-            }),
-        ));
-    }
-
-    state
-        .db
-        .add_auto_mod_word(node_id, &word, &request.action)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: {
-                        tracing::error!("Failed to add word: {}", e);
-                        "Internal server error".to_string()
-                    },
-                    code: 500,
-                }),
-            )
-        })?;
-
-    info!(
-        "Auto-mod word '{}' added to node {} by {}",
-        word, node_id, user_id
-    );
-    Ok(Json(
-        serde_json::json!({ "status": "added", "word": word, "action": request.action }),
-    ))
-}
-
-/// Remove auto-mod word (DELETE /nodes/:id/auto-mod/words/:word)
-pub async fn remove_auto_mod_word_handler(
-    State(state): State<SharedState>,
-    Path((node_id, word)): Path<(Uuid, String)>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    let user_role = state
-        .get_user_role_in_node(user_id, node_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e,
-                    code: 500,
-                }),
-            )
-        })?;
-    if !has_permission(user_role, Permission::ManageNode) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Insufficient permissions".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    let removed = state
-        .db
-        .remove_auto_mod_word(node_id, &word)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: {
-                        tracing::error!("Failed to remove word: {}", e);
-                        "Internal server error".to_string()
-                    },
-                    code: 500,
-                }),
-            )
-        })?;
-
-    if removed {
-        Ok(Json(
-            serde_json::json!({ "status": "removed", "word": word }),
-        ))
-    } else {
-        Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: "Word not found".into(),
-                code: 404,
-            }),
-        ))
-    }
-}
-
-/// List auto-mod words (GET /nodes/:id/auto-mod/words)
-pub async fn list_auto_mod_words_handler(
-    State(state): State<SharedState>,
-    Path(node_id): Path<Uuid>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    // Must be a member
-    if !state
-        .is_node_member(user_id, node_id)
-        .await
-        .unwrap_or(false)
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Must be a member of the node".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    let words = state.db.get_auto_mod_words(node_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: {
-                    tracing::error!("Failed to list words: {}", e);
-                    "Internal server error".to_string()
-                },
-                code: 500,
-            }),
-        )
-    })?;
-
-    Ok(Json(serde_json::json!({ "words": words })))
-}
-
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -4651,33 +4469,8 @@ async fn handle_ws_message(
                     drop(cooldowns);
                 }
 
-                // ── Auto-mod word filter ──
-                // NOTE: This checks the wire-format payload (encrypted_data). For
-                // unencrypted/plaintext messages during development this works fine.
-                // With real E2EE enabled, the server cannot inspect message content
-                // and this check becomes non-functional. At that point auto-mod
-                // should either move to client-side enforcement or be removed.
-                if let Ok(Some((matched_word, action))) = state
-                    .db
-                    .check_auto_mod(channel.node_id, &encrypted_data)
-                    .await
-                {
-                    if action == "block" {
-                        return Err(format!(
-                            "Message blocked by auto-mod: contains filtered word '{}'",
-                            matched_word
-                        ));
-                    }
-                    // "warn" action: let through but we could flag it (for now, just log)
-                    if action == "warn" {
-                        tracing::warn!(
-                            "Auto-mod warning: message from {} contains '{}' in channel {}",
-                            sender_user_id,
-                            matched_word,
-                            channel_id
-                        );
-                    }
-                }
+                // Auto-mod word filtering is client-side (relay is blind to node
+                // content and policy) — see desktop retention.ts checkAutoMod.
             }
 
             // Decode and store the message
@@ -4768,6 +4561,10 @@ async fn handle_ws_message(
                 "timestamp": ws_message.timestamp, "reply_to": reply_to,
                 "expires_at": expires_at,
                 "read_gated": gate_ttl_secs.is_some(),
+                // Duration (seconds) after which a recipient's own client drops its
+                // copy, measured from when THAT recipient read it. Not secret — the
+                // relay already stores it to compute the shared expiry.
+                "gate_ttl_secs": gate_ttl_secs,
                 "encrypted_display_name": sender_display_name_b64,
                 "sender_display_name": sender_display_name,
                 // Lets a recipient with a stale DM list know to refresh it —
@@ -11193,97 +10990,6 @@ mod tests {
 
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // 16. Auto-mod — invalid action value
-    // ════════════════════════════════════════════════════════════
-
-    #[tokio::test]
-    async fn add_auto_mod_word_invalid_action_returns_400() {
-        let state = make_state().await;
-        let (owner_id, owner_token) = register_and_auth(&state, "automod_owner_key").await;
-
-        let node = state
-            .create_node("AutoModTest".into(), owner_id, None)
-            .await
-            .unwrap();
-
-        let request = crate::models::AddAutoModWordRequest {
-            word: "badword".into(),
-            action: "delete".into(), // invalid — only "block" or "warn" accepted
-        };
-
-        let result = add_auto_mod_word_handler(
-            State(state),
-            Path(node.id),
-            auth_header(&owner_token),
-            Query(no_params()),
-            Json(request),
-        )
-        .await;
-
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn add_auto_mod_word_too_long_returns_400() {
-        let state = make_state().await;
-        let (owner_id, owner_token) = register_and_auth(&state, "automod_long_key").await;
-
-        let node = state
-            .create_node("AutoModLongTest".into(), owner_id, None)
-            .await
-            .unwrap();
-
-        let request = crate::models::AddAutoModWordRequest {
-            word: "w".repeat(101), // exceeds 100-char limit
-            action: "block".into(),
-        };
-
-        let result = add_auto_mod_word_handler(
-            State(state),
-            Path(node.id),
-            auth_header(&owner_token),
-            Query(no_params()),
-            Json(request),
-        )
-        .await;
-
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn add_auto_mod_word_non_admin_returns_403() {
-        let state = make_state().await;
-        let (owner_id, _) = register_and_auth(&state, "automod_owner2_key").await;
-        let (member_id, member_token) = register_and_auth(&state, "automod_member_key").await;
-
-        let node = state
-            .create_node("AutoModPermTest".into(), owner_id, None)
-            .await
-            .unwrap();
-
-        state.join_node(member_id, node.id).await.unwrap();
-
-        let request = crate::models::AddAutoModWordRequest {
-            word: "bad".into(),
-            action: "block".into(),
-        };
-
-        let result = add_auto_mod_word_handler(
-            State(state),
-            Path(node.id),
-            auth_header(&member_token),
-            Query(no_params()),
-            Json(request),
-        )
-        .await;
-
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
     // ════════════════════════════════════════════════════════════

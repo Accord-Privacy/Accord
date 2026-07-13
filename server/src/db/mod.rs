@@ -1102,28 +1102,8 @@ impl Database {
             .await
             .ok();
 
-        // ── Auto-mod word filter table ──
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS auto_mod_words (
-                node_id TEXT NOT NULL,
-                word TEXT NOT NULL,
-                action TEXT NOT NULL DEFAULT 'block',
-                created_at INTEGER NOT NULL,
-                PRIMARY KEY (node_id, word),
-                FOREIGN KEY (node_id) REFERENCES nodes (id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .context("Failed to create auto_mod_words table")?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_auto_mod_words_node ON auto_mod_words (node_id)",
-        )
-        .execute(&self.pool)
-        .await?;
+        // Auto-mod word filtering is client-side (relay is blind to node policy) —
+        // no auto_mod_words table. Legacy relay DBs keep theirs, harmlessly unused.
 
         // ── Webhooks table ──
         self.create_webhooks_table().await?;
@@ -5968,76 +5948,9 @@ impl Database {
             .unwrap_or(0))
     }
 
-    // ── Auto-mod word filter operations ──
+    // Auto-mod word filtering is client-side (see desktop retention.ts). The relay
+    // is deliberately blind to node moderation policy, so no auto-mod DB ops exist.
 
-    /// Add a filtered word for a node
-    pub async fn add_auto_mod_word(&self, node_id: Uuid, word: &str, action: &str) -> Result<bool> {
-        let created_at = now();
-        let result = sqlx::query(
-            "INSERT OR REPLACE INTO auto_mod_words (node_id, word, action, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(node_id.to_string())
-        .bind(word.to_lowercase())
-        .bind(action)
-        .bind(created_at as i64)
-        .execute(&self.pool)
-        .await
-        .context("Failed to add auto-mod word")?;
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Remove a filtered word from a node
-    pub async fn remove_auto_mod_word(&self, node_id: Uuid, word: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM auto_mod_words WHERE node_id = ? AND word = ?")
-            .bind(node_id.to_string())
-            .bind(word.to_lowercase())
-            .execute(&self.pool)
-            .await
-            .context("Failed to remove auto-mod word")?;
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// List all filtered words for a node
-    pub async fn get_auto_mod_words(
-        &self,
-        node_id: Uuid,
-    ) -> Result<Vec<crate::models::AutoModWord>> {
-        let rows = sqlx::query(
-            "SELECT node_id, word, action, created_at FROM auto_mod_words WHERE node_id = ? ORDER BY word",
-        )
-        .bind(node_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to query auto-mod words")?;
-
-        rows.iter()
-            .map(|row| -> Result<crate::models::AutoModWord> {
-                Ok(crate::models::AutoModWord {
-                    node_id: Uuid::parse_str(&row.get::<String, _>("node_id"))?,
-                    word: row.get("word"),
-                    action: row.get("action"),
-                    created_at: row.get::<i64, _>("created_at") as u64,
-                })
-            })
-            .collect()
-    }
-
-    /// Check message text against auto-mod words for a node.
-    /// Returns the matching word and its action, or None if clean.
-    pub async fn check_auto_mod(
-        &self,
-        node_id: Uuid,
-        text: &str,
-    ) -> Result<Option<(String, String)>> {
-        let words = self.get_auto_mod_words(node_id).await?;
-        let text_lower = text.to_lowercase();
-        for w in words {
-            if text_lower.contains(&w.word) {
-                return Ok(Some((w.word, w.action)));
-            }
-        }
-        Ok(None)
-    }
     // ── Federation discovery (known_relays) ──
 
     /// Insert or update a known relay.

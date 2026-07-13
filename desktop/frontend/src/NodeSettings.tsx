@@ -12,6 +12,9 @@ import {
   setNodeScreenshotProtect as persistNodeScreenshot,
   getChannelScreenshotOverride,
   setChannelScreenshotProtect as persistChannelScreenshot,
+  getNodeAutoMod,
+  setNodeAutoMod,
+  type AutoModEntry,
 } from './retention';
 
 interface Invite {
@@ -90,9 +93,8 @@ export function NodeSettings({
   const [deleteRoleConfirm, setDeleteRoleConfirm] = useState<string | null>(null);
   const [newRolePermissions, setNewRolePermissions] = useState(0);
 
-  // Moderation state
-  const [autoModWords, setAutoModWords] = useState<Array<{ word: string; action: string; created_at: number }>>([]);
-  const [loadingAutoMod, setLoadingAutoMod] = useState(false);
+  // Moderation state — auto-mod wordlist is client-side, distributed via NMK.
+  const [autoModWords, setAutoModWords] = useState<AutoModEntry[]>([]);
   const [newWord, setNewWord] = useState('');
   const [newWordAction, setNewWordAction] = useState<'block' | 'warn'>('block');
   const [slowModeChannels, setSlowModeChannels] = useState<Record<string, number>>({});
@@ -408,40 +410,29 @@ export function NodeSettings({
     }
   };
 
-  const loadAutoModWords = useCallback(async () => {
+  const loadAutoModWords = useCallback(() => {
     if (!isAdmin) return;
-    setLoadingAutoMod(true);
-    try {
-      const result = await api.getAutoModWords(node.id, token);
-      setAutoModWords(result.words || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load auto-mod words');
-    } finally {
-      setLoadingAutoMod(false);
-    }
-  }, [node.id, token, isAdmin]);
+    setAutoModWords(getNodeAutoMod(node.id));
+  }, [node.id, isAdmin]);
 
-  const handleAddWord = useCallback(async () => {
+  // Persist locally + distribute to members via the NMK-encrypted settings blob.
+  const persistAutoMod = useCallback((entries: AutoModEntry[]) => {
+    setNodeAutoMod(node.id, entries);
+    setAutoModWords(getNodeAutoMod(node.id));
+    onPublishSettings?.(node.id, nodeChannels.map(c => c.id));
+  }, [node.id, nodeChannels, onPublishSettings]);
+
+  const handleAddWord = useCallback(() => {
     if (!newWord.trim()) return;
-    try {
-      await api.addAutoModWord(node.id, newWord.trim(), newWordAction, token);
-      setNewWord('');
-      setSuccess('Word added to filter!');
-      await loadAutoModWords();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add word');
-    }
-  }, [node.id, token, newWord, newWordAction, loadAutoModWords]);
+    persistAutoMod([...getNodeAutoMod(node.id), { word: newWord.trim(), action: newWordAction }]);
+    setNewWord('');
+    setSuccess('Word added to filter');
+  }, [node.id, newWord, newWordAction, persistAutoMod]);
 
-  const handleRemoveWord = useCallback(async (word: string) => {
-    try {
-      await api.removeAutoModWord(node.id, word, token);
-      setSuccess('Word removed from filter!');
-      await loadAutoModWords();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove word');
-    }
-  }, [node.id, token, loadAutoModWords]);
+  const handleRemoveWord = useCallback((word: string) => {
+    persistAutoMod(getNodeAutoMod(node.id).filter(e => e.word !== word));
+    setSuccess('Word removed from filter');
+  }, [node.id, persistAutoMod]);
 
   const loadNodeChannelsForMod = useCallback(async () => {
     try {
@@ -1207,7 +1198,11 @@ export function NodeSettings({
               </div>
 
               <h4 className="ns-section-title">Word Filter</h4>
-              <p className="ns-section-desc">Block or warn when messages contain specific words.</p>
+              <p className="ns-section-desc">
+                Block or warn when messages contain specific words. Enforced by each member's
+                app and shared privately with the node — the relay never sees this list. A member
+                running a modified client can bypass it.
+              </p>
 
               <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                 <input
@@ -1225,9 +1220,7 @@ export function NodeSettings({
                 <button className="ns-btn ns-btn-success" onClick={handleAddWord} disabled={!newWord.trim()}>Add</button>
               </div>
 
-              {loadingAutoMod ? (
-                <div className="ns-loading">Loading...</div>
-              ) : autoModWords.length === 0 ? (
+              {autoModWords.length === 0 ? (
                 <div className="ns-empty">No filtered words yet</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

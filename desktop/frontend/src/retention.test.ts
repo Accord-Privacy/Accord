@@ -15,6 +15,9 @@ import {
   getChannelScreenshotOverride,
   setChannelScreenshotProtect,
   effectiveScreenshotProtect,
+  getNodeAutoMod,
+  setNodeAutoMod,
+  checkAutoMod,
 } from "./retention";
 
 const NODE = "node-1";
@@ -132,6 +135,7 @@ describe("node settings distribution", () => {
       v: 1,
       retention: { node: 86400, channels: { c1: 3600 } },
       screenshot: { node: true, channels: { c1: false } },
+      automod: [],
     });
   });
 
@@ -170,5 +174,41 @@ describe("node settings distribution", () => {
     expect(applyNodeSettings(NODE, "not json")).toBe(false);
     expect(applyNodeSettings(NODE, JSON.stringify({ v: 2 }))).toBe(false);
     expect(getNodeRetention(NODE)).toBe(0);
+  });
+});
+
+describe("auto-mod word filter (client-side)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("normalizes: lowercases, trims, dedupes, drops overlong", () => {
+    setNodeAutoMod(NODE, [
+      { word: "  Spam ", action: "block" },
+      { word: "spam", action: "warn" }, // dup by normalized word — dropped
+      { word: "w".repeat(101), action: "block" }, // too long — dropped
+      { word: "Rude", action: "warn" },
+    ]);
+    expect(getNodeAutoMod(NODE)).toEqual([
+      { word: "spam", action: "block" },
+      { word: "rude", action: "warn" },
+    ]);
+  });
+
+  it("checkAutoMod matches case-insensitively and reports the action", () => {
+    setNodeAutoMod(NODE, [{ word: "badword", action: "block" }]);
+    expect(checkAutoMod(NODE, "this has a BADWORD in it")).toEqual({ word: "badword", action: "block" });
+    expect(checkAutoMod(NODE, "totally clean")).toBeNull();
+  });
+
+  it("rides the NMK settings blob: serialize → apply", () => {
+    setNodeAutoMod(NODE, [{ word: "secret", action: "warn" }]);
+    const json = serializeNodeSettings(NODE, []);
+    localStorage.clear();
+    applyNodeSettings(NODE, json);
+    expect(getNodeAutoMod(NODE)).toEqual([{ word: "secret", action: "warn" }]);
+  });
+
+  it("a legacy blob without automod leaves the list empty", () => {
+    applyNodeSettings(NODE, JSON.stringify({ v: 1, node: 3600, channels: {} }));
+    expect(getNodeAutoMod(NODE)).toEqual([]);
   });
 });

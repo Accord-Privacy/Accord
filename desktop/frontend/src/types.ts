@@ -143,7 +143,7 @@ export type WsMessageType =
   | { LeaveChannel: { channel_id: string } }
   | { CreateChannel: { node_id: string; name: string } }
   | { DirectMessage: { to_user: string; encrypted_data: string } }
-  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string; expires_at?: number } }
+  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string; expires_at?: number; gate_users?: string[]; gate_roles?: string[]; gate_ttl_secs?: number } }
   | { EditMessage: { message_id: string; encrypted_data: string } }
   | { DeleteMessage: { message_id: string } }
   | { AddReaction: { message_id: string; emoji: string } }
@@ -269,6 +269,12 @@ export interface Message {
   pinned_by?: string;
   /** Disappearing messages: expiry as unix seconds. Undefined = keep forever. */
   expires_at?: number;
+  /** Read-gated expiry: message only starts its expiry timer once required readers have seen it. */
+  read_gated?: boolean;
+  /** Read-gated duration (seconds): how long after THIS device reads it before its copy vanishes. */
+  gate_ttl_secs?: number;
+  /** Local per-recipient expiry: unix seconds at which THIS device drops its copy (read time + duration). */
+  local_expires_at?: number;
   isEncrypted?: boolean;
   e2eeType?: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none';
   reactions?: MessageReaction[];

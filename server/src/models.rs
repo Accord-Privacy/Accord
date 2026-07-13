@@ -1386,21 +1386,8 @@ pub struct CustomEmoji {
     pub created_at: String,
 }
 
-/// Auto-mod word filter entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoModWord {
-    pub node_id: Uuid,
-    pub word: String,
-    pub action: String, // "block" or "warn"
-    pub created_at: u64,
-}
-
-/// Request to add an auto-mod word
-#[derive(Debug, Deserialize)]
-pub struct AddAutoModWordRequest {
-    pub word: String,
-    pub action: String, // "block" or "warn"
-}
+// Auto-mod word filtering moved fully client-side (relay is blind to node policy);
+// see desktop retention.ts. No relay models remain.
 
 /// Request to set slow mode on a channel
 #[derive(Debug, Deserialize)]

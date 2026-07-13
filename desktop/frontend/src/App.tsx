@@ -43,7 +43,8 @@ import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, typ
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { wipeLocalData } from "./wipe";
 import { setDuressPassword, isDuressConfigured } from "./duress";
-import { effectiveTtl, expiryForNow, applyNodeSettings, serializeNodeSettings, effectiveScreenshotProtect } from "./retention";
+import { effectiveTtl, expiryForNow, applyNodeSettings, serializeNodeSettings, effectiveScreenshotProtect, checkAutoMod } from "./retention";
+import { stampLocalExpiry, getLocalExpiry, isLocallyExpired, tombstone, filterTombstoned, clearLocalExpiry } from "./localExpiry";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -434,19 +435,45 @@ function App() {
   const sweepExpiredMessages = useCallback(() => {
     const now = Math.floor(Date.now() / 1000);
     let expiredIds: string[] = [];
+    // Per-recipient read-gated copies that this device has counted down. These get
+    // tombstoned (not just dropped) so a relay refetch can't resurrect them.
+    let locallyExpiredIds: string[] = [];
     setAppState(prev => {
       expiredIds = prev.messages
         .filter(m => m.expires_at !== undefined && m.expires_at <= now)
         .map(m => m.id);
-      if (expiredIds.length === 0) return prev;
-      const gone = new Set(expiredIds);
+      locallyExpiredIds = prev.messages
+        .filter(m => m.local_expires_at !== undefined && m.local_expires_at <= now)
+        .map(m => m.id);
+      const gone = new Set([...expiredIds, ...locallyExpiredIds]);
+      if (gone.size === 0) return prev;
       return { ...prev, messages: prev.messages.filter(m => !gone.has(m.id)) };
     });
-    if (expiredIds.length > 0) {
-      purgeOwnMessages(expiredIds);
+    if (locallyExpiredIds.length > 0) tombstone(locallyExpiredIds);
+    const allGone = [...expiredIds, ...locallyExpiredIds];
+    if (allGone.length > 0) {
+      purgeOwnMessages(allGone);
       setForceUpdate(prev => prev + 1);
     }
   }, [purgeOwnMessages]);
+
+  // This device just read a channel: start the per-recipient countdown on any
+  // read-gated messages it hasn't already stamped (skipping our own messages).
+  // The stamp persists, so re-reading never restarts this device's own timer.
+  const stampGatedReadsForChannel = useCallback((channelId: string) => {
+    const myId = localStorage.getItem('accord_user_id');
+    setAppState(prev => {
+      let changed = false;
+      const messages = prev.messages.map(m => {
+        if (m.channel_id !== channelId || !m.read_gated || !m.gate_ttl_secs) return m;
+        if (m.local_expires_at !== undefined) return m;
+        if (m.sender_id && myId && m.sender_id === myId) return m;
+        changed = true;
+        return { ...m, local_expires_at: stampLocalExpiry(m.id, m.gate_ttl_secs) };
+      });
+      return changed ? { ...prev, messages } : prev;
+    });
+  }, []);
 
   // Publish this node's disappearing-messages policy to other members, encrypted
   // under the node's NMK (the relay only ever stores the ciphertext). Called by
@@ -1110,6 +1137,9 @@ function App() {
 
     socket.on('channel_message', async (data) => {
       // Handle incoming channel messages
+      // This device already read-and-expired its copy; don't let a relay refetch
+      // or late echo resurrect it (the relay still holds it for the unread).
+      if (data.message_id && isLocallyExpired(data.message_id)) return;
       let content = data.encrypted_data;
       let isEncrypted = false;
       let e2eeType: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none' = 'none';
@@ -1210,6 +1240,9 @@ function App() {
         isEncrypted: isEncrypted,
         e2eeType: e2eeType,
         expires_at: data.expires_at ?? undefined,
+        read_gated: data.read_gated ?? undefined,
+        gate_ttl_secs: data.gate_ttl_secs ?? undefined,
+        local_expires_at: getLocalExpiry(data.message_id),
         reply_to: data.reply_to,
         replied_message: data.replied_message ? {
           id: data.replied_message.id,
@@ -1313,6 +1346,7 @@ function App() {
         // Send read receipt for the new message since user is at bottom
         if (data.channel_id === selectedChannelIdRef.current && newMessage.id) {
           sendReadReceipt(data.channel_id, newMessage.id, appState.token);
+          stampGatedReadsForChannel(data.channel_id);
         }
       } else {
         // User is scrolled up — increment unread count
@@ -1952,6 +1986,10 @@ function App() {
       timestamp: ts,
       channel_id: channelId,
       sender_id: msg.sender_id?.toString(),
+      read_gated: msg.read_gated ?? undefined,
+      gate_ttl_secs: msg.gate_ttl_secs ?? undefined,
+      // Restore this device's in-flight per-recipient countdown across reloads.
+      local_expires_at: getLocalExpiry(msg.id),
     };
   }, [decryptPayload]);
 
@@ -1962,11 +2000,12 @@ function App() {
     try {
       const response = await api.getChannelMessages(channelId, appState.token);
       
-      // Format and decrypt messages for display
-      const formattedMessages = await Promise.all(
+      // Format and decrypt messages for display, dropping any this device already
+      // read-expired (the relay still serves them for members who haven't read).
+      const formattedMessages = filterTombstoned(await Promise.all(
         response.messages.map(msg => mapServerMessage(msg, channelId))
-      );
-      
+      ));
+
       // Sort messages by timestamp (oldest first for display)
       formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
       
@@ -2019,11 +2058,11 @@ function App() {
         return;
       }
       
-      // Format and decrypt messages for display
-      const formattedMessages = await Promise.all(
+      // Format and decrypt messages for display (drop this device's read-expired)
+      const formattedMessages = filterTombstoned(await Promise.all(
         response.messages.map(msg => mapServerMessage(msg, channelId))
-      );
-      
+      ));
+
       // Sort new messages by timestamp (oldest first)
       formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
       
@@ -2498,8 +2537,9 @@ function App() {
       if (latestMessage?.id) {
         sendReadReceipt(channelId, latestMessage.id, appState.token);
       }
+      stampGatedReadsForChannel(channelId);
     }
-    
+
     // Reset pagination state
     setIsLoadingOlderMessages(false);
     setHasMoreMessages(true);
@@ -2800,8 +2840,9 @@ function App() {
       setForceUpdate(prev => prev + 1);
       // Send read receipt to server
       sendReadReceipt(channelId, latestMessage.id, appState.token);
+      stampGatedReadsForChannel(channelId);
     }
-  }, [selectedNodeId, sendReadReceipt, appState.token]);
+  }, [selectedNodeId, sendReadReceipt, appState.token, stampGatedReadsForChannel]);
 
   // Handle invite link submission
   const handleInviteLinkSubmit = async () => {
@@ -3335,6 +3376,7 @@ function App() {
       if (ws) ws.disconnect();
     } catch { /* ignore */ }
     try {
+      clearLocalExpiry();
       await wipeLocalData(userId, { allIdentities: true });
     } catch (e) {
       console.error('Panic wipe error (continuing to reload):', e);
@@ -3350,10 +3392,24 @@ function App() {
     setDuressConfigured(isDuressConfigured());
   }, []);
 
+  // Per-message read-gated / disappearing retention chosen in the composer popover.
+  const [messageGate, setMessageGate] = useState<import('./components/RetentionPopover').MessageGate | null>(null);
+
   // Handle sending messages
   const handleSendMessage = async (overrideText?: string) => {
     const msgText = overrideText !== undefined ? overrideText : message;
     if (!msgText.trim() && stagedFiles.length === 0) return;
+
+    // Client-side auto-mod word filter (node channels only). The relay never sees
+    // this policy — it's enforced here against the plaintext before encryption.
+    if (msgText.trim() && selectedNodeId && !selectedDmChannel) {
+      const hit = checkAutoMod(selectedNodeId, msgText);
+      if (hit && hit.action === 'block') {
+        setMessageError(`Message blocked: contains filtered word "${hit.word}"`);
+        setTimeout(() => setMessageError(''), 5000);
+        return;
+      }
+    }
 
     // Upload any staged files first
     const channelForUpload = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
@@ -3471,8 +3527,18 @@ function App() {
 
         // Disappearing messages: stamp the sender-computed expiry from this
         // channel's effective retention policy (DM channels use no node default).
-        const retentionTtl = effectiveTtl(isDmSend ? undefined : selectedNodeId ?? undefined, channelToUse);
-        const expiresAt = expiryForNow(retentionTtl);
+        // A per-message gate chosen in the composer overrides the channel default.
+        const gateHasReaders = !!messageGate && (messageGate.users.length > 0 || messageGate.roles.length > 0);
+        const gatePayload = gateHasReaders
+          ? { users: messageGate!.users, roles: messageGate!.roles, ttlSecs: messageGate!.ttlSecs }
+          : undefined;
+        // Read-gated messages get no upfront expiry — the relay stamps it once the
+        // required readers have seen it. Plain per-message TTL and the channel default
+        // both stamp immediately.
+        const retentionTtl = messageGate && !gateHasReaders
+          ? messageGate.ttlSecs
+          : effectiveTtl(isDmSend ? undefined : selectedNodeId ?? undefined, channelToUse);
+        const expiresAt = gateHasReaders ? undefined : expiryForNow(retentionTtl);
 
         // Add to local messages for immediate display (temp_ prefix for dedup)
         const tempId = `temp_${Date.now()}_${Math.random()}`;
@@ -3487,6 +3553,7 @@ function App() {
           isEncrypted: isEncrypted,
           e2eeType: e2eeType,
           expires_at: expiresAt,
+          read_gated: gateHasReaders,
           reply_to: replyingTo?.id,
           replied_message: replyingTo ? {
             id: replyingTo.id,
@@ -3515,7 +3582,7 @@ function App() {
 
         // Pass reply_to if we're replying to a message
         try {
-          ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id, expiresAt);
+          ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id, expiresAt, gatePayload);
           // Mark as sent (delivered to server)
           setAppState(prev => ({
             ...prev,
@@ -3563,6 +3630,9 @@ function App() {
 
     setMessage("");
     setReplyingTo(null);
+    // Per-message retention is a one-shot override; the channel default still applies
+    // to subsequent messages unless the user re-opens the popover.
+    setMessageGate(null);
 
     // Start slow mode cooldown if active
     if (slowModeSeconds > 0) {
@@ -4166,6 +4236,7 @@ function App() {
 
     // Reply
     replyingTo, setReplyingTo,
+    messageGate, setMessageGate,
 
     // Data
     nodes, channels, members, selectedNodeId, selectedChannelId,

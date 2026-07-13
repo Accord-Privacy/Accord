@@ -479,3 +479,131 @@
 .message-preview-body pre code .comment { color: #5c6370; font-style: italic; }
 .message-preview-body pre code .number { color: #d19a66; }
 .message-preview-body pre code .function { color: #61afef; }
+
+/* ── Per-message retention (disappearing / read-gated) ─────────────────── */
+.retention-popover-root {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.input-icon-btn:hover:not(:disabled) {
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+}
+.input-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.input-icon-btn-active {
+  color: var(--yellow);
+}
+
+.retention-popover {
+  position: absolute;
+  bottom: 42px;
+  right: 0;
+  width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+  padding: 12px;
+  z-index: 40;
+}
+
+.retention-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.retention-clear {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+}
+.retention-clear:hover { background: var(--bg-modifier-hover); }
+
+.retention-section-label {
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 10px 0 6px;
+}
+.retention-hint { text-transform: none; letter-spacing: 0; color: var(--text-faint); }
+
+.retention-explainer {
+  font-size: var(--font-xs);
+  color: var(--text-faint);
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.retention-durations,
+.retention-picker-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.retention-picker-members {
+  max-height: 132px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+
+.retention-chip,
+.retention-pill {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: var(--font-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.retention-chip:hover,
+.retention-pill:hover { color: var(--text-primary); }
+
+.retention-chip-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.retention-pill-active {
+  background: var(--bg-modifier-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+/* Small badge shown on disappearing / read-gated messages in the list */
+.message-ephemeral-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+.message-ephemeral-badge--gated { color: var(--yellow); }
