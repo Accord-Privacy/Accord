@@ -45,6 +45,8 @@ function getDefaultBaseUrl(): string {
  */
 export async function detectSameOriginRelay(): Promise<string | null> {
   if (typeof window === 'undefined') return null;
+  // Tauri webview origin serves bundled assets, never a relay
+  if ('__TAURI_INTERNALS__' in window) return null;
   const origin = window.location.origin;
   // Don't probe localhost dev servers (vite default ports)
   if (origin.includes(':1420') || origin.includes(':5173') || origin.includes(':3000')) return null;

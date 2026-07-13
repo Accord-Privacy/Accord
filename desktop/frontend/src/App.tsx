@@ -139,8 +139,11 @@ function App() {
     // Skip welcome if we already know a server URL or if served from a relay
     const savedUrl = localStorage.getItem('accord_server_url');
     if (savedUrl) return false;
-    // Check if current origin looks like a relay (not a dev server)
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    // Check if current origin looks like a relay (not a dev server).
+    // Never applies in the Tauri webview: its origin (tauri://localhost, or
+    // tauri.localhost on Windows) serves bundled assets, not a relay.
+    const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+    const origin = typeof window !== 'undefined' && !isTauri ? window.location.origin : '';
     if (origin && !origin.includes(':1420') && !origin.includes(':5173') && !origin.includes(':3000')) {
       // Optimistically set server URL to current origin and skip welcome
       localStorage.setItem('accord_server_url', origin);
