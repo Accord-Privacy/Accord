@@ -22,8 +22,11 @@ export type SpeakingCallback = (userId: string, speaking: boolean) => void;
 export type PeerStateCallback = (userId: string, state: 'connected' | 'disconnected') => void;
 
 /** PCM frame size: 960 samples @ 48kHz = 20ms */
-const FRAME_SIZE = 960;
 const SAMPLE_RATE = 48000;
+// ScriptProcessorNode requires a power-of-two buffer (256–16384); the old
+// 960-sample (20ms Opus frame) capture threw IndexSizeError everywhere.
+// Downstream paths handle arbitrary frame counts, so capture at 1024 (~21.3ms).
+const CAPTURE_BUFFER_SIZE = 1024;
 const PLAYOUT_INTERVAL_MS = 20;
 
 /** Check if WebCodecs AudioEncoder/AudioDecoder are available. */
@@ -88,26 +91,42 @@ export class RelayVoiceConnection {
   }
 
   async connect(): Promise<void> {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('Microphone access requires HTTPS or localhost. Voice is not available on plain HTTP.');
+    // A missing/broken microphone must not keep the user out of the channel:
+    // join listen-only (presence + playback, no capture) and let them fix
+    // their input device without leaving.
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Microphone access requires HTTPS or localhost. Voice is not available on plain HTTP.');
+      }
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: SAMPLE_RATE,
+        },
+      });
+    } catch (err) {
+      console.warn('Voice: microphone unavailable, joining listen-only:', err);
+      this.localStream = null;
     }
-    this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: SAMPLE_RATE,
-      },
-    });
 
-    // Initialize shared playback context
-    this.playbackContext = await this.audioManager.getContext();
+    // Initialize shared playback context. Playback paths are null-guarded,
+    // so a failed audio device must not block joining the channel.
+    try {
+      this.playbackContext = await this.audioManager.getContext();
+    } catch (err) {
+      console.warn('Voice: audio output unavailable, joining without playback:', err);
+      this.playbackContext = null;
+    }
 
     // Generate encryption key
     this.localKey = await generateVoiceKey();
 
-    this.setupCapture();
-    this.setupVAD();
+    if (this.localStream) {
+      this.setupCapture();
+      this.setupVAD();
+    }
 
     this.ws.joinVoiceChannel(this.channelId);
   }
@@ -198,7 +217,7 @@ export class RelayVoiceConnection {
     if (!this.captureContext) return;
 
     // Use ScriptProcessorNode to feed AudioEncoder
-    this.scriptProcessor = this.captureContext.createScriptProcessor(FRAME_SIZE, 1, 1);
+    this.scriptProcessor = this.captureContext.createScriptProcessor(CAPTURE_BUFFER_SIZE, 1, 1);
 
     this.opusEncoder = new AudioEncoder({
       output: (chunk: EncodedAudioChunk) => {
@@ -258,7 +277,7 @@ export class RelayVoiceConnection {
   private setupPcmCapture(source: MediaStreamAudioSourceNode): void {
     if (!this.captureContext) return;
 
-    this.scriptProcessor = this.captureContext.createScriptProcessor(FRAME_SIZE, 1, 1);
+    this.scriptProcessor = this.captureContext.createScriptProcessor(CAPTURE_BUFFER_SIZE, 1, 1);
     this.scriptProcessor.onaudioprocess = (e) => {
       if (this.isMuted || this.destroyed) return;
 

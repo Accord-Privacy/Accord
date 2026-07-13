@@ -278,14 +278,17 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
         isSpeaking,
         isMuted,
       },
-      ...peerList.map(p => ({
-        userId: p.userId,
-        displayName: p.userId.slice(0, 8),
-        isSpeaking: p.isSpeaking,
-      })),
+      ...peerList.map(p => {
+        const member = ctx.members.find(m => m.user_id === p.userId);
+        return {
+          userId: p.userId,
+          displayName: member?.user?.display_name || member?.profile?.display_name || p.userId.slice(0, 8),
+          isSpeaking: p.isSpeaking,
+        };
+      }),
     ];
     ctx.setVoiceChannelUsers(users);
-  }, [peers, isSpeaking, isMuted, currentUserId]);
+  }, [peers, isSpeaking, isMuted, currentUserId, ctx.members]);
 
   // Clear users on unmount
   useEffect(() => {

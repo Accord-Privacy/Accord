@@ -269,13 +269,47 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|_app| {
+        .setup(|app| {
             // Initialize Accord core (tracing, etc.)
             let _ = init();
 
             println!("🚀 Accord Desktop starting...");
             println!("🔒 End-to-end encryption enabled");
             println!("📱 Cross-platform desktop client");
+
+            // WebKitGTK denies getUserMedia by default (no permission UI in a
+            // plain webview), which breaks voice chat. Grant microphone/camera
+            // requests — this is a native app, so capture permission is the
+            // OS's concern, mirroring how other desktop chat apps behave.
+            // ACCORD_MOCK_MEDIA=1 additionally swaps in WebKit's mock capture
+            // devices so automated tests can join voice without real hardware.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use webkit2gtk::glib::prelude::ObjectExt as _;
+                        use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
+                        let wv = webview.inner();
+                        if std::env::var("ACCORD_MOCK_MEDIA").as_deref() == Ok("1") {
+                            if let Some(settings) = WebViewExt::settings(&wv) {
+                                settings.set_enable_mock_capture_devices(true);
+                            }
+                        }
+                        wv.connect_permission_request(|_, request| {
+                            use webkit2gtk::UserMediaPermissionRequest;
+                            if request.is::<UserMediaPermissionRequest>() {
+                                request.allow();
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                    });
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            let _ = app;
 
             Ok(())
         })
