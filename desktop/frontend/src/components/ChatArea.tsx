@@ -380,10 +380,10 @@ export const ChatArea: React.FC = () => {
                       ) : (ctx.selectedDmChannel.other_user_profile?.display_name || "?")[0].toUpperCase()}
                       <span className={`presence-dot presence-${ctx.getPresenceStatus(ctx.selectedDmChannel.other_user?.id || '')}`} />
                     </div>
-                    <span className="chat-channel-name">{ctx.selectedDmChannel.other_user_profile.display_name}</span>
+                    <span className="chat-channel-name">{ctx.selectedDmChannel.other_user_profile?.display_name || `${(ctx.selectedDmChannel.other_user?.id || 'unknown').slice(0, 8)}…`}</span>
                   </div>
                   <span className="chat-topic">
-                    Direct message with {ctx.selectedDmChannel.other_user_profile.display_name}
+                    Direct message with {ctx.selectedDmChannel.other_user_profile?.display_name || `${(ctx.selectedDmChannel.other_user?.id || 'unknown').slice(0, 8)}…`}
                   </span>
                 </>
               ) : (

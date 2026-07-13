@@ -658,7 +658,7 @@ const DMSection: React.FC = () => {
         <button onClick={() => ctx.setShowDmChannelCreate(!ctx.showDmChannelCreate)} className="dm-header-add-btn" title="New Direct Message" aria-label="Create direct message">+</button>
       </div>
 
-      {ctx.friendRequests.length > 0 && (
+      {(ctx.friendRequests?.length ?? 0) > 0 && (
         <div className="friend-requests" role="list" aria-label="Pending friend requests">
           {ctx.friendRequests.map((req) => (
             <FriendRequestRow key={req.id} request={req} />

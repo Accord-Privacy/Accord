@@ -78,16 +78,36 @@ try {
   await alice.waitFor(".dm-create-item", 5000);
   await alice.click(".dm-create-item");
   await alice.waitFor(".dm-item", 10000);
+  // Prove the view actually switched to the DM (not still #general): the DM
+  // header must be present and #general's hash-channel header gone. Without
+  // this, a message-text-only assertion would pass even if the DM leaked into
+  // the node channel.
+  await alice.waitFor(".chat-header-dm", 10000);
+  await alice.waitFor(`text=Direct message with ${BOB}`, 5000);
+  const aliceInGeneral = await alice.query(".chat-header .chat-channel-icon");
+  assert(aliceInGeneral.length === 0, "alice's chat header is the DM, not a #channel");
   await sendMessage(alice, DM_A);
 
   step("DM: bob receives and replies");
   await bob.waitFor(".dm-item", 20000);
   await bob.click(".dm-item");
+  await bob.waitFor(".chat-header-dm", 10000);
   await bob.waitFor(`text=${DM_A}`, 20000);
   await sendMessage(bob, DM_B);
 
   step("DM: alice sees bob's reply");
   await alice.waitFor(`text=${DM_B}`, 20000);
+
+  step("DM isolation: the DM view shows only DM content, not #general's");
+  // In the DM view (alice is here now), the message list must contain the DM
+  // lines and NOT the earlier #general channel messages. Combined with the
+  // channel-E2EE step (where MSG_A/B appeared in the node channel), this proves
+  // the DM channel and the node channel are separate stores, not one shared log.
+  const dmViewText = await alice.text(".message-content");
+  assert(dmViewText.includes(DM_A), "DM view shows DM_A");
+  assert(dmViewText.includes(DM_B), "DM view shows DM_B");
+  assert(!dmViewText.includes(MSG_A), "DM view does NOT show the #general channel message");
+  assert(!dmViewText.includes(MSG_B), "DM view does NOT show the other #general message");
 
   step("voice: alice creates voice channel");
   // Back to the node (alice is in the DM view; click node name in server list)
