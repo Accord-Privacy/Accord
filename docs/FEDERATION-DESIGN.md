@@ -17,6 +17,97 @@ Accord relays are independently operated servers. Federation lets users on diffe
 
 ---
 
+## 0. Federation Trust Model — Open vs Locked-Down
+
+> **Decision (2026-07-13):** relay creation stays **fully open**; mesh
+> participation is **opt-in and peer-configured** (not permissionless, not
+> centrally gatekept); metadata exposure from hostile relays is solved with
+> **cryptography (sealed sender + onion routing), not with a gatekeeper.**
+> See also [../GOVERNANCE.md](../GOVERNANCE.md#federation-trust).
+
+### The question
+
+Should anyone be able to spin up a relay and join the collaborative mesh (an
+unstoppable fabric, but hostile relays can join it), or should relay creation be
+locked down Signal-style (controlled quality, but a central authority, single
+coercion point, and the full uptime/patching/cost burden on one operator)?
+
+### Reframe: a hostile mesh relay cannot intercept *content*
+
+Everything is end-to-end encrypted, and the mesh does exactly one thing — route
+DMs **between users who are already friends**, gated by a mutual friendship proof
+(§2.4). No node data ever crosses a relay boundary (§7). So a malicious mesh
+relay **cannot**:
+
+- read any DM or node message (it holds no keys — §4),
+- forge or inject DMs (no valid friendship proof — §2.4, §5.5),
+- enumerate users (no discovery-by-listing protocol).
+
+What it **can** do is narrow and metadata-only: for traffic it happens to route,
+see *that* two `public_key_hash`es communicate, when, and how often; and degrade
+availability by dropping or delaying. The real exposure is **metadata and
+reliability, not interception.** That reframing drives the decision.
+
+### Two separate questions, opposite answers
+
+| Question | Answer | Why |
+|---|---|---|
+| **Who can run a relay?** (host their own nodes) | **Wide open** | It's the spine of Accord: self-host anywhere, no gatekeeper, censorship-resistant. Locking it installs the central authority [../GOVERNANCE.md](../GOVERNANCE.md) rejects and hands any government one coercion chokepoint. A self-hosted relay only affects people who *chose* to join it — the same trust-by-association model nodes already use. |
+| **Who can join the mesh?** (sit in *other* people's DM routing paths) | **Opt-in, peer-configured** | Each operator peers only with explicitly configured peers sharing a `mesh_secret` (§1.4). Nobody is forced to route through a relay they didn't choose — but no central body can revoke the fabric either. |
+
+### Seed, peering, and island mode
+
+- **Official seed relay.** Accord runs an official relay to seed the mesh and
+  give the network a reliable, always-up anchor. It is a *starting point*, not a
+  gatekeeper — it holds no authority over other relays, reads none of their
+  traffic, and cannot force anyone to route through it. New relays bootstrap off
+  it (`--mesh-peers`, §1) and the mesh grows outward.
+- **Relay-owner peering choice.** A relay operator chooses which relays to
+  federate with: the official relay, a hand-picked set, or **nobody** — a relay
+  may be an *island* and federate with no one. All valid; the choice is the
+  operator's.
+- **Node-owner relay choice.** A node owner independently chooses which mesh
+  relays their node will use, node by node.
+- **Federation map + version hash.** The peering panel exposes a federation map:
+  for each relay it lists the trust-relevant facts, including the relay's
+  **Accord build hash** (§6), so an operator can see exactly what code a
+  prospective peer runs and refuse anything unrecognized. This is the peer-side
+  analogue of the client build-hash allowlist.
+
+### The two real costs, and why they're payable — not by gatekeeping
+
+1. **Sybil metadata harvesting** — an attacker runs many mesh relays to land in
+   routing paths and log who-talks-to-whom. The fix is **cryptographic, not
+   administrative**: sealed sender (§4.5) hides the sender from the receiving
+   relay, and onion routing (Phase 7) hides the path. Gatekeeping relay creation
+   would not fix this — an attacker gets vouched in or runs "legitimate" relays.
+2. **Protocol ossification** (Moxie's argument for Signal's closed model —
+   heterogeneous relay versions slow crypto upgrades) — real, but **bounded**
+   here: the mesh does one narrow thing (DM routing), and Accord already has a
+   client **build-hash allowlist** plus a versioned mesh payload set (§6). A
+   narrow federation surface ossifies far less than a full federated app protocol
+   (Matrix/XMPP).
+
+### Why not Signal-central
+
+Signal runs every server itself: consistent quality and easy upgrades, but a
+single jurisdiction, a single point of legal/technical coercion, and no
+self-hosting. That is the exact chokepoint Accord's whole design avoids — and it
+contradicts the governance model finalized this project (no central authority;
+localhost is the only "owner"). Central control buys convenience at the cost of
+Accord's reason to exist.
+
+### Net
+
+Open relay creation + consensual peering gives the always-up, unstoppable mesh
+**and** never forces anyone to route through an untrusted relay — because content
+is unreadable regardless, DMs are unforgeable, and metadata is a cryptography
+problem we already have a roadmap for. Reputation/trust-scoring of relays (§7)
+stays deliberately out of scope: it drifts toward the soft central authority we
+are rejecting.
+
+---
+
 ## 1. Discovery — How Relays Find Each Other
 
 ### 1.1 Bootstrap Peers
@@ -337,7 +428,10 @@ dedup_ttl_hours = 24           # Envelope dedup window
 - **Sealed sender** (hiding sender identity from receiving relay) — v2.
 - **Multi-device sync** for cross-relay DMs — handled by existing per-relay device sync; mesh just delivers to the home relay.
 - **Rate limiting cross-relay DMs** — should be added but is an implementation detail, not a protocol decision.
-- **Relay reputation / trust scoring** — interesting but premature.
+- **Relay reputation / trust scoring** — deliberately out of scope, not just
+  premature. Ranking or scoring relays drifts toward the soft central authority
+  Accord rejects (§0). Trust is chosen per operator/per node via explicit peering
+  and the version-hash federation map, not assigned by a scoring service.
 
 ---
 

@@ -98,6 +98,51 @@ trust. That choice is the primary safety mechanism on Accord.
 
 ---
 
+## Federation trust
+
+Accord relays can federate into a **mesh** that routes cross-relay DMs between
+users who are already friends (see
+[`docs/FEDERATION-DESIGN.md`](docs/FEDERATION-DESIGN.md)). The governance rule for
+the mesh is the same as everywhere else in Accord: **no central authority, trust
+is chosen by association, and no one is forced into a relationship they didn't
+opt into.**
+
+**Running a relay is open to anyone.** That openness is the point — it is the
+spine of Accord's censorship resistance. Locking down who may run a relay would
+install exactly the central chokepoint this document rejects. A self-hosted relay
+only ever affects the people who choose to join it.
+
+**Accord hosts an official relay** to seed the mesh and give the network a
+reliable, always-up anchor to grow from. It is a *starting point*, not a
+gatekeeper: it holds no special authority over other relays, cannot read their
+traffic, and cannot force anyone to route through it. Others bootstrap their own
+relays off it and the mesh grows outward from there.
+
+**Peering is consensual on both sides:**
+
+- A **relay owner** chooses which other relays to federate with. Peer with the
+  official relay, peer with a hand-picked set, or **be an island** and federate
+  with no one — all valid. Nobody can force a relay into your routing path, and
+  no central body can revoke the fabric.
+- A **node owner** chooses which relays in the mesh their node will use. Trust is
+  theirs to grant or withhold, node by node.
+
+**Federation maps are transparent.** The peering panel shows, for each relay in
+the mesh, the information needed to make a trust decision — including the relay's
+**Accord version build hash**, so operators can see what code a prospective peer
+is running and refuse anything they don't recognize (ties into the client
+build-hash allowlist under the relay owner's powers above).
+
+Because content is end-to-end encrypted and cross-relay DMs require a mutual
+friendship proof, a hostile mesh relay cannot read messages, forge DMs, or
+enumerate users — its worst case is seeing routing **metadata** and degrading
+availability. That exposure is treated as a **cryptography problem** (sealed
+sender, onion routing — Phase 7), *not* solved by gatekeeping who may join the
+mesh. Relay reputation/trust-scoring is deliberately out of scope: it drifts
+toward the soft central authority Accord exists to avoid.
+
+---
+
 ## What this means for contributors
 
 Before adding anything that touches moderation, safety, or the relay, ask:
