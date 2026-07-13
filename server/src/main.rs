@@ -39,7 +39,6 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use base64::Engine;
 use clap::Parser;
 use handlers::{
     accept_friend_request_handler, ack_sender_keys_handler, add_build_allowlist_handler,
@@ -77,7 +76,6 @@ use handlers::{
     ws_handler,
 };
 use serde::Deserialize;
-use sqlx::Row;
 use state::{AppState, SharedState};
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -152,6 +150,35 @@ mod rate_limit_middleware {
             }
         }
 
+        next.run(request).await
+    }
+}
+
+mod ip_ban_middleware {
+    use crate::state::SharedState;
+    use axum::{
+        body::Body,
+        extract::{ConnectInfo, State},
+        http::{Request, StatusCode},
+        middleware::Next,
+        response::{IntoResponse, Response},
+    };
+    use std::net::SocketAddr;
+
+    /// Outermost middleware: reject transport-banned IPs before any routing or
+    /// rate-limit work (cheap DoS/DDoS rejection). Bans key on the real socket
+    /// peer address — never on a spoofable forwarded header. Relay-owner only;
+    /// the ban set is never correlated to a node.
+    pub async fn ip_ban_layer(
+        ConnectInfo(addr): ConnectInfo<SocketAddr>,
+        State(state): State<SharedState>,
+        request: Request<Body>,
+        next: Next,
+    ) -> Response {
+        let ip = addr.ip().to_string();
+        if state.is_ip_banned(&ip).await {
+            return (StatusCode::FORBIDDEN, "IP banned").into_response();
+        }
         next.run(request).await
     }
 }
@@ -596,87 +623,12 @@ async fn main() -> Result<()> {
         info!("Relay build hash enforcement: {}", build_hash_enforcement);
     }
 
-    // Bootstrap: create Management Node on first boot (empty DB)
-    {
-        let real_node_count =
-            match sqlx::query("SELECT COUNT(*) as count FROM nodes WHERE name != '__dm_system__'")
-                .fetch_one(app_state.db.pool())
-                .await
-            {
-                Ok(row) => row.get::<i64, _>("count") as u64,
-                Err(_) => 0,
-            };
-        if real_node_count == 0 {
-            info!("First boot detected — creating Management Node...");
-            // Use a fixed system UUID as placeholder owner (will be transferred to first admin)
-            let system_user_id =
-                uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
+    // NOTE: No "Management Node" / "first user becomes server admin" bootstrap.
+    // The relay has no in-band owner account — relay ownership IS localhost access
+    // to the admin dashboard (bound to 127.0.0.1). See GOVERNANCE.md and admin.rs.
 
-            // Insert a system placeholder user so FK constraints are satisfied
-            let _ = sqlx::query("INSERT OR IGNORE INTO users (id, public_key, public_key_hash, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
-                .bind(system_user_id.to_string())
-                .bind("SYSTEM")
-                .bind("SYSTEM")
-                .bind("SYSTEM")
-                .bind(0i64)
-                .execute(app_state.db.pool())
-                .await;
-
-            match app_state
-                .db
-                .create_node("Management", system_user_id, Some("Server management node"))
-                .await
-            {
-                Ok(node) => {
-                    // Generate a bootstrap invite code (8-char alphanumeric, same as normal invites)
-                    let invite_code: String = {
-                        use rand::{distributions::Alphanumeric, Rng};
-                        rand::thread_rng()
-                            .sample_iter(&Alphanumeric)
-                            .take(8)
-                            .map(char::from)
-                            .collect()
-                    };
-                    match app_state
-                        .db
-                        .create_node_invite(node.id, system_user_id, &invite_code, Some(1), None)
-                        .await
-                    {
-                        Ok(_) => {
-                            let host_port = format!("{}:{}", args.host, args.port);
-                            let encoded_host = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                                .encode(host_port.as_bytes());
-                            let invite_url = format!("accord://{}/{}", encoded_host, invite_code);
-                            let http_url = format!(
-                                "http://{}:{}/invite/{}",
-                                args.host, args.port, invite_code
-                            );
-                            info!(
-                                "╔══════════════════════════════════════════════════════════════╗"
-                            );
-                            info!(
-                                "║  MANAGEMENT NODE CREATED                                     ║"
-                            );
-                            info!(
-                                "║  First user to join becomes server admin.                     ║"
-                            );
-                            info!(
-                                "╠══════════════════════════════════════════════════════════════╣"
-                            );
-                            info!("║  Invite code: {}", invite_code);
-                            info!("║  Invite URL:  {}", invite_url);
-                            info!("║  HTTP URL:    {}", http_url);
-                            info!(
-                                "╚══════════════════════════════════════════════════════════════╝"
-                            );
-                        }
-                        Err(e) => error!("Failed to create bootstrap invite: {}", e),
-                    }
-                }
-                Err(e) => error!("Failed to create Management Node: {}", e),
-            }
-        }
-    }
+    // Load the IP ban cache (DoS/DDoS defense) before serving.
+    app_state.load_ip_bans().await;
 
     let state: SharedState = Arc::new(app_state);
 
@@ -740,6 +692,15 @@ async fn main() -> Result<()> {
         .route("/admin", get(admin::admin_page_handler))
         .route("/admin/stats", get(admin::admin_stats_handler))
         .route("/admin/nodes", get(admin::admin_nodes_handler))
+        .route("/admin/connections", get(admin::admin_connections_handler))
+        .route(
+            "/admin/ip-bans",
+            get(admin::admin_ip_bans_list_handler).post(admin::admin_ip_ban_add_handler),
+        )
+        .route(
+            "/admin/ip-bans/:ip",
+            delete(admin::admin_ip_ban_remove_handler),
+        )
         .route(
             "/api/admin/build-allowlist",
             get(admin::admin_build_allowlist_get_handler)
@@ -1115,7 +1076,12 @@ async fn main() -> Result<()> {
                     cors.allow_origin(AllowOrigin::list(origins))
                 }
             }),
-    );
+    )
+    // IP ban check — outermost so banned IPs are dropped before any other work.
+    .layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        ip_ban_middleware::ip_ban_layer,
+    ));
 
     println!("🚀 Accord Relay Server starting...");
     println!("📡 Listening on {}:{}", args.host, args.port);
@@ -1335,16 +1301,19 @@ async fn main() -> Result<()> {
 
             axum_server::bind_rustls(addr.parse()?, tls_config)
                 .handle(handle)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                 .await?;
         }
         (None, None) => {
             // Plain HTTP mode
             let listener = tokio::net::TcpListener::bind(&addr).await?;
             info!("Server starting in plain HTTP/WS mode on {}", addr);
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal)
-                .await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal)
+            .await?;
         }
         _ => {
             anyhow::bail!("Both --tls-cert and --tls-key must be provided together for TLS mode");

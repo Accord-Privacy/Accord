@@ -210,6 +210,9 @@ pub struct AppState {
     pub last_activity: RwLock<HashMap<Uuid, u64>>,
     /// Slow mode cooldowns: (channel_id, user_id) -> last_message_timestamp
     pub slow_mode_cooldowns: RwLock<HashMap<(Uuid, Uuid), u64>>,
+    /// IP ban cache for DoS/DDoS defense: ip -> expires_at (None = permanent).
+    /// Relay-owner only; never correlated to a node. Backed by the ip_bans table.
+    pub ip_bans: RwLock<HashMap<String, Option<i64>>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -253,12 +256,65 @@ impl AppState {
             link_preview_cache: RwLock::new(HashMap::new()),
             last_activity: RwLock::new(HashMap::new()),
             slow_mode_cooldowns: RwLock::new(HashMap::new()),
+            ip_bans: RwLock::new(HashMap::new()),
         })
     }
 
     /// Create new application state with in-memory database (for testing)
     pub async fn new_in_memory() -> Result<Self> {
         Self::new(":memory:").await
+    }
+
+    // ── IP bans (relay-owner DoS/DDoS defense, node-correlation-free) ──
+
+    /// Load the IP ban cache from the database (call once at boot). Expired bans
+    /// are pruned by the DB layer during load.
+    pub async fn load_ip_bans(&self) {
+        match self.db.load_ip_ban_cache().await {
+            Ok(entries) => {
+                let mut cache = self.ip_bans.write().await;
+                cache.clear();
+                for (ip, expires_at) in entries {
+                    cache.insert(ip, expires_at);
+                }
+            }
+            Err(e) => tracing::error!("Failed to load IP ban cache: {}", e),
+        }
+    }
+
+    /// Is this IP currently banned? Honors expiry live against the cache.
+    pub async fn is_ip_banned(&self, ip: &str) -> bool {
+        let cache = self.ip_bans.read().await;
+        match cache.get(ip) {
+            None => false,
+            Some(None) => true, // permanent
+            Some(Some(expires_at)) => *expires_at > now() as i64,
+        }
+    }
+
+    /// Ban an IP (DB + cache). `expires_at = None` is permanent.
+    pub async fn ban_ip(
+        &self,
+        ip: &str,
+        reason: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<(), String> {
+        self.db
+            .add_ip_ban(ip, reason, expires_at)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.ip_bans
+            .write()
+            .await
+            .insert(ip.to_string(), expires_at);
+        Ok(())
+    }
+
+    /// Remove an IP ban (DB + cache). Returns true if a ban existed.
+    pub async fn unban_ip(&self, ip: &str) -> Result<bool, String> {
+        let removed = self.db.remove_ip_ban(ip).await.map_err(|e| e.to_string())?;
+        self.ip_bans.write().await.remove(ip);
+        Ok(removed)
     }
 
     // ── User operations ──

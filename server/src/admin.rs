@@ -8,12 +8,13 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Path, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -148,6 +149,104 @@ pub async fn admin_nodes_handler(
     }
     let nodes = state.db.get_nodes_admin().await.unwrap_or_default();
     Ok(Json(json!({ "nodes": nodes })))
+}
+
+// ── Connection log & IP bans (relay-owner DoS/DDoS defense) ──
+//
+// These surfaces are deliberately node-correlation-free: the connection log
+// holds only IP + connect/disconnect + time, and IP bans key on IP alone. The
+// relay owner can defend against abuse without ever learning which node an IP
+// belongs to (it never does) — see GOVERNANCE.md.
+
+/// Recent connect/disconnect events (IP + event + time only).
+pub async fn admin_connections_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(200)
+        .clamp(1, 1000);
+    let entries = state.db.get_connection_log(limit).await.unwrap_or_default();
+    Ok(Json(json!({ "connections": entries })))
+}
+
+/// List all IP bans.
+pub async fn admin_ip_bans_list_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    let bans = state.db.list_ip_bans().await.unwrap_or_default();
+    Ok(Json(json!({ "bans": bans })))
+}
+
+#[derive(Deserialize)]
+pub struct IpBanRequest {
+    ip: String,
+    reason: Option<String>,
+    /// Optional ban duration in seconds. Omit for a permanent ban.
+    duration_secs: Option<i64>,
+}
+
+/// Add (or update) an IP ban.
+pub async fn admin_ip_ban_add_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Json(req): Json<IpBanRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    let ip = req.ip.trim();
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Invalid IP address" })),
+        ));
+    }
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let expires_at = req.duration_secs.filter(|d| *d > 0).map(|d| now_ts + d);
+    match state.ban_ip(ip, req.reason.as_deref(), expires_at).await {
+        Ok(()) => Ok(Json(
+            json!({ "ok": true, "ip": ip, "expires_at": expires_at }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        )),
+    }
+}
+
+/// Remove an IP ban.
+pub async fn admin_ip_ban_remove_handler(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    Path(ip): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !validate_admin_token(&headers, &params) {
+        return Err(unauthorized());
+    }
+    match state.unban_ip(&ip).await {
+        Ok(removed) => Ok(Json(json!({ "ok": true, "removed": removed }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e })),
+        )),
+    }
 }
 
 /// WebSocket endpoint for live log streaming
@@ -427,6 +526,7 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
     <div class="tabs">
       <div class="tab active" onclick="switchTab('stats')">📊 Stats</div>
       <div class="tab" onclick="switchTab('nodes')">🏠 Nodes</div>
+      <div class="tab" onclick="switchTab('conns')">🛡️ Connections</div>
       <div class="tab" onclick="switchTab('logs')">📜 Logs</div>
     </div>
 
@@ -450,6 +550,30 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
         <input class="search" placeholder="Search nodes..." oninput="filterTable('nodes-table', this.value)">
         <table><thead><tr><th>Name</th><th>ID</th><th>Created</th><th>Description</th></tr></thead>
         <tbody id="nodes-table"></tbody></table>
+      </div>
+    </div>
+
+    <!-- Connections panel -->
+    <div id="panel-conns" class="panel">
+      <div class="section">
+        <h2>IP Bans — DoS / DDoS defense</h2>
+        <p style="color:#888;font-size:0.82em;margin-bottom:10px">IPs only. The relay never links an IP to a node or user — bans exist purely for abuse defense.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+          <input id="ban-ip" class="search" style="margin-bottom:0;width:180px" placeholder="IP address">
+          <input id="ban-reason" class="search" style="margin-bottom:0;width:220px" placeholder="Reason (optional)">
+          <input id="ban-duration" class="search" style="margin-bottom:0;width:150px" placeholder="Duration (s, blank=perm)">
+          <button onclick="banIp()" style="padding:6px 16px;background:#e94560;color:#fff;border:none;border-radius:6px;cursor:pointer">Ban IP</button>
+        </div>
+        <div id="ban-error" class="error"></div>
+        <table><thead><tr><th>IP</th><th>Reason</th><th>Banned</th><th>Expires</th><th></th></tr></thead>
+        <tbody id="bans-table"></tbody></table>
+      </div>
+      <div class="section">
+        <h2>Recent Connections</h2>
+        <p style="color:#888;font-size:0.82em;margin-bottom:10px">Transport connect/disconnect events (IP + time only).</p>
+        <input class="search" placeholder="Filter by IP..." oninput="filterTable('conns-table', this.value)">
+        <table><thead><tr><th>IP</th><th>Event</th><th>Time</th></tr></thead>
+        <tbody id="conns-table"></tbody></table>
       </div>
     </div>
 
@@ -510,12 +634,21 @@ function apiFetch(path) {
   return fetch(path, { headers: { 'X-Admin-Token': adminToken } });
 }
 
+function apiSend(path, method, body) {
+  return fetch(path, {
+    method,
+    headers: { 'X-Admin-Token': adminToken, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   event.target.classList.add('active');
   if (name === 'nodes') loadNodes();
+  if (name === 'conns') loadConns();
   if (name === 'logs') connectLogWs();
 }
 
@@ -564,6 +697,59 @@ async function loadNodes() {
       `<tr><td>${esc(n.name)}</td><td class="mono">${esc(n.id.substring(0,8))}…</td><td>${fmtTime(n.created_at)}</td><td>${esc(n.description || '-')}</td></tr>`
     ).join('');
   } catch(e) { console.error('Failed to load nodes:', e); }
+}
+
+async function loadConns() {
+  loadBans();
+  try {
+    const r = await apiFetch('/admin/connections');
+    if (!r.ok) return;
+    const d = await r.json();
+    const tb = document.getElementById('conns-table');
+    tb.innerHTML = (d.connections || []).map(c =>
+      `<tr><td class="mono">${esc(c.ip)}</td><td><span class="badge">${esc(c.event)}</span></td><td>${fmtTime(c.created_at)}</td></tr>`
+    ).join('');
+  } catch(e) { console.error('Failed to load connections:', e); }
+}
+
+async function loadBans() {
+  try {
+    const r = await apiFetch('/admin/ip-bans');
+    if (!r.ok) return;
+    const d = await r.json();
+    const tb = document.getElementById('bans-table');
+    tb.innerHTML = (d.bans || []).map(b =>
+      `<tr><td class="mono">${esc(b.ip)}</td><td>${esc(b.reason || '-')}</td><td>${fmtTime(b.banned_at)}</td><td>${b.expires_at ? fmtTime(b.expires_at) : 'permanent'}</td>`
+      + `<td><button onclick="unbanIp('${esc(b.ip)}')" style="padding:3px 10px;background:#0f3460;color:#e0e0e0;border:none;border-radius:4px;cursor:pointer">Unban</button></td></tr>`
+    ).join('');
+  } catch(e) { console.error('Failed to load bans:', e); }
+}
+
+async function banIp() {
+  const ip = document.getElementById('ban-ip').value.trim();
+  const reason = document.getElementById('ban-reason').value.trim();
+  const dur = document.getElementById('ban-duration').value.trim();
+  const errEl = document.getElementById('ban-error');
+  errEl.textContent = '';
+  if (!ip) { errEl.textContent = 'Enter an IP address'; return; }
+  const body = { ip };
+  if (reason) body.reason = reason;
+  if (dur) { const d = parseInt(dur, 10); if (!isNaN(d) && d > 0) body.duration_secs = d; }
+  try {
+    const r = await apiSend('/admin/ip-bans', 'POST', body);
+    if (!r.ok) { const e = await r.json().catch(()=>({})); errEl.textContent = e.error || 'Ban failed'; return; }
+    document.getElementById('ban-ip').value = '';
+    document.getElementById('ban-reason').value = '';
+    document.getElementById('ban-duration').value = '';
+    loadBans();
+  } catch(e) { errEl.textContent = 'Request failed'; }
+}
+
+async function unbanIp(ip) {
+  try {
+    await apiSend('/admin/ip-bans/' + encodeURIComponent(ip), 'DELETE');
+    loadBans();
+  } catch(e) { console.error('Unban failed:', e); }
 }
 
 function connectLogWs() {

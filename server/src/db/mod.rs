@@ -39,6 +39,23 @@ pub const DM_SYSTEM_USER_ID: Uuid =
 pub const DM_SYSTEM_NODE_ID: Uuid =
     Uuid::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 
+/// A connection-log entry (relay-owner DoS view). Node-correlation-free by design.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConnectionLogEntry {
+    pub ip: String,
+    pub event: String,
+    pub created_at: i64,
+}
+
+/// An IP ban record (relay-owner abuse defense).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IpBan {
+    pub ip: String,
+    pub reason: Option<String>,
+    pub banned_at: i64,
+    pub expires_at: Option<i64>,
+}
+
 /// Database connection pool and operations
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -617,11 +634,51 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
-        // Add ip_address column to audit_log if not exists
+        // Add ip_address column to audit_log if not exists.
+        // NOTE: kept for schema compatibility only. Per GOVERNANCE.md, IPs are
+        // relay-only and never correlated to a node; node audit rows are written
+        // with ip_address = NULL. See log_audit().
         sqlx::query("ALTER TABLE audit_log ADD COLUMN ip_address TEXT")
             .execute(&self.pool)
             .await
             .ok();
+
+        // Connection log — relay-owner DoS/DDoS visibility ONLY. Deliberately
+        // node-correlation-free: it stores an IP, a connect/disconnect event, and
+        // a timestamp — never a user id, node id, or any node correlation.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS connection_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                event TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create connection_log table")?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_conn_log_time ON connection_log (created_at DESC)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // IP bans — relay-owner abuse defense. Keyed on IP only, no node link.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ip_bans (
+                ip TEXT PRIMARY KEY NOT NULL,
+                reason TEXT,
+                banned_at INTEGER NOT NULL,
+                expires_at INTEGER
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("Failed to create ip_bans table")?;
 
         // Create device_tokens table for push notifications
         sqlx::query(
@@ -4463,6 +4520,10 @@ impl Database {
         details: Option<&str>,
         ip_address: Option<&str>,
     ) -> Result<Uuid> {
+        // Governance invariant: node audit must never persist an end-user IP.
+        // IPs are relay-only (connection_log). The `ip_address` param is retained
+        // for call-site compatibility but is intentionally dropped here.
+        let _ = ip_address;
         let audit_id = Uuid::new_v4();
         let created_at = now();
 
@@ -4477,12 +4538,127 @@ impl Database {
         .bind(target_id.map(|id| id.to_string()))
         .bind(details)
         .bind(created_at as i64)
-        .bind(ip_address)
+        .bind(None::<&str>)
         .execute(&self.pool)
         .await
         .context("Failed to log audit event")?;
 
         Ok(audit_id)
+    }
+
+    // ── Connection log & IP bans (relay-owner DoS defense, node-correlation-free) ──
+
+    /// Record a transport-level connect/disconnect event. Stores IP + event +
+    /// time ONLY — never a user, node, or any node correlation.
+    pub async fn log_connection(&self, ip: &str, event: &str) -> Result<()> {
+        let now_ts = now() as i64;
+        sqlx::query("INSERT INTO connection_log (ip, event, created_at) VALUES (?, ?, ?)")
+            .bind(ip)
+            .bind(event)
+            .bind(now_ts)
+            .execute(&self.pool)
+            .await
+            .context("Failed to write connection_log")?;
+        // Bound growth: drop entries older than 7 days (cheap, index-backed).
+        let cutoff = now_ts - 7 * 86_400;
+        sqlx::query("DELETE FROM connection_log WHERE created_at < ?")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await
+            .ok();
+        Ok(())
+    }
+
+    /// Most-recent connection-log entries (newest first).
+    pub async fn get_connection_log(&self, limit: i64) -> Result<Vec<ConnectionLogEntry>> {
+        let rows = sqlx::query(
+            "SELECT ip, event, created_at FROM connection_log ORDER BY created_at DESC, id DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to read connection_log")?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ConnectionLogEntry {
+                ip: r.get("ip"),
+                event: r.get("event"),
+                created_at: r.get::<i64, _>("created_at"),
+            })
+            .collect())
+    }
+
+    /// Add or update an IP ban. `expires_at = None` means permanent.
+    pub async fn add_ip_ban(
+        &self,
+        ip: &str,
+        reason: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO ip_bans (ip, reason, banned_at, expires_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason, banned_at = excluded.banned_at, expires_at = excluded.expires_at",
+        )
+        .bind(ip)
+        .bind(reason)
+        .bind(now() as i64)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await
+        .context("Failed to add ip ban")?;
+        Ok(())
+    }
+
+    /// Remove an IP ban. Returns true if a row was deleted.
+    pub async fn remove_ip_ban(&self, ip: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM ip_bans WHERE ip = ?")
+            .bind(ip)
+            .execute(&self.pool)
+            .await
+            .context("Failed to remove ip ban")?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// All IP bans (including expired) for the admin view, newest first.
+    pub async fn list_ip_bans(&self) -> Result<Vec<IpBan>> {
+        let rows = sqlx::query(
+            "SELECT ip, reason, banned_at, expires_at FROM ip_bans ORDER BY banned_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to list ip bans")?;
+        Ok(rows
+            .into_iter()
+            .map(|r| IpBan {
+                ip: r.get("ip"),
+                reason: r.get("reason"),
+                banned_at: r.get::<i64, _>("banned_at"),
+                expires_at: r.get::<Option<i64>, _>("expires_at"),
+            })
+            .collect())
+    }
+
+    /// Load the ban cache: ip -> expires_at. Expired rows are pruned first.
+    pub async fn load_ip_ban_cache(&self) -> Result<Vec<(String, Option<i64>)>> {
+        let now_ts = now() as i64;
+        sqlx::query("DELETE FROM ip_bans WHERE expires_at IS NOT NULL AND expires_at <= ?")
+            .bind(now_ts)
+            .execute(&self.pool)
+            .await
+            .ok();
+        let rows = sqlx::query("SELECT ip, expires_at FROM ip_bans")
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to load ip ban cache")?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("ip"),
+                    r.get::<Option<i64>, _>("expires_at"),
+                )
+            })
+            .collect())
     }
 
     /// Get paginated audit log entries for a Node

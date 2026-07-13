@@ -3913,6 +3913,7 @@ pub async fn get_slow_mode_handler(
 /// WebSocket upgrade handler
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    conn_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
     State(state): State<SharedState>,
@@ -3926,16 +3927,37 @@ pub async fn ws_handler(
     // Support legacy query-param token for backward compatibility, but prefer post-upgrade auth.
     let legacy_token = params.get("token").cloned();
 
+    // Transport-peer IP for the relay-owner connection log (DoS defense only;
+    // never correlated to a user or node — see GOVERNANCE.md). ConnectInfo is
+    // absent when served without a connect-info make service (e.g. in tests).
+    let client_ip = conn_info
+        .map(|ci| ci.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
     info!("WebSocket upgrade requested (post-upgrade auth)");
     ws.on_upgrade(move |socket| {
-        websocket_handler_with_auth(socket, legacy_token, state, client_hash)
+        websocket_handler_with_auth(socket, legacy_token, state, client_hash, client_ip)
     })
 }
 
-/// Post-upgrade WebSocket authentication wrapper.
+/// Thin wrapper that brackets a WS session with connect/disconnect logging so
+/// the relay owner has DoS/DDoS visibility. Logs an IP + event + timestamp only.
+async fn websocket_handler_with_auth(
+    socket: WebSocket,
+    legacy_token: Option<String>,
+    state: SharedState,
+    client_hash: Option<String>,
+    client_ip: String,
+) {
+    state.db.log_connection(&client_ip, "connect").await.ok();
+    run_ws_session(socket, legacy_token, state.clone(), client_hash).await;
+    state.db.log_connection(&client_ip, "disconnect").await.ok();
+}
+
+/// Post-upgrade WebSocket authentication + session driver.
 /// The client must send an `Authenticate` message within 5 seconds or the connection is closed.
 /// Also supports legacy query-param token for backward compatibility.
-async fn websocket_handler_with_auth(
+async fn run_ws_session(
     socket: WebSocket,
     legacy_token: Option<String>,
     state: SharedState,
