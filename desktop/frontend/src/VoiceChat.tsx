@@ -191,6 +191,16 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     ws.on('voice_peer_joined' as any, onPeerJoinedScreen);
     ws.on('voice_peer_left' as any, onPeerLeftScreen);
 
+    // Arm the native microphone permission gate BEFORE requesting capture.
+    // On the desktop app the WebKitGTK permission handler denies getUserMedia
+    // unless the user is actively in a call; this is that signal. No-op on web.
+    const setVoiceArmed = (armed: boolean) => {
+      try {
+        (window as any).__TAURI__?.core?.invoke('set_voice_capture_armed', { armed });
+      } catch { /* web build: no native gate */ }
+    };
+    setVoiceArmed(true);
+
     // Connect
     vc.connect().catch(err => {
       console.error('Voice connection failed:', err);
@@ -198,6 +208,7 @@ export const VoiceChat: React.FC<VoiceChatProps> = ({
     });
 
     return () => {
+      setVoiceArmed(false);
       sm.destroy();
       screenShareRef.current = null;
       setIsScreenSharing(false);

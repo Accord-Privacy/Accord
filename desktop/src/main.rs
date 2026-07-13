@@ -12,6 +12,19 @@ use accord_core::{init, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// True only while the user is actively in a voice call. Gates the WebKitGTK
+/// microphone permission handler: capture is denied unless the user has
+/// explicitly joined voice, so an XSS payload cannot silently open the mic.
+static VOICE_CAPTURE_ARMED: AtomicBool = AtomicBool::new(false);
+
+/// Called by the frontend when it joins/leaves a voice channel, arming or
+/// disarming microphone permission. Camera is never granted (no video feature).
+#[tauri::command]
+fn set_voice_capture_armed(armed: bool) {
+    VOICE_CAPTURE_ARMED.store(armed, Ordering::SeqCst);
+}
 
 /// Get the Accord config directory (e.g. ~/.config/accord or platform equivalent)
 fn config_dir() -> Result<PathBuf, String> {
@@ -278,17 +291,21 @@ fn main() {
             println!("📱 Cross-platform desktop client");
 
             // WebKitGTK denies getUserMedia by default (no permission UI in a
-            // plain webview), which breaks voice chat. Grant microphone/camera
-            // requests — this is a native app, so capture permission is the
-            // OS's concern, mirroring how other desktop chat apps behave.
-            // ACCORD_MOCK_MEDIA=1 additionally swaps in WebKit's mock capture
-            // devices so automated tests can join voice without real hardware.
+            // plain webview), which breaks voice chat. We grant it, but only
+            // narrowly: microphone requests are honoured *only while the user
+            // has actively joined a voice channel* (VOICE_CAPTURE_ARMED, set by
+            // the frontend via set_voice_capture_armed), and camera/video
+            // requests are always denied (there is no video feature). This
+            // keeps an XSS payload from silently opening the mic despite the
+            // strong CSP. ACCORD_MOCK_MEDIA=1 additionally swaps in WebKit's
+            // mock capture devices so automated tests can join voice without
+            // real hardware.
             #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
-                        use webkit2gtk::glib::prelude::ObjectExt as _;
+                        use webkit2gtk::glib::object::Cast as _;
                         use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
                         let wv = webview.inner();
                         if std::env::var("ACCORD_MOCK_MEDIA").as_deref() == Ok("1") {
@@ -298,8 +315,21 @@ fn main() {
                         }
                         wv.connect_permission_request(|_, request| {
                             use webkit2gtk::UserMediaPermissionRequest;
-                            if request.is::<UserMediaPermissionRequest>() {
-                                request.allow();
+                            use webkit2gtk::UserMediaPermissionRequestExt;
+                            if let Some(media_req) =
+                                request.dynamic_cast_ref::<UserMediaPermissionRequest>()
+                            {
+                                // Deny anything requesting video/camera outright.
+                                if media_req.is_for_video_device() {
+                                    request.deny();
+                                    return true;
+                                }
+                                // Audio: allow only while in a voice call.
+                                if VOICE_CAPTURE_ARMED.load(Ordering::SeqCst) {
+                                    request.allow();
+                                } else {
+                                    request.deny();
+                                }
                                 true
                             } else {
                                 false
@@ -328,6 +358,7 @@ fn main() {
             delete_identity,
             list_identities,
             get_device_identity,
+            set_voice_capture_armed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

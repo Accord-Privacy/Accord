@@ -561,7 +561,19 @@ async fn main() -> Result<()> {
     app_state.metadata_mode = metadata_mode;
     app_state.federation_enabled = args.mesh_enabled;
     if args.disable_rate_limits {
-        warn!("RATE LIMITING DISABLED (--disable-rate-limits) — dev/load-testing only, NEVER production");
+        // This flag also disables the per-device account cap and registration
+        // throttling. Gate it behind --no-tls so it cannot be enabled on a
+        // TLS-terminated (i.e. production-shaped) deployment by accident.
+        if !args.no_tls {
+            anyhow::bail!(
+                "--disable-rate-limits requires --no-tls (dev/load-testing only). \
+                 Refusing to disable abuse protection on a TLS deployment."
+            );
+        }
+        warn!("╔══════════════════════════════════════════════════════════════╗");
+        warn!("║ RATE LIMITING + DEVICE CAP DISABLED (--disable-rate-limits).    ║");
+        warn!("║ Dev/load-testing ONLY. NEVER run this in production.           ║");
+        warn!("╚══════════════════════════════════════════════════════════════╝");
         app_state.rate_limiter = rate_limit::RateLimiter::new_disabled();
     }
 
