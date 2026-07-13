@@ -484,6 +484,15 @@ pub enum WsMessageType {
         /// channel retention policy. None = keep forever. Relay stores it opaquely.
         #[serde(default)]
         expires_at: Option<u64>,
+        /// Read-gated expiry: hold the message (no expiry) until all these users
+        /// and all members of these roles have read it, then run gate_ttl_secs.
+        /// When set, the sender omits expires_at. Relay stores ids opaquely.
+        #[serde(default)]
+        gate_users: Option<Vec<Uuid>>,
+        #[serde(default)]
+        gate_roles: Option<Vec<Uuid>>,
+        #[serde(default)]
+        gate_ttl_secs: Option<u64>,
     },
     /// Edit a message (author only)
     EditMessage {

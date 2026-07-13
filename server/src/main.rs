@@ -1178,6 +1178,13 @@ async fn main() -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
+                // Start the fresh timer on any read-gated message whose audience
+                // has now seen it, then sweep everything whose expiry has passed.
+                match sweep_state.db.resolve_read_gates(now).await {
+                    Ok(n) if n > 0 => info!("Started expiry timer on {} read-gated messages", n),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Read-gate sweep error: {}", e),
+                }
                 match sweep_state.db.delete_expired_messages(now).await {
                     Ok(n) if n > 0 => info!("Swept {} expired (disappearing) messages", n),
                     Ok(_) => {}

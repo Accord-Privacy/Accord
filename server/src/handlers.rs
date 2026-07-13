@@ -4570,6 +4570,9 @@ async fn handle_ws_message(
             encrypted_data,
             reply_to,
             expires_at,
+            gate_users,
+            gate_roles,
+            gate_ttl_secs,
         } => {
             // Check if this is a DM channel; enforce participation and blocks
             let is_dm = state.db.is_dm_channel(channel_id).await.unwrap_or(false);
@@ -4697,6 +4700,20 @@ async fn handle_ws_message(
                     "Internal server error".to_string()
                 })?;
 
+            // Read-gated expiry: attach the gate so the sweep holds this message
+            // until its audience has read it (see resolve_read_gates).
+            if let Some(ttl) = gate_ttl_secs {
+                let users = gate_users.unwrap_or_default();
+                let roles = gate_roles.unwrap_or_default();
+                if let Err(e) = state
+                    .db
+                    .set_message_gate(message_id, &users, &roles, ttl)
+                    .await
+                {
+                    tracing::error!("Failed to set message read-gate: {}", e);
+                }
+            }
+
             // Record slow mode cooldown timestamp
             {
                 let current_time = std::time::SystemTime::now()
@@ -4750,6 +4767,7 @@ async fn handle_ws_message(
                 "seq": seq,
                 "timestamp": ws_message.timestamp, "reply_to": reply_to,
                 "expires_at": expires_at,
+                "read_gated": gate_ttl_secs.is_some(),
                 "encrypted_display_name": sender_display_name_b64,
                 "sender_display_name": sender_display_name,
                 // Lets a recipient with a stale DM list know to refresh it —

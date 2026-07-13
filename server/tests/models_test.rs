@@ -673,6 +673,9 @@ fn ws_message_type_roundtrip_channel_message() {
         encrypted_data: "payload".to_string(),
         reply_to: Some(reply_id),
         expires_at: None,
+        gate_users: None,
+        gate_roles: None,
+        gate_ttl_secs: None,
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();
@@ -696,6 +699,9 @@ fn ws_message_type_roundtrip_channel_message_no_reply() {
         encrypted_data: "enc".to_string(),
         reply_to: None,
         expires_at: None,
+        gate_users: None,
+        gate_roles: None,
+        gate_ttl_secs: None,
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();

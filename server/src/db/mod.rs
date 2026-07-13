@@ -322,6 +322,26 @@ impl Database {
         .await
         .ok();
 
+        // Read-gated expiry: a message can be held past the channel timer until a
+        // chosen audience has read it. gate_users/gate_roles are opaque JSON arrays
+        // of ids; gate_ttl_secs is the fresh timer length applied once the gate is
+        // satisfied. While gated-unsatisfied, expires_at stays NULL (kept); when the
+        // sweep sees every required reader has read it, it stamps
+        // expires_at = now + gate_ttl_secs (timer restarts on last read).
+        for col in [
+            "ALTER TABLE messages ADD COLUMN gate_users TEXT",
+            "ALTER TABLE messages ADD COLUMN gate_roles TEXT",
+            "ALTER TABLE messages ADD COLUMN gate_ttl_secs INTEGER",
+        ] {
+            sqlx::query(col).execute(&self.pool).await.ok();
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_gated ON messages (gate_ttl_secs) WHERE gate_ttl_secs IS NOT NULL AND expires_at IS NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
         // Create node_invites table
         sqlx::query(
             r#"
@@ -3194,6 +3214,110 @@ impl Database {
             .await
             .context("Failed to purge messages before cutoff")?;
         Ok(result.rows_affected())
+    }
+
+    /// Attach a read-gate to a message: it will not expire until every listed
+    /// user AND every member of every listed role has read it, at which point a
+    /// fresh `ttl_secs` timer starts. ids are stored as opaque JSON arrays.
+    pub async fn set_message_gate(
+        &self,
+        message_id: Uuid,
+        gate_users: &[Uuid],
+        gate_roles: &[Uuid],
+        ttl_secs: u64,
+    ) -> Result<()> {
+        let users_json = serde_json::to_string(gate_users).unwrap_or_else(|_| "[]".into());
+        let roles_json = serde_json::to_string(gate_roles).unwrap_or_else(|_| "[]".into());
+        sqlx::query(
+            "UPDATE messages SET gate_users = ?, gate_roles = ?, gate_ttl_secs = ? WHERE id = ?",
+        )
+        .bind(users_json)
+        .bind(roles_json)
+        .bind(ttl_secs as i64)
+        .bind(message_id.to_string())
+        .execute(&self.pool)
+        .await
+        .context("Failed to set message read-gate")?;
+        Ok(())
+    }
+
+    /// Read-gate sweep: for every gated message not yet satisfied, check whether
+    /// each required reader (the listed users plus all current members of the
+    /// listed roles, the author excepted) has read up to at least that message.
+    /// When the gate is fully satisfied, stamp `expires_at = now + ttl_secs` so
+    /// the normal expiry sweep deletes it — "timer restarts on last read".
+    /// Returns the number of messages whose timers were started this pass.
+    pub async fn resolve_read_gates(&self, now: u64) -> Result<u64> {
+        let rows = sqlx::query(
+            "SELECT id, channel_id, sender_id, created_at, gate_users, gate_roles, gate_ttl_secs \
+             FROM messages WHERE gate_ttl_secs IS NOT NULL AND expires_at IS NULL",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("Failed to query gated messages")?;
+
+        let mut started = 0u64;
+        for row in rows {
+            let msg_id: String = row.get("id");
+            let channel_id: String = row.get("channel_id");
+            let sender_id: String = row.get("sender_id");
+            let created_at: i64 = row.get("created_at");
+            let ttl_secs: i64 = row.get("gate_ttl_secs");
+            let users: Vec<Uuid> = row
+                .get::<Option<String>, _>("gate_users")
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            let roles: Vec<Uuid> = row
+                .get::<Option<String>, _>("gate_roles")
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+
+            // Required readers = listed users ∪ members of listed roles, minus the
+            // author (they wrote it, so they've seen it).
+            let mut required: std::collections::HashSet<String> =
+                users.into_iter().map(|u| u.to_string()).collect();
+            for role in &roles {
+                let members: Vec<String> =
+                    sqlx::query_scalar("SELECT member_id FROM member_roles WHERE role_id = ?")
+                        .bind(role.to_string())
+                        .fetch_all(&self.pool)
+                        .await
+                        .unwrap_or_default();
+                required.extend(members);
+            }
+            required.remove(&sender_id);
+
+            // A required reader is satisfied if their channel read-pointer covers
+            // this message (their last-read message's created_at >= this one's).
+            let mut all_read = true;
+            for user in &required {
+                let read: Option<i64> = sqlx::query_scalar(
+                    "SELECT m.created_at FROM read_receipts r \
+                     JOIN messages m ON m.id = r.last_read_message_id \
+                     WHERE r.user_id = ? AND r.channel_id = ?",
+                )
+                .bind(user)
+                .bind(&channel_id)
+                .fetch_optional(&self.pool)
+                .await
+                .unwrap_or(None);
+                if read.is_none_or(|last| last < created_at) {
+                    all_read = false;
+                    break;
+                }
+            }
+
+            if all_read {
+                sqlx::query("UPDATE messages SET expires_at = ? WHERE id = ?")
+                    .bind(now as i64 + ttl_secs)
+                    .bind(&msg_id)
+                    .execute(&self.pool)
+                    .await
+                    .context("Failed to start read-gate timer")?;
+                started += 1;
+            }
+        }
+        Ok(started)
     }
 
     pub async fn get_channel_messages(
@@ -6874,6 +6998,76 @@ mod tests {
         assert_eq!(removed, 1);
         // Second sweep is a no-op (idempotent).
         assert_eq!(db.delete_expired_messages(now).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_read_gate_holds_until_read_then_expires() {
+        let db = Database::new(":memory:").await.unwrap();
+        let author = db.create_user("gauthor", "").await.unwrap();
+        let reader = db.create_user("greader", "").await.unwrap();
+        let node = db.create_node("N", author.id, None).await.unwrap();
+        let channel = db.create_channel("c", node.id, author.id).await.unwrap();
+        db.add_user_to_channel(channel.id, reader.id).await.unwrap();
+
+        // Gated on `reader`, ttl 0 (so once satisfied it's immediately sweepable).
+        let (msg_id, _) = db
+            .store_message(channel.id, author.id, b"important", None, None)
+            .await
+            .unwrap();
+        db.set_message_gate(msg_id, &[reader.id], &[], 0)
+            .await
+            .unwrap();
+
+        let now = now();
+        // Reader hasn't read it: gate not satisfied, message still served.
+        assert_eq!(db.resolve_read_gates(now).await.unwrap(), 0);
+        assert_eq!(db.delete_expired_messages(now).await.unwrap(), 0);
+        assert_eq!(
+            db.get_channel_messages(channel.id, 10, None)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "gated message must survive until read"
+        );
+
+        // Reader reads up to the message → gate satisfied, timer starts (ttl 0).
+        db.mark_channel_read(reader.id, channel.id, msg_id)
+            .await
+            .unwrap();
+        let later = now + 1;
+        assert_eq!(db.resolve_read_gates(later).await.unwrap(), 1);
+        // Re-running is idempotent (already stamped, no longer expires_at IS NULL).
+        assert_eq!(db.resolve_read_gates(later).await.unwrap(), 0);
+        assert_eq!(db.delete_expired_messages(later).await.unwrap(), 1);
+        assert!(db
+            .get_channel_messages(channel.id, 10, None)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_read_gate_excludes_author() {
+        let db = Database::new(":memory:").await.unwrap();
+        let author = db.create_user("gauthor2", "").await.unwrap();
+        let node = db.create_node("N", author.id, None).await.unwrap();
+        let channel = db.create_channel("c", node.id, author.id).await.unwrap();
+
+        // Gated only on the author: they wrote it, so the gate is satisfied at once.
+        let (msg_id, _) = db
+            .store_message(channel.id, author.id, b"self", None, None)
+            .await
+            .unwrap();
+        db.set_message_gate(msg_id, &[author.id], &[], 3600)
+            .await
+            .unwrap();
+
+        let now = now();
+        assert_eq!(db.resolve_read_gates(now).await.unwrap(), 1);
+        // Timer started for 3600s → still present now, gone after it elapses.
+        assert_eq!(db.delete_expired_messages(now).await.unwrap(), 0);
+        assert_eq!(db.delete_expired_messages(now + 3601).await.unwrap(), 1);
     }
 
     #[tokio::test]
