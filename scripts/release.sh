@@ -43,7 +43,16 @@ bash scripts/pre-push-qa.sh
 # ── 2. Build signed Linux bundles ──────────────────────────────────
 # APPIMAGE_EXTRACT_AND_RUN: linuxdeploy self-extracts instead of requiring FUSE2
 # NO_STRIP: linuxdeploy's bundled strip is too old for modern .relr.dyn sections
-(cd desktop && NO_STRIP=true APPIMAGE_EXTRACT_AND_RUN=1 frontend/node_modules/.bin/tauri build --bundles deb,appimage)
+# Rebuild the frontend from scratch: tauri build ships frontend/dist as-is, and a
+# stale dist may contain the dev automation bridge (VITE_ACCORD_AUTOMATION build)
+(cd desktop/frontend && unset VITE_ACCORD_AUTOMATION && rm -rf dist && npm run build)
+(cd desktop && unset VITE_ACCORD_AUTOMATION && NO_STRIP=true APPIMAGE_EXTRACT_AND_RUN=1 frontend/node_modules/.bin/tauri build --bundles deb,appimage)
+
+# Release gate: the dev automation bridge must not be present in shipped assets
+if grep -rq "__ACCORD_AUTOMATION_BRIDGE__" desktop/frontend/dist/; then
+    echo "ERROR: dev automation bridge found in frontend/dist — release aborted" >&2
+    exit 1
+fi
 
 DEB=$(ls "${BUNDLE_DIR}"/deb/*.deb | head -1)
 APPIMAGE=$(ls "${BUNDLE_DIR}"/appimage/*.AppImage | head -1)

@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "auto:build": "VITE_ACCORD_AUTOMATION=1 npm run build && cd .. && frontend/node_modules/.bin/tauri build --debug --no-bundle",
+    "auto:smoke": "node automation/smoke.mjs ../../target/debug/accord-desktop"
   },
   "dependencies": {
     "@noble/ciphers": "^2.1.1",
@@ -39,6 +41,7 @@
     "jsdom": "^29.0.1",
     "typescript": "^6.0.2",
     "vite": "^8.0.3",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "ws": "^8.18.0"
   }
 }

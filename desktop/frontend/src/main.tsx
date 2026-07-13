@@ -12,6 +12,13 @@ import "./styles.css";
 // Migrate localStorage identities to OS keyring on first Tauri launch
 migrateToKeyring().catch((e) => console.warn("Keyring migration failed:", e));
 
+// Dev-only automation bridge (see src/dev/automationBridge.ts). Both branch
+// conditions are build-time constants, so Vite eliminates this import (and the
+// module) from production builds; scripts/release.sh asserts it stays out.
+if (import.meta.env.DEV || import.meta.env.VITE_ACCORD_AUTOMATION === "1") {
+  import("./dev/automationBridge");
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
