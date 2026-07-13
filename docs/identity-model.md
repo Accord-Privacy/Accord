@@ -177,12 +177,13 @@ Invite-only Nodes are the most effective anti-abuse measure. Even if someone eva
 | Display name | ❌ Encrypted blob | ✅ Decrypted with NMK |
 | Avatar | ❌ Encrypted blob | ✅ Decrypted with NMK |
 | Message content | ❌ Encrypted blob | ✅ E2E decrypted |
-| Node name | ❌ Encrypted blob (Phase 2+) | ✅ Decrypted with NMK |
-| Channel names | ❌ Encrypted blob (Phase 2+) | ✅ Decrypted with NMK |
+| Node name + description | ✅ Plaintext (by design — landlord registry) | ✅ |
+| Channel / category names | ❌ Encrypted blob | ✅ Decrypted with NMK |
+| Per-node policy (retention, screenshot, word filters) | ❌ Encrypted settings blob | ✅ Decrypted with NMK |
 | Device fingerprint | ❌ Only SHA-256 hash | Node admins only |
-| Who is in which Node | ✅ Membership table (UUIDs) | ✅ |
+| Who is in which Node | ✅ Membership table (UUIDs) — never shown in the admin surface | ✅ |
 | Ban list | ✅ Hashes only | Admins see encrypted reasons |
-| IP address | ✅ At transport layer | ❌ |
+| IP address | ✅ Transport layer; relay-owner connection log only, never node-correlated, never shown to node owners/users | ❌ |
 | Message timestamps | ✅ | ✅ |
 | Message sender UUID | ✅ | ✅ |
 
@@ -190,8 +191,11 @@ Invite-only Nodes are the most effective anti-abuse measure. Even if someone eva
 - Any display name, nickname, or human-readable identity
 - Message content (E2E encrypted)
 - Why someone was banned (reason is encrypted)
-- What any Node is about (name/description encrypted in Phase 2+)
+- A node's channel/category names or its policy (encrypted under the NMK)
+- Per-node governance — kicks, role changes; there is no relay-wide audit or user roster
 - Device hardware details (only the fingerprint hash)
+
+(A node's **name and description** are the one intentional exception — visible to the relay owner for the node registry; see [../GOVERNANCE.md](../GOVERNANCE.md).)
 
 ---
 
