@@ -501,7 +501,8 @@ export class AccordWebSocket {
   }
 
   getPendingSenderKeys(): void {
-    this.sendMessage({ GetPendingSenderKeys: {} });
+    // Unit variant server-side: must serialize as a bare string, not a map
+    this.sendMessage('GetPendingSenderKeys');
   }
 
   ackSenderKeys(ids: string[]): void {

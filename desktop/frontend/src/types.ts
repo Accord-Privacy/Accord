@@ -152,7 +152,7 @@ export type WsMessageType =
   | { UnpinMessage: { message_id: string } }
   | { TypingStart: { channel_id: string } }
   | { StoreSenderKey: { channel_id: string; to_user_id: string; payload: string } }
-  | { GetPendingSenderKeys: Record<string, never> }
+  | 'GetPendingSenderKeys'
   | { AckSenderKeys: { ids: string[] } }
   | { JoinVoiceChannel: { channel_id: string } }
   | { LeaveVoiceChannel: { channel_id: string } }
