@@ -204,6 +204,13 @@ async function execute(cmd: Cmd): Promise<unknown> {
           throw new Error(`storage: unknown action ${a.action}`);
       }
     }
+    case "token": {
+      // Dev-only: hand the driver the in-memory auth token so it can make
+      // authenticated REST probes (the desktop keeps the token in memory, not
+      // localStorage, so it isn't reachable via the storage command).
+      const { api } = await import("../api");
+      return api.getToken();
+    }
     case "click":
       return click(String(a.target));
     case "type":

@@ -14,7 +14,8 @@
     "auto:smoke": "node automation/smoke.mjs ../../target/debug/accord-desktop",
     "auto:two": "node automation/two-client.mjs ../../target/debug/accord-desktop",
     "auto:panic": "node automation/panic-wipe.mjs ../../target/debug/accord-desktop",
-    "auto:duress": "node automation/duress.mjs ../../target/debug/accord-desktop"
+    "auto:duress": "node automation/duress.mjs ../../target/debug/accord-desktop",
+    "auto:disappearing": "node automation/disappearing.mjs ../../target/debug/accord-desktop"
   },
   "dependencies": {
     "@noble/ciphers": "^2.1.1",

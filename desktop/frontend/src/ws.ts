@@ -29,6 +29,7 @@ export interface WsEvents {
   channel_message: (data: any) => void;
   message_edit: (data: any) => void;
   message_delete: (data: any) => void;
+  messages_purged: (data: any) => void;
   presence_update: (data: any) => void;
   presence_bulk: (data: any) => void;
   pong: (data: any) => void;
@@ -416,8 +417,8 @@ export class AccordWebSocket {
     throw new Error('DirectMessage is deprecated. Use DM channels with sendChannelMessage instead.');
   }
 
-  sendChannelMessage(channelId: string, encryptedData: string, replyTo?: string): void {
-    this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData, reply_to: replyTo } });
+  sendChannelMessage(channelId: string, encryptedData: string, replyTo?: string, expiresAt?: number): void {
+    this.sendMessage({ ChannelMessage: { channel_id: channelId, encrypted_data: encryptedData, reply_to: replyTo, expires_at: expiresAt } });
   }
 
   sendEditMessage(messageId: string, encryptedData: string): void {

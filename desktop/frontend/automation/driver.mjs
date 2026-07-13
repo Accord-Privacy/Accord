@@ -149,6 +149,7 @@ export class AppHandle {
   storageGet(key) { return this.send("storage", { action: "get", key }); }
   storageSet(key, value) { return this.send("storage", { action: "set", key, value }); }
   storageKeys() { return this.send("storage", { action: "keys" }); }
+  token() { return this.send("token"); }
   snapshot(maxLen) { return this.send("snapshot", { maxLen }); }
   console(since = 0) { return this.send("console", { since }); }
   title() { return this.send("title"); }

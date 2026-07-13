@@ -563,6 +563,19 @@ export class AccordApi {
     );
   }
 
+  /**
+   * Retroactively purge a channel's messages older than `before` (unix seconds).
+   * Backs the "wipe-old" path when disappearing messages is first enabled.
+   */
+  async purgeChannelBefore(channelId: string, before: number): Promise<{ success: boolean; removed: number }> {
+    return this.request<{ success: boolean; removed: number }>(
+      `/channels/${channelId}/purge_before`, {
+        method: 'POST',
+        body: JSON.stringify({ before }),
+      }
+    );
+  }
+
   // Get message thread (replies to a message)
   async getMessageThread(messageId: string, _token: string): Promise<MessagePaginationResponse> {
     return this.request<MessagePaginationResponse>(

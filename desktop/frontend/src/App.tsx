@@ -43,6 +43,7 @@ import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, typ
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { wipeLocalData } from "./wipe";
 import { setDuressPassword, isDuressConfigured } from "./duress";
+import { effectiveTtl, expiryForNow } from "./retention";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -408,6 +409,41 @@ function App() {
   // messageId → plaintext of our own sent messages. We can't decrypt our own
   // sender-key envelopes, so this (persisted encrypted) keeps history readable.
   const ownMessagesRef = useRef<Map<string, string>>(new Map());
+
+  // Disappearing messages: drop the given message ids from the own-message
+  // plaintext cache and re-persist, so expired/purged messages leave no local
+  // trace. Uses only refs, so it's safe to call from stale WS-handler closures.
+  const purgeOwnMessages = useCallback((ids: string[]) => {
+    let changed = false;
+    for (const id of ids) {
+      if (ownMessagesRef.current.delete(id)) changed = true;
+    }
+    if (changed) {
+      const uid = localStorage.getItem('accord_user_id');
+      const pwd = passwordRef.current;
+      if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
+    }
+  }, []);
+
+  // Remove every message whose per-message expiry has passed, from both the
+  // rendered state and the own-message cache. Complements the relay-side sweep
+  // so a device that stays open still drops disappearing messages on time.
+  const sweepExpiredMessages = useCallback(() => {
+    const now = Math.floor(Date.now() / 1000);
+    let expiredIds: string[] = [];
+    setAppState(prev => {
+      expiredIds = prev.messages
+        .filter(m => m.expires_at !== undefined && m.expires_at <= now)
+        .map(m => m.id);
+      if (expiredIds.length === 0) return prev;
+      const gone = new Set(expiredIds);
+      return { ...prev, messages: prev.messages.filter(m => !gone.has(m.id)) };
+    });
+    if (expiredIds.length > 0) {
+      purgeOwnMessages(expiredIds);
+      setForceUpdate(prev => prev + 1);
+    }
+  }, [purgeOwnMessages]);
   // nodeId → Node Metadata Key. Creator derives it; members receive it over DR.
   const nmkStoreRef = useRef<Map<string, NodeMetadataKey>>(new Map());
   // Raw identity private key bytes — the NMK derivation input for nodes we create
@@ -446,6 +482,15 @@ function App() {
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const userPresenceStatusRef = useRef(userPresenceStatus);
   useEffect(() => { userPresenceStatusRef.current = userPresenceStatus; }, [userPresenceStatus]);
+
+  // Disappearing messages: sweep expired messages out of the UI + own-message
+  // cache on a fixed cadence (the relay stops serving them, but a long-open
+  // session needs its own timer to drop them promptly).
+  useEffect(() => {
+    sweepExpiredMessages();
+    const timer = setInterval(sweepExpiredMessages, 30_000);
+    return () => clearInterval(timer);
+  }, [sweepExpiredMessages]);
 
   // Idle detection: after 5 min of no mouse/keyboard activity, set status to idle
   // (unless user explicitly chose dnd or invisible)
@@ -1123,6 +1168,7 @@ function App() {
         channel_id: data.channel_id,
         isEncrypted: isEncrypted,
         e2eeType: e2eeType,
+        expires_at: data.expires_at ?? undefined,
         reply_to: data.reply_to,
         replied_message: data.replied_message ? {
           id: data.replied_message.id,
@@ -1302,13 +1348,36 @@ function App() {
 
     // Handle message delete events
     socket.on('message_delete', (data) => {
-      
+
       setAppState(prev => ({
         ...prev,
         messages: prev.messages.filter(msg => msg.id !== data.message_id),
       }));
 
       // Message editing/deletion functionality removed
+    });
+
+    // Disappearing messages: relay purged everything in a channel older than a
+    // cutoff (the "wipe-old" enable path). Drop those locally right away, and
+    // purge the own-message plaintext cache so nothing survives on this device.
+    socket.on('messages_purged', (data) => {
+      const cutoffMs = (data.before as number) * 1000;
+      let removedIds: string[] = [];
+      setAppState(prev => {
+        removedIds = prev.messages
+          .filter(m => m.channel_id === data.channel_id && m.timestamp < cutoffMs)
+          .map(m => m.id);
+        return {
+          ...prev,
+          messages: prev.messages.filter(
+            m => !(m.channel_id === data.channel_id && m.timestamp < cutoffMs)
+          ),
+        };
+      });
+      if (removedIds.length > 0) {
+        purgeOwnMessages(removedIds);
+        setForceUpdate(prev => prev + 1);
+      }
     });
 
     // Handle reaction add events
@@ -3352,6 +3421,11 @@ function App() {
           }
         }
 
+        // Disappearing messages: stamp the sender-computed expiry from this
+        // channel's effective retention policy (DM channels use no node default).
+        const retentionTtl = effectiveTtl(isDmSend ? undefined : selectedNodeId ?? undefined, channelToUse);
+        const expiresAt = expiryForNow(retentionTtl);
+
         // Add to local messages for immediate display (temp_ prefix for dedup)
         const tempId = `temp_${Date.now()}_${Math.random()}`;
         const newMessage: Message = {
@@ -3364,6 +3438,7 @@ function App() {
           sender_id: localStorage.getItem('accord_user_id') || undefined,
           isEncrypted: isEncrypted,
           e2eeType: e2eeType,
+          expires_at: expiresAt,
           reply_to: replyingTo?.id,
           replied_message: replyingTo ? {
             id: replyingTo.id,
@@ -3392,7 +3467,7 @@ function App() {
 
         // Pass reply_to if we're replying to a message
         try {
-          ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id);
+          ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id, expiresAt);
           // Mark as sent (delivered to server)
           setAppState(prev => ({
             ...prev,

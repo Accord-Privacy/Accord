@@ -2,6 +2,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { api, generateInviteLink } from './api';
 import { Icon } from './components/Icon';
 import { Node, AuditLogEntry, Role, CustomEmoji, BatchMemberEntry } from './types';
+import {
+  RETENTION_PRESETS,
+  getNodeRetention,
+  setNodeRetention as persistNodeRetention,
+  getChannelRetentionOverride,
+  setChannelRetention as persistChannelRetention,
+} from './retention';
 
 interface Invite {
   code: string;
@@ -82,6 +89,10 @@ export function NodeSettings({
   const [newWord, setNewWord] = useState('');
   const [newWordAction, setNewWordAction] = useState<'block' | 'warn'>('block');
   const [slowModeChannels, setSlowModeChannels] = useState<Record<string, number>>({});
+  // Disappearing messages: node default (seconds; 0 = keep forever) and per-channel
+  // overrides (null = inherit the node default). Policy is local + distributed via NMK.
+  const [nodeRetention, setNodeRetentionState] = useState<number>(0);
+  const [channelRetention, setChannelRetentionState] = useState<Record<string, number | null>>({});
   const [nodeChannels, setNodeChannels] = useState<Array<{ id: string; name: string }>>([]);
 
   // Custom emoji state
@@ -434,8 +445,37 @@ export function NodeSettings({
         } catch { /* ignore */ }
       }
       setSlowModeChannels(modes);
+      // Load disappearing-messages policy (local; distributed via NMK).
+      setNodeRetentionState(getNodeRetention(node.id));
+      const retentions: Record<string, number | null> = {};
+      for (const ch of channels) retentions[ch.id] = getChannelRetentionOverride(ch.id);
+      setChannelRetentionState(retentions);
     } catch { /* ignore */ }
   }, [node.id, token]);
+
+  const handleSetNodeRetention = useCallback((seconds: number) => {
+    persistNodeRetention(node.id, seconds);
+    setNodeRetentionState(seconds);
+    setSuccess(seconds > 0 ? 'Node disappearing-messages default set' : 'Node disappearing messages off');
+  }, [node.id]);
+
+  const handleSetChannelRetention = useCallback(async (channelId: string, seconds: number | null) => {
+    persistChannelRetention(channelId, seconds);
+    setChannelRetentionState(prev => ({ ...prev, [channelId]: seconds }));
+    // Wipe-old: immediately purge messages already older than the effective TTL.
+    const effective = seconds !== null ? seconds : nodeRetention;
+    if (effective > 0) {
+      try {
+        const cutoff = Math.floor(Date.now() / 1000) - effective;
+        const res = await api.purgeChannelBefore(channelId, cutoff);
+        setSuccess(`Disappearing messages on — removed ${res.removed} older message${res.removed === 1 ? '' : 's'}`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to purge old messages');
+      }
+    } else {
+      setSuccess('Channel disappearing messages updated');
+    }
+  }, [nodeRetention]);
 
   const handleSetSlowMode = useCallback(async (channelId: string, seconds: number) => {
     try {
@@ -1057,6 +1097,45 @@ export function NodeSettings({
                   ))}
                 </div>
               )}
+
+              <h4 className="ns-section-title">🕓 Disappearing Messages</h4>
+              <p className="ns-section-desc">
+                Messages auto-delete after the chosen time. The node default applies to any
+                channel without its own setting. Turning it on (or shortening it) immediately
+                removes messages that are already older than the limit.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 32 }}>
+                <div className="ns-channel-row">
+                  <span className="ns-channel-name">Node default</span>
+                  <select
+                    className="ns-select" style={{ width: 'auto' }}
+                    value={nodeRetention}
+                    onChange={(e) => handleSetNodeRetention(parseInt(e.target.value))}
+                  >
+                    {RETENTION_PRESETS.map(p => (
+                      <option key={p.secs} value={p.secs}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {nodeChannels.map(ch => (
+                  <div key={ch.id} className="ns-channel-row">
+                    <span className="ns-channel-name">#{ch.name}</span>
+                    <select
+                      className="ns-select" style={{ width: 'auto' }}
+                      value={channelRetention[ch.id] ?? -1}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value);
+                        handleSetChannelRetention(ch.id, v < 0 ? null : v);
+                      }}
+                    >
+                      <option value={-1}>Use node default</option>
+                      {RETENTION_PRESETS.map(p => (
+                        <option key={p.secs} value={p.secs}>{p.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
 
               <h4 className="ns-section-title">Word Filter</h4>
               <p className="ns-section-desc">Block or warn when messages contain specific words.</p>

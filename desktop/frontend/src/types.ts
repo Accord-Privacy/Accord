@@ -143,7 +143,7 @@ export type WsMessageType =
   | { LeaveChannel: { channel_id: string } }
   | { CreateChannel: { node_id: string; name: string } }
   | { DirectMessage: { to_user: string; encrypted_data: string } }
-  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string } }
+  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string; expires_at?: number } }
   | { EditMessage: { message_id: string; encrypted_data: string } }
   | { DeleteMessage: { message_id: string } }
   | { AddReaction: { message_id: string; emoji: string } }
@@ -267,6 +267,8 @@ export interface Message {
   edited_at?: number;
   pinned_at?: number;
   pinned_by?: string;
+  /** Disappearing messages: expiry as unix seconds. Undefined = keep forever. */
+  expires_at?: number;
   isEncrypted?: boolean;
   e2eeType?: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none';
   reactions?: MessageReaction[];
