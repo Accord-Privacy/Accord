@@ -41,7 +41,10 @@ struct TestServer {
 
 impl TestServer {
     async fn new() -> Self {
-        let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
+        // Federation routes are gated on the mesh being enabled
+        let mut app_state = AppState::new_in_memory().await.unwrap();
+        app_state.federation_enabled = true;
+        let state: SharedState = Arc::new(app_state);
 
         let app = Router::new()
             .route("/federation/relays", get(list_relays_handler))

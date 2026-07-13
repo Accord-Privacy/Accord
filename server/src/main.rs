@@ -257,6 +257,10 @@ struct Args {
     #[arg(long, default_value = "off")]
     build_hash_enforcement: String,
 
+    /// DEV/LOAD-TESTING ONLY: disable all rate limiting. Never use in production.
+    #[arg(long)]
+    disable_rate_limits: bool,
+
     /// Enable relay mesh networking for cross-relay DMs
     #[arg(long)]
     mesh_enabled: bool,
@@ -555,6 +559,11 @@ async fn main() -> Result<()> {
     let mut app_state =
         AppState::new_with_encryption(&args.database, args.database_encryption).await?;
     app_state.metadata_mode = metadata_mode;
+    app_state.federation_enabled = args.mesh_enabled;
+    if args.disable_rate_limits {
+        warn!("RATE LIMITING DISABLED (--disable-rate-limits) — dev/load-testing only, NEVER production");
+        app_state.rate_limiter = rate_limit::RateLimiter::new_disabled();
+    }
 
     // Parse build hash enforcement mode
     let build_hash_enforcement: state::BuildHashEnforcementMode = args

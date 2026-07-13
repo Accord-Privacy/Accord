@@ -96,7 +96,6 @@ function fingerprint(publicKeyHash: string): string {
 // Initialize theme immediately on module load (before first render)
 initTheme();
 
-/** Distribute a sender key to all channel members via WS. */
 // Legacy (pre-Sender-Keys) channel crypto derives the key from the channel ID,
 // which the relay also knows — it is NOT E2EE. Only allowed as an explicit
 // compatibility opt-in for channels with old clients.

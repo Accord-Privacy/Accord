@@ -192,6 +192,8 @@ pub struct AppState {
     pub node_creation_policy: NodeCreationPolicy,
     /// Rate limiter
     pub rate_limiter: RateLimiter,
+    /// True only when the relay mesh is enabled — gates /federation/* routes.
+    pub federation_enabled: bool,
     /// Build hash verification
     pub build_verification: BuildVerification,
     /// Metadata storage mode (standard or minimal)
@@ -247,6 +249,7 @@ impl AppState {
             client_build_hashes: RwLock::new(HashMap::new()),
             build_hash_enforcement: BuildHashEnforcementMode::default(),
             mesh_handle: RwLock::new(None),
+            federation_enabled: false,
             link_preview_cache: RwLock::new(HashMap::new()),
             last_activity: RwLock::new(HashMap::new()),
             slow_mode_cooldowns: RwLock::new(HashMap::new()),

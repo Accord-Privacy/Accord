@@ -3,7 +3,10 @@
 # Accord WebSocket Load Test Script
 #
 # Tests concurrent WebSocket connections and message relay against a running
-# Accord server. Requires the server to be running first.
+# Accord server. Requires the server to be running first — and, for more than
+# ~20 connections, started with --disable-rate-limits (registration is limited
+# to 20/hour otherwise):
+#   ./target/debug/accord-server --no-tls --disable-rate-limits --database /tmp/loadtest.db
 #
 # Usage:
 #   ./scripts/load-test.sh [OPTIONS]
@@ -124,16 +127,21 @@ ws_connect() {
     # For real load testing, use the Rust binary or websocat
     local connect_start=$(date +%s%N)
 
-    # Try to establish connection using curl (WebSocket upgrade)
-    if curl -sf --max-time 10 \
+    # WebSocket upgrade via curl: success is HTTP 101 Switching Protocols.
+    # curl then sits on the open socket until --max-time — that's expected,
+    # so we read the status code rather than curl's exit code.
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
         -H "Connection: Upgrade" \
         -H "Upgrade: websocket" \
         -H "Sec-WebSocket-Version: 13" \
         -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-        "${BASE_URL}/ws?token=${token}" \
-        > /dev/null 2>&1; then
+        "${BASE_URL}/ws?token=${token}" 2>/dev/null) || true
+    if [ "$code" = "101" ]; then
         local connect_end=$(date +%s%N)
-        local latency=$(( (connect_end - connect_start) / 1000000 ))
+        # Latency includes the 101 handshake but not the 3s socket hold
+        local latency=$(( (connect_end - connect_start) / 1000000 - 3000 ))
+        (( latency < 0 )) && latency=0
         echo "ok ${latency}" > "$result_file"
     else
         echo "fail" > "$result_file"

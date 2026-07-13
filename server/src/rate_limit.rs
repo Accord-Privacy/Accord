@@ -82,6 +82,8 @@ pub struct RateLimiter {
     windows: Arc<RwLock<WindowMap>>,
     /// Tracks timestamps of actions per (ip, action_type)
     ip_windows: Arc<RwLock<IpWindowMap>>,
+    /// When true, every check passes. Dev/load-testing only — never production.
+    disabled: bool,
 }
 
 impl RateLimiter {
@@ -90,11 +92,23 @@ impl RateLimiter {
         Self {
             windows: Arc::new(RwLock::new(HashMap::new())),
             ip_windows: Arc::new(RwLock::new(HashMap::new())),
+            disabled: false,
+        }
+    }
+
+    /// Create a rate limiter that allows everything (dev/load-testing only).
+    pub fn new_disabled() -> Self {
+        Self {
+            disabled: true,
+            ..Self::new()
         }
     }
 
     /// Check if an action is allowed for an IP address (for auth/registration)
     pub async fn check_ip(&self, ip: &str, action: ActionType) -> Result<(), RateLimitError> {
+        if self.disabled {
+            return Ok(());
+        }
         let mut windows = self.ip_windows.write().await;
         let now = Instant::now();
         let window_duration = action.window_duration();
@@ -141,6 +155,9 @@ impl RateLimiter {
 
     /// Check if an action is allowed for a user
     pub async fn check(&self, user_id: Uuid, action: ActionType) -> Result<(), RateLimitError> {
+        if self.disabled {
+            return Ok(());
+        }
         let mut windows = self.windows.write().await;
         let now = Instant::now();
         let window_duration = action.window_duration();

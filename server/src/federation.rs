@@ -103,10 +103,27 @@ fn validate_mesh_secret(
 
 // ── Handlers ──
 
+/// Reject all federation traffic unless the relay mesh is explicitly enabled.
+/// Without this, a default (mesh-disabled) deployment would still accept
+/// unauthenticated `/federation/register` writes to its known-relays table.
+fn require_mesh_enabled(state: &SharedState) -> Result<(), (StatusCode, Json<ErrorBody>)> {
+    if state.federation_enabled {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: "Federation is not enabled on this relay".to_string(),
+            }),
+        ))
+    }
+}
+
 /// `GET /federation/relays` — list all known relays
 pub async fn list_relays_handler(
     State(state): State<SharedState>,
 ) -> Result<Json<RelayListResponse>, (StatusCode, Json<ErrorBody>)> {
+    require_mesh_enabled(&state)?;
     let relays = state.db.list_known_relays().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -128,6 +145,7 @@ pub async fn register_relay_handler(
     headers: HeaderMap,
     Json(req): Json<RegisterRelayRequest>,
 ) -> Result<Json<RegisterRelayResponse>, (StatusCode, Json<ErrorBody>)> {
+    require_mesh_enabled(&state)?;
     validate_mesh_secret(&state, &headers)?;
 
     // Basic validation
@@ -173,6 +191,7 @@ pub async fn heartbeat_handler(
     headers: HeaderMap,
     Json(req): Json<HeartbeatRequest>,
 ) -> Result<Json<HeartbeatResponse>, (StatusCode, Json<ErrorBody>)> {
+    require_mesh_enabled(&state)?;
     validate_mesh_secret(&state, &headers)?;
 
     if req.relay_id.is_empty() {
@@ -330,10 +349,36 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
     use std::sync::Arc;
 
-    /// Build an in-memory SharedState for tests.
-    /// mesh_handle defaults to None → open federation (no secret required).
+    /// Build an in-memory SharedState for tests with federation enabled
+    /// (mesh_secret unset → open federation, no secret required).
     async fn make_test_state() -> SharedState {
+        let mut state = AppState::new_in_memory().await.unwrap();
+        state.federation_enabled = true;
+        Arc::new(state)
+    }
+
+    /// Federation disabled (the default deployment shape).
+    async fn make_disabled_state() -> SharedState {
         Arc::new(AppState::new_in_memory().await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_federation_routes_gated_when_mesh_disabled() {
+        let state = make_disabled_state().await;
+        let req = RegisterRelayRequest {
+            relay_id: "r1".into(),
+            hostname: "relay.example".into(),
+            port: 443,
+            public_key: "pk".into(),
+        };
+        let result =
+            register_relay_handler(State(state.clone()), HeaderMap::new(), Json(req)).await;
+        let (status, _) = result.expect_err("must be rejected when mesh disabled");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let result = list_relays_handler(State(state)).await;
+        let (status, _) = result.expect_err("list must be rejected when mesh disabled");
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     /// Build a HeaderMap with the given x-mesh-secret value.
