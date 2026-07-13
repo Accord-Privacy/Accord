@@ -48,11 +48,10 @@ jobs:
 
       - name: Build Tauri app (Windows)
         working-directory: desktop
-        run: cargo tauri build
-        env:
-          # Code signing (set these as repo secrets when ready)
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        # Per-push CI smoke build: disable updater artifacts so this job never
+        # needs the release signing key. Signed updater artifacts are produced
+        # only by release.yml (which has the real TAURI_SIGNING_* secrets).
+        run: cargo tauri build --config tauri.ci.conf.json
 
       - name: Upload NSIS installer
         uses: actions/upload-artifact@v4
