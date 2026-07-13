@@ -183,6 +183,14 @@ export const AppModals: React.FC = () => {
         </div>
       )}
 
+      {/* Informational (non-error) notice */}
+      {ctx.notice && (
+        <div className="notice-toast" role="status">
+          <span className="notice-toast-text">{ctx.notice}</span>
+          <button onClick={() => ctx.setNotice("")} className="notice-toast-close" aria-label="Dismiss">×</button>
+        </div>
+      )}
+
       {/* Join/Create Node Modal */}
       {ctx.showJoinNodeModal && !ctx.showCreateNodeModal && (
         <div className="modal-overlay" onKeyDown={(e) => { if (e.key === 'Escape') { ctx.setShowJoinNodeModal(false); ctx.setJoinInviteCode(""); ctx.setJoinError(""); } joinNodeTrap.handleKeyDown(e); }}>

@@ -64,7 +64,7 @@ try {
   await alice.type(".dm-search-input", BOB);
   await alice.waitFor(".dm-create-item", 5000);
   await alice.click(".dm-create-item");
-  await alice.waitFor("text=friend request sent", 10000);
+  await alice.waitFor("text=Friend request sent", 10000);
 
   step("friends: bob accepts (request appears via poll)");
   await bob.waitFor(".friend-request-row", 25000);

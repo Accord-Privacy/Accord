@@ -306,6 +306,7 @@ function App() {
     showDeleteConfirm, setShowDeleteConfirm,
     replyingTo, setReplyingTo,
     error, setError,
+    notice, setNotice,
   } = ui;
 
   // Node discovery state
@@ -2204,12 +2205,16 @@ function App() {
         }
         try {
           await api.sendFriendRequest(targetUserId, nodeId);
-          setError('Not friends yet — friend request sent. You can DM once they accept.');
+          setNotice('Friend request sent — you can DM once they accept.');
+          setTimeout(() => setNotice(''), 5000);
         } catch (frError) {
           const frMsg = frError instanceof Error ? frError.message : String(frError);
-          setError(frMsg.includes('already')
-            ? 'Friend request already pending.'
-            : `Could not send friend request: ${frMsg}`);
+          if (frMsg.includes('already')) {
+            setNotice('Friend request already pending.');
+            setTimeout(() => setNotice(''), 5000);
+          } else {
+            setError(`Could not send friend request: ${frMsg}`);
+          }
         }
         return null;
       }
@@ -4024,6 +4029,7 @@ function App() {
     inviteGenerating, setInviteGenerating,
     handleGenerateInviteWithOptions,
     error, setError,
+    notice, setNotice,
 
     // Voice
     voiceChannelId, setVoiceChannelId,

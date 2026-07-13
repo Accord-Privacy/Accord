@@ -124,8 +124,12 @@ export function useUIState() {
 
   // Error banner
   const [error, setError] = useState<string>("");
+  // Informational (non-error) banner — e.g. "friend request sent". Rendered
+  // in a neutral/success style, never the red error toast.
+  const [notice, setNotice] = useState<string>("");
 
   return {
+    notice, setNotice,
     customStatus, setCustomStatus,
     showStatusPopover, setShowStatusPopover,
     statusInput, setStatusInput,

@@ -138,6 +138,8 @@ export interface AppContextType {
   handleGenerateInviteWithOptions: (expiry?: string, maxUses?: string) => Promise<void>;
   error: string;
   setError: React.Dispatch<React.SetStateAction<string>>;
+  notice: string;
+  setNotice: React.Dispatch<React.SetStateAction<string>>;
 
   // Voice
   voiceChannelId: string | null;

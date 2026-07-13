@@ -65,6 +65,44 @@ button {
   opacity: 1;
 }
 
+/* Informational (non-error) toast — neutral accent, sits below the error slot */
+.notice-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: var(--accent);
+  color: var(--text-primary);
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  z-index: 1001;
+  max-width: 340px;
+  font-size: var(--font-base);
+  box-shadow: var(--shadow-high);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: toast-in 0.2s ease-out;
+}
+
+.notice-toast-text {
+  flex: 1;
+}
+
+.notice-toast-close {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--font-xl);
+  padding: 0;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
+}
+
+.notice-toast-close:hover {
+  opacity: 1;
+}
+
 /* =================== Loading / Connecting States =================== */
 
 @keyframes spin {
