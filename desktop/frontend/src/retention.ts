@@ -14,6 +14,8 @@
 
 const nodeKey = (nodeId: string) => `accord_retention_node_${nodeId}`;
 const channelKey = (channelId: string) => `accord_retention_chan_${channelId}`;
+const ssNodeKey = (nodeId: string) => `accord_ssprotect_node_${nodeId}`;
+const ssChannelKey = (channelId: string) => `accord_ssprotect_chan_${channelId}`;
 
 /** Retention choices offered in the UI. `secs === 0` means "keep forever". */
 export const RETENTION_PRESETS: ReadonlyArray<{ label: string; secs: number }> = [
@@ -101,51 +103,119 @@ export function wipeOldCutoff(
 }
 
 // ---------------------------------------------------------------------------
-// Distribution: serialize the whole node policy for the NMK-encrypted metadata
-// blob, and apply a received one so every member's client expires messages the
-// same way. The relay only ever stores the encrypted form.
+// Screenshot protection — a per-node/channel policy that asks the OS to exclude
+// the window from screen capture while a protected channel is open. Local by
+// nature (each viewer's window), but distributed so a "confidential" node can
+// auto-enable it for every member. `true` = protect. Honest scope: reliable on
+// Windows/macOS, best-effort on Linux (most Wayland compositors ignore it).
 // ---------------------------------------------------------------------------
 
-interface SerializedRetention {
-  v: 1;
-  node: number;
-  channels: Record<string, number>;
+function readBool(key: string): boolean | null {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return null;
+  return raw === "1" || raw === "true";
 }
 
-/** Serialize a node's retention policy (node default + the overrides among `channelIds`). */
-export function serializeNodeRetention(nodeId: string, channelIds: string[]): string {
-  const channels: Record<string, number> = {};
-  for (const cid of channelIds) {
-    const override = getChannelRetentionOverride(cid);
-    if (override !== null) channels[cid] = override;
+export function getNodeScreenshotProtect(nodeId: string): boolean {
+  return readBool(ssNodeKey(nodeId)) ?? false;
+}
+
+export function setNodeScreenshotProtect(nodeId: string, on: boolean): void {
+  localStorage.setItem(ssNodeKey(nodeId), on ? "1" : "0");
+}
+
+export function getChannelScreenshotOverride(channelId: string): boolean | null {
+  return readBool(ssChannelKey(channelId));
+}
+
+export function setChannelScreenshotProtect(channelId: string, on: boolean | null): void {
+  if (on === null) {
+    localStorage.removeItem(ssChannelKey(channelId));
+    return;
   }
-  const payload: SerializedRetention = { v: 1, node: getNodeRetention(nodeId), channels };
+  localStorage.setItem(ssChannelKey(channelId), on ? "1" : "0");
+}
+
+/** Effective screenshot protection for a channel: override wins, else node default. */
+export function effectiveScreenshotProtect(
+  nodeId: string | undefined,
+  channelId: string
+): boolean {
+  const override = getChannelScreenshotOverride(channelId);
+  if (override !== null) return override;
+  return nodeId ? getNodeScreenshotProtect(nodeId) : false;
+}
+
+// ---------------------------------------------------------------------------
+// Distribution: serialize the whole node policy (retention + screenshot) for the
+// NMK-encrypted metadata blob, and apply a received one so every member's client
+// behaves the same. The relay only ever stores the encrypted form.
+// ---------------------------------------------------------------------------
+
+interface SerializedSettings {
+  v: 1;
+  retention: { node: number; channels: Record<string, number> };
+  screenshot: { node: boolean; channels: Record<string, boolean> };
+}
+
+/** Serialize a node's disappearing + screenshot policy (defaults + overrides among `channelIds`). */
+export function serializeNodeSettings(nodeId: string, channelIds: string[]): string {
+  const retChannels: Record<string, number> = {};
+  const ssChannels: Record<string, boolean> = {};
+  for (const cid of channelIds) {
+    const ret = getChannelRetentionOverride(cid);
+    if (ret !== null) retChannels[cid] = ret;
+    const ss = getChannelScreenshotOverride(cid);
+    if (ss !== null) ssChannels[cid] = ss;
+  }
+  const payload: SerializedSettings = {
+    v: 1,
+    retention: { node: getNodeRetention(nodeId), channels: retChannels },
+    screenshot: { node: getNodeScreenshotProtect(nodeId), channels: ssChannels },
+  };
   return JSON.stringify(payload);
 }
 
 /**
- * Apply a distributed retention policy into the local store. Returns true if
- * anything changed (so the caller can re-sweep). Malformed/unknown-version
- * input is ignored.
+ * Apply a distributed node settings blob into the local store. Returns true if
+ * anything changed. Malformed/unknown-version input is ignored. Also reads the
+ * pre-screenshot format (`{v:1, node, channels}` = retention only).
  */
-export function applyNodeRetention(nodeId: string, json: string): boolean {
-  let payload: SerializedRetention;
+export function applyNodeSettings(nodeId: string, json: string): boolean {
+  let payload: any;
   try {
     payload = JSON.parse(json);
   } catch {
     return false;
   }
   if (!payload || payload.v !== 1) return false;
+  // Legacy retention-only blob: promote its top-level fields into `retention`.
+  const retention = payload.retention ?? { node: payload.node, channels: payload.channels };
   let changed = false;
-  if (typeof payload.node === "number" && payload.node >= 0) {
-    if (getNodeRetention(nodeId) !== payload.node) changed = true;
-    setNodeRetention(nodeId, payload.node);
+
+  if (retention && typeof retention.node === "number" && retention.node >= 0) {
+    if (getNodeRetention(nodeId) !== retention.node) changed = true;
+    setNodeRetention(nodeId, retention.node);
   }
-  if (payload.channels && typeof payload.channels === "object") {
-    for (const [cid, ttl] of Object.entries(payload.channels)) {
+  if (retention && retention.channels && typeof retention.channels === "object") {
+    for (const [cid, ttl] of Object.entries(retention.channels)) {
       if (typeof ttl === "number" && ttl >= 0) {
         if (getChannelRetentionOverride(cid) !== ttl) changed = true;
         setChannelRetention(cid, ttl);
+      }
+    }
+  }
+
+  const ss = payload.screenshot;
+  if (ss && typeof ss.node === "boolean") {
+    if (getNodeScreenshotProtect(nodeId) !== ss.node) changed = true;
+    setNodeScreenshotProtect(nodeId, ss.node);
+  }
+  if (ss && ss.channels && typeof ss.channels === "object") {
+    for (const [cid, on] of Object.entries(ss.channels)) {
+      if (typeof on === "boolean") {
+        if (getChannelScreenshotOverride(cid) !== on) changed = true;
+        setChannelScreenshotProtect(cid, on);
       }
     }
   }

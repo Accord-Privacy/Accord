@@ -43,7 +43,7 @@ import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, typ
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { wipeLocalData } from "./wipe";
 import { setDuressPassword, isDuressConfigured } from "./duress";
-import { effectiveTtl, expiryForNow, applyNodeRetention, serializeNodeRetention } from "./retention";
+import { effectiveTtl, expiryForNow, applyNodeSettings, serializeNodeSettings, effectiveScreenshotProtect } from "./retention";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -409,6 +409,9 @@ function App() {
   // messageId → plaintext of our own sent messages. We can't decrypt our own
   // sender-key envelopes, so this (persisted encrypted) keeps history readable.
   const ownMessagesRef = useRef<Map<string, string>>(new Map());
+  // nodeId → ms timestamp of our last local settings publish. Used to ignore the
+  // metadata_updated echo of our own change (our local state is authoritative).
+  const settingsPublishedAtRef = useRef<Map<string, number>>(new Map());
 
   // Disappearing messages: drop the given message ids from the own-message
   // plaintext cache and re-persist, so expired/purged messages leave no local
@@ -449,14 +452,18 @@ function App() {
   // under the node's NMK (the relay only ever stores the ciphertext). Called by
   // NodeSettings after an admin changes retention. No NMK → local-only (nothing
   // to distribute yet), which is safe: senders still stamp their own messages.
-  const publishNodeRetention = useCallback(async (nodeId: string, channelIds: string[]) => {
+  const publishNodeSettings = useCallback(async (nodeId: string, channelIds: string[]) => {
     const nmk = nmkStoreRef.current.get(nodeId);
     if (!nmk) return;
+    // Our local state is authoritative right after we publish. The PUT triggers a
+    // metadata_updated broadcast back to us; suppress re-applying our own echo for a
+    // moment so a stale earlier publish can't clobber a newer local change.
+    settingsPublishedAtRef.current.set(nodeId, Date.now());
     try {
-      const blob = nmk.encryptToBase64(serializeNodeRetention(nodeId, channelIds));
+      const blob = nmk.encryptToBase64(serializeNodeSettings(nodeId, channelIds));
       await api.updateEncryptedMetadata(nodeId, { node: { encrypted_settings: blob } });
     } catch (e) {
-      console.warn('Failed to publish retention policy:', e);
+      console.warn('Failed to publish node settings:', e);
     }
   }, []);
   // nodeId → Node Metadata Key. Creator derives it; members receive it over DR.
@@ -506,6 +513,17 @@ function App() {
     const timer = setInterval(sweepExpiredMessages, 30_000);
     return () => clearInterval(timer);
   }, [sweepExpiredMessages]);
+
+  // Screenshot protection: ask the OS to exclude the window from screen capture
+  // while the viewed channel's policy calls for it. Re-runs on channel switch and
+  // when a distributed policy is adopted (forceUpdate bump). No-op off Win/macOS.
+  useEffect(() => {
+    const protect = selectedChannelId
+      ? effectiveScreenshotProtect(selectedNodeId ?? undefined, selectedChannelId)
+      : false;
+    (window as any).__TAURI__?.core?.invoke('set_content_protected', { enabled: protect })
+      .catch(() => {});
+  }, [selectedChannelId, selectedNodeId, forceUpdate]);
 
   // Idle detection: after 5 min of no mouse/keyboard activity, set status to idle
   // (unless user explicitly chose dnd or invisible)
@@ -921,10 +939,13 @@ function App() {
         if (cancelled) return;
         const dec = decryptMetadataBundle(bundle, nmk);
         setDecryptedMeta(prev => new Map(prev).set(selectedNodeId, dec));
-        // Adopt the node's distributed disappearing-messages policy so this
-        // client expires messages the same way every other member does.
-        if (dec.settings && applyNodeRetention(selectedNodeId, dec.settings)) {
+        // Adopt the node's distributed policy (disappearing messages + screenshot
+        // protection) so this client behaves the same as every other member —
+        // unless we just published it ourselves (our local state is newer).
+        const publishedAt = settingsPublishedAtRef.current.get(selectedNodeId) ?? 0;
+        if (dec.settings && Date.now() - publishedAt > 3000 && applyNodeSettings(selectedNodeId, dec.settings)) {
           sweepExpiredMessages();
+          setForceUpdate(prev => prev + 1);
         }
       })
       .catch(e => console.warn('Failed to fetch encrypted metadata:', e));
@@ -4286,7 +4307,7 @@ function App() {
     showRolePopup, setShowRolePopup,
 
     // ---- Handlers ----
-    handleAuth, handleLogout, handlePanicWipe, handleConfigureDuress, duressConfigured, publishNodeRetention, handleSendMessage, handleRetryMessage,
+    handleAuth, handleLogout, handlePanicWipe, handleConfigureDuress, duressConfigured, publishNodeSettings, handleSendMessage, handleRetryMessage,
     handleSaveEdit, handleCancelEdit, handleDeleteMessage,
     handleReply, handleCancelReply,
     handleAddReaction, handleRemoveReaction, handleToggleReaction,

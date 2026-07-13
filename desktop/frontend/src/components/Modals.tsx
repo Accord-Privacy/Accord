@@ -420,7 +420,7 @@ export const AppModals: React.FC = () => {
                 const member = ctx.members.find(m => m.user_id === userId);
                 return member ? ctx.displayName(member.user) : '';
               }}
-              onPublishRetention={ctx.publishNodeRetention}
+              onPublishSettings={ctx.publishNodeSettings}
             />
           </Suspense>
         );

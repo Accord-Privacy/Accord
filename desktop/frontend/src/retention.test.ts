@@ -8,8 +8,13 @@ import {
   expiryForNow,
   isExpired,
   wipeOldCutoff,
-  serializeNodeRetention,
-  applyNodeRetention,
+  serializeNodeSettings,
+  applyNodeSettings,
+  getNodeScreenshotProtect,
+  setNodeScreenshotProtect,
+  getChannelScreenshotOverride,
+  setChannelScreenshotProtect,
+  effectiveScreenshotProtect,
 } from "./retention";
 
 const NODE = "node-1";
@@ -87,46 +92,83 @@ describe("retention policy", () => {
   });
 });
 
-describe("retention distribution", () => {
+describe("screenshot protection", () => {
   beforeEach(() => localStorage.clear());
 
-  it("serializes node default + only the channels with overrides", () => {
-    setNodeRetention(NODE, 86400);
-    setChannelRetention("c1", 3600);
-    // c2 has no override; c3 isn't in the node's channel list.
-    setChannelRetention("c3", 60);
-    const json = serializeNodeRetention(NODE, ["c1", "c2"]);
-    const parsed = JSON.parse(json);
-    expect(parsed).toEqual({ v: 1, node: 86400, channels: { c1: 3600 } });
+  it("defaults to off; node default applies without an override", () => {
+    expect(getNodeScreenshotProtect(NODE)).toBe(false);
+    expect(effectiveScreenshotProtect(NODE, CHAN)).toBe(false);
+    setNodeScreenshotProtect(NODE, true);
+    expect(effectiveScreenshotProtect(NODE, CHAN)).toBe(true);
   });
 
-  it("applies a distributed policy into the local store", () => {
-    const json = JSON.stringify({ v: 1, node: 86400, channels: { c1: 3600, c2: 0 } });
-    expect(applyNodeRetention(NODE, json)).toBe(true);
+  it("channel override wins and can be cleared", () => {
+    setNodeScreenshotProtect(NODE, true);
+    setChannelScreenshotProtect(CHAN, false);
+    expect(getChannelScreenshotOverride(CHAN)).toBe(false);
+    expect(effectiveScreenshotProtect(NODE, CHAN)).toBe(false);
+    setChannelScreenshotProtect(CHAN, null);
+    expect(getChannelScreenshotOverride(CHAN)).toBeNull();
+    expect(effectiveScreenshotProtect(NODE, CHAN)).toBe(true);
+  });
+
+  it("DM channels (no node) use only their own override", () => {
+    expect(effectiveScreenshotProtect(undefined, CHAN)).toBe(false);
+    setChannelScreenshotProtect(CHAN, true);
+    expect(effectiveScreenshotProtect(undefined, CHAN)).toBe(true);
+  });
+});
+
+describe("node settings distribution", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("serializes retention + screenshot with only the overridden channels", () => {
+    setNodeRetention(NODE, 86400);
+    setChannelRetention("c1", 3600);
+    setNodeScreenshotProtect(NODE, true);
+    setChannelScreenshotProtect("c1", false);
+    const parsed = JSON.parse(serializeNodeSettings(NODE, ["c1", "c2"]));
+    expect(parsed).toEqual({
+      v: 1,
+      retention: { node: 86400, channels: { c1: 3600 } },
+      screenshot: { node: true, channels: { c1: false } },
+    });
+  });
+
+  it("applies a distributed settings blob into the local store", () => {
+    const json = JSON.stringify({
+      v: 1,
+      retention: { node: 86400, channels: { c1: 0 } },
+      screenshot: { node: true, channels: { c1: false } },
+    });
+    expect(applyNodeSettings(NODE, json)).toBe(true);
     expect(getNodeRetention(NODE)).toBe(86400);
-    expect(getChannelRetentionOverride("c1")).toBe(3600);
-    expect(getChannelRetentionOverride("c2")).toBe(0);
-    expect(effectiveTtl(NODE, "c1")).toBe(3600);
+    expect(getChannelRetentionOverride("c1")).toBe(0);
+    expect(getNodeScreenshotProtect(NODE)).toBe(true);
+    expect(getChannelScreenshotOverride("c1")).toBe(false);
   });
 
   it("round-trips serialize → apply", () => {
     setNodeRetention(NODE, 604800);
-    setChannelRetention("c1", 3600);
-    const json = serializeNodeRetention(NODE, ["c1", "c2"]);
+    setNodeScreenshotProtect(NODE, true);
+    setChannelScreenshotProtect("c1", true);
+    const json = serializeNodeSettings(NODE, ["c1", "c2"]);
     localStorage.clear();
-    applyNodeRetention(NODE, json);
+    applyNodeSettings(NODE, json);
     expect(getNodeRetention(NODE)).toBe(604800);
-    expect(getChannelRetentionOverride("c1")).toBe(3600);
+    expect(getNodeScreenshotProtect(NODE)).toBe(true);
+    expect(getChannelScreenshotOverride("c1")).toBe(true);
   });
 
-  it("reports no change when applying an identical policy", () => {
-    setNodeRetention(NODE, 3600);
-    expect(applyNodeRetention(NODE, JSON.stringify({ v: 1, node: 3600, channels: {} }))).toBe(false);
+  it("still reads the legacy retention-only blob format", () => {
+    expect(applyNodeSettings(NODE, JSON.stringify({ v: 1, node: 3600, channels: { c1: 60 } }))).toBe(true);
+    expect(getNodeRetention(NODE)).toBe(3600);
+    expect(getChannelRetentionOverride("c1")).toBe(60);
   });
 
   it("ignores malformed or unknown-version payloads", () => {
-    expect(applyNodeRetention(NODE, "not json")).toBe(false);
-    expect(applyNodeRetention(NODE, JSON.stringify({ v: 2, node: 3600 }))).toBe(false);
+    expect(applyNodeSettings(NODE, "not json")).toBe(false);
+    expect(applyNodeSettings(NODE, JSON.stringify({ v: 2 }))).toBe(false);
     expect(getNodeRetention(NODE)).toBe(0);
   });
 });

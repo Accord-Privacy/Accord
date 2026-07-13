@@ -127,9 +127,14 @@ function selectOption(target: string, value: string): string {
   const el = find(target);
   if (!el) throw new Error(`select: no element for ${target}`);
   const sel = el as HTMLSelectElement;
+  const previous = sel.value;
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
   sel.focus();
   setter.call(sel, value);
+  // Reset React's value tracker to the OLD value so a controlled <select> reliably
+  // sees this as a change (otherwise a rapid second change can be dropped).
+  const tracker = (sel as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
+  if (tracker) tracker.setValue(previous);
   sel.dispatchEvent(new Event("input", { bubbles: true }));
   sel.dispatchEvent(new Event("change", { bubbles: true }));
   return describe(sel);

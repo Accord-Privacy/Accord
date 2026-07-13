@@ -26,6 +26,18 @@ fn set_voice_capture_armed(armed: bool) {
     VOICE_CAPTURE_ARMED.store(armed, Ordering::SeqCst);
 }
 
+/// Screenshot protection: exclude the window from OS screen capture / recording.
+/// Enforced by the compositor — reliable on Windows (WDA_EXCLUDEFROMCAPTURE) and
+/// macOS (NSWindowSharingNone); on Linux/Wayland most compositors ignore it, so
+/// it's friction, not a hard boundary (the UI says as much). Applied per the
+/// viewed channel's policy, so it toggles as the user moves between channels.
+#[tauri::command]
+fn set_content_protected(window: tauri::Window, enabled: bool) -> Result<(), String> {
+    window
+        .set_content_protected(enabled)
+        .map_err(|e| e.to_string())
+}
+
 /// Get the Accord config directory (e.g. ~/.config/accord or platform equivalent)
 fn config_dir() -> Result<PathBuf, String> {
     let base = dirs::config_dir().ok_or("Could not determine config directory")?;
@@ -405,6 +417,7 @@ fn main() {
             list_identities,
             get_device_identity,
             set_voice_capture_armed,
+            set_content_protected,
             get_or_create_smk,
             delete_smk,
         ])

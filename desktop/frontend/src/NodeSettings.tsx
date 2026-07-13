@@ -8,6 +8,10 @@ import {
   setNodeRetention as persistNodeRetention,
   getChannelRetentionOverride,
   setChannelRetention as persistChannelRetention,
+  getNodeScreenshotProtect,
+  setNodeScreenshotProtect as persistNodeScreenshot,
+  getChannelScreenshotOverride,
+  setChannelScreenshotProtect as persistChannelScreenshot,
 } from './retention';
 
 interface Invite {
@@ -28,8 +32,8 @@ interface NodeSettingsProps {
   onLeaveNode?: () => void;
   onShowTemplateImport?: () => void;
   resolveUserName?: (userId: string) => string;
-  /** Distribute this node's disappearing-messages policy to members (NMK-encrypted). */
-  onPublishRetention?: (nodeId: string, channelIds: string[]) => void;
+  /** Distribute this node's disappearing + screenshot policy to members (NMK-encrypted). */
+  onPublishSettings?: (nodeId: string, channelIds: string[]) => void;
 }
 
 export function NodeSettings({ 
@@ -42,7 +46,7 @@ export function NodeSettings({
   onLeaveNode,
   onShowTemplateImport,
   resolveUserName,
-  onPublishRetention,
+  onPublishSettings,
 }: NodeSettingsProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'members' | 'invites' | 'roles' | 'audit' | 'moderation' | 'emojis'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -96,6 +100,9 @@ export function NodeSettings({
   // overrides (null = inherit the node default). Policy is local + distributed via NMK.
   const [nodeRetention, setNodeRetentionState] = useState<number>(0);
   const [channelRetention, setChannelRetentionState] = useState<Record<string, number | null>>({});
+  // Screenshot protection: node default (bool) + per-channel overrides (null = inherit).
+  const [nodeScreenshot, setNodeScreenshotState] = useState<boolean>(false);
+  const [channelScreenshot, setChannelScreenshotState] = useState<Record<string, boolean | null>>({});
   const [nodeChannels, setNodeChannels] = useState<Array<{ id: string; name: string }>>([]);
 
   // Custom emoji state
@@ -448,25 +455,45 @@ export function NodeSettings({
         } catch { /* ignore */ }
       }
       setSlowModeChannels(modes);
-      // Load disappearing-messages policy (local; distributed via NMK).
+      // Load disappearing-messages + screenshot policy (local; distributed via NMK).
       setNodeRetentionState(getNodeRetention(node.id));
+      setNodeScreenshotState(getNodeScreenshotProtect(node.id));
       const retentions: Record<string, number | null> = {};
-      for (const ch of channels) retentions[ch.id] = getChannelRetentionOverride(ch.id);
+      const screenshots: Record<string, boolean | null> = {};
+      for (const ch of channels) {
+        retentions[ch.id] = getChannelRetentionOverride(ch.id);
+        screenshots[ch.id] = getChannelScreenshotOverride(ch.id);
+      }
       setChannelRetentionState(retentions);
+      setChannelScreenshotState(screenshots);
     } catch { /* ignore */ }
   }, [node.id, token]);
 
   const handleSetNodeRetention = useCallback((seconds: number) => {
     persistNodeRetention(node.id, seconds);
     setNodeRetentionState(seconds);
-    onPublishRetention?.(node.id, nodeChannels.map(c => c.id));
+    onPublishSettings?.(node.id, nodeChannels.map(c => c.id));
     setSuccess(seconds > 0 ? 'Node disappearing-messages default set' : 'Node disappearing messages off');
-  }, [node.id, nodeChannels, onPublishRetention]);
+  }, [node.id, nodeChannels, onPublishSettings]);
+
+  const handleSetNodeScreenshot = useCallback((on: boolean) => {
+    persistNodeScreenshot(node.id, on);
+    setNodeScreenshotState(on);
+    onPublishSettings?.(node.id, nodeChannels.map(c => c.id));
+    setSuccess(on ? 'Screenshot protection on for this node' : 'Screenshot protection off');
+  }, [node.id, nodeChannels, onPublishSettings]);
+
+  const handleSetChannelScreenshot = useCallback((channelId: string, on: boolean | null) => {
+    persistChannelScreenshot(channelId, on);
+    setChannelScreenshotState(prev => ({ ...prev, [channelId]: on }));
+    onPublishSettings?.(node.id, nodeChannels.map(c => c.id));
+    setSuccess('Channel screenshot protection updated');
+  }, [node.id, nodeChannels, onPublishSettings]);
 
   const handleSetChannelRetention = useCallback(async (channelId: string, seconds: number | null) => {
     persistChannelRetention(channelId, seconds);
     setChannelRetentionState(prev => ({ ...prev, [channelId]: seconds }));
-    onPublishRetention?.(node.id, nodeChannels.map(c => c.id));
+    onPublishSettings?.(node.id, nodeChannels.map(c => c.id));
     // Wipe-old: immediately purge messages already older than the effective TTL.
     const effective = seconds !== null ? seconds : nodeRetention;
     if (effective > 0) {
@@ -480,7 +507,7 @@ export function NodeSettings({
     } else {
       setSuccess('Channel disappearing messages updated');
     }
-  }, [nodeRetention, node.id, nodeChannels, onPublishRetention]);
+  }, [nodeRetention, node.id, nodeChannels, onPublishSettings]);
 
   const handleSetSlowMode = useCallback(async (channelId: string, seconds: number) => {
     try {
@@ -1137,6 +1164,43 @@ export function NodeSettings({
                       {RETENTION_PRESETS.map(p => (
                         <option key={p.secs} value={p.secs}>{p.label}</option>
                       ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              <h4 className="ns-section-title">📵 Screenshot Protection</h4>
+              <p className="ns-section-desc">
+                Ask the OS to exclude the window from screen capture and recording while a
+                protected channel is open. Reliable on Windows and macOS; on Linux most
+                compositors ignore it, so treat it as friction, not a guarantee.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 32 }}>
+                <div className="ns-channel-row">
+                  <span className="ns-channel-name">Node default</span>
+                  <select
+                    className="ns-select ns-screenshot-node" style={{ width: 'auto' }}
+                    value={nodeScreenshot ? 'on' : 'off'}
+                    onChange={(e) => handleSetNodeScreenshot(e.target.value === 'on')}
+                  >
+                    <option value="off">Off</option>
+                    <option value="on">Protected</option>
+                  </select>
+                </div>
+                {nodeChannels.map(ch => (
+                  <div key={ch.id} className="ns-channel-row">
+                    <span className="ns-channel-name">#{ch.name}</span>
+                    <select
+                      className="ns-select" style={{ width: 'auto' }}
+                      value={channelScreenshot[ch.id] == null ? 'inherit' : channelScreenshot[ch.id] ? 'on' : 'off'}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        handleSetChannelScreenshot(ch.id, v === 'inherit' ? null : v === 'on');
+                      }}
+                    >
+                      <option value="inherit">Use node default</option>
+                      <option value="off">Off</option>
+                      <option value="on">Protected</option>
                     </select>
                   </div>
                 ))}

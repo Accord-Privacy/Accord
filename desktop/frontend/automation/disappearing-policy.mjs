@@ -39,7 +39,7 @@ try {
   const node = JSON.parse(nodesResp.body).find((n) => n.name === NODE);
   assert(node, 'node listed on relay');
 
-  step('alice sets the node disappearing-messages default (Node Settings → Moderation)');
+  step('alice sets node disappearing + screenshot policy (Node Settings → Moderation)');
   await alice.click('.server-header-button');
   await alice.waitFor('text=Node Settings', 8000);
   await alice.click('text=Node Settings');
@@ -48,10 +48,16 @@ try {
   await alice.waitFor('text=Disappearing Messages', 8000);
   await alice.select('.ns-retention-node', String(TTL));
   await alice.waitFor('text=Node disappearing-messages default set', 8000);
+  await alice.select('.ns-screenshot-node', 'on');
+  await alice.waitFor('text=Screenshot protection on for this node', 8000);
 
   assert(
     (await alice.storageGet(`accord_retention_node_${node.id}`)) === String(TTL),
     'alice stored the node retention locally'
+  );
+  assert(
+    (await alice.storageGet(`accord_ssprotect_node_${node.id}`)) === '1',
+    'alice stored screenshot protection locally'
   );
 
   step('relay stored an opaque encrypted_settings blob (not plaintext)');
@@ -62,16 +68,19 @@ try {
   assert(!blob.includes(String(TTL)), 'blob does not leak the TTL in cleartext');
 
   step('bob adopts the distributed policy live (metadata_updated broadcast)');
-  // Poll bob's local store until the policy arrives (broadcast → fetch + decrypt + apply).
-  let applied = null;
+  // Poll bob's local store until BOTH policy fields arrive (broadcast → decrypt → apply).
+  let ret = null;
+  let ss = null;
   for (let i = 0; i < 20; i++) {
-    applied = await bob.storageGet(`accord_retention_node_${node.id}`);
-    if (applied === String(TTL)) break;
+    ret = await bob.storageGet(`accord_retention_node_${node.id}`);
+    ss = await bob.storageGet(`accord_ssprotect_node_${node.id}`);
+    if (ret === String(TTL) && ss === '1') break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  assert(applied === String(TTL), `bob adopted the node retention (${applied})`);
+  assert(ret === String(TTL), `bob adopted the node retention (${ret})`);
+  assert(ss === '1', `bob adopted screenshot protection (${ss})`);
 
-  console.log(`\nDISAPPEARING-POLICY PASS — alice set ${TTL}s; relay stored only ciphertext; bob decrypted + adopted it`);
+  console.log(`\nDISAPPEARING-POLICY PASS — alice set retention ${TTL}s + screenshot protection; relay stored only ciphertext; bob decrypted + adopted both`);
   process.exitCode = 0;
 } catch (e) {
   console.error('\nDISAPPEARING-POLICY FAIL:', e.message);
