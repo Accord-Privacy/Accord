@@ -41,6 +41,7 @@ import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifi
 import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, saveOwnMessages, loadOwnMessages, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
 import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, type DecryptedMetadata } from "./e2ee/metadata";
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
+import { wipeLocalData } from "./wipe";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -3206,6 +3207,23 @@ function App() {
     setInviteError("");
   };
 
+  // Panic wipe — irreversibly destroy ALL local account data on this device,
+  // then hard-reload to a fresh install state. No recovery without the
+  // recovery phrase. Wipes every identity, not just the active one.
+  const handlePanicWipe = useCallback(async () => {
+    const userId = localStorage.getItem('accord_user_id');
+    try {
+      if (ws) ws.disconnect();
+    } catch { /* ignore */ }
+    try {
+      await wipeLocalData(userId, { allIdentities: true });
+    } catch (e) {
+      console.error('Panic wipe error (continuing to reload):', e);
+    }
+    // Hard reload so no decrypted state survives in memory.
+    window.location.reload();
+  }, [ws]);
+
   // Handle sending messages
   const handleSendMessage = async (overrideText?: string) => {
     const msgText = overrideText !== undefined ? overrideText : message;
@@ -4157,7 +4175,7 @@ function App() {
     showRolePopup, setShowRolePopup,
 
     // ---- Handlers ----
-    handleAuth, handleLogout, handleSendMessage, handleRetryMessage,
+    handleAuth, handleLogout, handlePanicWipe, handleSendMessage, handleRetryMessage,
     handleSaveEdit, handleCancelEdit, handleDeleteMessage,
     handleReply, handleCancelReply,
     handleAddReaction, handleRemoveReaction, handleToggleReaction,

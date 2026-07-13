@@ -83,6 +83,12 @@ interface SettingsProps {
   blockedUserNames?: Map<string, string>;
   /** Called when the user clicks Log Out */
   onLogout?: () => void;
+  /** Called to irreversibly wipe all local account data (panic button) */
+  onPanicWipe?: () => void;
+  /** Called to set/clear a duress password (opens decoy + wipes real on use) */
+  onConfigureDuress?: (duressPassword: string | null) => Promise<void>;
+  /** Whether a duress password is currently configured */
+  duressConfigured?: boolean;
 }
 
 type SettingsTab = 'account' | 'appearance' | 'notifications' | 'voice' | 'privacy' | 'advanced' | 'server' | 'about';
@@ -132,9 +138,19 @@ export const Settings: React.FC<SettingsProps> = ({
   onUnblockUser,
   blockedUserNames,
   onLogout,
+  onPanicWipe,
+  onConfigureDuress,
+  duressConfigured,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
   const [showWhatsNew, setShowWhatsNew] = useState(false);
+
+  // Danger-zone state (panic wipe + duress password)
+  const [wipeConfirm, setWipeConfirm] = useState("");
+  const [showWipe, setShowWipe] = useState(false);
+  const [duressInput, setDuressInput] = useState("");
+  const [duressBusy, setDuressBusy] = useState(false);
+  const [duressMsg, setDuressMsg] = useState("");
   
   // Settings state
   const [accountSettings, setAccountSettings] = useState<AccountSettings>(defaultAccountSettings);
@@ -964,6 +980,83 @@ export const Settings: React.FC<SettingsProps> = ({
                     <p className="settings-logout-hint">
                       Your identity keys are saved locally. You can log back in with your password.
                     </p>
+                  </div>
+
+                  {/* ─── Danger zone ─────────────────────────────────────── */}
+                  <div className="settings-danger-zone">
+                    <h4 className="settings-danger-title">Danger zone</h4>
+
+                    {/* Panic wipe */}
+                    <div className="settings-danger-item">
+                      <div className="settings-danger-copy">
+                        <strong>Panic wipe</strong>
+                        <span>Irreversibly destroy every identity key, message, and cached secret on this device. There is no undo and no recovery without your recovery phrase.</span>
+                      </div>
+                      {!showWipe ? (
+                        <button className="btn btn-danger" onClick={() => { setShowWipe(true); setWipeConfirm(""); }}>
+                          Wipe this device
+                        </button>
+                      ) : (
+                        <div className="settings-danger-confirm">
+                          <input
+                            type="text"
+                            placeholder="Type WIPE to confirm"
+                            value={wipeConfirm}
+                            onChange={(e) => setWipeConfirm(e.target.value)}
+                            aria-label="Type WIPE to confirm panic wipe"
+                          />
+                          <button
+                            className="btn btn-danger"
+                            disabled={wipeConfirm !== 'WIPE'}
+                            onClick={() => { onClose(); if (onPanicWipe) setTimeout(onPanicWipe, 100); }}
+                          >
+                            Wipe now
+                          </button>
+                          <button className="btn btn-outline btn-sm" onClick={() => { setShowWipe(false); setWipeConfirm(""); }}>Cancel</button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Duress password */}
+                    {onConfigureDuress && (
+                      <div className="settings-danger-item">
+                        <div className="settings-danger-copy">
+                          <strong>Duress password {duressConfigured ? '(active)' : ''}</strong>
+                          <span>
+                            Set a second password that, when entered at login, opens an empty decoy account <em>and permanently wipes this real one</em>. Use it only if you may be forced to unlock the app. Never enter it by accident — the wipe cannot be undone.
+                          </span>
+                        </div>
+                        <div className="settings-danger-confirm">
+                          <input
+                            type="password"
+                            placeholder={duressConfigured ? "New duress password" : "Set duress password"}
+                            value={duressInput}
+                            onChange={(e) => setDuressInput(e.target.value)}
+                            aria-label="Duress password"
+                          />
+                          <button
+                            className="btn btn-danger"
+                            disabled={duressBusy || duressInput.length < 8}
+                            onClick={async () => {
+                              setDuressBusy(true); setDuressMsg("");
+                              try { await onConfigureDuress(duressInput); setDuressInput(""); setDuressMsg("Duress password set."); }
+                              catch (e) { setDuressMsg(e instanceof Error ? e.message : 'Failed to set duress password'); }
+                              finally { setDuressBusy(false); }
+                            }}
+                          >
+                            {duressConfigured ? 'Change' : 'Set'}
+                          </button>
+                          {duressConfigured && (
+                            <button
+                              className="btn btn-outline btn-sm"
+                              disabled={duressBusy}
+                              onClick={async () => { setDuressBusy(true); try { await onConfigureDuress(null); setDuressMsg("Duress password removed."); } finally { setDuressBusy(false); } }}
+                            >Remove</button>
+                          )}
+                        </div>
+                        {duressMsg && <p className="settings-danger-msg">{duressMsg}</p>}
+                      </div>
+                    )}
                   </div>
                 </div>
 

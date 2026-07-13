@@ -476,6 +476,7 @@ export const AppModals: React.FC = () => {
           blockedUsers={ctx.blockedUsers}
           onUnblockUser={ctx.handleUnblockUser}
           onLogout={ctx.handleLogout}
+          onPanicWipe={ctx.handlePanicWipe}
           onRelayChange={async (newUrl) => {
             if (ctx.ws) { ctx.ws.disconnect(); }
             ctx.setServerUrl(newUrl);

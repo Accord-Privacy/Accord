@@ -329,6 +329,7 @@ export interface AppContextType {
   // ---- Handlers ----
   handleAuth: () => Promise<void>;
   handleLogout: () => void;
+  handlePanicWipe: () => Promise<void>;
   handleSendMessage: (overrideText?: string) => Promise<void>;
   handleRetryMessage: (messageId: string) => void;
   handleSaveEdit: () => Promise<void>;
