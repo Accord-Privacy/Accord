@@ -55,6 +55,14 @@
 - [ ] Post-quantum key exchange (ML-KEM / hybrid X25519+Kyber)
 - [ ] External security firm audit
 
+### 📋 Phase 8: Federated Node High Availability — PLANNED
+> Design: [docs/FEDERATION-DESIGN.md §9](docs/FEDERATION-DESIGN.md). Today nodes
+> are single-home (one relay per node); this phase makes them survive a relay outage.
+- [ ] Multi-home nodes — owner-chosen, opt-in relay set per node
+- [ ] Primary + warm-standby replication with epoch-numbered failover; client relay-set walk
+- [ ] Collective, advisory node-deletion vote (signed, published tally; each relay decides for itself)
+- [ ] Federation-map governance column (voting record + version build-hash) for trust-based peering
+
 ---
 
 ## Technical Specifications

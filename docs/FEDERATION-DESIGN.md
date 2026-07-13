@@ -423,7 +423,9 @@ dedup_ttl_hours = 24           # Envelope dedup window
 
 ## 7. What This Design Does NOT Cover
 
-- **Federated Nodes** (channels/groups spanning multiple relays) — much harder, deferred.
+- **Federated Nodes** (channels/groups spanning multiple relays) — much harder;
+  now has a forward design in §9 (node high availability), targeted at Phase 8.
+  The current mesh still only routes friend-DMs; nodes remain single-home until §9 lands.
 - **User migration** (moving from one relay to another) — needs key transfer protocol.
 - **Sealed sender** (hiding sender identity from receiving relay) — v2.
 - **Multi-device sync** for cross-relay DMs — handled by existing per-relay device sync; mesh just delivers to the home relay.
@@ -445,3 +447,134 @@ dedup_ttl_hours = 24           # Envelope dedup window
 6. **Add `FriendRequest` mesh payload** — enables cross-relay friendship establishment.
 7. **Add deduplication** — required once retries are enabled.
 8. **Message padding** — privacy hardening.
+
+---
+
+## 9. Node High Availability & Cross-Relay Node Governance (Phase 8 — forward design)
+
+> **Status:** design, not built. Today a node is **single-home** — its data lives
+> in exactly one relay's database, so if that relay goes down the node goes down
+> with it. This section specifies how a node can be **hosted across several
+> relays** for availability, how a node owner controls that set, and how relays
+> coordinate node takedowns **without any central authority**. Decisions locked
+> 2026-07-13.
+
+### 9.0 Why this is even feasible: E2EE makes replication safe
+
+A relay holds only **opaque ciphertext** — encrypted messages, sender-key
+envelopes, NMK-encrypted metadata blobs — plus pseudonymous UUIDs (membership,
+bans). Replicating a node to a second relay therefore leaks **nothing new about
+content**: the standby stores the same blobs it cannot read. This is the crucial
+difference from Matrix/XMPP/email federation, where servers replicate plaintext.
+Here, resilience does not cost confidentiality.
+
+The cost that *does* grow with the host set is **metadata**: each additional host
+relay sees the node's membership-UUID graph and message timing. Adding hosts is
+therefore an explicit **availability-vs-metadata trade the node owner makes**,
+per node — never an automatic default.
+
+### 9.1 The relay set (multi-home nodes)
+
+A node gains an **ordered relay set** instead of a single home:
+
+```
+node.relay_set = [ R1 (primary, epoch=5), R2 (standby), R3 (standby) ]
+```
+
+- **Two-sided opt-in.** The node owner requests that relay `R` host node `N`;
+  `R`'s operator must accept. A relay is never forced to carry a node — this
+  mirrors mesh peering (§0) and the landlord model in
+  [../GOVERNANCE.md](../GOVERNANCE.md). The owner assembles their own resilience
+  set from relays that agreed to host.
+- Clients learn the relay set (it is owner-configured) and keep it ordered.
+
+### 9.2 Consistency model — primary + warm standby (chosen)
+
+Chosen over multi-primary quorum (split-brain risk, overkill for chat) and over
+read-only replicas (no write failover):
+
+- **One writer.** The **primary** accepts writes and streams its append-only
+  encrypted event log — messages, membership deltas, metadata blobs, sender-key
+  distributions, bans, invites — to the **warm standbys**.
+- **Epoch/term-numbered failover.** Each primary term carries a monotonic
+  `epoch`. On heartbeat loss the next live standby **promotes**, bumps `epoch`,
+  and begins accepting writes. A stale old-primary that returns with a lower
+  `epoch` **demotes to follower** and re-syncs. This is deliberately Raft-lite:
+  single writer + epoch fencing avoids split-brain without full consensus.
+- **Client failover.** The client walks the ordered `relay_set` to the next live
+  relay, which is already warm, reconnects, and resumes. Because clients already
+  sort by monotonic `created_at`/message-id and dedup by id, the small window of
+  events in flight during promotion is tolerated (append-log, not mutation-heavy).
+
+```
+R1 (primary, epoch=5) --stream append-log--> R2, R3
+R1 dies
+R2 promotes -> epoch=6, accepts writes
+R1 returns (epoch=5) -> sees higher epoch -> demotes to follower, re-syncs
+client: R1 unreachable -> next in relay_set -> R2 (warm) -> resume
+```
+
+### 9.3 Node deletion is not one relay's decision
+
+Two very different actions must not be conflated:
+
+1. **A relay dropping its own replica** — *always its right.* A relay owner
+   decides what infrastructure they run and may stop hosting any node at any
+   time (GOVERNANCE.md). Dropping a replica just **decrements the node's host
+   count**; the node lives on the remaining relays and the owner can re-home to a
+   fresh relay. No vote, no coordination, nobody forced.
+2. **A takedown *request*** — "all co-hosts should drop node `N`." This is the
+   only thing that needs coordination, and it is handled by an **advisory vote**,
+   below. There is deliberately **no mechanism by which one relay purges a node
+   from another relay's storage** — that capability does not exist and will not
+   be built.
+
+### 9.4 Advisory deletion vote (chosen: advisory + published tally)
+
+A **non-binding, transparent** coordination protocol — explicitly *not* a binding
+quorum (a binding quorum would be a central authority able to force a minority
+relay's storage and would hand a Sybil majority a deplatforming weapon — both
+rejected by GOVERNANCE.md).
+
+- **Proposal.** Any co-host relay may post a signed
+  `NodeRemovalProposal { node_id, reason, proposer_relay_id, ts, sig }` to the
+  node's co-host set (and gossip it to peers).
+- **Votes.** Each co-host casts a signed
+  `NodeRemovalVote { proposal_id, node_id, decision, relay_id, sig }`.
+- **Published tally.** The tally is gossiped and queryable, attributable to each
+  voting relay's identity key. It becomes a **governance column in the federation
+  map** (§0) alongside the version build-hash.
+- **Independent enforcement.** Each relay **still decides for itself** whether to
+  keep or drop its own replica. The vote informs; it never compels.
+- **Sybil resistance.** Votes are attributable and signed; a relay **weights**
+  votes by its own trust of the voter (and can discount unknown/low-trust
+  relays), so a flood of Sybil relays degrades to noise rather than a forced
+  outcome.
+
+### 9.5 The intended consequence: soft isolation, not forced deletion
+
+The published tally is the whole point. A relay is free to **keep hosting a node
+the majority voted to drop** — but peers that read the tally may **decline to
+peer with it**. So the relays that keep a controversial node alive risk becoming
+**isolated** from the relays that voted it down.
+
+That is the designed self-regulating mechanism: federation sorts itself by values
+through **consequence, not coercion**. No central authority ever forces a purge; a
+node can always survive as long as ≥1 relay keeps it and the owner can re-home;
+but the network expresses its judgment through who it will and won't carry.
+
+Honest tension (documented, not hidden): a coordinated set of relays *can* make a
+node hard to host by all refusing it — the same way no one can force mail servers
+to relay you. This is federation declining to carry, not central censorship. The
+node owner's escape valve is real: **re-home to relays that did not drop it.**
+This is the direct trade for having no central authority, and it is intended.
+
+### 9.6 Phasing
+
+1. **HA replication first** — relay set, primary + warm standby, epoch failover,
+   client relay-set walk. Delivers the resilience (node survives a relay outage).
+2. **Governance layer second** — signed proposal/vote gossip, published tally,
+   federation-map governance column.
+
+Neither exists yet; the mesh currently routes only friend-DMs (§8). This is
+Phase 8+ scope and needs a real replication protocol plus a signed gossip layer.

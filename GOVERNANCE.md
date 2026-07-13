@@ -141,6 +141,33 @@ sender, onion routing — Phase 7), *not* solved by gatekeeping who may join the
 mesh. Relay reputation/trust-scoring is deliberately out of scope: it drifts
 toward the soft central authority Accord exists to avoid.
 
+### Node high availability & collective deletion (Phase 8 design)
+
+Today a node lives on one relay, so that relay going down takes the node with it.
+The planned fix (design in
+[`docs/FEDERATION-DESIGN.md`](docs/FEDERATION-DESIGN.md#9-node-high-availability--cross-relay-node-governance-phase-8--forward-design))
+lets a node be **hosted across several relays** — and it stays true to the rules
+here:
+
+- **The node owner chooses the host relays**, and each relay must **opt in** to
+  host. Nobody is forced to carry a node; the owner assembles their own
+  resilience set. (Replication is safe because relays only ever hold ciphertext —
+  a standby stores blobs it cannot read.)
+- **No relay can delete a node from another relay.** A relay may always stop
+  hosting *its own* replica — that just lowers the node's host count; the node
+  survives elsewhere and the owner can re-home.
+- **Takedowns are collective and advisory, never binding.** A co-host may propose
+  a node's removal; co-hosts cast **signed, published** votes; but **each relay
+  still decides for itself** whether to drop its copy. A binding quorum is
+  rejected — it would be a central authority able to force a minority relay's
+  storage, and a Sybil-majority deplatforming weapon.
+- **The consequence is isolation, not coercion.** A relay may keep hosting a node
+  the majority voted down — but peers who read the public tally may **refuse to
+  peer with it**. Federation sorts itself by values through consequence, not a
+  forced purge. A node can always survive while one relay keeps it and the owner
+  can re-home; the honest cost of having no central authority is that a node the
+  network broadly rejects can become hard to host.
+
 ---
 
 ## What this means for contributors
