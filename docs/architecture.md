@@ -260,6 +260,28 @@ The server admin **cannot**:
 - Access any Node as a member (unless explicitly invited)
 - Decrypt any metadata
 
+### Permission Hierarchy (Server Admin vs Node Admin)
+
+```
+Server Admin
+├── Create/delete Nodes (per creation policy)
+├── Set server-wide policies (rate limits, storage quotas)
+├── View Node metadata (name, size — NOT content)
+├── Suspend/remove Nodes (abuse, ToS violations)
+└── NO access to Node internals
+
+Node Admin (per Node)
+├── Manage channels (create, delete, configure)
+├── Manage roles and permissions
+├── Invite/remove members
+├── Set Node-level policies (invite rules, etc.)
+└── Appoint moderators and other admins
+```
+
+Discoverability runs both ways, narrowly: Node members can discover the
+server admin for abuse reports/support **if the admin allows it**; the
+server admin sees only routing-level Node metadata, never content.
+
 ---
 
 ## 9. What the Relay Sees vs. Doesn't See

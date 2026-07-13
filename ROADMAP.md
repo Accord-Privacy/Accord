@@ -1,6 +1,9 @@
 # Accord Roadmap
 
-## Current Status: Phase 6 In Progress (Feb 2026)
+## Current Status: Phase 6 — Beta Packaging (July 2026)
+
+> Working plan with per-milestone status lives in [PROJECT-MAP.md](PROJECT-MAP.md);
+> this file tracks the phase-level picture.
 
 ---
 
@@ -38,11 +41,16 @@
 
 ### 🚧 Phase 6: Public Release — IN PROGRESS
 - [x] Bot API (permission scopes, webhooks, rate limiting, developer docs)
+- [x] Channel group E2EE (Sender Keys) — verified two-client, fail-closed sends
+- [x] Metadata encryption Phase 2 (NMK) — node/channel names as opaque relay blobs
+- [x] Security hardening (CSP, OS-keyring tokens, error-detail sanitization, boundary tests)
+- [x] Linux packaging (.deb/.AppImage, signed updater feed, release pipeline)
+- [ ] Windows packaging (CI)
 - [ ] Beta program
 - [ ] Community feedback integration
 
 ### 📋 Phase 7: Post-Launch Hardening — PLANNED
-- [ ] Metadata protection (encrypt usernames, channel names; minimize server-visible plaintext)
+- [ ] Metadata protection Phase 3 (drop plaintext name columns entirely; per-user display-name keys)
 - [ ] Onion routing for metadata resistance
 - [ ] Post-quantum key exchange (ML-KEM / hybrid X25519+Kyber)
 - [ ] External security firm audit

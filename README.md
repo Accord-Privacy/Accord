@@ -257,7 +257,7 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 - **[Permission System](docs/permission-system.md)** — roles, bits, cascade model
 - **[Identity Model](docs/identity-model.md)** — keypair identity & BIP39
 - **[Metadata Privacy](docs/metadata-privacy.md)** — what's visible vs encrypted
-- **[Bot API](docs/bot-api.md)** — building integrations
+- **[Bot API](docs/bot-api-v2.md)** — building integrations
 - **[Self-Hosting](docs/SELF-HOSTING.md)** — deployment guide
 - **[Reproducible Builds](REPRODUCIBLE-BUILDS.md)** — build verification
 - **[Security Audit](SECURITY-AUDIT.md)** — latest audit findings and status
