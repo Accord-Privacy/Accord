@@ -86,7 +86,7 @@ table should note metadata encryption is client-optional.
 | M4 rate-limiting gaps | ✅ HTTP middleware + WS checks; `rate_limit.rs` now has 34 tests incl. edge cases |
 | M1 no CSP header | ✅ Fixed — full security-header stack in `main.rs` (CSP, nosniff, frame-ancestors, referrer, permissions-policy) |
 | M2 auth tokens in localStorage | ✅ Fixed — `tokenStorage.ts` uses Tauri plugin-store (OS keychain) with localStorage web fallback + migration |
-| L1 weak session key-wrap passphrase | ❌ Document-only fix pending |
+| L1 weak session key-wrap passphrase | ✅ Fixed (`f8ff2e5`): two-factor at-rest keys — HKDF(password, salt=OS-keyring SMK). See `docs/threat-model-endpoint.md` |
 | L3 error messages leak internals | ✅ Fixed — 54 sites log detail server-side, return category only |
 
 ### ✅ D. Test coverage holes at security boundaries — CLOSED

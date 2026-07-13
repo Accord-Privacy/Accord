@@ -4,6 +4,24 @@ All notable changes to Accord are documented here. This project adheres to [Sema
 
 ## [Unreleased] — Phase 6: Public Release (In Progress)
 
+### Security hardening (2026-07-13 endpoint-threat sweep)
+- **Two-factor at-rest keys (audit L1).** Local encrypted stores now derive their
+  key from `HKDF(password, salt = per-user 256-bit secret held in the OS
+  keyring)` instead of `SHA-256(password‖domain)`. Recovering history at rest
+  requires both the password and the device's keyring secret — a locked, seized
+  device cannot yield it without the password, and a leaked password is useless
+  without the device. Legacy blobs migrate transparently. Web build keeps the
+  legacy path (documented residual-risk surface).
+- **Microphone permission scoped (desktop).** getUserMedia is granted only while
+  actively in a voice call; camera/video is always denied. Previously all
+  user-media requests were granted unconditionally.
+- **`--disable-rate-limits` gated behind `--no-tls`** so abuse protection (rate
+  limits + per-device account cap) cannot be turned off on a production-shaped
+  deployment by accident.
+- **Endpoint threat model** documented (`docs/threat-model-endpoint.md`): the
+  compromised/seized-device model, disappearing-messages and duress designs, and
+  reproducible-builds-as-scanning-resistance for the legislative angle.
+
 ### Added (2026-07-12 desktop testing sweep)
 - **Friends in the desktop app** — friend requests (sent automatically when DMing a non-friend), pending-request accept/reject UI in the DM sidebar; DMs require friendship per relay policy
 - **Listen-only voice** — joining a voice channel no longer requires a working microphone or audio output; capture and playback degrade independently
