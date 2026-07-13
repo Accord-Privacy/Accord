@@ -141,6 +141,7 @@ export class AppHandle {
   // Targets: CSS selector, or "text=Visible Label".
   click(target) { return this.send("click", { target }); }
   type(target, text) { return this.send("type", { target, text }); }
+  select(target, value) { return this.send("select", { target, value }); }
   press(key, target) { return this.send("press", { key, target }); }
   query(selector) { return this.send("query", { selector }); }
   waitFor(target, timeoutMs = 10000) { return this.send("waitFor", { target, timeoutMs }, timeoutMs + 5000); }

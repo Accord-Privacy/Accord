@@ -8,6 +8,8 @@ import {
   expiryForNow,
   isExpired,
   wipeOldCutoff,
+  serializeNodeRetention,
+  applyNodeRetention,
 } from "./retention";
 
 const NODE = "node-1";
@@ -81,6 +83,50 @@ describe("retention policy", () => {
 
   it("tolerates corrupt stored values", () => {
     localStorage.setItem("accord_retention_node_" + NODE, "not-a-number");
+    expect(getNodeRetention(NODE)).toBe(0);
+  });
+});
+
+describe("retention distribution", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("serializes node default + only the channels with overrides", () => {
+    setNodeRetention(NODE, 86400);
+    setChannelRetention("c1", 3600);
+    // c2 has no override; c3 isn't in the node's channel list.
+    setChannelRetention("c3", 60);
+    const json = serializeNodeRetention(NODE, ["c1", "c2"]);
+    const parsed = JSON.parse(json);
+    expect(parsed).toEqual({ v: 1, node: 86400, channels: { c1: 3600 } });
+  });
+
+  it("applies a distributed policy into the local store", () => {
+    const json = JSON.stringify({ v: 1, node: 86400, channels: { c1: 3600, c2: 0 } });
+    expect(applyNodeRetention(NODE, json)).toBe(true);
+    expect(getNodeRetention(NODE)).toBe(86400);
+    expect(getChannelRetentionOverride("c1")).toBe(3600);
+    expect(getChannelRetentionOverride("c2")).toBe(0);
+    expect(effectiveTtl(NODE, "c1")).toBe(3600);
+  });
+
+  it("round-trips serialize → apply", () => {
+    setNodeRetention(NODE, 604800);
+    setChannelRetention("c1", 3600);
+    const json = serializeNodeRetention(NODE, ["c1", "c2"]);
+    localStorage.clear();
+    applyNodeRetention(NODE, json);
+    expect(getNodeRetention(NODE)).toBe(604800);
+    expect(getChannelRetentionOverride("c1")).toBe(3600);
+  });
+
+  it("reports no change when applying an identical policy", () => {
+    setNodeRetention(NODE, 3600);
+    expect(applyNodeRetention(NODE, JSON.stringify({ v: 1, node: 3600, channels: {} }))).toBe(false);
+  });
+
+  it("ignores malformed or unknown-version payloads", () => {
+    expect(applyNodeRetention(NODE, "not json")).toBe(false);
+    expect(applyNodeRetention(NODE, JSON.stringify({ v: 2, node: 3600 }))).toBe(false);
     expect(getNodeRetention(NODE)).toBe(0);
   });
 });

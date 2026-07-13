@@ -43,7 +43,7 @@ import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, typ
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { wipeLocalData } from "./wipe";
 import { setDuressPassword, isDuressConfigured } from "./duress";
-import { effectiveTtl, expiryForNow } from "./retention";
+import { effectiveTtl, expiryForNow, applyNodeRetention, serializeNodeRetention } from "./retention";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -444,6 +444,21 @@ function App() {
       setForceUpdate(prev => prev + 1);
     }
   }, [purgeOwnMessages]);
+
+  // Publish this node's disappearing-messages policy to other members, encrypted
+  // under the node's NMK (the relay only ever stores the ciphertext). Called by
+  // NodeSettings after an admin changes retention. No NMK → local-only (nothing
+  // to distribute yet), which is safe: senders still stamp their own messages.
+  const publishNodeRetention = useCallback(async (nodeId: string, channelIds: string[]) => {
+    const nmk = nmkStoreRef.current.get(nodeId);
+    if (!nmk) return;
+    try {
+      const blob = nmk.encryptToBase64(serializeNodeRetention(nodeId, channelIds));
+      await api.updateEncryptedMetadata(nodeId, { node: { encrypted_settings: blob } });
+    } catch (e) {
+      console.warn('Failed to publish retention policy:', e);
+    }
+  }, []);
   // nodeId → Node Metadata Key. Creator derives it; members receive it over DR.
   const nmkStoreRef = useRef<Map<string, NodeMetadataKey>>(new Map());
   // Raw identity private key bytes — the NMK derivation input for nodes we create
@@ -906,10 +921,15 @@ function App() {
         if (cancelled) return;
         const dec = decryptMetadataBundle(bundle, nmk);
         setDecryptedMeta(prev => new Map(prev).set(selectedNodeId, dec));
+        // Adopt the node's distributed disappearing-messages policy so this
+        // client expires messages the same way every other member does.
+        if (dec.settings && applyNodeRetention(selectedNodeId, dec.settings)) {
+          sweepExpiredMessages();
+        }
       })
       .catch(e => console.warn('Failed to fetch encrypted metadata:', e));
     return () => { cancelled = true; };
-  }, [selectedNodeId, e2eeReady, nmkVersion, appState.token]);
+  }, [selectedNodeId, e2eeReady, nmkVersion, appState.token, sweepExpiredMessages]);
 
   // Prefer decrypted names over the relay's plaintext columns (which become
   // placeholders in minimal-metadata mode / Phase 3). No-op when nothing
@@ -1355,6 +1375,13 @@ function App() {
       }));
 
       // Message editing/deletion functionality removed
+    });
+
+    // A node's encrypted metadata changed (e.g. an admin updated the
+    // disappearing-messages policy). Re-run the fetch+decrypt effect so this
+    // client adopts it live rather than waiting for the next node open.
+    socket.on('metadata_updated', () => {
+      setNmkVersion(prev => prev + 1);
     });
 
     // Disappearing messages: relay purged everything in a channel older than a
@@ -4259,7 +4286,7 @@ function App() {
     showRolePopup, setShowRolePopup,
 
     // ---- Handlers ----
-    handleAuth, handleLogout, handlePanicWipe, handleConfigureDuress, duressConfigured, handleSendMessage, handleRetryMessage,
+    handleAuth, handleLogout, handlePanicWipe, handleConfigureDuress, duressConfigured, publishNodeRetention, handleSendMessage, handleRetryMessage,
     handleSaveEdit, handleCancelEdit, handleDeleteMessage,
     handleReply, handleCancelReply,
     handleAddReaction, handleRemoveReaction, handleToggleReaction,

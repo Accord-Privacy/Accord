@@ -28,6 +28,8 @@ interface NodeSettingsProps {
   onLeaveNode?: () => void;
   onShowTemplateImport?: () => void;
   resolveUserName?: (userId: string) => string;
+  /** Distribute this node's disappearing-messages policy to members (NMK-encrypted). */
+  onPublishRetention?: (nodeId: string, channelIds: string[]) => void;
 }
 
 export function NodeSettings({ 
@@ -40,6 +42,7 @@ export function NodeSettings({
   onLeaveNode,
   onShowTemplateImport,
   resolveUserName,
+  onPublishRetention,
 }: NodeSettingsProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'members' | 'invites' | 'roles' | 'audit' | 'moderation' | 'emojis'>('general');
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -456,12 +459,14 @@ export function NodeSettings({
   const handleSetNodeRetention = useCallback((seconds: number) => {
     persistNodeRetention(node.id, seconds);
     setNodeRetentionState(seconds);
+    onPublishRetention?.(node.id, nodeChannels.map(c => c.id));
     setSuccess(seconds > 0 ? 'Node disappearing-messages default set' : 'Node disappearing messages off');
-  }, [node.id]);
+  }, [node.id, nodeChannels, onPublishRetention]);
 
   const handleSetChannelRetention = useCallback(async (channelId: string, seconds: number | null) => {
     persistChannelRetention(channelId, seconds);
     setChannelRetentionState(prev => ({ ...prev, [channelId]: seconds }));
+    onPublishRetention?.(node.id, nodeChannels.map(c => c.id));
     // Wipe-old: immediately purge messages already older than the effective TTL.
     const effective = seconds !== null ? seconds : nodeRetention;
     if (effective > 0) {
@@ -475,7 +480,7 @@ export function NodeSettings({
     } else {
       setSuccess('Channel disappearing messages updated');
     }
-  }, [nodeRetention]);
+  }, [nodeRetention, node.id, nodeChannels, onPublishRetention]);
 
   const handleSetSlowMode = useCallback(async (channelId: string, seconds: number) => {
     try {
@@ -1108,7 +1113,7 @@ export function NodeSettings({
                 <div className="ns-channel-row">
                   <span className="ns-channel-name">Node default</span>
                   <select
-                    className="ns-select" style={{ width: 'auto' }}
+                    className="ns-select ns-retention-node" style={{ width: 'auto' }}
                     value={nodeRetention}
                     onChange={(e) => handleSetNodeRetention(parseInt(e.target.value))}
                   >

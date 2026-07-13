@@ -163,7 +163,7 @@ pub async fn get_encrypted_metadata_handler(
     let user_id = extract_user_from_token(&state, &headers, &params).await?;
     require_role(&state, node_id, user_id, false).await?;
 
-    let (enc_name, enc_desc, channels, categories) = state
+    let (enc_name, enc_desc, enc_settings, channels, categories) = state
         .db
         .get_node_encrypted_metadata(node_id)
         .await
@@ -174,6 +174,7 @@ pub async fn get_encrypted_metadata_handler(
         node: EncryptedNodeFields {
             encrypted_name: enc_name.map(b64),
             encrypted_description: enc_desc.map(b64),
+            encrypted_settings: enc_settings.map(b64),
         },
         channels: channels
             .into_iter()
@@ -218,9 +219,19 @@ pub async fn update_encrypted_metadata_handler(
             .as_deref()
             .map(|b64| decode_blob(b64, MAX_ENCRYPTED_DESC_BYTES, "node encrypted_description"))
             .transpose()?;
+        let settings_blob = node_fields
+            .encrypted_settings
+            .as_deref()
+            .map(|b64| decode_blob(b64, MAX_ENCRYPTED_DESC_BYTES, "node encrypted_settings"))
+            .transpose()?;
         state
             .db
-            .set_node_encrypted_metadata(node_id, name_blob.as_deref(), desc_blob.as_deref())
+            .set_node_encrypted_metadata(
+                node_id,
+                name_blob.as_deref(),
+                desc_blob.as_deref(),
+                settings_blob.as_deref(),
+            )
             .await
             .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error"))?;
     }
@@ -262,6 +273,17 @@ pub async fn update_encrypted_metadata_handler(
             StatusCode::BAD_REQUEST,
             &format!("Unknown channel/category ids for this node: {unknown_ids:?}"),
         ));
+    }
+
+    // Tell node members metadata changed so they refetch + decrypt (e.g. adopt a
+    // new disappearing-messages policy live, not just on next node open). Sent
+    // over the node's channels, like member-join events. Opaque signal only.
+    if let Ok(channels) = state.db.get_node_channels(node_id).await {
+        let event =
+            serde_json::json!({ "type": "metadata_updated", "node_id": node_id }).to_string();
+        for channel in &channels {
+            let _ = state.send_to_channel(channel.id, event.clone()).await;
+        }
     }
 
     Ok(Json(serde_json::json!({ "success": true })))

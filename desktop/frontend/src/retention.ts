@@ -99,3 +99,55 @@ export function wipeOldCutoff(
 ): number {
   return ttlSecs > 0 ? nowSecs - Math.floor(ttlSecs) : 0;
 }
+
+// ---------------------------------------------------------------------------
+// Distribution: serialize the whole node policy for the NMK-encrypted metadata
+// blob, and apply a received one so every member's client expires messages the
+// same way. The relay only ever stores the encrypted form.
+// ---------------------------------------------------------------------------
+
+interface SerializedRetention {
+  v: 1;
+  node: number;
+  channels: Record<string, number>;
+}
+
+/** Serialize a node's retention policy (node default + the overrides among `channelIds`). */
+export function serializeNodeRetention(nodeId: string, channelIds: string[]): string {
+  const channels: Record<string, number> = {};
+  for (const cid of channelIds) {
+    const override = getChannelRetentionOverride(cid);
+    if (override !== null) channels[cid] = override;
+  }
+  const payload: SerializedRetention = { v: 1, node: getNodeRetention(nodeId), channels };
+  return JSON.stringify(payload);
+}
+
+/**
+ * Apply a distributed retention policy into the local store. Returns true if
+ * anything changed (so the caller can re-sweep). Malformed/unknown-version
+ * input is ignored.
+ */
+export function applyNodeRetention(nodeId: string, json: string): boolean {
+  let payload: SerializedRetention;
+  try {
+    payload = JSON.parse(json);
+  } catch {
+    return false;
+  }
+  if (!payload || payload.v !== 1) return false;
+  let changed = false;
+  if (typeof payload.node === "number" && payload.node >= 0) {
+    if (getNodeRetention(nodeId) !== payload.node) changed = true;
+    setNodeRetention(nodeId, payload.node);
+  }
+  if (payload.channels && typeof payload.channels === "object") {
+    for (const [cid, ttl] of Object.entries(payload.channels)) {
+      if (typeof ttl === "number" && ttl >= 0) {
+        if (getChannelRetentionOverride(cid) !== ttl) changed = true;
+        setChannelRetention(cid, ttl);
+      }
+    }
+  }
+  return changed;
+}

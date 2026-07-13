@@ -332,6 +332,7 @@ export interface AppContextType {
   handlePanicWipe: () => Promise<void>;
   handleConfigureDuress: (duressPassword: string | null) => Promise<void>;
   duressConfigured: boolean;
+  publishNodeRetention: (nodeId: string, channelIds: string[]) => void;
   handleSendMessage: (overrideText?: string) => Promise<void>;
   handleRetryMessage: (messageId: string) => void;
   handleSaveEdit: () => Promise<void>;

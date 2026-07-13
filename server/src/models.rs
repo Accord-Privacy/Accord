@@ -712,6 +712,9 @@ pub struct EncryptedNodeFields {
     pub encrypted_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encrypted_description: Option<String>,
+    /// NMK-encrypted node settings blob (e.g. disappearing-messages policy).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub encrypted_settings: Option<String>,
 }
 
 /// Bulk encrypted-metadata update for a node (PUT /nodes/:id/metadata/encrypted)

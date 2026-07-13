@@ -214,6 +214,8 @@ export interface EncryptedMetadataBundle {
   node: {
     encrypted_name?: string;
     encrypted_description?: string;
+    /** NMK-encrypted node settings blob (e.g. disappearing-messages policy). */
+    encrypted_settings?: string;
   };
   /** channel_id → base64 blob */
   channels: Record<string, string>;
@@ -227,6 +229,8 @@ export interface DecryptedMetadata {
   nodeDescription?: string;
   channelNames: Map<string, string>;
   categoryNames: Map<string, string>;
+  /** Decrypted node settings JSON string (e.g. disappearing-messages policy). */
+  settings?: string;
 }
 
 /**
@@ -263,5 +267,6 @@ export function decryptMetadataBundle(
     nodeDescription: tryDecrypt(bundle.node?.encrypted_description),
     channelNames,
     categoryNames,
+    settings: tryDecrypt(bundle.node?.encrypted_settings),
   };
 }

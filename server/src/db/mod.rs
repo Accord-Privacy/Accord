@@ -636,6 +636,13 @@ impl Database {
             .execute(&self.pool)
             .await
             .ok();
+        // NMK-encrypted node settings blob (e.g. disappearing-messages policy).
+        // Opaque to the relay — distributed to members so everyone's client
+        // applies the same retention. NULL = no settings published.
+        sqlx::query("ALTER TABLE nodes ADD COLUMN encrypted_settings BLOB")
+            .execute(&self.pool)
+            .await
+            .ok();
 
         // Channels: encrypted_name
         sqlx::query("ALTER TABLE channels ADD COLUMN encrypted_name BLOB")
@@ -2272,6 +2279,7 @@ impl Database {
         node_id: Uuid,
         encrypted_name: Option<&[u8]>,
         encrypted_description: Option<&[u8]>,
+        encrypted_settings: Option<&[u8]>,
     ) -> Result<()> {
         if let Some(name) = encrypted_name {
             sqlx::query("UPDATE nodes SET encrypted_name = ? WHERE id = ?")
@@ -2288,6 +2296,14 @@ impl Database {
                 .execute(&self.pool)
                 .await
                 .context("Failed to set node encrypted_description")?;
+        }
+        if let Some(settings) = encrypted_settings {
+            sqlx::query("UPDATE nodes SET encrypted_settings = ? WHERE id = ?")
+                .bind(settings)
+                .bind(node_id.to_string())
+                .execute(&self.pool)
+                .await
+                .context("Failed to set node encrypted_settings")?;
         }
         Ok(())
     }
@@ -2338,21 +2354,24 @@ impl Database {
     ) -> Result<(
         Option<Vec<u8>>,
         Option<Vec<u8>>,
+        Option<Vec<u8>>,
         Vec<(Uuid, Vec<u8>)>,
         Vec<(Uuid, Vec<u8>)>,
     )> {
-        let node_row =
-            sqlx::query("SELECT encrypted_name, encrypted_description FROM nodes WHERE id = ?")
-                .bind(node_id.to_string())
-                .fetch_optional(&self.pool)
-                .await
-                .context("Failed to query node encrypted metadata")?;
-        let (enc_name, enc_desc) = match node_row {
+        let node_row = sqlx::query(
+            "SELECT encrypted_name, encrypted_description, encrypted_settings FROM nodes WHERE id = ?",
+        )
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query node encrypted metadata")?;
+        let (enc_name, enc_desc, enc_settings) = match node_row {
             Some(row) => (
                 row.try_get::<Option<Vec<u8>>, _>("encrypted_name")?,
                 row.try_get::<Option<Vec<u8>>, _>("encrypted_description")?,
+                row.try_get::<Option<Vec<u8>>, _>("encrypted_settings")?,
             ),
-            None => (None, None),
+            None => (None, None, None),
         };
 
         let channel_rows = sqlx::query(
@@ -2385,7 +2404,7 @@ impl Database {
             ));
         }
 
-        Ok((enc_name, enc_desc, channels, categories))
+        Ok((enc_name, enc_desc, enc_settings, channels, categories))
     }
 
     pub async fn get_user_nodes(&self, user_id: Uuid) -> Result<Vec<Node>> {
@@ -6710,14 +6729,20 @@ mod tests {
         let category = db.create_channel_category(node.id, "cat").await.unwrap();
 
         // Nothing set yet
-        let (name, desc, chans, cats) = db.get_node_encrypted_metadata(node.id).await.unwrap();
-        assert!(name.is_none() && desc.is_none());
+        let (name, desc, settings, chans, cats) =
+            db.get_node_encrypted_metadata(node.id).await.unwrap();
+        assert!(name.is_none() && desc.is_none() && settings.is_none());
         assert!(chans.is_empty() && cats.is_empty());
 
         // Set node blobs (opaque bytes — relay never interprets them)
-        db.set_node_encrypted_metadata(node.id, Some(&[1u8; 40]), Some(&[2u8; 60]))
-            .await
-            .unwrap();
+        db.set_node_encrypted_metadata(
+            node.id,
+            Some(&[1u8; 40]),
+            Some(&[2u8; 60]),
+            Some(&[5u8; 50]),
+        )
+        .await
+        .unwrap();
         assert!(db
             .set_channel_encrypted_name(node.id, channel_id, &[3u8; 40])
             .await
@@ -6727,19 +6752,22 @@ mod tests {
             .await
             .unwrap());
 
-        let (name, desc, chans, cats) = db.get_node_encrypted_metadata(node.id).await.unwrap();
+        let (name, desc, settings, chans, cats) =
+            db.get_node_encrypted_metadata(node.id).await.unwrap();
         assert_eq!(name.unwrap(), vec![1u8; 40]);
         assert_eq!(desc.unwrap(), vec![2u8; 60]);
+        assert_eq!(settings.unwrap(), vec![5u8; 50]);
         assert_eq!(chans, vec![(channel_id, vec![3u8; 40])]);
         assert_eq!(cats, vec![(category.id, vec![4u8; 40])]);
 
-        // Partial update: only description
-        db.set_node_encrypted_metadata(node.id, None, Some(&[9u8; 30]))
+        // Partial update: only description (name + settings must be preserved)
+        db.set_node_encrypted_metadata(node.id, None, Some(&[9u8; 30]), None)
             .await
             .unwrap();
-        let (name, desc, _, _) = db.get_node_encrypted_metadata(node.id).await.unwrap();
+        let (name, desc, settings, _, _) = db.get_node_encrypted_metadata(node.id).await.unwrap();
         assert_eq!(name.unwrap(), vec![1u8; 40]);
         assert_eq!(desc.unwrap(), vec![9u8; 30]);
+        assert_eq!(settings.unwrap(), vec![5u8; 50]);
     }
 
     #[tokio::test]
@@ -6756,7 +6784,7 @@ mod tests {
             .await
             .unwrap());
         // And B's bundle stays empty
-        let (_, _, chans, _) = db.get_node_encrypted_metadata(node_b.id).await.unwrap();
+        let (_, _, _, chans, _) = db.get_node_encrypted_metadata(node_b.id).await.unwrap();
         assert!(chans.is_empty());
     }
 

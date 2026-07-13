@@ -122,6 +122,19 @@ function type(target: string, text: string): string {
   return describe(input);
 }
 
+/** React-compatible <select> change: set value via the native setter, fire change. */
+function selectOption(target: string, value: string): string {
+  const el = find(target);
+  if (!el) throw new Error(`select: no element for ${target}`);
+  const sel = el as HTMLSelectElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+  sel.focus();
+  setter.call(sel, value);
+  sel.dispatchEvent(new Event("input", { bubbles: true }));
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+  return describe(sel);
+}
+
 /** Press a key on a target (or the active element). Enough for Enter-to-send. */
 function press(key: string, target?: string): void {
   const el = (target ? find(target) : document.activeElement) as HTMLElement | null;
@@ -215,6 +228,8 @@ async function execute(cmd: Cmd): Promise<unknown> {
       return click(String(a.target));
     case "type":
       return type(String(a.target), String(a.text));
+    case "select":
+      return selectOption(String(a.target), String(a.value));
     case "press":
       press(String(a.key), a.target ? String(a.target) : undefined);
       return "ok";

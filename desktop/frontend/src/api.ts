@@ -899,7 +899,7 @@ export class AccordApi {
   async updateEncryptedMetadata(
     nodeId: string,
     update: {
-      node?: { encrypted_name?: string; encrypted_description?: string };
+      node?: { encrypted_name?: string; encrypted_description?: string; encrypted_settings?: string };
       channels?: Record<string, string>;
       categories?: Record<string, string>;
     },
