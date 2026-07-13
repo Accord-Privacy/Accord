@@ -227,6 +227,15 @@ struct Args {
     #[arg(long)]
     auto_tls: bool,
 
+    /// Relay admin dashboard port (bound to 127.0.0.1 only — localhost access IS the
+    /// relay owner, no login). The dashboard is never exposed on the public interface.
+    #[arg(long, default_value_t = 6789)]
+    admin_port: u16,
+
+    /// Disable the localhost admin dashboard entirely.
+    #[arg(long)]
+    no_admin: bool,
+
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
@@ -719,25 +728,18 @@ async fn main() -> Result<()> {
 
     let log_tx_arc = Arc::new(log_tx);
 
-    // Admin log WebSocket route (different state type)
-    let admin_logs_router = Router::new()
-        .route("/admin/logs", get(admin::admin_logs_ws_handler))
-        .with_state(log_tx_arc.clone());
-
-    // Build the router with all endpoints
-    let app = Router::new()
-        .merge(admin_logs_router)
-        // Admin dashboard endpoints
+    // ── Relay admin dashboard ──
+    // Bound to 127.0.0.1 ONLY and served on a separate listener (see below), so
+    // "whoever has localhost access is the relay owner" — no token, no login, and
+    // never reachable from the public interface. The relay owner's surface is
+    // deliberately narrow: aggregate stats, a node registry (name/description +
+    // create/delete), the relay log stream, and the build-hash allowlist. It must
+    // never expose node membership, a user list, per-node governance, or any end
+    // user's IP beyond the node-correlation-free connection log.
+    let admin_app = Router::new()
         .route("/admin", get(admin::admin_page_handler))
         .route("/admin/stats", get(admin::admin_stats_handler))
-        .route("/admin/users", get(admin::admin_users_handler))
         .route("/admin/nodes", get(admin::admin_nodes_handler))
-        // Relay-level build hash allowlist admin endpoints
-        .route("/api/admin/audit-log", get(admin::admin_audit_log_handler))
-        .route(
-            "/api/admin/audit-log/actions",
-            get(admin::admin_audit_log_actions_handler),
-        )
         .route(
             "/api/admin/build-allowlist",
             get(admin::admin_build_allowlist_get_handler)
@@ -748,6 +750,15 @@ async fn main() -> Result<()> {
             "/api/admin/build-allowlist/:hash",
             delete(admin::admin_build_allowlist_remove_handler),
         )
+        .with_state(state.clone())
+        .merge(
+            Router::new()
+                .route("/admin/logs", get(admin::admin_logs_ws_handler))
+                .with_state(log_tx_arc.clone()),
+        );
+
+    // Build the public router (admin routes are NOT mounted here).
+    let app = Router::new()
         .route("/health", get(health_handler))
         .route("/api/build-info", get(build_info_handler))
         .route("/register", post(register_handler))
@@ -1271,6 +1282,31 @@ async fn main() -> Result<()> {
 
         info!("Shutdown: complete.");
     };
+
+    // Spawn the admin dashboard on a localhost-only listener. Plain HTTP is fine:
+    // it never leaves 127.0.0.1, and localhost access is the ownership boundary.
+    if !args.no_admin {
+        let admin_addr = format!("127.0.0.1:{}", args.admin_port);
+        match tokio::net::TcpListener::bind(&admin_addr).await {
+            Ok(admin_listener) => {
+                info!(
+                    "Relay admin dashboard on http://{} (localhost only — no login)",
+                    admin_addr
+                );
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(admin_listener, admin_app).await {
+                        error!("Admin dashboard listener error: {}", e);
+                    }
+                });
+            }
+            Err(e) => {
+                warn!(
+                    "Could not bind admin dashboard on {} ({}). Continuing without it.",
+                    admin_addr, e
+                );
+            }
+        }
+    }
 
     match (args.tls_cert, args.tls_key) {
         (Some(cert_path), Some(key_path)) => {

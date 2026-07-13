@@ -1,8 +1,9 @@
 //! Integration tests for admin handlers.
 //!
-//! Tests admin_page_handler, admin_stats_handler, admin_users_handler,
-//! admin_nodes_handler, admin_build_allowlist_*_handler,
-//! admin_audit_log_handler, and admin_audit_log_actions_handler.
+//! Tests admin_page_handler, admin_stats_handler, admin_nodes_handler, and
+//! admin_build_allowlist_*_handler. The relay-wide users roster and cross-node
+//! audit-log views were removed (relay is blind to node internals), and the admin
+//! token is now optional (unset = localhost-trusted).
 #![allow(clippy::all, unused_imports, dead_code)]
 
 use axum::{
@@ -22,10 +23,9 @@ use tower_http::{
 
 use accord_server::{
     admin::{
-        admin_audit_log_actions_handler, admin_audit_log_handler,
         admin_build_allowlist_add_handler, admin_build_allowlist_get_handler,
         admin_build_allowlist_remove_handler, admin_build_allowlist_set_handler,
-        admin_nodes_handler, admin_page_handler, admin_stats_handler, admin_users_handler,
+        admin_nodes_handler, admin_page_handler, admin_stats_handler,
     },
     state::{AppState, SharedState},
 };
@@ -50,7 +50,6 @@ impl TestServer {
             .route("/admin", get(admin_page_handler))
             // Admin JSON endpoints (X-Admin-Token required)
             .route("/admin/stats", get(admin_stats_handler))
-            .route("/admin/users", get(admin_users_handler))
             .route("/admin/nodes", get(admin_nodes_handler))
             // Build allowlist
             .route(
@@ -62,12 +61,6 @@ impl TestServer {
             .route(
                 "/api/admin/build-allowlist/:hash",
                 delete(admin_build_allowlist_remove_handler),
-            )
-            // Audit log
-            .route("/api/admin/audit-log", get(admin_audit_log_handler))
-            .route(
-                "/api/admin/audit-log/actions",
-                get(admin_audit_log_actions_handler),
             )
             .with_state(state.clone())
             .layer(
@@ -312,51 +305,6 @@ async fn test_stats_version_matches_cargo_pkg() {
         "version '{}' should look like x.y.z",
         version
     );
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  3. admin_users_handler
-// ═══════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_users_success_with_valid_token() {
-    let _g = with_admin_token("tok-users");
-    let server = TestServer::new().await;
-
-    let resp = server.get_admin("/admin/users", "tok-users").await;
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["users"].is_array());
-}
-
-#[tokio::test]
-async fn test_users_unauthorized_no_token() {
-    let _g = with_admin_token("tok-users");
-    let server = TestServer::new().await;
-
-    let resp = server.get_no_auth("/admin/users").await;
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_users_unauthorized_wrong_token() {
-    let _g = with_admin_token("tok-users");
-    let server = TestServer::new().await;
-
-    let resp = server.get_admin("/admin/users", "not-the-token").await;
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_users_fresh_db_has_system_user() {
-    let _g = with_admin_token("tok-users");
-    let server = TestServer::new().await;
-
-    let resp = server.get_admin("/admin/users", "tok-users").await;
-    let body: Value = resp.json().await.unwrap();
-    let users = body["users"].as_array().unwrap();
-    // A fresh DB has the system sentinel user created on init
-    assert_eq!(users.len(), 1, "expected exactly 1 system user on fresh DB");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -782,238 +730,14 @@ async fn test_build_allowlist_remove_then_gone_from_get() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  9. admin_audit_log_handler
-// ═══════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_audit_log_success_with_valid_token() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server.get_admin("/api/admin/audit-log", "tok-audit").await;
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["entries"].is_array());
-    assert!(body["total"].is_number());
-    assert!(body["page"].is_number());
-    assert!(body["per_page"].is_number());
-    assert!(body["total_pages"].is_number());
-}
-
-#[tokio::test]
-async fn test_audit_log_no_auth() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server.get_no_auth("/api/admin/audit-log").await;
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_audit_log_wrong_token() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server.get_admin("/api/admin/audit-log", "wrong-tok").await;
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_audit_log_defaults_page_1_per_page_25() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server.get_admin("/api/admin/audit-log", "tok-audit").await;
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["page"], 1);
-    assert_eq!(body["per_page"], 25);
-}
-
-#[tokio::test]
-async fn test_audit_log_custom_page_and_per_page() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?page=2&per_page=10"))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["page"], 2);
-    assert_eq!(body["per_page"], 10);
-}
-
-#[tokio::test]
-async fn test_audit_log_per_page_capped_at_100() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?per_page=999"))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["per_page"], 100);
-}
-
-#[tokio::test]
-async fn test_audit_log_page_zero_clamped_to_1() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?page=0"))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["page"], 1);
-}
-
-#[tokio::test]
-async fn test_audit_log_with_action_filter() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    // Filter with a specific action — may return 0 entries on fresh DB but should not error
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?action=user_registered"))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["entries"].is_array());
-}
-
-#[tokio::test]
-async fn test_audit_log_with_time_range_filter() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    // Use a time range far in the past — 0 entries expected but no error
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?start=0&end=1000"))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["entries"].is_array());
-    assert_eq!(body["entries"].as_array().unwrap().len(), 0);
-}
-
-#[tokio::test]
-async fn test_audit_log_invalid_page_treated_as_default() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    // Non-numeric page value — falls back to default (1)
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?page=notanumber"))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["page"], 1);
-}
-
-#[tokio::test]
-async fn test_audit_log_empty_action_filter_returns_all() {
-    let _g = with_admin_token("tok-audit");
-    let server = TestServer::new().await;
-
-    // Empty action filter = no filter applied
-    let resp_all = server.get_admin("/api/admin/audit-log", "tok-audit").await;
-    let resp_empty_filter = server
-        .client
-        .get(server.url("/api/admin/audit-log?action="))
-        .header("X-Admin-Token", "tok-audit")
-        .send()
-        .await
-        .unwrap();
-
-    let all: Value = resp_all.json().await.unwrap();
-    let filtered: Value = resp_empty_filter.json().await.unwrap();
-    assert_eq!(all["total"], filtered["total"]);
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  10. admin_audit_log_actions_handler
-// ═══════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_audit_log_actions_success_with_valid_token() {
-    let _g = with_admin_token("tok-actions");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .get_admin("/api/admin/audit-log/actions", "tok-actions")
-        .await;
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["actions"].is_array());
-}
-
-#[tokio::test]
-async fn test_audit_log_actions_no_auth() {
-    let _g = with_admin_token("tok-actions");
-    let server = TestServer::new().await;
-
-    let resp = server.get_no_auth("/api/admin/audit-log/actions").await;
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_audit_log_actions_wrong_token() {
-    let _g = with_admin_token("tok-actions");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .get_admin("/api/admin/audit-log/actions", "bad-tok")
-        .await;
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_audit_log_actions_returns_array_on_empty_db() {
-    let _g = with_admin_token("tok-actions");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .get_admin("/api/admin/audit-log/actions", "tok-actions")
-        .await;
-    let body: Value = resp.json().await.unwrap();
-    // Empty DB may have zero or some actions; either way it must be an array
-    assert!(body["actions"].is_array());
-}
-
-// ═══════════════════════════════════════════════════════════════
 //  11. Token edge cases (no env var set, empty env var)
 // ═══════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_stats_no_env_var_always_401() {
-    // When ACCORD_ADMIN_TOKEN is unset, all requests should be rejected —
-    // even with a non-empty header value.
+async fn test_stats_no_env_var_allows_localhost() {
+    // The dashboard binds to 127.0.0.1 only, so when ACCORD_ADMIN_TOKEN is unset
+    // (the norm) localhost access IS the relay owner — requests are allowed with
+    // no credentials at all.
     {
         // Scope ensures guard is dropped and env is restored before test ends.
         struct Guard {
@@ -1033,11 +757,11 @@ async fn test_stats_no_env_var_always_401() {
         let guard = Guard { prev };
 
         let server = TestServer::new().await;
-        let resp = server.get_admin("/admin/stats", "anything").await;
+        let resp = server.get_no_auth("/admin/stats").await;
         assert_eq!(
             resp.status(),
-            401,
-            "admin endpoint must reject when ACCORD_ADMIN_TOKEN is unset"
+            200,
+            "with no token set, localhost access must be allowed"
         );
         drop(guard);
     }
@@ -1098,34 +822,4 @@ async fn test_build_allowlist_round_trip_multiple_entries() {
     assert!(hashes.contains(&"aaa"));
     assert!(hashes.contains(&"bbb"));
     assert!(hashes.contains(&"ccc"));
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  13. Audit log total_pages calculation
-// ═══════════════════════════════════════════════════════════════
-
-#[tokio::test]
-async fn test_audit_log_total_pages_is_consistent() {
-    let _g = with_admin_token("tok-tp");
-    let server = TestServer::new().await;
-
-    let resp = server
-        .client
-        .get(server.url("/api/admin/audit-log?per_page=25"))
-        .header("X-Admin-Token", "tok-tp")
-        .send()
-        .await
-        .unwrap();
-    let body: Value = resp.json().await.unwrap();
-
-    let total = body["total"].as_u64().unwrap_or(0);
-    let per_page = body["per_page"].as_u64().unwrap_or(25);
-    let total_pages = body["total_pages"].as_u64().unwrap_or(0);
-
-    let expected_pages = if total == 0 {
-        0
-    } else {
-        (total + per_page - 1) / per_page
-    };
-    assert_eq!(total_pages, expected_pages);
 }

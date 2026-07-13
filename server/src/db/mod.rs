@@ -2514,111 +2514,9 @@ impl Database {
             .collect())
     }
 
-    /// Get admin audit log: paginated, filterable by action and date range
-    pub async fn get_admin_audit_log(
-        &self,
-        page: u32,
-        per_page: u32,
-        action_filter: Option<&str>,
-        start_time: Option<i64>,
-        end_time: Option<i64>,
-    ) -> Result<(Vec<serde_json::Value>, u64)> {
-        let offset = (page.saturating_sub(1) * per_page) as i64;
-        let limit = per_page as i64;
-
-        // Build WHERE clauses dynamically
-        let mut conditions = Vec::new();
-        if action_filter.is_some() {
-            conditions.push("a.action = ?".to_string());
-        }
-        if start_time.is_some() {
-            conditions.push("a.created_at >= ?".to_string());
-        }
-        if end_time.is_some() {
-            conditions.push("a.created_at <= ?".to_string());
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-
-        // Count query
-        let count_sql = format!("SELECT COUNT(*) as count FROM audit_log a {}", where_clause);
-        let mut count_query = sqlx::query(&count_sql);
-        if let Some(ref action) = action_filter {
-            count_query = count_query.bind(action.to_string());
-        }
-        if let Some(st) = start_time {
-            count_query = count_query.bind(st);
-        }
-        if let Some(et) = end_time {
-            count_query = count_query.bind(et);
-        }
-        let count_row = count_query.fetch_one(&self.pool).await?;
-        let total: u64 = count_row.get::<i64, _>("count") as u64;
-
-        // Data query
-        let data_sql = format!(
-            r#"SELECT a.id, a.node_id, a.actor_id, a.action, a.target_type, a.target_id, a.details, a.created_at, a.ip_address,
-                      COALESCE(u.public_key_hash, '') as actor_public_key_hash,
-                      COALESCE(up.display_name, '') as actor_display_name
-               FROM audit_log a
-               LEFT JOIN users u ON a.actor_id = u.id
-               LEFT JOIN user_profiles up ON a.actor_id = up.user_id
-               {}
-               ORDER BY a.created_at DESC
-               LIMIT ? OFFSET ?"#,
-            where_clause
-        );
-        let mut data_query = sqlx::query(&data_sql);
-        if let Some(ref action) = action_filter {
-            data_query = data_query.bind(action.to_string());
-        }
-        if let Some(st) = start_time {
-            data_query = data_query.bind(st);
-        }
-        if let Some(et) = end_time {
-            data_query = data_query.bind(et);
-        }
-        data_query = data_query.bind(limit).bind(offset);
-
-        let rows = data_query
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to query admin audit log")?;
-
-        let entries: Vec<serde_json::Value> = rows
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "id": r.get::<String, _>("id"),
-                    "node_id": r.get::<String, _>("node_id"),
-                    "actor_id": r.get::<String, _>("actor_id"),
-                    "actor_public_key_hash": r.get::<String, _>("actor_public_key_hash"),
-                    "actor_display_name": r.get::<String, _>("actor_display_name"),
-                    "action": r.get::<String, _>("action"),
-                    "target_type": r.get::<String, _>("target_type"),
-                    "target_id": r.get::<Option<String>, _>("target_id"),
-                    "details": r.get::<Option<String>, _>("details"),
-                    "ip_address": r.get::<Option<String>, _>("ip_address"),
-                    "created_at": r.get::<i64, _>("created_at"),
-                })
-            })
-            .collect();
-
-        Ok((entries, total))
-    }
-
-    /// Get distinct action types from audit log
-    pub async fn get_audit_action_types(&self) -> Result<Vec<String>> {
-        let rows = sqlx::query("SELECT DISTINCT action FROM audit_log ORDER BY action")
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to query audit action types")?;
-        Ok(rows.iter().map(|r| r.get::<String, _>("action")).collect())
-    }
+    // The relay-wide audit-log aggregate (get_admin_audit_log / action types) is
+    // gone: cross-node governance history + actor IPs are node business, never the
+    // relay owner's. Node owners still read their own via the node-scoped audit API.
 
     /// Count total messages
     pub async fn count_messages(&self) -> Result<u64> {
@@ -2628,50 +2526,23 @@ impl Database {
         Ok(row.get::<i64, _>("count") as u64)
     }
 
-    /// Get all users with their public_key_hash, created_at, and node memberships (admin)
-    pub async fn get_all_users_admin(&self) -> Result<Vec<serde_json::Value>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT u.id, u.public_key_hash, u.created_at,
-                   GROUP_CONCAT(n.name, ', ') as node_names
-            FROM users u
-            LEFT JOIN node_members nm ON u.id = nm.user_id
-            LEFT JOIN nodes n ON nm.node_id = n.id
-            GROUP BY u.id
-            ORDER BY u.created_at DESC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to query all users")?;
+    // A relay-wide user roster is deliberately gone: the relay owner must never be
+    // able to enumerate users or see which nodes anyone belongs to.
 
-        Ok(rows
-            .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "id": r.get::<String, _>("id"),
-                    "public_key_hash": r.get::<String, _>("public_key_hash"),
-                    "created_at": r.get::<i64, _>("created_at"),
-                    "node_names": r.get::<Option<String>, _>("node_names"),
-                })
-            })
-            .collect())
-    }
-
-    /// Get all nodes with member count, channel count, created_at (admin)
+    /// Node registry for the relay owner: id, name, description, created_at only.
+    /// No owner, no member/channel counts — names + a handle to create/delete, and
+    /// nothing about who is inside a node.
     pub async fn get_nodes_admin(&self) -> Result<Vec<serde_json::Value>> {
         let rows = sqlx::query(
             r#"
-            SELECT n.id, n.name, n.owner_id, n.description, n.created_at,
-                   (SELECT COUNT(*) FROM node_members nm WHERE nm.node_id = n.id) as member_count,
-                   (SELECT COUNT(*) FROM channels c WHERE c.node_id = n.id) as channel_count
+            SELECT n.id, n.name, n.description, n.created_at
             FROM nodes n
             ORDER BY n.created_at DESC
             "#,
         )
         .fetch_all(&self.pool)
         .await
-        .context("Failed to query all nodes")?;
+        .context("Failed to query node registry")?;
 
         Ok(rows
             .iter()
@@ -2679,11 +2550,8 @@ impl Database {
                 serde_json::json!({
                     "id": r.get::<String, _>("id"),
                     "name": r.get::<String, _>("name"),
-                    "owner_id": r.get::<String, _>("owner_id"),
                     "description": r.get::<Option<String>, _>("description"),
                     "created_at": r.get::<i64, _>("created_at"),
-                    "member_count": r.get::<i64, _>("member_count"),
-                    "channel_count": r.get::<i64, _>("channel_count"),
                 })
             })
             .collect())

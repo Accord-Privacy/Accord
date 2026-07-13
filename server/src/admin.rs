@@ -30,11 +30,17 @@ pub fn new_log_broadcast() -> LogBroadcast {
 }
 
 // ── Auth helper ──
+//
+// The admin dashboard is bound to 127.0.0.1 only (see main.rs), so localhost
+// access IS the relay owner — no login needed. `ACCORD_ADMIN_TOKEN` is therefore
+// OPTIONAL, defense-in-depth: unset (the norm) → allowed (localhost-trusted); set
+// → a matching `x-admin-token` header is still required, for operators who expose
+// the port through their own tunnel/reverse proxy and want an extra gate.
 
 fn validate_admin_token(headers: &HeaderMap, _params: &HashMap<String, String>) -> bool {
     let expected = match std::env::var("ACCORD_ADMIN_TOKEN") {
         Ok(t) if !t.is_empty() => t,
-        _ => return false, // No token configured → admin disabled
+        _ => return true, // No token configured → localhost access is authority
     };
     // Only accept token via header — never query params (which leak in logs/history/referers)
     if let Some(hdr) = headers.get("x-admin-token") {
@@ -51,15 +57,19 @@ fn validate_admin_token(headers: &HeaderMap, _params: &HashMap<String, String>) 
 /// query param auth ONLY for the admin WebSocket endpoint. This is acceptable
 /// because WS upgrade URLs aren't stored in browser history or sent as referers.
 fn validate_admin_token_ws(headers: &HeaderMap, params: &HashMap<String, String>) -> bool {
-    // Try header first
-    if validate_admin_token(headers, params) {
-        return true;
-    }
-    // Fall back to query param for WebSocket only
     let expected = match std::env::var("ACCORD_ADMIN_TOKEN") {
         Ok(t) if !t.is_empty() => t,
-        _ => return false,
+        _ => return true, // No token configured → localhost access is authority
     };
+    // Try header first
+    if let Some(hdr) = headers.get("x-admin-token") {
+        if let Ok(val) = hdr.to_str() {
+            if val.as_bytes().ct_eq(expected.as_bytes()).into() {
+                return true;
+            }
+        }
+    }
+    // Fall back to query param for WebSocket only
     if let Some(val) = params.get("admin_token") {
         if val.as_bytes().ct_eq(expected.as_bytes()).into() {
             return true;
@@ -122,20 +132,12 @@ pub async fn admin_stats_handler(
     })))
 }
 
-/// Return all users (admin)
-pub async fn admin_users_handler(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !validate_admin_token(&headers, &params) {
-        return Err(unauthorized());
-    }
-    let users = state.db.get_all_users_admin().await.unwrap_or_default();
-    Ok(Json(json!({ "users": users })))
-}
+// A relay-wide user list (and its node_names correlation) is deliberately gone:
+// the relay owner must not see who is in which node, nor a global roster.
 
-/// Return all nodes (admin)
+/// Return the node registry (admin): id, name, description, created_at only.
+/// No owner, no member/channel counts — the relay owner sees a name and a handle
+/// to create/delete, nothing about who is inside.
 pub async fn admin_nodes_handler(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -336,73 +338,9 @@ pub async fn admin_build_allowlist_remove_handler(
     }
 }
 
-// ── Audit Log endpoint ──
-
-/// Return paginated, filterable audit log (GET /api/admin/audit-log)
-pub async fn admin_audit_log_handler(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !validate_admin_token(&headers, &params) {
-        return Err(unauthorized());
-    }
-
-    let page = params
-        .get("page")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(1)
-        .max(1);
-    let per_page = params
-        .get("per_page")
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(25)
-        .min(100);
-    let action_filter = params
-        .get("action")
-        .filter(|s| !s.is_empty())
-        .map(|s| s.as_str());
-    let start_time = params.get("start").and_then(|s| s.parse::<i64>().ok());
-    let end_time = params.get("end").and_then(|s| s.parse::<i64>().ok());
-
-    match state
-        .db
-        .get_admin_audit_log(page, per_page, action_filter, start_time, end_time)
-        .await
-    {
-        Ok((entries, total)) => {
-            let total_pages = (total as f64 / per_page as f64).ceil() as u64;
-            Ok(Json(json!({
-                "entries": entries,
-                "total": total,
-                "page": page,
-                "per_page": per_page,
-                "total_pages": total_pages,
-            })))
-        }
-        Err(e) => {
-            tracing::error!("Failed to query audit log: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Internal server error"})),
-            ))
-        }
-    }
-}
-
-/// Return distinct action types for filter dropdown (GET /api/admin/audit-log/actions)
-pub async fn admin_audit_log_actions_handler(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    if !validate_admin_token(&headers, &params) {
-        return Err(unauthorized());
-    }
-
-    let actions = state.db.get_audit_action_types().await.unwrap_or_default();
-    Ok(Json(json!({ "actions": actions })))
-}
+// The relay-wide audit-log aggregate is deliberately gone: per-node governance
+// (kicks, bans, role changes) and actor IPs are node business, not the relay's.
+// Node owners still read their own node-scoped audit via get_node_audit_log.
 
 // ── Helpers ──
 
@@ -488,9 +426,7 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
   <div class="container">
     <div class="tabs">
       <div class="tab active" onclick="switchTab('stats')">📊 Stats</div>
-      <div class="tab" onclick="switchTab('users')">👤 Users</div>
       <div class="tab" onclick="switchTab('nodes')">🏠 Nodes</div>
-      <div class="tab" onclick="switchTab('audit')">🔍 Audit Log</div>
       <div class="tab" onclick="switchTab('logs')">📜 Logs</div>
     </div>
 
@@ -506,41 +442,14 @@ const ADMIN_HTML: &str = r##"<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Users panel -->
-    <div id="panel-users" class="panel">
-      <div class="section">
-        <h2>Registered Users</h2>
-        <input class="search" placeholder="Search users..." oninput="filterTable('users-table', this.value)">
-        <table><thead><tr><th>ID</th><th>Public Key Hash</th><th>Created</th><th>Node Memberships</th></tr></thead>
-        <tbody id="users-table"></tbody></table>
-      </div>
-    </div>
-
     <!-- Nodes panel -->
     <div id="panel-nodes" class="panel">
       <div class="section">
-        <h2>All Nodes</h2>
+        <h2>Node Registry</h2>
+        <p style="color:#888;font-size:0.82em;margin-bottom:10px">Names and descriptions only — the relay cannot see who is inside a node.</p>
         <input class="search" placeholder="Search nodes..." oninput="filterTable('nodes-table', this.value)">
-        <table><thead><tr><th>Name</th><th>ID</th><th>Members</th><th>Channels</th><th>Created</th><th>Description</th></tr></thead>
+        <table><thead><tr><th>Name</th><th>ID</th><th>Created</th><th>Description</th></tr></thead>
         <tbody id="nodes-table"></tbody></table>
-      </div>
-    </div>
-
-    <!-- Audit Log panel -->
-    <div id="panel-audit" class="panel">
-      <div class="section">
-        <h2>Audit Log</h2>
-        <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
-          <select id="audit-action-filter" class="search" style="width:200px" onchange="loadAuditLog(1)">
-            <option value="">All actions</option>
-          </select>
-          <input id="audit-start" type="date" class="search" style="width:160px" onchange="loadAuditLog(1)" title="Start date">
-          <input id="audit-end" type="date" class="search" style="width:160px" onchange="loadAuditLog(1)" title="End date">
-          <span id="audit-total" style="color:#888;font-size:0.82em"></span>
-        </div>
-        <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
-        <tbody id="audit-table"></tbody></table>
-        <div id="audit-pagination" style="display:flex;gap:8px;justify-content:center;margin-top:12px"></div>
       </div>
     </div>
 
@@ -561,17 +470,24 @@ let adminToken = '';
 let logWs = null;
 let pollTimer = null;
 
+// Localhost access is the relay owner — connect straight away. A token is only
+// needed if the operator set ACCORD_ADMIN_TOKEN (e.g. exposing the port), in
+// which case an unauthenticated request 401s and we show the login prompt.
 function init() {
-  const saved = sessionStorage.getItem('accord_admin_token');
-  if (saved) { adminToken = saved; tryConnect(); }
-  else { document.getElementById('login').style.display = 'flex'; }
+  adminToken = sessionStorage.getItem('accord_admin_token') || '';
+  tryConnect();
+}
+
+function showLogin() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login').style.display = 'flex';
 }
 
 async function doLogin() {
   const t = document.getElementById('token-input').value.trim();
   if (!t) return;
   adminToken = t;
-  // Validate token by hitting stats endpoint
   try {
     const r = await apiFetch('/admin/stats');
     if (!r.ok) { document.getElementById('login-error').textContent = 'Invalid token'; adminToken = ''; return; }
@@ -585,6 +501,7 @@ document.getElementById('token-input').addEventListener('keydown', e => { if (e.
 function tryConnect() {
   document.getElementById('login').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  if (pollTimer) clearInterval(pollTimer);
   pollStats();
   pollTimer = setInterval(pollStats, 5000);
 }
@@ -598,9 +515,7 @@ function switchTab(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   event.target.classList.add('active');
-  if (name === 'users') loadUsers();
   if (name === 'nodes') loadNodes();
-  if (name === 'audit') { loadAuditActions(); loadAuditLog(1); }
   if (name === 'logs') connectLogWs();
 }
 
@@ -626,7 +541,7 @@ function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.
 async function pollStats() {
   try {
     const r = await apiFetch('/admin/stats');
-    if (r.status === 401) { sessionStorage.removeItem('accord_admin_token'); location.reload(); return; }
+    if (r.status === 401) { sessionStorage.removeItem('accord_admin_token'); showLogin(); return; }
     const d = await r.json();
     document.getElementById('version').textContent = d.version;
     document.getElementById('uptime').textContent = fmtUptime(d.uptime_seconds);
@@ -639,18 +554,6 @@ async function pollStats() {
   } catch(e) { console.error('Poll failed:', e); }
 }
 
-async function loadUsers() {
-  try {
-    const r = await apiFetch('/admin/users');
-    if (!r.ok) return;
-    const d = await r.json();
-    const tb = document.getElementById('users-table');
-    tb.innerHTML = d.users.map(u =>
-      `<tr><td class="mono">${esc(u.id.substring(0,8))}…</td><td class="mono">${esc(u.public_key_hash.substring(0,16))}…</td><td>${fmtTime(u.created_at)}</td><td>${esc(u.node_names || 'None')}</td></tr>`
-    ).join('');
-  } catch(e) { console.error('Failed to load users:', e); }
-}
-
 async function loadNodes() {
   try {
     const r = await apiFetch('/admin/nodes');
@@ -658,7 +561,7 @@ async function loadNodes() {
     const d = await r.json();
     const tb = document.getElementById('nodes-table');
     tb.innerHTML = d.nodes.map(n =>
-      `<tr><td>${esc(n.name)}</td><td class="mono">${esc(n.id.substring(0,8))}…</td><td>${n.member_count}</td><td>${n.channel_count}</td><td>${fmtTime(n.created_at)}</td><td>${esc(n.description || '-')}</td></tr>`
+      `<tr><td>${esc(n.name)}</td><td class="mono">${esc(n.id.substring(0,8))}…</td><td>${fmtTime(n.created_at)}</td><td>${esc(n.description || '-')}</td></tr>`
     ).join('');
   } catch(e) { console.error('Failed to load nodes:', e); }
 }
@@ -695,58 +598,6 @@ function filterTable(tableId, query) {
   rows.forEach(row => {
     row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
-}
-
-let auditActionsLoaded = false;
-async function loadAuditActions() {
-  if (auditActionsLoaded) return;
-  try {
-    const r = await apiFetch('/api/admin/audit-log/actions');
-    if (!r.ok) return;
-    const d = await r.json();
-    const sel = document.getElementById('audit-action-filter');
-    d.actions.forEach(a => {
-      const opt = document.createElement('option');
-      opt.value = a; opt.textContent = a.replace(/_/g, ' ');
-      sel.appendChild(opt);
-    });
-    auditActionsLoaded = true;
-  } catch(e) { console.error('Failed to load audit actions:', e); }
-}
-
-async function loadAuditLog(page) {
-  try {
-    const action = document.getElementById('audit-action-filter').value;
-    const startDate = document.getElementById('audit-start').value;
-    const endDate = document.getElementById('audit-end').value;
-    let url = `/api/admin/audit-log?page=${page}&per_page=25`;
-    if (action) url += `&action=${encodeURIComponent(action)}`;
-    if (startDate) url += `&start=${Math.floor(new Date(startDate).getTime()/1000)}`;
-    if (endDate) url += `&end=${Math.floor(new Date(endDate + 'T23:59:59').getTime()/1000)}`;
-    const r = await apiFetch(url);
-    if (!r.ok) return;
-    const d = await r.json();
-    document.getElementById('audit-total').textContent = `${d.total} total entries`;
-    const tb = document.getElementById('audit-table');
-    tb.innerHTML = d.entries.map(e => {
-      const actor = e.actor_display_name || (e.actor_public_key_hash ? e.actor_public_key_hash.substring(0,12)+'…' : e.actor_id.substring(0,8)+'…');
-      const target = e.target_id ? e.target_type + ' ' + e.target_id.substring(0,8)+'…' : e.target_type || '-';
-      let details = '-';
-      if (e.details) { try { const p = JSON.parse(e.details); details = Object.entries(p).map(([k,v])=>k+': '+v).join(', '); } catch { details = e.details; } }
-      if (details.length > 80) details = details.substring(0,77)+'…';
-      return `<tr><td>${fmtTime(e.created_at)}</td><td class="mono">${esc(actor)}</td><td><span class="badge">${esc(e.action)}</span></td><td class="mono">${esc(target)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${esc(details)}</td><td class="mono">${esc(e.ip_address||'-')}</td></tr>`;
-    }).join('');
-    // Pagination
-    const pg = document.getElementById('audit-pagination');
-    pg.innerHTML = '';
-    for (let i = 1; i <= d.total_pages && i <= 20; i++) {
-      const btn = document.createElement('button');
-      btn.textContent = i;
-      btn.className = 'tab' + (i === d.page ? ' active' : '');
-      btn.onclick = () => loadAuditLog(i);
-      pg.appendChild(btn);
-    }
-  } catch(e) { console.error('Failed to load audit log:', e); }
 }
 
 init();
@@ -863,17 +714,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_admin_token_not_configured() {
+    async fn test_admin_token_not_configured_allows_localhost() {
+        // No token set → localhost access is the relay owner, so any request passes.
         let _g = set_admin_token(None).await;
-        let headers = headers_with_token("anything");
-        assert!(!validate_admin_token(&headers, &empty_params()));
+        assert!(validate_admin_token(&HeaderMap::new(), &empty_params()));
     }
 
     #[tokio::test]
-    async fn test_admin_token_configured_empty() {
+    async fn test_admin_token_configured_empty_allows_localhost() {
+        // Empty token is treated as "no token" → localhost-trusted.
         let _g = set_admin_token(Some("")).await;
-        let headers = headers_with_token("anything");
-        assert!(!validate_admin_token(&headers, &empty_params()));
+        assert!(validate_admin_token(&HeaderMap::new(), &empty_params()));
     }
 
     #[tokio::test]
@@ -939,12 +790,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ws_no_token_configured() {
+    async fn test_ws_no_token_configured_allows_localhost() {
+        // No token set → the admin WS accepts localhost connections without creds.
         let _g = set_admin_token(None).await;
-        assert!(!validate_admin_token_ws(
-            &HeaderMap::new(),
-            &params_with_token("anything")
-        ));
+        assert!(validate_admin_token_ws(&HeaderMap::new(), &empty_params()));
     }
 
     #[tokio::test]
@@ -1040,54 +889,6 @@ mod tests {
         .await;
         let json = result.unwrap().0;
         assert_eq!(json["connection_count"], 1);
-    }
-
-    // ── Users handler tests ──
-
-    #[tokio::test]
-    async fn test_users_handler_rejects_no_auth() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result =
-            admin_users_handler(State(state), HeaderMap::new(), Query(empty_params())).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_users_handler_accepts_valid_token() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result = admin_users_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(empty_params()),
-        )
-        .await;
-        assert!(result.is_ok());
-        let json = result.unwrap().0;
-        assert!(json.get("users").is_some());
-        // System user exists from DB init (DM sentinel)
-        assert_eq!(json["users"].as_array().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_users_handler_returns_registered_users() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        state
-            .register_user("test-pubkey-123".into(), "".into())
-            .await
-            .unwrap();
-        let result = admin_users_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(empty_params()),
-        )
-        .await;
-        let json = result.unwrap().0;
-        let users = json["users"].as_array().unwrap();
-        assert_eq!(users.len(), 2); // system user + registered user
     }
 
     // ── Nodes handler tests ──
@@ -1371,127 +1172,6 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
-    }
-
-    // ── Audit log handler tests ──
-
-    #[tokio::test]
-    async fn test_audit_log_rejects_no_auth() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result =
-            admin_audit_log_handler(State(state), HeaderMap::new(), Query(empty_params())).await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_accepts_valid_token() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result = admin_audit_log_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(empty_params()),
-        )
-        .await;
-        assert!(result.is_ok());
-        let json = result.unwrap().0;
-        assert!(json.get("entries").is_some());
-        assert!(json.get("total").is_some());
-        assert!(json.get("page").is_some());
-        assert!(json.get("per_page").is_some());
-        assert!(json.get("total_pages").is_some());
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_pagination_defaults() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result = admin_audit_log_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(empty_params()),
-        )
-        .await;
-        let json = result.unwrap().0;
-        assert_eq!(json["page"], 1);
-        assert_eq!(json["per_page"], 25);
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_custom_pagination() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let mut params = HashMap::new();
-        params.insert("page".to_string(), "2".to_string());
-        params.insert("per_page".to_string(), "10".to_string());
-        let result = admin_audit_log_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(params),
-        )
-        .await;
-        let json = result.unwrap().0;
-        assert_eq!(json["page"], 2);
-        assert_eq!(json["per_page"], 10);
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_per_page_capped_at_100() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let mut params = HashMap::new();
-        params.insert("per_page".to_string(), "500".to_string());
-        let result = admin_audit_log_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(params),
-        )
-        .await;
-        let json = result.unwrap().0;
-        assert_eq!(json["per_page"], 100);
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_page_minimum_is_1() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let mut params = HashMap::new();
-        params.insert("page".to_string(), "0".to_string());
-        let result = admin_audit_log_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(params),
-        )
-        .await;
-        let json = result.unwrap().0;
-        assert_eq!(json["page"], 1);
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_actions_rejects_no_auth() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result =
-            admin_audit_log_actions_handler(State(state), HeaderMap::new(), Query(empty_params()))
-                .await;
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn test_audit_log_actions_accepts_valid_token() {
-        let _g = set_admin_token(Some("admin-pass")).await;
-        let state = make_test_state().await;
-        let result = admin_audit_log_actions_handler(
-            State(state),
-            headers_with_token("admin-pass"),
-            Query(empty_params()),
-        )
-        .await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().0.get("actions").is_some());
     }
 
     // ── unauthorized() helper test ──
