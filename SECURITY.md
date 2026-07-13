@@ -50,9 +50,10 @@ Keys rotate with every message via the Double Ratchet. Compromising a single mes
 
 ### ✅ The relay **can** see:
 - Which public keys are registered and online (presence)
-- Which Node a user is connected to (routing metadata)
+- Which Node a user is connected to (routing metadata — never surfaced in the admin dashboard)
+- **Node names and descriptions** — a deliberate concession so the relay owner can run a node registry and create/delete nodes (see [GOVERNANCE.md](GOVERNANCE.md))
 - Encrypted blob sizes and timestamps
-- IP addresses of connected clients (standard for any network service)
+- IP addresses of connected clients — standard for any network service. The relay owner keeps a node-correlation-free connection log for DoS/DDoS defense and IP bans; IPs are **never** linked to nodes and **never** exposed to node owners or other users
 
 ### ❌ The relay **cannot** see:
 - Message contents
@@ -61,6 +62,8 @@ Keys rotate with every message via the Double Ratchet. Compromising a single mes
 - Display names, avatars, or profile information (encrypted per-Node)
 - Role names or permission assignments within a Node
 - Which specific channel within a Node a message belongs to (encrypted routing)
+- Per-node policy (disappearing-message retention, screenshot protection, word filters) — carried in the NMK-encrypted settings blob
+- Per-node governance (kicks, bans, role changes) — there is no relay-level audit aggregate and no user roster
 
 ### Metadata Considerations
 

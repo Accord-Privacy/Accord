@@ -4,6 +4,31 @@ All notable changes to Accord are documented here. This project adheres to [Sema
 
 ## [Unreleased] — Phase 6: Public Release (In Progress)
 
+### Governance & privacy (2026-07-13)
+- **Governance model documented** ([GOVERNANCE.md](GOVERNANCE.md)) — no central or
+  relay-side moderation; parent model; node owners are 100% responsible for their
+  communities; Accord is explicitly not a "safe space". Reflected across README,
+  CONTRIBUTING, architecture, admin-guide, and metadata-privacy docs.
+- **Relay owner = localhost.** The admin dashboard now binds to `127.0.0.1` only
+  (`--admin-port`, default 6789; `--no-admin`) and is off the public router.
+  `ACCORD_ADMIN_TOKEN` is optional defense-in-depth (unset = localhost-trusted).
+- **Relay blindness tightened.** Removed the all-users roster (it exposed each
+  user's node memberships) and the cross-node audit-log aggregate (per-node
+  governance + actor IPs). The node registry now shows names/descriptions only.
+- **Disappearing messages** — per-node default + per-channel override, retroactive
+  wipe-old on enable; policy distributed via the NMK-encrypted settings blob (the
+  relay sees only an opaque `expires_at`).
+- **Read-gated messages** — composer control to hold a message's disappear timer
+  until chosen readers (users and/or roles) have seen it, with per-recipient,
+  per-device expiry after each reader opens it.
+- **Screenshot protection** — per-node/channel; reliable on Windows/macOS,
+  best-effort on Linux (honestly scoped in-app).
+- **Auto-mod word filters moved fully client-side** — distributed inside the
+  NMK-encrypted node settings and enforced on the client; all relay auto-mod
+  endpoints, storage, and enforcement removed (they leaked the wordlist and were
+  non-functional against E2E-encrypted messages anyway).
+- **Panic wipe** and **duress password** (decoy account, no forensic trace).
+
 ### Security hardening (2026-07-13 endpoint-threat sweep)
 - **Two-factor at-rest keys (audit L1).** Local encrypted stores now derive their
   key from `HKDF(password, salt = per-user 256-bit secret held in the OS

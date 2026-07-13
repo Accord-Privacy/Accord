@@ -100,7 +100,7 @@ The relay does maintain a minimal `user_profiles` table (with a default display 
 
 ## 5. Moderation: Kicks and Bans
 
-Moderation in Accord is **strictly per-Node**. There is no global ban list, no cross-Node visibility, and no centralized moderation authority.
+Moderation in Accord is **strictly per-Node** and is the node owner's responsibility. There is no global ban list, no cross-Node visibility, and no centralized moderation authority — the relay cannot see inside a node and does not moderate one. See [../GOVERNANCE.md](../GOVERNANCE.md).
 
 ### Kick
 

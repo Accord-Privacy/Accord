@@ -95,12 +95,12 @@
 ### Node Model
 - **Nodes** = community spaces (like Discord servers, but E2E encrypted)
 - **Relay server** = invisible infrastructure (users never interact with it directly)
-- **Server admin ≠ Node admin** — "landlord can't enter apartments"
-- **Node creation policies:** `admin_only | open | approval | invite`
+- **Relay owner ≠ Node owner** — "landlord can't enter apartments." Relay owner = whoever has localhost access; sees node names/descriptions, creates/deletes nodes, bans IPs for abuse — nothing inside a node. No central moderation. See [GOVERNANCE.md](GOVERNANCE.md).
+- **Node creation policies:** `open | admin_only` (implemented); `approval | invite` (planned)
 
 ### Trust Model
 E2E encryption means even malicious relays can't read content. Remaining risks and mitigations:
-- **Metadata** → Phase 7: encrypt usernames/channels, onion routing
+- **Metadata** → NMK encrypts channel/category names + per-node policy (done); Phase 7: onion routing for timing/graph metadata
 - **Server fingerprinting** → Ed25519 identity key, TOFU + out-of-band verification
 - **Quantum threats** → Phase 7: post-quantum key exchange
 

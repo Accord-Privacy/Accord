@@ -107,7 +107,7 @@ cd Accord
 bash deploy/install.sh
 ```
 
-The script will ask for your domain and admin token, then launch everything.
+The script will ask for your domain (and, optionally, an admin token — the dashboard is localhost-only, so a token is only needed if you deliberately expose that port), then launch everything.
 
 **That's it.** Caddy automatically gets a Let's Encrypt certificate. Your server is live at `https://chat.yourdomain.com`.
 
@@ -325,7 +325,12 @@ sudo journalctl -u accord --since "1 hour ago"
 
 ### Admin dashboard
 
-Accord has a built-in admin dashboard at `https://chat.yourdomain.com/admin` with stats, user list, and live log streaming.
+Accord has a built-in admin dashboard **bound to `127.0.0.1` only** (default port `6789`) — it is not exposed on your public domain. Localhost access is the relay owner, so there's no login by default. It shows aggregate stats, a node registry (names/descriptions only — no user list), and live logs. To view it remotely, tunnel over SSH:
+
+```bash
+ssh -L 6789:127.0.0.1:6789 user@your-relay-host
+# then open http://127.0.0.1:6789/admin locally
+```
 
 ### Disk space
 

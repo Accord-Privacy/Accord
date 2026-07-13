@@ -363,7 +363,7 @@ server {
 
 ## 6. Node Management
 
-A **Node** is a community space (like a Discord server). The relay server admin and Node admins are independent roles.
+A **Node** is a community space (like a Discord server). The **relay owner** (localhost access) and **node owners** are independent roles — the relay owner can create/delete nodes and see their names/descriptions, but has no authority or visibility inside a node.
 
 ### Node Creation Policies
 
