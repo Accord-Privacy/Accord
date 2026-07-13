@@ -75,6 +75,7 @@ export class AutomationHub {
         XDG_CACHE_HOME: join(root, "cache"),
         XDG_STATE_HOME: join(root, "state"),
         WEBKIT_DISABLE_DMABUF_RENDERER: "1", // NVIDIA blank-window workaround
+        ACCORD_MOCK_MEDIA: "1", // WebKit mock capture devices — voice without real mic
         APPIMAGE_EXTRACT_AND_RUN: "1",
         NO_STRIP: "1",
         ...opts.env,
@@ -144,7 +145,7 @@ export class AppHandle {
   query(selector) { return this.send("query", { selector }); }
   waitFor(target, timeoutMs = 10000) { return this.send("waitFor", { target, timeoutMs }, timeoutMs + 5000); }
   waitGone(target, timeoutMs = 10000) { return this.send("waitFor", { target, timeoutMs, gone: true }, timeoutMs + 5000); }
-  http(url, method) { return this.send("http", { url, method }); }
+  http(url, method, body) { return this.send("http", { url, method, body }); }
   storageGet(key) { return this.send("storage", { action: "get", key }); }
   storageSet(key, value) { return this.send("storage", { action: "set", key, value }); }
   storageKeys() { return this.send("storage", { action: "keys" }); }

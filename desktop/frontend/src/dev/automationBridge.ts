@@ -34,8 +34,12 @@ function pushLog(level: string, parts: unknown[]) {
   const text = parts
     .map((p) => {
       if (typeof p === "string") return p;
+      if (p instanceof Error)
+        return `${p.name}: ${p.message}\n${(p.stack || "").split("\n").slice(1, 4).join("\n")}`;
       try {
-        return JSON.stringify(p);
+        const s = JSON.stringify(p);
+        // JSON.stringify flattens DOMException/Error-likes to {}
+        return s === "{}" && p && typeof p === "object" ? String(p) : s;
       } catch {
         return String(p);
       }
@@ -232,6 +236,8 @@ async function execute(cmd: Cmd): Promise<unknown> {
       try {
         const resp = await fetch(String(a.url), {
           method: String(a.method ?? "GET"),
+          headers: a.body ? { "Content-Type": "application/json" } : undefined,
+          body: a.body ? String(a.body) : undefined,
         });
         const body = await resp.text();
         return { status: resp.status, body: body.slice(0, 500) };
