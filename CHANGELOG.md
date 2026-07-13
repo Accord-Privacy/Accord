@@ -4,6 +4,19 @@ All notable changes to Accord are documented here. This project adheres to [Sema
 
 ## [Unreleased] — Phase 6: Public Release (In Progress)
 
+### Added (2026-07-12 desktop testing sweep)
+- **Friends in the desktop app** — friend requests (sent automatically when DMing a non-friend), pending-request accept/reject UI in the DM sidebar; DMs require friendship per relay policy
+- **Listen-only voice** — joining a voice channel no longer requires a working microphone or audio output; capture and playback degrade independently
+- **Desktop two-client automation suite** — drives two real desktop instances through node/invite, channel E2EE, friends, DMs, and voice presence (`npm run auto:two`)
+
+### Fixed (2026-07-12 desktop testing sweep)
+- **Sender-key exchange no longer depends on UI state** — node join initiates E2EE key exchange from the join event itself, with retry while the peer's prekey bundle publishes; previously messages could stay permanently undecryptable depending on user-ID ordering and member-list load timing
+- **DM channels work end-to-end in the desktop app** — relay node-permission checks no longer block DM join/read/send; received DMs are cached (encrypted at rest) so history survives Double Ratchet advancement; the DM list refreshes on the first message from a new channel
+- **Voice capture** — ScriptProcessorNode buffer size was invalid (960, must be a power of two); voice audio capture never worked in any browser or webview
+- **Desktop Tauri integration** — `withGlobalTauri` was missing, so OS-keyring token storage and device identity silently fell back to browser behavior in the packaged app
+- Voice participant sidebar shows display names instead of user-ID prefixes
+- DM list crash when a DM channel's last message has no plaintext content
+
 ### Security
 - **Security audit** — full frontend + server audit with 0 critical, 1 high, 4 medium, 3 low findings ([SECURITY-AUDIT.md](SECURITY-AUDIT.md))
 - Admin token removed from URL query parameters (H1 fix)
