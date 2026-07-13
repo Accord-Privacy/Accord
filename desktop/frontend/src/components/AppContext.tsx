@@ -330,6 +330,8 @@ export interface AppContextType {
   handleAuth: () => Promise<void>;
   handleLogout: () => void;
   handlePanicWipe: () => Promise<void>;
+  handleConfigureDuress: (duressPassword: string | null) => Promise<void>;
+  duressConfigured: boolean;
   handleSendMessage: (overrideText?: string) => Promise<void>;
   handleRetryMessage: (messageId: string) => void;
   handleSaveEdit: () => Promise<void>;

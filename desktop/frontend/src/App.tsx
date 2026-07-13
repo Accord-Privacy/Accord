@@ -42,6 +42,7 @@ import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, 
 import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, type DecryptedMetadata } from "./e2ee/metadata";
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { wipeLocalData } from "./wipe";
+import { setDuressPassword, isDuressConfigured } from "./duress";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -184,6 +185,7 @@ function App() {
   const [recoverError, setRecoverError] = useState("");
   const [recoverLoading, setRecoverLoading] = useState(false);
   const [hasExistingKey, setHasExistingKey] = useState(() => hasStoredKeyPair());
+  const [duressConfigured, setDuressConfigured] = useState(() => isDuressConfigured());
   // Store password in memory for session reconnect
   const passwordRef = useRef<string>("");
 
@@ -3224,6 +3226,13 @@ function App() {
     window.location.reload();
   }, [ws]);
 
+  // Configure (or clear) the duress password. Rejects a duress password equal
+  // to the real one (which would wipe on a normal login).
+  const handleConfigureDuress = useCallback(async (duressPassword: string | null) => {
+    setDuressPassword(duressPassword, passwordRef.current || "");
+    setDuressConfigured(isDuressConfigured());
+  }, []);
+
   // Handle sending messages
   const handleSendMessage = async (overrideText?: string) => {
     const msgText = overrideText !== undefined ? overrideText : message;
@@ -4175,7 +4184,7 @@ function App() {
     showRolePopup, setShowRolePopup,
 
     // ---- Handlers ----
-    handleAuth, handleLogout, handlePanicWipe, handleSendMessage, handleRetryMessage,
+    handleAuth, handleLogout, handlePanicWipe, handleConfigureDuress, duressConfigured, handleSendMessage, handleRetryMessage,
     handleSaveEdit, handleCancelEdit, handleDeleteMessage,
     handleReply, handleCancelReply,
     handleAddReaction, handleRemoveReaction, handleToggleReaction,
@@ -4264,6 +4273,22 @@ function App() {
 
         const chosenDisplayName = result.displayName || fingerprint(result.publicKeyHash);
         if (result.displayName) localStorage.setItem('accord_display_name', result.displayName);
+
+        // Duress decoy: a purely local, empty identity. Never contact a relay
+        // (that would risk a username collision and leave a network trace);
+        // just enter the app authenticated-offline with an empty account.
+        if (result.offline) {
+          setAppState(prev => ({
+            ...prev,
+            isAuthenticated: true,
+            user: { id: '', public_key_hash: result.publicKeyHash, public_key: result.publicKey, created_at: Date.now() / 1000, display_name: chosenDisplayName },
+          }));
+          setIsAuthenticated(true);
+          setHasExistingKey(true);
+          setShowSetupWizard(false);
+          setShowWelcomeScreen(false);
+          return;
+        }
 
         // If relay URL provided (backward compat or login with existing relay), connect to it
         if (result.relayUrl) {

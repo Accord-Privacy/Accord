@@ -12,6 +12,8 @@ import {
   getRawPrivateKey,
   entropyToMnemonic,
 } from "./crypto";
+import { isDuressPassword } from "./duress";
+import { wipeLocalData } from "./wipe";
 
 export interface SetupResult {
   keyPair: CryptoKeyPair;
@@ -26,6 +28,8 @@ export interface SetupResult {
   isRecovery?: boolean;
   /** Username for v2 auth flow */
   username?: string;
+  /** Duress decoy: create a purely local, empty identity — never touch a relay. */
+  offline?: boolean;
 }
 
 interface SetupWizardProps {
@@ -205,6 +209,31 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
     setLoading(true);
     setError("");
     try {
+      // ── Duress check ──────────────────────────────────────────────────
+      // If this is the configured duress password, destroy the real account
+      // on this device and continue as a fresh, empty, OFFLINE decoy identity.
+      // The wipe removes the duress verifier too, so nothing remains to reveal
+      // that a duress password was ever set.
+      if (isDuressPassword(password)) {
+        await wipeLocalData(localStorage.getItem("accord_user_id"), { allIdentities: true });
+        const decoyKp = await generateKeyPair();
+        const decoyPk = await exportPublicKey(decoyKp.publicKey);
+        const decoyHash = await sha256Hex(decoyPk);
+        setActiveIdentity(decoyHash);
+        await saveKeyWithPassword(decoyKp, password, decoyHash);
+        localStorage.setItem("accord_username", username.trim());
+        onComplete({
+          keyPair: decoyKp,
+          publicKey: decoyPk,
+          publicKeyHash: decoyHash,
+          password,
+          mnemonic: "",
+          username: username.trim(),
+          offline: true,
+        });
+        return;
+      }
+
       // Try to load stored keypair for E2EE (optional — might not exist on this device)
       let kp: CryptoKeyPair | null = null;
       let pk = "";
