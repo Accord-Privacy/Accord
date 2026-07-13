@@ -1266,6 +1266,7 @@ pub async fn broadcast_member_joined(state: &SharedState, node_id: Uuid, user_id
             let join_event = serde_json::json!({
                 "type": "sender_key_new_member",
                 "channel_id": channel.id,
+                "node_id": node_id,
                 "new_user_id": user_id,
             });
             let _ = state
@@ -4569,9 +4570,13 @@ async fn handle_ws_message(
             encrypted_data,
             reply_to,
         } => {
-            // Check if this is a DM channel and enforce blocks
-            if let Ok(true) = state.db.is_dm_channel(channel_id).await {
+            // Check if this is a DM channel; enforce participation and blocks
+            let is_dm = state.db.is_dm_channel(channel_id).await.unwrap_or(false);
+            if is_dm {
                 if let Ok(Some(dm)) = state.db.get_dm_channel(channel_id).await {
+                    if dm.user1_id != sender_user_id && dm.user2_id != sender_user_id {
+                        return Err("Not a participant of this DM channel".to_string());
+                    }
                     let other_user = if dm.user1_id == sender_user_id {
                         dm.user2_id
                     } else {
@@ -4590,8 +4595,10 @@ async fn handle_ws_message(
                 }
             }
 
-            // Check SEND_MESSAGES permission and build hash allowlist
-            if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
+            // Check SEND_MESSAGES permission and build hash allowlist.
+            // DM channels sit under the memberless DM system node, so node
+            // permissions don't apply — participation was verified above.
+            if let Ok(Some(channel)) = state.db.get_channel(channel_id).await.map(|c| c.filter(|_| !is_dm)) {
                 // Check build hash allowlist
                 state
                     .check_build_hash_for_node(sender_user_id, channel.node_id)
@@ -4731,7 +4738,11 @@ async fn handle_ws_message(
                 "seq": seq,
                 "timestamp": ws_message.timestamp, "reply_to": reply_to,
                 "encrypted_display_name": sender_display_name_b64,
-                "sender_display_name": sender_display_name
+                "sender_display_name": sender_display_name,
+                // Lets a recipient with a stale DM list know to refresh it —
+                // without this, the first message in a new DM channel is
+                // mis-handled as a node channel message.
+                "is_dm": is_dm
             });
             state.send_to_channel(channel_id, relay.to_string()).await?;
         }

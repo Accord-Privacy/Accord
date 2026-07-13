@@ -361,8 +361,12 @@ impl AppState {
             _ => {}
         }
 
-        // Check device alt limit (max 5 accounts per device)
-        if let Some(ref fingerprint) = device_fingerprint_hash {
+        // Check device alt limit (max 5 accounts per device). Skipped under
+        // --disable-rate-limits: automated tests register many accounts from
+        // one device, and this guard is the same abuse class as rate limits.
+        if let (false, Some(ref fingerprint)) =
+            (self.rate_limiter.is_disabled(), &device_fingerprint_hash)
+        {
             match self
                 .db
                 .count_registrations_for_fingerprint(fingerprint)
@@ -1045,6 +1049,19 @@ impl AppState {
     // ── Channel operations (now Node-scoped) ──
 
     pub async fn join_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
+        // DM channels: membership is being one of the two participants (the
+        // DM system node has no members, so the node check below would fail).
+        if let Ok(Some(dm)) = self.db.get_dm_channel(channel_id).await {
+            if dm.user1_id == user_id || dm.user2_id == user_id {
+                return self
+                    .db
+                    .add_user_to_channel(channel_id, user_id)
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+            return Err("Not a participant of this DM channel".to_string());
+        }
+
         // Verify channel exists and user is member of the Node
         let channel = match self.db.get_channel(channel_id).await {
             Ok(Some(c)) => c,
@@ -1814,6 +1831,12 @@ impl AppState {
         user_id: Uuid,
         channel_id: Uuid,
     ) -> Result<bool, String> {
+        // DM channels live under the DM system node, which has no members —
+        // access is simply "am I one of the two participants".
+        if let Ok(Some(dm)) = self.db.get_dm_channel(channel_id).await {
+            return Ok(dm.user1_id == user_id || dm.user2_id == user_id);
+        }
+
         // Get channel info to find the node
         let channel = self.db.get_channel(channel_id).await.map_err(|e| {
             tracing::error!("Database error: {}", e);

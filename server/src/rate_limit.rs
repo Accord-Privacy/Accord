@@ -104,6 +104,12 @@ impl RateLimiter {
         }
     }
 
+    /// True when limits are disabled (--disable-rate-limits). Other abuse
+    /// guards (e.g. the per-device account cap) also key off this.
+    pub fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+
     /// Check if an action is allowed for an IP address (for auth/registration)
     pub async fn check_ip(&self, ip: &str, action: ActionType) -> Result<(), RateLimitError> {
         if self.disabled {
