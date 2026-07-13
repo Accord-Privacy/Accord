@@ -1,7 +1,8 @@
 # Accord — Architecture
 
 > Single source of truth for Accord's architecture decisions.
-> Last updated: 2026-02-17
+> Last updated: 2026-07-13. Governance model (relay-owner vs node-owner, no
+> central moderation): see [../GOVERNANCE.md](../GOVERNANCE.md).
 
 ---
 
@@ -39,9 +40,9 @@ The relay is a dumb pipe. It:
 - Routes WebSocket traffic between clients by UUID
 - Authenticates users via public key hash + Argon2 password
 - Enforces rate limits and transport-level security
-- **Knows nothing** about message content, display names, community names, or user identities
+- **Knows nothing** about message content, display names, channel names, node membership, or per-node policy
 
-The relay admin is a landlord — they provide the building but cannot enter the apartments.
+The relay admin is a landlord — they provide the building but cannot enter the apartments. The one narrow concession: a landlord can read the nameplate — the relay may see a node's **name and description** (to run a node registry and create/delete nodes), but nothing about who is inside or what they say. Whoever has localhost access to the relay is the owner; there is no relay account. See [../GOVERNANCE.md](../GOVERNANCE.md).
 
 ### Nodes
 
@@ -247,40 +248,46 @@ For operators who want additional protection:
 - Tor hidden service — optional, documented separately
 - Neither is required for normal operation
 
-### Server Admin Capabilities
+### Relay Owner Capabilities
 
-The server admin can:
+The relay owner is **whoever has localhost access** to the machine — no relay
+account, no login. The admin dashboard binds to `127.0.0.1` only. The owner can:
 - Start, stop, and maintain the relay process
-- See encrypted blobs, UUIDs, and timestamps
-- Set Node creation policies (`admin_only | open | approval | invite`)
+- See a **node registry** — node names + descriptions only
+- **Create and delete** nodes
+- See a node-correlation-free **connection log** (IP + connect/disconnect) and
+  **ban an IP** for DoS/DDoS defense
+- Pin allowed client **build hashes**
 
-The server admin **cannot**:
-- Read any message content
-- See any display name, channel name, or Node name (encrypted with NMK)
-- Access any Node as a member (unless explicitly invited)
-- Decrypt any metadata
+The relay owner **cannot**:
+- Read any message content, or decrypt any metadata
+- See node membership, channels, roles, or a user roster
+- See any per-node governance (kicks, bans, role changes)
+- Correlate an IP to a node, or expose any end user's IP to node owners or others
+- Access any node as a member (unless explicitly invited)
 
-### Permission Hierarchy (Server Admin vs Node Admin)
+### Permission Hierarchy (Relay Owner vs Node Owner)
 
 ```
-Server Admin
-├── Create/delete Nodes (per creation policy)
-├── Set server-wide policies (rate limits, storage quotas)
-├── View Node metadata (name, size — NOT content)
-├── Suspend/remove Nodes (abuse, ToS violations)
-└── NO access to Node internals
+Relay Owner (= localhost access; a landlord)
+├── Create/delete nodes
+├── Set relay-wide policies (rate limits, build-hash allowlist)
+├── View the node registry (name + description only — NOT membership or content)
+├── Connection log + IP ban (abuse defense; never correlated to nodes)
+└── NO access to node internals, membership, or governance
 
-Node Admin (per Node)
+Node Owner (per node; 100% responsible for their community)
 ├── Manage channels (create, delete, configure)
-├── Manage roles and permissions
-├── Invite/remove members
-├── Set Node-level policies (invite rules, etc.)
-└── Appoint moderators and other admins
+├── Manage roles and permissions (delegates to moderators/admins)
+├── Invite/remove members; bans; slow mode; word filters (client-side)
+├── Set node policies (retention, screenshot protection — NMK-distributed)
+└── All node moderation — none of it visible to or enforceable by the relay
 ```
 
-Discoverability runs both ways, narrowly: Node members can discover the
-server admin for abuse reports/support **if the admin allows it**; the
-server admin sees only routing-level Node metadata, never content.
+There is **no central moderation and no appeal to "Accord."** The relay cannot see
+inside a node, so it cannot police one. If a node isn't what you expected, leave
+it; if you want a trusted space, create one and invite only people you know. See
+[../GOVERNANCE.md](../GOVERNANCE.md).
 
 ---
 
@@ -290,18 +297,19 @@ server admin sees only routing-level Node metadata, never content.
 |------|:---:|:---:|
 | Message content | ❌ Encrypted blob | ✅ Plaintext (client only) |
 | Display names | ❌ Encrypted blob | ✅ Plaintext (Node members only) |
-| Node names | ❌ Encrypted blob | ✅ Plaintext (Node members only) |
-| Channel names | ❌ Encrypted blob | ✅ Plaintext (Node members only) |
+| Node name + description | ✅ Plaintext (by design — landlord registry) | — |
+| Channel / category names | ❌ Encrypted blob | ✅ Plaintext (Node members only) |
+| Per-node policy (retention, screenshot, word filters) | ❌ Encrypted `encrypted_settings` blob | ✅ Plaintext (Node members only) |
 | Ban reasons | ❌ Encrypted blob | ✅ Plaintext (Node admins only) |
 | File names | ❌ Encrypted | ✅ Plaintext (client only) |
 | Voice audio | ❌ SRTP encrypted | ✅ Audio (participants only) |
 | Public key + hash | ✅ | — |
 | User UUID | ✅ | — |
 | Password | ❌ Only Argon2id hash | — |
-| Node membership (UUIDs) | ✅ | — |
+| Node membership (UUIDs) | ✅ (routing) — never exposed in the admin surface | — |
 | Message timestamps | ✅ | — |
 | Message sender UUID | ✅ | — |
-| IP address | ✅ (transport layer) | — |
+| IP address | ✅ (transport; relay-owner connection log only, never node-correlated, never shown to node owners/users) | — |
 | Device fingerprint | ❌ Only SHA-256 hash | — |
 | Device hardware details | ❌ | — |
 
@@ -321,7 +329,7 @@ The relay **does** see:
 |-----------|-----------|---------|
 | Key agreement | X3DH (Extended Triple Diffie-Hellman) | Initial key exchange between users |
 | Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
-| Metadata encryption | AES-256-GCM | Node names, channel names, display names |
+| Metadata encryption | AES-256-GCM | Channel/category names, display names, per-node policy blob (node name/description are relay-visible by design) |
 | Key derivation | HKDF-SHA256 | Deriving per-purpose keys from shared secrets |
 | Voice encryption | SRTP (AES-128-CTR + HMAC-SHA1) | Per-packet voice encryption with 30s key rotation |
 | Identity keys | Ed25519 | Long-term identity for users and servers |
@@ -365,7 +373,7 @@ Phase 7 will add hybrid key exchange (X25519 + ML-KEM/Kyber) to protect against 
 | Tradeoff | Why We Accept It |
 |----------|-----------------|
 | **Relay sees membership graphs** | Inherent to relay routing. UUIDs are pseudonymous. Full mitigation requires onion routing (Phase 7). |
-| **Relay sees IP addresses** | Standard TCP. Users can use Tor/VPN. We don't log IPs beyond what's needed for active connections. |
+| **Relay sees IP addresses** | Standard TCP. Users can use Tor/VPN. The relay owner keeps a node-correlation-free connection log (IP + connect/disconnect) purely for DoS/DDoS defense and IP bans; IPs are never linked to nodes and never exposed to node owners or other users. |
 | **Relay sees message timing** | Required for message ordering. Timing analysis is a known metadata risk. Onion routing planned for Phase 7. |
 | **Device bans defeated by factory reset** | Closing this gap requires invasive hardware-level tracking that contradicts our privacy principles. The high barrier (new device or factory reset) is sufficient for most abuse scenarios. Invite-only Nodes provide the strongest defense. |
 | **NMK shared to all Node members** | A compromised member can decrypt metadata. This is inherent to group encryption. Revoking a member requires NMK rotation (planned). |
@@ -392,6 +400,7 @@ Phase 7 will add hybrid key exchange (X25519 + ML-KEM/Kyber) to protect against 
 
 ## Related Documents
 
+- [Governance](../GOVERNANCE.md) — moderation philosophy, relay-owner vs node-owner powers
 - [Identity Model](identity-model.md) — keypair identity, authentication, moderation details
 - [Device Fingerprinting](device-fingerprinting.md) — full transparency on what's collected and why
 - [Metadata Privacy](metadata-privacy.md) — NMK architecture and migration phases

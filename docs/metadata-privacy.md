@@ -1,12 +1,28 @@
-# Metadata Privacy — Phase 1
+# Metadata Privacy (NMK)
 
-## Problem
+> **Status:** implemented. Clients derive and distribute the Node Metadata Key,
+> publish encrypted channel/category names and per-node policy, and prefer the
+> decrypted values in the UI. `core/src/metadata_crypto.rs` +
+> `GET/PUT /api/nodes/:id/metadata/encrypted`.
 
-Accord encrypts message *content* end-to-end, but node names, channel names, descriptions, and user display names are stored **in plaintext** on the relay server. A compromised server (or subpoena) reveals the organizational structure of every community.
+## What is (and isn't) hidden from the relay
 
-## Solution: Encrypted Metadata Fields
+Accord encrypts message *content* end-to-end. Beyond content, the **Node Metadata
+Key (NMK)** hides the parts of a node's structure and policy that are nobody's
+business but the members':
 
-Phase 1 adds **optional encrypted metadata fields** alongside the existing plaintext ones. This is backward-compatible — clients that don't support encrypted metadata continue working.
+- **Channel names**, **category names**
+- **Per-node policy** — disappearing-message retention, screenshot protection,
+  and the client-side word-filter list — all serialized into one NMK-encrypted
+  `encrypted_settings` blob the relay stores but cannot read
+- (Future) role names, emoji names, per-user display names
+
+**Deliberately NOT hidden:** a node's **name and description**. Per
+[../GOVERNANCE.md](../GOVERNANCE.md), the relay owner is a landlord who may see
+node names/descriptions (to run a node registry and create/delete nodes) but
+nothing about who is inside. So the plaintext `nodes.name`/`description` columns
+are intentionally retained — this is the one narrow metadata concession, not a
+bug to be "fixed" by Phase 3.
 
 ### Architecture
 
@@ -24,12 +40,15 @@ Creator's identity key + Node UUID
 ```
 
 Each **Node** has one NMK. The NMK encrypts:
-- Node name and description
 - Channel names within that node
 - Channel category names
+- The per-node policy blob (`encrypted_settings`): disappearing-message
+  retention, screenshot protection, client-side word filters
 - (Future) role names, emoji names, etc.
 
-User display names use a **separate per-user key** (not yet implemented — Phase 2).
+A node's name/description may also be published in encrypted form, but the
+plaintext copy is kept on purpose (the relay owner is allowed to see it — see
+above). User display names use a **separate per-user key** (Phase 2).
 
 ### Key Distribution
 
@@ -67,16 +86,16 @@ New nullable columns (backward-compatible):
 
 | Feature | Impact |
 |---------|--------|
-| Server-side search by name | **Broken** for encrypted names. Search becomes client-side only. |
-| Node discovery / listing | Server can't display names. Clients need the NMK first (via invite). |
-| Audit logs | Server logs actions with UUIDs, not human-readable names. |
-| Admin tooling | Server admin sees encrypted blobs, not community names. This is the point. |
+| Server-side search by channel name | **Broken** for encrypted channel/category names. Search is client-side only. |
+| Channel/category discovery | Relay can't display channel names; clients need the NMK first (via invite). |
+| Per-node policy | Relay stores an opaque `encrypted_settings` blob; it can't read retention/screenshot/word-filter settings. |
+| Node registry | Relay owner **can** see node names/descriptions by design (landlord surface), but nothing about channels, members, or policy. |
 
 ### Migration Path
 
-1. **Phase 1 (this PR)**: Add encrypted fields, crypto module, tests. Plaintext fields remain required.
-2. **Phase 2**: Clients start sending encrypted metadata. Plaintext fields become optional (server accepts either).
-3. **Phase 3**: Plaintext fields removed. Server stores only encrypted blobs + UUIDs.
+1. **Phase 1 (done)**: encrypted fields, crypto module, tests; plaintext fields still written.
+2. **Phase 2 (done)**: clients derive/distribute the NMK, publish encrypted channel/category names + the `encrypted_settings` policy blob, and prefer decrypted values in the UI.
+3. **Phase 3 (partial)**: drop the plaintext columns the relay must not see (channel/category names) once no client depends on them. **Node name/description plaintext is intentionally retained** for the relay-owner registry (see [../GOVERNANCE.md](../GOVERNANCE.md)) — it is *not* removed.
 
 ### Code Locations
 

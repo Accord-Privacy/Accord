@@ -237,6 +237,23 @@ All messages and files in Accord are **end-to-end encrypted**. This means:
 
 Accord uses industry-standard cryptography (the same foundations as the Signal protocol) to protect your conversations.
 
+### Disappearing Messages
+Node owners can set messages to auto-delete after a chosen time — a node-wide default or a per-channel override. Turning it on also wipes messages already older than the limit. The relay only ever sees an opaque expiry timestamp; the policy itself is encrypted and shared privately among members. When enabled, messages show a small clock badge.
+
+### Read-Gated Messages
+When composing, click the **clock button** in the message bar to attach retention to a single message:
+- **Vanish after a time** — a plain timer.
+- **Vanish after seen** — pick specific people and/or roles; the timer doesn't start until *they* have opened it, so the message stays for anyone who hasn't read it yet. Each reader's own copy disappears after they read it. (Deletion is honored by their app — like any disappearing message, it isn't a hard guarantee against a modified client.)
+
+### Screenshot Protection
+A node or channel can ask your operating system to exclude the Accord window from screen capture. This is reliable on **Windows and macOS**; on **Linux** it's best-effort (many Wayland compositors ignore it), and Accord tells you so rather than implying a guarantee.
+
+### Panic Wipe
+In **Settings → Privacy** (danger zone), **Panic Wipe** immediately destroys all local identity, keys, and data on this device and reloads the app to a clean state. Keep your 12-word recovery phrase somewhere safe if you ever want the account back.
+
+### Duress Password
+You can configure a **duress password** distinct from your real one. Entering the duress password at login **wipes your real identity and data** and opens an empty, offline decoy account — with no forensic trace that a second (real) account ever existed. Use it if you may be compelled to unlock the app.
+
 ### Blocking Users
 To block a user, open their profile card and click **Block**. Blocked users won't be able to send you direct messages. You can manage your blocked users list in **Settings → Privacy**.
 
@@ -253,6 +270,17 @@ You can also use **QR code sync** — go to **Settings → Account** to generate
 In **Settings → Privacy**, you can control:
 - **Read receipts** — Whether others can see when you've read their messages.
 - **Typing indicators** — Whether others can see when you're typing.
+
+### Choosing Who to Trust
+Accord performs **no central moderation** — because the relay can't read your messages, no platform admin is filtering content or refereeing communities. Each **node owner** is responsible for their own space.
+
+What this means for you:
+- If a node isn't what you expected, **leave it.**
+- For a space you trust, **create your own node and invite only people you know.**
+- Report problems to the **node's** owners/moderators — there is no "Accord" to appeal to, by design.
+- **Parents:** you are responsible for what your children see and do on Accord, the same as with a web browser. There is no platform-side content filter.
+
+See [GOVERNANCE.md](../GOVERNANCE.md) for the full philosophy.
 
 ---
 
