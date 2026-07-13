@@ -1,10 +1,18 @@
-//! Role-based permission system for Node operations
+//! Permission vocabulary for Node operations.
 //!
-//! This module defines permissions and maps them to NodeRoles, providing
-//! a centralized system for controlling access to Node operations.
+//! The `Permission` enum is a readable vocabulary used at enforcement sites. The
+//! authoritative source of truth is the per-Node **custom-role bitflag** system
+//! (`roles`/`member_roles` + `Database::compute_node_permissions`): the only
+//! hardcoded authorities are the **Node owner** (`nodes.owner_id`, gets every
+//! permission) and, at the relay layer, the **Relay owner** (localhost). Admin /
+//! Moderator are ordinary owner-defined custom roles, seeded with sensible
+//! defaults on node creation — not hardcoded. See GOVERNANCE.md.
+//!
+//! This module maps the `Permission` vocabulary onto `permission_bits` so call
+//! sites read `perms_have(effective_perms, Permission::X)` while enforcement is
+//! driven entirely by the custom-role bitflags a member actually holds.
 
-use crate::node::NodeRole;
-use std::collections::HashSet;
+use crate::models::permission_bits as bits;
 
 /// Permissions that can be granted to roles within a Node
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,118 +41,98 @@ pub enum Permission {
     ManageEmojis,
 }
 
-/// Get all permissions for a given role
-pub fn role_permissions(role: NodeRole) -> HashSet<Permission> {
-    use Permission::*;
-
-    match role {
-        NodeRole::Admin => {
-            // Admins have all permissions
-            vec![
-                CreateChannel,
-                DeleteChannel,
-                ManageChannels,
-                ManageMembers,
-                KickMembers,
-                ManageRoles,
-                ManageInvites,
-                SendMessages,
-                ManageNode,
-                ViewAuditLog,
-                ManageEmojis,
-            ]
-            .into_iter()
-            .collect()
+/// Map a `Permission` vocabulary item onto its `permission_bits` bit.
+///
+/// Several coarse operations share a bit because Accord's bitflag set does not
+/// have a dedicated flag for every enum variant (e.g. create/delete/manage
+/// channel all fall under `MANAGE_CHANNELS`; audit-log and emoji management fall
+/// under `MANAGE_NODE`).
+pub fn permission_bit(permission: Permission) -> u64 {
+    match permission {
+        Permission::CreateChannel | Permission::DeleteChannel | Permission::ManageChannels => {
+            bits::MANAGE_CHANNELS
         }
-        NodeRole::Moderator => {
-            // Moderators have limited management permissions
-            vec![KickMembers, ManageInvites, SendMessages, ViewAuditLog]
-                .into_iter()
-                .collect()
-        }
-        NodeRole::Member => {
-            // Members can only participate
-            vec![SendMessages].into_iter().collect()
+        Permission::ManageMembers | Permission::KickMembers => bits::KICK_MEMBERS,
+        Permission::ManageRoles => bits::MANAGE_ROLES,
+        Permission::ManageInvites => bits::CREATE_INVITE,
+        Permission::SendMessages => bits::SEND_MESSAGES,
+        Permission::ManageNode | Permission::ViewAuditLog | Permission::ManageEmojis => {
+            bits::MANAGE_NODE
         }
     }
 }
 
-/// Check if a role has a specific permission
-pub fn has_permission(user_role: NodeRole, permission: Permission) -> bool {
-    role_permissions(user_role).contains(&permission)
+/// Does this effective bitflag set grant `permission`?
+///
+/// `perms` is expected to come from `Database::compute_node_permissions`, which
+/// already expands the Node owner and the `ADMINISTRATOR` bit to the full
+/// permission set — so a plain bit test is sufficient here.
+pub fn perms_have(perms: u64, permission: Permission) -> bool {
+    perms & permission_bit(permission) != 0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::permission_bits::{ALL_PERMISSIONS, DEFAULT_EVERYONE};
 
     #[test]
-    fn admin_has_all_permissions() {
-        let admin_perms = role_permissions(NodeRole::Admin);
-
-        // Admin should have all permissions
-        assert!(admin_perms.contains(&Permission::CreateChannel));
-        assert!(admin_perms.contains(&Permission::DeleteChannel));
-        assert!(admin_perms.contains(&Permission::ManageMembers));
-        assert!(admin_perms.contains(&Permission::KickMembers));
-        assert!(admin_perms.contains(&Permission::ManageRoles));
-        assert!(admin_perms.contains(&Permission::ManageInvites));
-        assert!(admin_perms.contains(&Permission::SendMessages));
-        assert!(admin_perms.contains(&Permission::ManageNode));
-        assert!(admin_perms.contains(&Permission::ViewAuditLog));
+    fn all_permissions_grants_everything() {
+        // The owner / ADMINISTRATOR expansion (ALL_PERMISSIONS) grants every
+        // vocabulary permission.
+        for p in [
+            Permission::CreateChannel,
+            Permission::DeleteChannel,
+            Permission::ManageChannels,
+            Permission::ManageMembers,
+            Permission::KickMembers,
+            Permission::ManageRoles,
+            Permission::ManageInvites,
+            Permission::SendMessages,
+            Permission::ManageNode,
+            Permission::ViewAuditLog,
+            Permission::ManageEmojis,
+        ] {
+            assert!(perms_have(ALL_PERMISSIONS, p), "ALL should grant {p:?}");
+        }
     }
 
     #[test]
-    fn moderator_has_limited_permissions() {
-        let mod_perms = role_permissions(NodeRole::Moderator);
-
-        // Moderator should have these permissions
-        assert!(mod_perms.contains(&Permission::KickMembers));
-        assert!(mod_perms.contains(&Permission::ManageInvites));
-        assert!(mod_perms.contains(&Permission::SendMessages));
-        assert!(mod_perms.contains(&Permission::ViewAuditLog));
-
-        // But not these
-        assert!(!mod_perms.contains(&Permission::CreateChannel));
-        assert!(!mod_perms.contains(&Permission::DeleteChannel));
-        assert!(!mod_perms.contains(&Permission::ManageMembers));
-        assert!(!mod_perms.contains(&Permission::ManageRoles));
-        assert!(!mod_perms.contains(&Permission::ManageNode));
+    fn default_everyone_can_send_but_not_manage() {
+        assert!(perms_have(DEFAULT_EVERYONE, Permission::SendMessages));
+        assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageInvites)); // invite mgmt is not default
+        assert!(!perms_have(DEFAULT_EVERYONE, Permission::KickMembers));
+        assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageNode));
+        assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageChannels));
+        assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageRoles));
     }
 
     #[test]
-    fn member_has_minimal_permissions() {
-        let member_perms = role_permissions(NodeRole::Member);
-
-        // Member should only have this permission
-        assert!(member_perms.contains(&Permission::SendMessages));
-
-        // But not any management permissions
-        assert!(!member_perms.contains(&Permission::CreateChannel));
-        assert!(!member_perms.contains(&Permission::DeleteChannel));
-        assert!(!member_perms.contains(&Permission::ManageMembers));
-        assert!(!member_perms.contains(&Permission::KickMembers));
-        assert!(!member_perms.contains(&Permission::ManageRoles));
-        assert!(!member_perms.contains(&Permission::ManageInvites));
-        assert!(!member_perms.contains(&Permission::ManageNode));
-        assert!(!member_perms.contains(&Permission::ViewAuditLog));
+    fn empty_perms_grant_nothing() {
+        assert!(!perms_have(0, Permission::SendMessages));
+        assert!(!perms_have(0, Permission::KickMembers));
+        assert!(!perms_have(0, Permission::ManageNode));
     }
 
     #[test]
-    fn has_permission_works_correctly() {
-        // Admin should have all permissions
-        assert!(has_permission(NodeRole::Admin, Permission::CreateChannel));
-        assert!(has_permission(NodeRole::Admin, Permission::ManageNode));
+    fn single_bit_role_grants_only_that_permission() {
+        // A custom role holding just MANAGE_CHANNELS grants the channel-management
+        // vocabulary but nothing else — proving granularity survives.
+        let perms = bits::MANAGE_CHANNELS;
+        assert!(perms_have(perms, Permission::CreateChannel));
+        assert!(perms_have(perms, Permission::DeleteChannel));
+        assert!(perms_have(perms, Permission::ManageChannels));
+        assert!(!perms_have(perms, Permission::KickMembers));
+        assert!(!perms_have(perms, Permission::ManageNode));
+    }
 
-        // Moderator should have some permissions but not others
-        assert!(has_permission(NodeRole::Moderator, Permission::KickMembers));
-        assert!(!has_permission(
-            NodeRole::Moderator,
-            Permission::CreateChannel
-        ));
-
-        // Member should only send messages
-        assert!(has_permission(NodeRole::Member, Permission::SendMessages));
-        assert!(!has_permission(NodeRole::Member, Permission::KickMembers));
+    #[test]
+    fn coarse_bits_are_shared_as_documented() {
+        assert_eq!(permission_bit(Permission::ViewAuditLog), bits::MANAGE_NODE);
+        assert_eq!(permission_bit(Permission::ManageEmojis), bits::MANAGE_NODE);
+        assert_eq!(
+            permission_bit(Permission::ManageMembers),
+            bits::KICK_MEMBERS
+        );
     }
 }

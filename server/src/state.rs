@@ -4,7 +4,7 @@ use crate::db::Database;
 use crate::files::FileHandler;
 use crate::models::{AuthToken, Channel};
 use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
-use crate::permissions::{has_permission, Permission};
+use crate::permissions::Permission;
 use crate::rate_limit::RateLimiter;
 use accord_core::build_hash::{BuildInfo, BuildTrust, KnownBuild};
 use anyhow::Result;
@@ -839,7 +839,11 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         match member {
             Some(m) => {
-                if !has_permission(m.role, Permission::KickMembers) {
+                if !self
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::KickMembers)
+                    .await
+                {
                     return Err("Insufficient permissions to kick members".to_string());
                 }
             }
@@ -878,7 +882,11 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         match member {
             Some(m) => {
-                if !has_permission(m.role, Permission::ManageInvites) {
+                if !self
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::ManageInvites)
+                    .await
+                {
                     return Err("Insufficient permissions to create invites".to_string());
                 }
             }
@@ -1054,7 +1062,11 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         match member {
             Some(m) => {
-                if !has_permission(m.role, Permission::ManageInvites) {
+                if !self
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::ManageInvites)
+                    .await
+                {
                     return Err("Insufficient permissions to list invites".to_string());
                 }
             }
@@ -1085,14 +1097,17 @@ impl AppState {
             .get_node_member(invite.node_id, user_id)
             .await
             .map_err(|e| e.to_string())?;
-        let has_permission = match member {
+        let may_revoke = match member {
             Some(m) => {
-                has_permission(m.role, Permission::ManageInvites) || invite.created_by == user_id
+                self.db
+                    .node_member_can(m.node_id, m.user_id, Permission::ManageInvites)
+                    .await
+                    || invite.created_by == user_id
             }
             None => false,
         };
 
-        if !has_permission {
+        if !may_revoke {
             return Err("Insufficient permissions to revoke this invite".to_string());
         }
 
@@ -1164,7 +1179,11 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         match member {
             Some(m) => {
-                if !has_permission(m.role, Permission::CreateChannel) {
+                if !self
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::CreateChannel)
+                    .await
+                {
                     return Err("Insufficient permissions to create channels".to_string());
                 }
             }
@@ -1198,7 +1217,11 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         match member {
             Some(m) => {
-                if !has_permission(m.role, Permission::DeleteChannel) {
+                if !self
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::DeleteChannel)
+                    .await
+                {
                     return Err("Insufficient permissions to delete channels".to_string());
                 }
             }
@@ -1292,7 +1315,11 @@ impl AppState {
             .map_err(|e| e.to_string())?;
         match member {
             Some(m) => {
-                if !has_permission(m.role, Permission::ManageNode) {
+                if !self
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                    .await
+                {
                     return Err("Insufficient permissions to manage node settings".to_string());
                 }
             }

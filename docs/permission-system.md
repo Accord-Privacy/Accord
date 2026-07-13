@@ -79,10 +79,45 @@ pub struct Role {
 }
 ```
 
-### Default Roles
+### Hardcoded authorities vs. custom roles
 
-Every Node has an `@everyone` role (position 0, cannot be deleted).
-Its permissions define the baseline for all members.
+There are **no hardcoded Admin/Moderator roles**. The only hardcoded authorities are:
+
+- **Node owner** (`nodes.owner_id`) — always resolves to every permission. This
+  is the single in-node authority that cannot be removed.
+- **Relay owner** (localhost) — a relay-layer concept only; has no authority
+  *inside* a node (see [../GOVERNANCE.md](../GOVERNANCE.md)).
+
+Everyone else is a **User** whose power is exactly the union of the custom roles
+they hold. "Admin" and "Moderator" are ordinary **owner-defined custom roles**,
+auto-seeded on node creation with sensible defaults (Admin = all permissions;
+Moderator = kick/ban + manage messages/channels + create invites). The owner may
+rename, re-permission, or delete them like any other role.
+
+### Default Roles seeded on node creation
+
+- `@everyone` (position 0, cannot be deleted) — baseline for all members.
+  `DEFAULT_EVERYONE` grants participation (view/send/history/react/connect/speak/
+  embed/attach) but **not** invite management or any moderation bit.
+- `Admin` (all permissions) and `Moderator` (moderation subset) — seeded custom
+  roles, fully editable by the owner.
+
+### Enforcement
+
+Every server-side permission check resolves through
+`Database::compute_node_permissions(node_id, user_id)`:
+
+1. Node owner → all permissions.
+2. Otherwise: `@everyone` permissions `|` the permissions of every assigned
+   custom role.
+3. If the result contains `ADMINISTRATOR` (bit 3) → expand to all permissions.
+
+Enforcement sites read this via `perms_have(effective_perms, Permission::X)` — the
+legacy hardcoded-role → permission table was removed. The `node_members.role`
+column is retained only as a legacy display marker and is **not** consulted for
+any authorization decision; a member added through the legacy
+`add_node_member(Admin/Moderator)` path is automatically assigned the matching
+seeded custom role so enforcement still grants the expected power.
 
 ### Role Hierarchy
 

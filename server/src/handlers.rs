@@ -17,7 +17,7 @@ use crate::models::{
     WsMessageType,
 };
 use crate::node::NodeInfo;
-use crate::permissions::{has_permission, Permission};
+use crate::permissions::Permission;
 use crate::state::SharedState;
 use axum::body::Body;
 use axum::{
@@ -1353,7 +1353,11 @@ pub async fn ban_user_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::KickMembers) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::KickMembers)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -1464,7 +1468,11 @@ pub async fn unban_user_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::KickMembers) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::KickMembers)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -1603,7 +1611,11 @@ pub async fn list_bans_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::KickMembers) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::KickMembers)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -1663,7 +1675,11 @@ pub async fn get_build_allowlist_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::ManageNode) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -1725,7 +1741,11 @@ pub async fn set_build_allowlist_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::ManageNode) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -1797,7 +1817,11 @@ pub async fn add_build_allowlist_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::ManageNode) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -1877,7 +1901,11 @@ pub async fn remove_build_allowlist_handler(
     })?;
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::ManageNode) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -2082,7 +2110,11 @@ pub async fn create_channel_category_handler(
             )
         })?;
 
-    if !has_permission(user_role, Permission::ManageChannels) {
+    if !state
+        .db
+        .node_member_can(node_id, user_id, Permission::ManageChannels)
+        .await
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -2169,7 +2201,11 @@ pub async fn update_channel_category_handler(
             )
         })?;
 
-    if !has_permission(user_role, Permission::ManageChannels) {
+    if !state
+        .db
+        .node_member_can(category.node_id, user_id, Permission::ManageChannels)
+        .await
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -2252,7 +2288,11 @@ pub async fn delete_channel_category_handler(
             )
         })?;
 
-    if !has_permission(user_role, Permission::ManageChannels) {
+    if !state
+        .db
+        .node_member_can(category.node_id, user_id, Permission::ManageChannels)
+        .await
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -2333,7 +2373,11 @@ pub async fn update_channel_handler(
             )
         })?;
 
-    if !has_permission(user_role, Permission::ManageChannels) {
+    if !state
+        .db
+        .node_member_can(channel.node_id, user_id, Permission::ManageChannels)
+        .await
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -2964,18 +3008,22 @@ async fn check_node_permission(
 
     match member {
         Some(member_info) => {
-            if has_permission(member_info.role, required_permission) {
+            if state
+                .db
+                .node_member_can(
+                    member_info.node_id,
+                    member_info.user_id,
+                    required_permission,
+                )
+                .await
+            {
                 Ok(())
             } else {
                 let permission_name = format!("{:?}", required_permission);
-                let role_name = member_info.role.as_str();
                 Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
-                        error: format!(
-                            "Permission denied. Required: {:?}, Your role: {:?}",
-                            permission_name, role_name
-                        ),
+                        error: format!("Permission denied. Required: {:?}", permission_name),
                         code: 403,
                     }),
                 ))
@@ -3054,17 +3102,23 @@ pub async fn upload_node_icon_handler(
             }),
         )
     })?;
-    match member {
-        Some(m) if has_permission(m.role, Permission::ManageChannels) => {}
-        _ => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Insufficient permissions to update node icon".into(),
-                    code: 403,
-                }),
-            ));
+    let allowed = match &member {
+        Some(m) => {
+            state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageChannels)
+                .await
         }
+        None => false,
+    };
+    if !allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions to update node icon".into(),
+                code: 403,
+            }),
+        ));
     }
 
     // Extract file from multipart
@@ -3829,19 +3883,11 @@ pub async fn set_slow_mode_handler(
         })?;
 
     // Check admin/mod permission
-    let user_role = state
-        .get_user_role_in_node(user_id, channel.node_id)
+    if !state
+        .db
+        .node_member_can(channel.node_id, user_id, Permission::ManageChannels)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e,
-                    code: 500,
-                }),
-            )
-        })?;
-    if !has_permission(user_role, Permission::ManageChannels) {
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -7910,7 +7956,15 @@ pub async fn get_node_audit_log_handler(
     })?;
 
     // Check if user has ViewAuditLog permission
-    if !has_permission(user_member.role, Permission::ViewAuditLog) {
+    if !state
+        .db
+        .node_member_can(
+            user_member.node_id,
+            user_member.user_id,
+            Permission::ViewAuditLog,
+        )
+        .await
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -8892,7 +8946,11 @@ pub async fn import_discord_template_handler(
                 }),
             )
         })?;
-    if !has_permission(user_role, Permission::ManageNode) {
+    if !state
+        .db
+        .node_member_can(node_id, user_id, Permission::ManageNode)
+        .await
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -9703,17 +9761,23 @@ pub async fn upload_custom_emoji_handler(
             }),
         )
     })?;
-    match member {
-        Some(m) if has_permission(m.role, Permission::ManageEmojis) => {}
-        _ => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Insufficient permissions to manage emojis".into(),
-                    code: 403,
-                }),
-            ));
+    let allowed = match &member {
+        Some(m) => {
+            state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageEmojis)
+                .await
         }
+        None => false,
+    };
+    if !allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Insufficient permissions to manage emojis".into(),
+                code: 403,
+            }),
+        ));
     }
 
     let mut file_data: Option<Vec<u8>> = None;
@@ -9947,17 +10011,23 @@ pub async fn delete_custom_emoji_handler(
                 }),
             )
         })?;
-        match member {
-            Some(m) if has_permission(m.role, Permission::ManageEmojis) => {}
-            _ => {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    Json(ErrorResponse {
-                        error: "Only the uploader or an admin can delete this emoji".into(),
-                        code: 403,
-                    }),
-                ));
+        let allowed = match &member {
+            Some(m) => {
+                state
+                    .db
+                    .node_member_can(m.node_id, m.user_id, Permission::ManageEmojis)
+                    .await
             }
+            None => false,
+        };
+        if !allowed {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "Only the uploader or an admin can delete this emoji".into(),
+                    code: 403,
+                }),
+            ));
         }
     }
 

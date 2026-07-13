@@ -2176,14 +2176,10 @@ impl Database {
             .await
             .context("Failed to insert node")?;
 
-        // Add owner as admin member
-        self.add_node_member(node_id, owner_id, NodeRole::Admin)
-            .await?;
-
-        // Create a default "general" channel
-        self.create_channel("general", node_id, owner_id).await?;
-
-        // Create the default @everyone role (position 0) with sensible defaults
+        // Create the default @everyone role (position 0) with sensible defaults,
+        // then seed the owner-editable management roles. Roles must exist before
+        // the owner is added so the legacy-bridge assignment in add_node_member
+        // can attach the "Admin" role.
         self.create_role_with_id(
             node_id, // Use node_id as the @everyone role ID (convention: same UUID)
             node_id,
@@ -2192,6 +2188,16 @@ impl Database {
             0,
         )
         .await?;
+        self.seed_management_roles(node_id).await?;
+
+        // Add owner as a member. Node authority comes from `owner_id` (owner has
+        // every permission); the legacy role marker + seeded Admin role are for
+        // display/continuity only.
+        self.add_node_member(node_id, owner_id, NodeRole::Admin)
+            .await?;
+
+        // Create a default "general" channel
+        self.create_channel("general", node_id, owner_id).await?;
 
         Ok(Node {
             id: node_id,
@@ -2278,6 +2284,18 @@ impl Database {
             .execute(&self.pool)
             .await
             .context("Failed to add node member")?;
+        // Bridge legacy callers: a member added as Admin/Moderator gets the
+        // matching seeded custom role, so enforcement (which runs entirely on
+        // custom-role bitflags) grants them the expected power. Plain members
+        // rely on @everyone. No-op if the seeded role is absent.
+        match role {
+            NodeRole::Admin => self.assign_named_role(node_id, user_id, "Admin").await?,
+            NodeRole::Moderator => {
+                self.assign_named_role(node_id, user_id, "Moderator")
+                    .await?
+            }
+            NodeRole::Member => {}
+        }
         Ok(())
     }
 
@@ -3585,23 +3603,26 @@ impl Database {
             // Check if requester is the author
             let is_author = requester_id == sender_id;
 
-            // Check if requester is admin/mod of the node containing this channel
-            let is_admin_or_mod = sqlx::query_scalar::<_, bool>(
-                r#"
-                SELECT EXISTS(
-                    SELECT 1 FROM node_members nm
-                    JOIN channels c ON c.node_id = nm.node_id
-                    WHERE c.id = ? AND nm.user_id = ? AND nm.role IN ('admin', 'moderator')
-                )
-                "#,
-            )
-            .bind(channel_id.to_string())
-            .bind(requester_id.to_string())
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or(false);
+            // Otherwise, requester needs MANAGE_MESSAGES in the channel's node —
+            // resolved via the custom-role bitflags (owner + ADMINISTRATOR are
+            // expanded to all permissions inside compute_node_permissions).
+            let can_manage = if is_author {
+                false
+            } else {
+                match self.get_channel(channel_id).await? {
+                    Some(channel) => {
+                        use crate::models::permission_bits::MANAGE_MESSAGES;
+                        let perms = self
+                            .compute_node_permissions(channel.node_id, requester_id)
+                            .await
+                            .unwrap_or(0);
+                        perms & MANAGE_MESSAGES != 0
+                    }
+                    None => false,
+                }
+            };
 
-            if is_author || is_admin_or_mod {
+            if is_author || can_manage {
                 let result = sqlx::query("DELETE FROM messages WHERE id = ?")
                     .bind(message_id.to_string())
                     .execute(&self.pool)
@@ -5861,6 +5882,126 @@ impl Database {
         }
 
         Ok(perms)
+    }
+
+    /// Single enforcement entry point: does `user_id` hold `permission` in
+    /// `node_id`, per the custom-role bitflags? The Node owner and the
+    /// `ADMINISTRATOR` bit are expanded to all permissions inside
+    /// `compute_node_permissions`, so this is the only check enforcement needs.
+    pub async fn node_member_can(
+        &self,
+        node_id: Uuid,
+        user_id: Uuid,
+        permission: crate::permissions::Permission,
+    ) -> bool {
+        let perms = self
+            .compute_node_permissions(node_id, user_id)
+            .await
+            .unwrap_or(0);
+        crate::permissions::perms_have(perms, permission)
+    }
+
+    /// Look up a role in a Node by its exact name.
+    pub async fn get_role_by_name(
+        &self,
+        node_id: Uuid,
+        name: &str,
+    ) -> Result<Option<crate::models::Role>> {
+        let row = sqlx::query(
+            "SELECT id, node_id, name, color, permissions, position, hoist, mentionable, icon_emoji, created_at FROM roles WHERE node_id = ? AND name = ? LIMIT 1",
+        )
+        .bind(node_id.to_string())
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to query role by name")?;
+        row.map(|r| parse_role(&r)).transpose()
+    }
+
+    /// Seed the default owner-editable management roles ("Admin", "Moderator")
+    /// for a Node if absent. These are ordinary custom roles — the owner may
+    /// rename, re-permission, or delete them. Idempotent.
+    pub async fn seed_management_roles(&self, node_id: Uuid) -> Result<()> {
+        use crate::models::permission_bits::{
+            ALL_PERMISSIONS, BAN_MEMBERS, CREATE_INVITE, KICK_MEMBERS, MANAGE_CHANNELS,
+            MANAGE_MESSAGES,
+        };
+        if self.get_role_by_name(node_id, "Admin").await?.is_none() {
+            self.create_role(
+                node_id,
+                "Admin",
+                0x00E7_4C3C,
+                ALL_PERMISSIONS,
+                2,
+                true,
+                true,
+                None,
+            )
+            .await?;
+        }
+        if self.get_role_by_name(node_id, "Moderator").await?.is_none() {
+            let mod_perms =
+                KICK_MEMBERS | BAN_MEMBERS | CREATE_INVITE | MANAGE_MESSAGES | MANAGE_CHANNELS;
+            self.create_role(
+                node_id,
+                "Moderator",
+                0x0034_98DB,
+                mod_perms,
+                1,
+                true,
+                true,
+                None,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Assign a member the seeded custom role with the given name, if it exists.
+    /// Bridges legacy callers that add members with `NodeRole::Admin/Moderator`.
+    pub async fn assign_named_role(&self, node_id: Uuid, user_id: Uuid, name: &str) -> Result<()> {
+        if let Some(role) = self.get_role_by_name(node_id, name).await? {
+            self.assign_member_role(node_id, user_id, role.id).await?;
+        }
+        Ok(())
+    }
+
+    /// One-time migration for nodes created before management roles were custom:
+    /// ensure every real Node has seeded Admin/Moderator roles, then assign them
+    /// to members carrying the legacy `node_members.role` marker. Idempotent.
+    pub async fn migrate_legacy_roles(&self) -> Result<()> {
+        let node_ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM nodes WHERE name != '__dm_system__'")
+                .fetch_all(&self.pool)
+                .await
+                .context("Failed to list nodes for role migration")?;
+        for node_id_str in node_ids {
+            let node_id = match Uuid::parse_str(&node_id_str) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            self.seed_management_roles(node_id).await?;
+            let legacy: Vec<(String, String)> = sqlx::query_as(
+                "SELECT user_id, role FROM node_members WHERE node_id = ? AND role IN ('admin', 'moderator')",
+            )
+            .bind(node_id_str)
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to read legacy member roles")?;
+            for (user_id_str, role) in legacy {
+                let user_id = match Uuid::parse_str(&user_id_str) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let name = if role == "admin" {
+                    "Admin"
+                } else {
+                    "Moderator"
+                };
+                self.assign_named_role(node_id, user_id, name).await?;
+            }
+        }
+        Ok(())
     }
 
     // ── Icon / Avatar operations ──

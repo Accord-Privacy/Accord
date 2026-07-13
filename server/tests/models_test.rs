@@ -110,7 +110,6 @@ fn default_everyone_contains_all_expected_bits() {
         SPEAK,
         EMBED_LINKS,
         ATTACH_FILES,
-        CREATE_INVITE,
     ];
     for &b in expected {
         assert_ne!(
@@ -120,6 +119,8 @@ fn default_everyone_contains_all_expected_bits() {
             name(b)
         );
     }
+    // Invite management is gated to roles, not a default @everyone permission.
+    assert_eq!(DEFAULT_EVERYONE & CREATE_INVITE, 0);
 }
 
 /// DEFAULT_EVERYONE must NOT grant privileged / moderation bits.

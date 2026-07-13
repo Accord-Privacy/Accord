@@ -630,6 +630,13 @@ async fn main() -> Result<()> {
     // Load the IP ban cache (DoS/DDoS defense) before serving.
     app_state.load_ip_bans().await;
 
+    // Migrate any pre-existing nodes to the custom-role model: seed the
+    // owner-editable Admin/Moderator roles and assign them to members that carry
+    // the legacy node_members.role marker. Idempotent — safe on every boot.
+    if let Err(e) = app_state.db.migrate_legacy_roles().await {
+        warn!("Legacy role migration failed (continuing): {}", e);
+    }
+
     let state: SharedState = Arc::new(app_state);
 
     // Start mesh service if enabled

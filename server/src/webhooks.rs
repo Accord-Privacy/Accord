@@ -5,7 +5,7 @@
 //! member_join, member_leave, reaction_add).
 
 use crate::models::ErrorResponse;
-use crate::permissions::{has_permission, Permission};
+use crate::permissions::Permission;
 use crate::state::SharedState;
 use axum::{
     extract::{Path, Query, State},
@@ -352,7 +352,11 @@ async fn extract_admin_for_node(
 
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::ManageNode) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
@@ -440,7 +444,11 @@ async fn extract_admin_for_webhook(
 
     match member {
         Some(m) => {
-            if !has_permission(m.role, Permission::ManageNode) {
+            if !state
+                .db
+                .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
+                .await
+            {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {

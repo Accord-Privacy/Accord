@@ -1,423 +1,100 @@
-//! External integration tests for the permissions module
+//! Permission-vocabulary tests for the custom-role bitflag model.
 //!
-//! Covers role_permissions and has_permission for all NodeRoles,
-//! verifying that each role gets exactly the right set of permissions.
+//! Hardcoded roles were removed: the only hardcoded authorities are the Node
+//! owner (all permissions) and the Relay owner (localhost). Admin/Moderator are
+//! ordinary owner-defined custom roles. Permission enforcement runs on the
+//! `permission_bits` bitflags a member effectively holds; this file covers the
+//! `Permission` → bit mapping that enforcement sites read through. See
+//! GOVERNANCE.md and docs/permission-system.md.
 
-#![allow(clippy::all)]
+use accord_server::models::permission_bits::{
+    ALL_PERMISSIONS, DEFAULT_EVERYONE, KICK_MEMBERS, MANAGE_CHANNELS, MANAGE_NODE, MANAGE_ROLES,
+    SEND_MESSAGES,
+};
+use accord_server::permissions::{permission_bit, perms_have, Permission};
 
-use accord_server::node::NodeRole;
-use accord_server::permissions::{has_permission, role_permissions, Permission};
-
-// ============================================================================
-// Group 1 — Admin role permissions
-// ============================================================================
-
-#[test]
-fn admin_has_create_channel() {
-    assert!(has_permission(NodeRole::Admin, Permission::CreateChannel));
-}
-
-#[test]
-fn admin_has_delete_channel() {
-    assert!(has_permission(NodeRole::Admin, Permission::DeleteChannel));
-}
-
-#[test]
-fn admin_has_manage_channels() {
-    assert!(has_permission(NodeRole::Admin, Permission::ManageChannels));
-}
-
-#[test]
-fn admin_has_manage_members() {
-    assert!(has_permission(NodeRole::Admin, Permission::ManageMembers));
-}
+const ALL_VOCAB: [Permission; 11] = [
+    Permission::CreateChannel,
+    Permission::DeleteChannel,
+    Permission::ManageChannels,
+    Permission::ManageMembers,
+    Permission::KickMembers,
+    Permission::ManageRoles,
+    Permission::ManageInvites,
+    Permission::SendMessages,
+    Permission::ManageNode,
+    Permission::ViewAuditLog,
+    Permission::ManageEmojis,
+];
 
 #[test]
-fn admin_has_kick_members() {
-    assert!(has_permission(NodeRole::Admin, Permission::KickMembers));
-}
-
-#[test]
-fn admin_has_manage_roles() {
-    assert!(has_permission(NodeRole::Admin, Permission::ManageRoles));
-}
-
-#[test]
-fn admin_has_manage_invites() {
-    assert!(has_permission(NodeRole::Admin, Permission::ManageInvites));
-}
-
-#[test]
-fn admin_has_send_messages() {
-    assert!(has_permission(NodeRole::Admin, Permission::SendMessages));
-}
-
-#[test]
-fn admin_has_manage_node() {
-    assert!(has_permission(NodeRole::Admin, Permission::ManageNode));
-}
-
-#[test]
-fn admin_has_view_audit_log() {
-    assert!(has_permission(NodeRole::Admin, Permission::ViewAuditLog));
-}
-
-#[test]
-fn admin_has_manage_emojis() {
-    assert!(has_permission(NodeRole::Admin, Permission::ManageEmojis));
-}
-
-#[test]
-fn admin_permission_set_has_eleven_permissions() {
-    // Admin should have all 11 defined permissions
-    let perms = role_permissions(NodeRole::Admin);
-    assert_eq!(perms.len(), 11);
-}
-
-// ============================================================================
-// Group 2 — Moderator role permissions
-// ============================================================================
-
-#[test]
-fn moderator_has_kick_members() {
-    assert!(has_permission(NodeRole::Moderator, Permission::KickMembers));
-}
-
-#[test]
-fn moderator_has_manage_invites() {
-    assert!(has_permission(
-        NodeRole::Moderator,
-        Permission::ManageInvites
-    ));
-}
-
-#[test]
-fn moderator_has_send_messages() {
-    assert!(has_permission(
-        NodeRole::Moderator,
-        Permission::SendMessages
-    ));
-}
-
-#[test]
-fn moderator_has_view_audit_log() {
-    assert!(has_permission(
-        NodeRole::Moderator,
-        Permission::ViewAuditLog
-    ));
-}
-
-#[test]
-fn moderator_lacks_create_channel() {
-    assert!(!has_permission(
-        NodeRole::Moderator,
-        Permission::CreateChannel
-    ));
-}
-
-#[test]
-fn moderator_lacks_delete_channel() {
-    assert!(!has_permission(
-        NodeRole::Moderator,
-        Permission::DeleteChannel
-    ));
-}
-
-#[test]
-fn moderator_lacks_manage_channels() {
-    assert!(!has_permission(
-        NodeRole::Moderator,
-        Permission::ManageChannels
-    ));
-}
-
-#[test]
-fn moderator_lacks_manage_members() {
-    assert!(!has_permission(
-        NodeRole::Moderator,
-        Permission::ManageMembers
-    ));
-}
-
-#[test]
-fn moderator_lacks_manage_roles() {
-    assert!(!has_permission(
-        NodeRole::Moderator,
-        Permission::ManageRoles
-    ));
-}
-
-#[test]
-fn moderator_lacks_manage_node() {
-    assert!(!has_permission(NodeRole::Moderator, Permission::ManageNode));
-}
-
-#[test]
-fn moderator_lacks_manage_emojis() {
-    assert!(!has_permission(
-        NodeRole::Moderator,
-        Permission::ManageEmojis
-    ));
-}
-
-#[test]
-fn moderator_permission_set_has_four_permissions() {
-    let perms = role_permissions(NodeRole::Moderator);
-    assert_eq!(perms.len(), 4);
-}
-
-// ============================================================================
-// Group 3 — Member role permissions
-// ============================================================================
-
-#[test]
-fn member_has_send_messages() {
-    assert!(has_permission(NodeRole::Member, Permission::SendMessages));
-}
-
-#[test]
-fn member_lacks_create_channel() {
-    assert!(!has_permission(NodeRole::Member, Permission::CreateChannel));
-}
-
-#[test]
-fn member_lacks_delete_channel() {
-    assert!(!has_permission(NodeRole::Member, Permission::DeleteChannel));
-}
-
-#[test]
-fn member_lacks_manage_channels() {
-    assert!(!has_permission(
-        NodeRole::Member,
-        Permission::ManageChannels
-    ));
-}
-
-#[test]
-fn member_lacks_manage_members() {
-    assert!(!has_permission(NodeRole::Member, Permission::ManageMembers));
-}
-
-#[test]
-fn member_lacks_kick_members() {
-    assert!(!has_permission(NodeRole::Member, Permission::KickMembers));
-}
-
-#[test]
-fn member_lacks_manage_roles() {
-    assert!(!has_permission(NodeRole::Member, Permission::ManageRoles));
-}
-
-#[test]
-fn member_lacks_manage_invites() {
-    assert!(!has_permission(NodeRole::Member, Permission::ManageInvites));
-}
-
-#[test]
-fn member_lacks_manage_node() {
-    assert!(!has_permission(NodeRole::Member, Permission::ManageNode));
-}
-
-#[test]
-fn member_lacks_view_audit_log() {
-    assert!(!has_permission(NodeRole::Member, Permission::ViewAuditLog));
-}
-
-#[test]
-fn member_lacks_manage_emojis() {
-    assert!(!has_permission(NodeRole::Member, Permission::ManageEmojis));
-}
-
-#[test]
-fn member_permission_set_has_one_permission() {
-    let perms = role_permissions(NodeRole::Member);
-    assert_eq!(perms.len(), 1);
-}
-
-// ============================================================================
-// Group 4 — Admin vs Moderator vs Member differences
-// ============================================================================
-
-#[test]
-fn admin_has_strictly_more_permissions_than_moderator() {
-    let admin_perms = role_permissions(NodeRole::Admin);
-    let mod_perms = role_permissions(NodeRole::Moderator);
-    // Every moderator permission is also an admin permission
-    for p in &mod_perms {
-        assert!(
-            admin_perms.contains(p),
-            "Admin should have all moderator permissions, missing: {:?}",
-            p
-        );
-    }
-    // Admin has more than moderator
-    assert!(admin_perms.len() > mod_perms.len());
-}
-
-#[test]
-fn moderator_has_strictly_more_permissions_than_member() {
-    let mod_perms = role_permissions(NodeRole::Moderator);
-    let member_perms = role_permissions(NodeRole::Member);
-    // Every member permission is also a moderator permission
-    for p in &member_perms {
-        assert!(
-            mod_perms.contains(p),
-            "Moderator should have all member permissions, missing: {:?}",
-            p
-        );
-    }
-    // Moderator has more than member
-    assert!(mod_perms.len() > member_perms.len());
-}
-
-#[test]
-fn admin_can_do_things_moderator_cannot() {
-    // Admin-only permissions
-    let admin_only = [
-        Permission::CreateChannel,
-        Permission::DeleteChannel,
-        Permission::ManageChannels,
-        Permission::ManageMembers,
-        Permission::ManageRoles,
-        Permission::ManageNode,
-        Permission::ManageEmojis,
-    ];
-    for p in admin_only {
-        assert!(
-            has_permission(NodeRole::Admin, p),
-            "Admin should have {:?}",
-            p
-        );
-        assert!(
-            !has_permission(NodeRole::Moderator, p),
-            "Moderator should NOT have {:?}",
-            p
-        );
+fn all_permissions_grants_every_vocabulary_item() {
+    // This is what the Node owner and any ADMINISTRATOR role resolve to.
+    for p in ALL_VOCAB {
+        assert!(perms_have(ALL_PERMISSIONS, p), "ALL should grant {p:?}");
     }
 }
 
 #[test]
-fn moderator_can_do_things_member_cannot() {
-    let mod_only = [
-        Permission::KickMembers,
-        Permission::ManageInvites,
-        Permission::ViewAuditLog,
-    ];
-    for p in mod_only {
-        assert!(
-            has_permission(NodeRole::Moderator, p),
-            "Moderator should have {:?}",
-            p
-        );
-        assert!(
-            !has_permission(NodeRole::Member, p),
-            "Member should NOT have {:?}",
-            p
-        );
-    }
-}
-
-// ============================================================================
-// Group 5 — role_permissions returns a HashSet (deduplication)
-// ============================================================================
-
-#[test]
-fn role_permissions_returns_set_no_duplicates_admin() {
-    let perms = role_permissions(NodeRole::Admin);
-    // HashSet guarantees uniqueness; len() == actual distinct perms
-    assert_eq!(perms.len(), 11);
-}
-
-#[test]
-fn role_permissions_returns_set_no_duplicates_moderator() {
-    let perms = role_permissions(NodeRole::Moderator);
-    assert_eq!(perms.len(), 4);
-}
-
-#[test]
-fn role_permissions_returns_set_no_duplicates_member() {
-    let perms = role_permissions(NodeRole::Member);
-    assert_eq!(perms.len(), 1);
-}
-
-// ============================================================================
-// Group 6 — has_permission consistency with role_permissions
-// ============================================================================
-
-#[test]
-fn has_permission_consistent_with_role_permissions_admin() {
-    let all_perms = [
-        Permission::CreateChannel,
-        Permission::DeleteChannel,
-        Permission::ManageChannels,
-        Permission::ManageMembers,
-        Permission::KickMembers,
-        Permission::ManageRoles,
-        Permission::ManageInvites,
-        Permission::SendMessages,
-        Permission::ManageNode,
-        Permission::ViewAuditLog,
-        Permission::ManageEmojis,
-    ];
-    let set = role_permissions(NodeRole::Admin);
-    for p in all_perms {
-        assert_eq!(
-            has_permission(NodeRole::Admin, p),
-            set.contains(&p),
-            "has_permission and role_permissions disagree on Admin/{:?}",
-            p
-        );
+fn empty_perms_grant_nothing() {
+    for p in ALL_VOCAB {
+        assert!(!perms_have(0, p), "empty should deny {p:?}");
     }
 }
 
 #[test]
-fn has_permission_consistent_with_role_permissions_moderator() {
-    let all_perms = [
-        Permission::CreateChannel,
-        Permission::DeleteChannel,
-        Permission::ManageChannels,
-        Permission::ManageMembers,
-        Permission::KickMembers,
-        Permission::ManageRoles,
-        Permission::ManageInvites,
-        Permission::SendMessages,
-        Permission::ManageNode,
-        Permission::ViewAuditLog,
-        Permission::ManageEmojis,
-    ];
-    let set = role_permissions(NodeRole::Moderator);
-    for p in all_perms {
-        assert_eq!(
-            has_permission(NodeRole::Moderator, p),
-            set.contains(&p),
-            "has_permission and role_permissions disagree on Moderator/{:?}",
-            p
-        );
-    }
+fn default_everyone_can_participate_but_not_manage() {
+    // A plain member (no assigned roles) resolves to @everyone = DEFAULT_EVERYONE.
+    assert!(perms_have(DEFAULT_EVERYONE, Permission::SendMessages));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageInvites)); // invite mgmt gated to roles
+
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::KickMembers));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageMembers));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageChannels));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::CreateChannel));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::DeleteChannel));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageRoles));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageNode));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ViewAuditLog));
+    assert!(!perms_have(DEFAULT_EVERYONE, Permission::ManageEmojis));
 }
 
 #[test]
-fn has_permission_consistent_with_role_permissions_member() {
-    let all_perms = [
-        Permission::CreateChannel,
-        Permission::DeleteChannel,
-        Permission::ManageChannels,
-        Permission::ManageMembers,
-        Permission::KickMembers,
-        Permission::ManageRoles,
-        Permission::ManageInvites,
-        Permission::SendMessages,
-        Permission::ManageNode,
-        Permission::ViewAuditLog,
-        Permission::ManageEmojis,
-    ];
-    let set = role_permissions(NodeRole::Member);
-    for p in all_perms {
-        assert_eq!(
-            has_permission(NodeRole::Member, p),
-            set.contains(&p),
-            "has_permission and role_permissions disagree on Member/{:?}",
-            p
-        );
-    }
+fn single_bit_custom_role_grants_only_its_scope() {
+    // A custom role that holds only KICK_MEMBERS grants kick/manage-members and
+    // nothing else — proving arbitrary-bit custom roles keep their granularity
+    // (the whole point of dropping the coarse hardcoded enum).
+    let perms = KICK_MEMBERS;
+    assert!(perms_have(perms, Permission::KickMembers));
+    assert!(perms_have(perms, Permission::ManageMembers));
+    assert!(!perms_have(perms, Permission::ManageChannels));
+    assert!(!perms_have(perms, Permission::ManageNode));
+    assert!(!perms_have(perms, Permission::SendMessages));
+}
+
+#[test]
+fn a_moderator_shaped_role_has_expected_scope() {
+    // Roughly the seeded "Moderator" default: can kick + manage channels, cannot
+    // manage the node or roles.
+    let perms = KICK_MEMBERS | MANAGE_CHANNELS;
+    assert!(perms_have(perms, Permission::KickMembers));
+    assert!(perms_have(perms, Permission::ManageChannels));
+    assert!(perms_have(perms, Permission::CreateChannel));
+    assert!(!perms_have(perms, Permission::ManageNode));
+    assert!(!perms_have(perms, Permission::ManageRoles));
+}
+
+#[test]
+fn permission_bit_mapping_is_stable() {
+    assert_eq!(permission_bit(Permission::SendMessages), SEND_MESSAGES);
+    assert_eq!(permission_bit(Permission::KickMembers), KICK_MEMBERS);
+    assert_eq!(permission_bit(Permission::ManageMembers), KICK_MEMBERS);
+    assert_eq!(permission_bit(Permission::ManageRoles), MANAGE_ROLES);
+    assert_eq!(permission_bit(Permission::CreateChannel), MANAGE_CHANNELS);
+    assert_eq!(permission_bit(Permission::DeleteChannel), MANAGE_CHANNELS);
+    assert_eq!(permission_bit(Permission::ManageChannels), MANAGE_CHANNELS);
+    // Coarse-mapped onto MANAGE_NODE (no dedicated bits in the current set).
+    assert_eq!(permission_bit(Permission::ManageNode), MANAGE_NODE);
+    assert_eq!(permission_bit(Permission::ViewAuditLog), MANAGE_NODE);
+    assert_eq!(permission_bit(Permission::ManageEmojis), MANAGE_NODE);
 }

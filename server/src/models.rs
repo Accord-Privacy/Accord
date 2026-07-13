@@ -30,7 +30,12 @@ pub mod permission_bits {
     pub const MOVE_MEMBERS: u64 = 1 << 24;
     pub const MANAGE_ROLES: u64 = 1 << 28;
 
-    /// Default permissions for the @everyone role
+    /// Default permissions for the @everyone role.
+    ///
+    /// Invite management (`CREATE_INVITE`) is intentionally NOT default: managing
+    /// invites is gated to roles that hold it (the seeded Moderator/Admin roles,
+    /// or any owner-defined role), matching the pre-custom-role behavior where
+    /// only admins/moderators could create, list, or revoke invites.
     pub const DEFAULT_EVERYONE: u64 = VIEW_CHANNEL
         | SEND_MESSAGES
         | READ_MESSAGE_HISTORY
@@ -38,8 +43,7 @@ pub mod permission_bits {
         | CONNECT
         | SPEAK
         | EMBED_LINKS
-        | ATTACH_FILES
-        | CREATE_INVITE;
+        | ATTACH_FILES;
 
     /// All Phase 1 permission bits OR'd together (for masking)
     pub const ALL_PERMISSIONS: u64 = CREATE_INVITE
@@ -1518,7 +1522,6 @@ mod tests {
             SPEAK,
             EMBED_LINKS,
             ATTACH_FILES,
-            CREATE_INVITE,
         ];
         for &b in &expected {
             assert_ne!(
@@ -1528,6 +1531,13 @@ mod tests {
                 name(b)
             );
         }
+        // Invite management is intentionally NOT a default @everyone permission
+        // (gated to roles, matching pre-custom-role admin/mod-only behavior).
+        assert_eq!(
+            DEFAULT_EVERYONE & CREATE_INVITE,
+            0,
+            "DEFAULT_EVERYONE must not include CREATE_INVITE"
+        );
     }
 
     #[test]
