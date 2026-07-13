@@ -256,6 +256,17 @@ fn get_device_identity() -> Result<DeviceIdentityResponse, String> {
 }
 
 fn main() {
+    // WebKitGTK's DMA-BUF renderer fails on NVIDIA proprietary drivers
+    // ("Failed to create GBM buffer"), leaving a blank window. Disable it
+    // when the NVIDIA kernel module is present, unless the user already set
+    // the variable themselves.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && std::path::Path::new("/proc/driver/nvidia/version").exists()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|_app| {
