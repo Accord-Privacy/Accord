@@ -147,6 +147,7 @@ added with M2. Remaining smaller gap: voice stack / `useVoice` (open issue #3).
 3. ✅ Updater wired: signing keypair generated (private key OUTSIDE repo — `~/.tauri/accord-updater.key`, BACK IT UP), pubkey + createUpdaterArtifacts in tauri.conf.json, endpoint → releases/latest/download/latest.json, release.sh emits latest.json
 4. ⏳ Screenshots, beta signup/feedback (GitHub Discussions), donate link
 5. ✅ Full Playwright suite green against local relay (14/14 chromium); ⏳ load scripts against staged relay
+6. ✅ Desktop automation harness (2026-07-12, `50a9b2f`): dev-only WS bridge drives the real Tauri binary headlessly — `desktop/frontend/automation/` (driver + smoke), `npm run auto:build && npm run auto:smoke`. Tree-shaken from release builds; release.sh rebuilds dist and asserts bridge marker absent. First run found + fixed 4 desktop-only launch blockers browser e2e can't see: NVIDIA blank window (`388f872`), relay CORS missing tauri:// origins (`8675481`), tauri://localhost persisted as server URL so registration silently went offline (`51cf689`), GetPendingSenderKeys serialized as map → pending E2EE sender keys never fetched on connect (`9f5905d`). Desktop smoke (account → node → message) green, zero console errors.
 
 ### M5 — Post-beta (explicitly out of scope for first beta)
 Mobile store releases · federation/relay-mesh hardening + cross-relay DMs · onion routing · post-quantum hybrid KEX · external security firm audit (Phase 7)
