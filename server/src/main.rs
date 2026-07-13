@@ -1072,14 +1072,26 @@ async fn main() -> Result<()> {
                 if effective_cors.trim() == "*" {
                     warn!("CORS: allowing any origin — use --cors-origins to restrict in production");
                     cors.allow_origin(Any)
-                } else if effective_cors.is_empty() {
-                    info!("CORS: same-origin only (no additional origins allowed)");
-                    cors.allow_origin(AllowOrigin::list(Vec::<HeaderValue>::new()))
                 } else {
-                    let origins: Vec<_> = effective_cors
+                    // The desktop app's webview runs on a custom app scheme
+                    // (tauri://localhost on Linux/macOS, http(s)://tauri.localhost
+                    // on Windows). No web page can ever have these origins, so
+                    // always allowing them lets the desktop client reach any
+                    // relay without weakening browser-facing CORS.
+                    let tauri_origins = [
+                        "tauri://localhost",
+                        "https://tauri.localhost",
+                        "http://tauri.localhost",
+                    ];
+                    let mut origins: Vec<HeaderValue> = effective_cors
                         .split(',')
                         .filter_map(|o| o.trim().parse().ok())
                         .collect();
+                    origins.extend(
+                        tauri_origins
+                            .iter()
+                            .filter_map(|o| o.parse::<HeaderValue>().ok()),
+                    );
                     info!("CORS: allowed origins: {:?}", origins);
                     cors.allow_origin(AllowOrigin::list(origins))
                 }
