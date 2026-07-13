@@ -3,6 +3,8 @@
 This guide covers installation, configuration, deployment, and ongoing administration of an Accord relay server.
 
 > **Key concept:** The Accord relay is a *zero-knowledge* routing layer. It never decrypts user content. As an admin, you manage infrastructure, not user data.
+>
+> **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and no end user's IP is ever exposed to node owners or other users. See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
 
 ---
 
@@ -96,6 +98,11 @@ Accord accepts configuration from three sources. **Priority order** (highest win
 | `--database-encryption` | `true` | Enable SQLCipher encryption at rest |
 | `--tls-cert` | — | Path to TLS certificate PEM |
 | `--tls-key` | — | Path to TLS private key PEM |
+| `--no-tls` | `false` | Disable TLS (plain HTTP — dev, or behind a reverse proxy) |
+| `--auto-tls` | — | Auto-generate a self-signed cert on startup (default when no cert given) |
+| `--admin-port` | `6789` | Admin dashboard port, **bound to `127.0.0.1` only** |
+| `--no-admin` | `false` | Disable the localhost admin dashboard entirely |
+| `--disable-rate-limits` | `false` | **Dev/load-testing only** — requires `--no-tls`; never use in production |
 | `-c, --config` | — | Path to TOML config file |
 | `--cors-origins` | auto | Comma-separated allowed origins (`*` for any) |
 | `--metadata-mode` | `standard` | `standard` or `minimal` (strips optional metadata) |
@@ -138,7 +145,7 @@ The Docker Compose setup uses environment variables via `.env`:
 |----------|-------------|
 | `ACCORD_PORT` | Server port (default `8080`) |
 | `ACCORD_DOMAIN` | Domain for Caddy TLS |
-| `ACCORD_ADMIN_TOKEN` | Admin authentication token |
+| `ACCORD_ADMIN_TOKEN` | **Optional.** The admin dashboard is localhost-only, so this is unset by default (localhost access is the relay owner). Set it only if you deliberately expose the admin port through your own tunnel/proxy and want an extra `x-admin-token` gate. |
 
 ### CORS Behavior
 
@@ -362,12 +369,12 @@ A **Node** is a community space (like a Discord server). The relay server admin 
 
 The server supports four creation policies:
 
-| Policy | Description |
-|--------|-------------|
-| `open` | Anyone can create a Node (default) |
-| `admin_only` | Only the server admin can create Nodes |
-| `approval` | Node creation requires server admin approval |
-| `invite` | Nodes can only be created via invite |
+| Policy | Description | Status |
+|--------|-------------|--------|
+| `open` | Anyone can create a Node (default) | Implemented |
+| `admin_only` | Only the relay owner can create Nodes | Implemented |
+| `approval` | Node creation requires relay-owner approval | Planned — not yet enforced |
+| `invite` | Nodes can only be created via invite | Planned — not yet enforced |
 
 ### Node Roles
 
@@ -414,24 +421,31 @@ GET /channels/:id/effective-permissions  — view computed result
 
 ## 7. Moderation
 
+> **Moderation is the node owner's job, not the relay's.** The relay performs no
+> content moderation and cannot — it never sees plaintext. Everything below is
+> operated by node owners/moderators; the relay only routes or stores opaque
+> values it can't interpret. See [../GOVERNANCE.md](../GOVERNANCE.md).
+
 ### Slow Mode
 
-Set a per-channel cooldown between messages:
+Set a per-channel cooldown between messages (relay enforces timing only, not content):
 
 ```
 PUT /channels/:id/slow-mode  — set interval (seconds)
 GET /channels/:id/slow-mode  — get current setting
 ```
 
-### Word Filters (Auto-Mod)
+### Word Filters (client-side)
 
-Node admins can maintain a blocked word list:
+Word filtering is **client-side** and lives entirely inside the node. The node
+owner's blocklist is distributed to members inside the NMK-encrypted node
+settings blob and enforced by each member's client before a message is sent.
+**The relay never sees the list** — and because messages are E2E encrypted, it
+could not match against it anyway. There are no relay auto-mod endpoints.
 
-```
-GET  /nodes/:id/auto-mod/words      — list filtered words
-POST /nodes/:id/auto-mod/words      — add a word
-DELETE /nodes/:id/auto-mod/words/:word — remove a word
-```
+Note: like all client-cooperative controls, a member running a modified client
+can bypass it. This matches Accord's model — moderation is a node-owner tool
+within a trusted membership, not a guarantee enforced by the infrastructure.
 
 ### Bans
 
@@ -442,20 +456,19 @@ GET    /nodes/:id/bans       — list bans
 GET    /nodes/:id/ban-check  — check if a user is banned
 ```
 
+Ban reasons are stored encrypted; the relay routes the ban but cannot read it.
+
 ### Audit Logging
 
-Every administrative action is logged in the Node's audit log:
+Administrative actions are logged in the **node's own** audit log, readable only
+by the node owner/moderators — never aggregated for the relay owner:
 
 ```
-GET /nodes/:id/audit-log  — view Node-level audit entries
+GET /nodes/:id/audit-log  — view node-level audit entries
 ```
 
-Relay-level audit log (server admin):
-
-```
-GET /api/admin/audit-log          — all relay audit events
-GET /api/admin/audit-log/actions  — list of audit action types
-```
+There is no relay-wide audit-log endpoint. The relay owner has no visibility
+into per-node governance (kicks, bans, role changes).
 
 ---
 
@@ -469,24 +482,33 @@ curl http://localhost:8080/health
 
 The Docker Compose health check polls this endpoint every 30 seconds.
 
-### Admin Dashboard
+### Admin Dashboard (localhost only)
 
-Access the built-in admin dashboard at:
-
-```
-GET /admin        — HTML dashboard page
-GET /admin/stats  — JSON server statistics
-GET /admin/users  — JSON user list
-GET /admin/nodes  — JSON node list
-```
-
-### Live Log Streaming
-
-Connect to the admin WebSocket for real-time log output:
+The dashboard is served on a **separate listener bound to `127.0.0.1`** (default
+port `6789`, set with `--admin-port`, disable with `--no-admin`). It is **not**
+reachable on the public port — `/admin*` returns 404 there. Localhost access is
+the relay owner, so no login is required by default.
 
 ```
-WS /admin/logs
+# On the relay host:
+GET  http://127.0.0.1:6789/admin        — HTML dashboard page
+GET  http://127.0.0.1:6789/admin/stats  — aggregate stats (counts, uptime, memory, connections)
+GET  http://127.0.0.1:6789/admin/nodes  — node registry: id, name, description, created_at only
+WS   ws://127.0.0.1:6789/admin/logs     — live server log stream
 ```
+
+To view it from your workstation, tunnel over SSH rather than exposing the port:
+
+```bash
+ssh -L 6789:127.0.0.1:6789 user@relay-host
+# then open http://127.0.0.1:6789/admin locally
+```
+
+**Deliberately absent:** there is no user roster and no `/admin/users` (it would
+correlate users to nodes), and no cross-node audit view. The node registry shows
+names and descriptions only — nothing about who is inside a node. If you set
+`ACCORD_ADMIN_TOKEN`, every dashboard request must then carry a matching
+`x-admin-token` header (useful only if you expose the port beyond localhost).
 
 ### Logs
 

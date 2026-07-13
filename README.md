@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust 1.86+](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](https://www.rust-lang.org/)
 
-[Website](https://accord.chat) · [Quick Start](#quick-start) · [Self-Hosting](docs/SELF-HOSTING.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Security Audit](SECURITY-AUDIT.md) · [Roadmap](ROADMAP.md)
+[Website](https://accord.chat) · [Quick Start](#quick-start) · [Self-Hosting](docs/SELF-HOSTING.md) · [Governance](GOVERNANCE.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Security Audit](SECURITY-AUDIT.md) · [Roadmap](ROADMAP.md)
 
 </div>
 
@@ -27,8 +27,10 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 
 ### 🔐 End-to-End Encryption
 - **Double Ratchet + X3DH** for DMs (Signal protocol foundations)
-- **AES-256-GCM** channel encryption for all group messages and files (Sender Keys upgrade planned)
+- **Sender Keys** for channel group messaging — the relay stores only opaque `{v,sk,iv,ct}` envelopes it cannot read
+- **AES-256-GCM** for channel content and files
 - **Forward secrecy** — keys rotate per message
+- **NMK metadata privacy** — node/channel names, descriptions, and per-node policies are encrypted under a Node Metadata Key the relay never sees
 - **SRTP voice encryption** with periodic key rotation
 - **Encrypted file sharing** — relay stores only opaque blobs
 - **Client-side encrypted search** — messages are decrypted locally before indexing
@@ -72,19 +74,32 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 - **Export/import** for full account backup
 - **QR code sync** between devices
 
-### 🛡️ Server Security
+### 🕵️ Privacy & Anti-Coercion
+- **Disappearing messages** — per-node default + per-channel override; enabling wipes older messages retroactively. The relay sees only an opaque `expires_at`; the policy itself rides the NMK-encrypted blob
+- **Read-gated messages** — a message won't start its disappear timer until the intended readers have actually seen it; each reader's own copy vanishes after they read it
+- **Screenshot protection** — asks the OS to exclude the window from capture (reliable on Windows/macOS, best-effort on Linux)
+- **Panic wipe** — one action destroys all local identity, keys, and data
+- **Duress password** — a decoy password wipes the real account and opens an empty offline decoy, leaving no forensic trace of a second account
+
+### 🛡️ Node Moderation (owner-run)
+- **Roles & permissions**, **bans**, **slow mode** — operated by node owners/moderators
+- **Word filters** — a node-wide blocklist enforced **client-side** and distributed inside the NMK-encrypted node settings; the relay never sees it
+- **Node-scoped audit log** — visible to the node owner, not the relay
+
+> Moderation is the node owner's responsibility. Accord performs **no** central or relay-side moderation — see **[GOVERNANCE.md](GOVERNANCE.md)**.
+
+### 🖥️ Relay Operation
 - **TLS with auto-generated certs** — self-signed TLS by default, bring your own cert supported
 - **CORS configuration** — configurable allowed origins
 - **Batch API endpoints** — efficient member and channel queries
-- **Admin dashboard** — token-gated stats, user management, and server overview
+- **Localhost admin dashboard** — bound to `127.0.0.1` (localhost access *is* the relay owner, no login); shows aggregate stats, a node registry (names/descriptions only), and live logs
 - **Rate limiting** and input validation
-- **Auto-mod** with configurable word filters
+- **Build-hash allowlist** — relay owners can pin which client builds may connect
 
 ### 📦 More
 - **Themes** and customizable UI
 - **Build hash verification** — clients display trust indicators
 - **Reproducible builds** — verify you're running unmodified code
-- **Audit logging** for administrative actions
 - **Push notifications** — FCM, UnifiedPush, and APNs with encrypted payloads
 - **Landing page** at [accord.chat](https://accord.chat) ([`website/`](website/))
 
@@ -115,7 +130,7 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 └──────────┘                                    └──────────┘
 ```
 
-**Relay** — routes encrypted blobs. Has no decryption keys. Handles auth, presence, and channel metadata.
+**Relay** — routes encrypted blobs. Has no decryption keys. Handles auth and presence; node/channel metadata is encrypted under a Node Metadata Key it never sees. Blind to node membership and content — see [GOVERNANCE.md](GOVERNANCE.md).
 
 **Node** — a community space (like a Discord server). All content is E2E encrypted; the relay sees only opaque ciphertext.
 
@@ -253,6 +268,7 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
 ## Documentation
 
+- **[Governance](GOVERNANCE.md)** — moderation philosophy, relay-owner vs node-owner powers
 - **[Architecture](docs/architecture.md)** — system design deep-dive
 - **[Permission System](docs/permission-system.md)** — roles, bits, cascade model
 - **[Identity Model](docs/identity-model.md)** — keypair identity & BIP39

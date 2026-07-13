@@ -5,6 +5,13 @@
 Accord's permission system is modeled after Discord's but designed for privacy-first architecture.
 Roles and permissions are **per-Node** — there are no global roles.
 
+> **Governance boundary:** these permissions govern authority *inside a node* and
+> are held by the node owner and the roles they delegate. The relay is blind to
+> node governance — it enforces only the routing-level capability it must (who may
+> post to a channel) and never exposes a node's role graph or membership to the
+> relay owner. There is no relay-level "super admin" over nodes. See
+> [../GOVERNANCE.md](../GOVERNANCE.md).
+
 ## Permission Bits
 
 Permissions are stored as a 64-bit integer bitmask, same as Discord.

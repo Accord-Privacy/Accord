@@ -1298,56 +1298,15 @@ curl "http://localhost:8080/channels/{channel_id}/slow-mode?token=AUTH_TOKEN"
 
 ---
 
-### `POST /nodes/:id/auto-mod/words` — Add auto-mod word
+### Auto-mod word filters — client-side (no relay endpoints)
 
-**Auth required:** Yes (token, ManageNode permission)
-
-**Request body:**
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `word` | string | Yes | Word to filter (1-100 chars, lowercased) |
-| `action` | string | Yes | `block` or `warn` |
-
-**Response (200):**
-```json
-{ "status": "added", "word": "badword", "action": "block" }
-```
-
-```bash
-curl -X POST "http://localhost:8080/nodes/{node_id}/auto-mod/words?token=AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"word": "badword", "action": "block"}'
-```
-
----
-
-### `DELETE /nodes/:id/auto-mod/words/:word` — Remove auto-mod word
-
-**Auth required:** Yes (token, ManageNode permission)
-
-**Response (200):**
-```json
-{ "status": "removed", "word": "badword" }
-```
-
-```bash
-curl -X DELETE "http://localhost:8080/nodes/{node_id}/auto-mod/words/badword?token=AUTH_TOKEN"
-```
-
----
-
-### `GET /nodes/:id/auto-mod/words` — List auto-mod words
-
-**Auth required:** Yes (token, must be member)
-
-**Response (200):**
-```json
-{ "words": [{ "node_id": "uuid", "word": "badword", "action": "block", "created_at": 1700000000 }] }
-```
-
-```bash
-curl "http://localhost:8080/nodes/{node_id}/auto-mod/words?token=AUTH_TOKEN"
-```
+Word filtering is **not** a relay feature. The node owner's blocklist is stored
+client-side and distributed to members inside the NMK-encrypted node settings
+blob; each member's client checks outgoing messages against it before encrypting
+and sending. The relay never sees the list and — since channel messages are E2E
+encrypted — could not match against it anyway. The former
+`/nodes/:id/auto-mod/words` endpoints have been removed. See
+[../GOVERNANCE.md](../GOVERNANCE.md).
 
 ---
 
@@ -2721,19 +2680,26 @@ curl -X POST "http://localhost:8080/federation/heartbeat" \
 
 ---
 
-## Admin
+## Admin (localhost only)
 
-Admin endpoints require the `ACCORD_ADMIN_TOKEN` environment variable to be set. Authenticate via `X-Admin-Token` header or `?admin_token=` query param.
+The admin dashboard is served on a **separate listener bound to `127.0.0.1`**
+(default port `6789`, `--admin-port`), not on the public port — `/admin*` returns
+404 on the public interface. Localhost access is the relay owner, so **no auth is
+required by default**. If `ACCORD_ADMIN_TOKEN` is set, every request must carry a
+matching `X-Admin-Token` header (query-param auth is accepted only for the log
+WebSocket). The surface is deliberately narrow — no user roster, no cross-node
+audit — see [../GOVERNANCE.md](../GOVERNANCE.md). Base URL below is
+`http://127.0.0.1:6789`.
 
 ### `GET /admin` — Admin dashboard HTML page
 
-**Auth required:** No (page loads, data requires admin token)
+**Auth required:** No
 
 ---
 
-### `GET /admin/stats` — Server statistics
+### `GET /admin/stats` — Aggregate server statistics
 
-**Auth required:** Yes (admin token)
+**Auth required:** No by default (localhost); `X-Admin-Token` if a token is set
 
 **Response (200):**
 ```json
@@ -2749,52 +2715,35 @@ Admin endpoints require the `ACCORD_ADMIN_TOKEN` environment variable to be set.
 ```
 
 ```bash
-curl -H "X-Admin-Token: YOUR_ADMIN_TOKEN" "http://localhost:8080/admin/stats"
+curl "http://127.0.0.1:6789/admin/stats"
 ```
 
 ---
 
-### `GET /admin/users` — List all users
+### `GET /admin/nodes` — Node registry
 
-**Auth required:** Yes (admin token)
+**Auth required:** No by default (localhost); `X-Admin-Token` if a token is set
 
-```bash
-curl -H "X-Admin-Token: YOUR_ADMIN_TOKEN" "http://localhost:8080/admin/users"
-```
-
----
-
-### `GET /admin/nodes` — List all nodes
-
-**Auth required:** Yes (admin token)
+Returns `id`, `name`, `description`, `created_at` per node — **only**. No owner,
+member count, channel count, membership, or user roster. There is no
+`/admin/users` endpoint (it would correlate users to nodes) and no relay-level
+audit-log endpoint (per-node governance is node business).
 
 ```bash
-curl -H "X-Admin-Token: YOUR_ADMIN_TOKEN" "http://localhost:8080/admin/nodes"
+curl "http://127.0.0.1:6789/admin/nodes"
 ```
 
 ---
 
 ### `GET /admin/logs` (WebSocket) — Live log streaming
 
-**Auth required:** Yes (admin token)
+**Auth required:** No by default (localhost); `admin_token` query param if a token is set
 
 Connect via WebSocket to receive real-time server log lines.
 
 ```bash
-websocat "ws://localhost:8080/admin/logs?admin_token=YOUR_ADMIN_TOKEN"
+websocat "ws://127.0.0.1:6789/admin/logs"
 ```
-
----
-
-### `GET /api/admin/audit-log` — Relay-level audit log
-
-**Auth required:** Yes (admin token)
-
----
-
-### `GET /api/admin/audit-log/actions` — List audit log action types
-
-**Auth required:** Yes (admin token)
 
 ---
 
@@ -2807,7 +2756,7 @@ websocat "ws://localhost:8080/admin/logs?admin_token=YOUR_ADMIN_TOKEN"
 | `POST` | `/api/admin/build-allowlist` | Add a build hash |
 | `DELETE` | `/api/admin/build-allowlist/:hash` | Remove a build hash |
 
-All require admin token authentication.
+Served on the localhost admin listener; `X-Admin-Token` only if a token is set.
 
 ---
 

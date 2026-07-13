@@ -226,6 +226,10 @@ Identity is a keypair. No emails, no phone numbers, no usernames at the relay le
 
 Crypto happens on the client. The server never touches plaintext. If you're tempted to decrypt something server-side "for convenience," stop and redesign.
 
+### No Central Moderation
+
+Accord performs **no** relay-side or otherwise centralized moderation, and it never will — the relay cannot read node content, and it must not be able to. Moderation is the **node owner's** duty and runs client-side or within the node's own trust boundary. The relay owner is a landlord (localhost access = authority) who can see node names/descriptions, create/delete nodes, and ban an IP for abuse defense — nothing about who is inside a node, and no end user's IP is ever exposed to node owners, admins, or other users. Any feature that gives the relay content inspection, cross-node ban lists, keyword scanning, or IP↔node correlation is a non-starter. Read **[GOVERNANCE.md](GOVERNANCE.md)** before proposing anything that touches moderation or the relay.
+
 ---
 
 ## Security Contributions
