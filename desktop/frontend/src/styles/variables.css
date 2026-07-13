@@ -80,14 +80,17 @@
   --space-xl: 24px;
   --space-2xl: 32px;
 
-  /* Font sizes */
-  --font-xs: 11px;
-  --font-sm: 12px;
-  --font-base: 14px;
-  --font-md: 15px;
-  --font-lg: 16px;
-  --font-xl: 20px;
-  --font-2xl: 24px;
+  /* Font sizes — derived from --font-size (the user-adjustable base, default
+     15px) so the Appearance › Font Size setting scales the whole type ramp.
+     At the 15px default this reproduces the original 11/12/14/15/16/20/24. */
+  --font-size: 15px;
+  --font-xs: calc(var(--font-size) - 4px);
+  --font-sm: calc(var(--font-size) - 3px);
+  --font-base: calc(var(--font-size) - 1px);
+  --font-md: var(--font-size);
+  --font-lg: calc(var(--font-size) + 1px);
+  --font-xl: calc(var(--font-size) + 5px);
+  --font-2xl: calc(var(--font-size) + 9px);
 
   /* Font weights (Discord reference) */
   --font-weight-normal: 400;

@@ -6,7 +6,7 @@ import { api } from './api';
 import { loadKeyWithPassword, setActiveIdentity } from './crypto';
 import { CLIENT_BUILD_HASH, ACCORD_VERSION, shortHash, verifyBuildHash, getCombinedTrust, getTrustIndicator, KnownBuild } from './buildHash';
 import { UpdateSection } from './UpdateChecker';
-import { themes, applyTheme, getSavedTheme, ACCENT_PRESETS, applyAccentColor, getSavedAccentColor, clearAccentColor, FONT_SIZE_OPTIONS, applyFontSize } from './themes';
+import { themes, applyTheme, getSavedTheme, ACCENT_PRESETS, applyAccentColor, getSavedAccentColor, clearAccentColor, FONT_SIZE_OPTIONS, applyFontSize, applyDensity } from './themes';
 import { avatarColor } from './avatarColor';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
@@ -318,24 +318,15 @@ export const Settings: React.FC<SettingsProps> = ({
     setNotificationPreferences(preferences);
   }, []);
 
-  // Apply appearance settings to DOM
+  // Apply appearance settings to DOM. Delegates to the theme system so boot-time
+  // (initTheme) and live changes go through exactly the same code path, then
+  // broadcasts so the running app (e.g. message density in ChatArea) updates
+  // without needing a reload.
   const applyAppearanceSettings = (settings: AppearanceSettings) => {
-    const root = document.documentElement;
-    
-    // Apply theme via theme system
     applyTheme(settings.theme);
-
-    // Apply font size (CSS variable)
-    root.style.setProperty('--font-size', `${settings.fontSize}px`);
-    localStorage.setItem('accord_font_size', String(settings.fontSize));
-
-    // Apply message density
-    const spacingMap = { compact: '2px', comfortable: '8px', cozy: '16px' };
-    root.style.setProperty('--message-spacing', spacingMap[settings.messageDensity]);
-    localStorage.setItem('accord_message_density', settings.messageDensity);
-    
-    // Add density class to body
-    document.body.className = `theme-${settings.theme} density-${settings.messageDensity}`;
+    applyFontSize(settings.fontSize);
+    applyDensity(settings.messageDensity);
+    window.dispatchEvent(new CustomEvent('accord:appearance', { detail: settings }));
   };
 
   // Handle keyboard shortcuts

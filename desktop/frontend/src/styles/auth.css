@@ -3,8 +3,9 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
+  flex: 1 1 auto;
   background: var(--bg-deepest);
   position: relative;
   overflow: hidden;

@@ -4034,17 +4034,20 @@ function App() {
     });
   }, [showShortcutsHelp, showSearchOverlay, showSettings, showNotificationSettings, showJoinNodeModal, showInviteModal, showDisplayNamePrompt, editingMessageId, replyingTo, showInputEmojiPicker, showGifPicker, channels, selectedChannelId, handleChannelSelect, selectedNodeId]);
 
-  // Apply font-size and density from localStorage on mount
-  useEffect(() => {
-    const savedFontSize = localStorage.getItem('accord-font-size');
-    if (savedFontSize) {
-      document.documentElement.style.setProperty('--font-size', savedFontSize);
-    }
-  }, []);
-
-  const [messageDensity] = useState<string>(() =>
-    localStorage.getItem('accord-message-density') || 'comfortable'
+  // Message density mirrors the appearance settings. initTheme() already applied
+  // it to <body> at boot; here we keep a reactive copy for views that key off it,
+  // updated live when Settings broadcasts a change (no reload needed).
+  const [messageDensity, setMessageDensity] = useState<string>(() =>
+    localStorage.getItem('accord_message_density') || 'comfortable'
   );
+  useEffect(() => {
+    const onAppearance = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.messageDensity) setMessageDensity(detail.messageDensity);
+    };
+    window.addEventListener('accord:appearance', onAppearance);
+    return () => window.removeEventListener('accord:appearance', onAppearance);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {

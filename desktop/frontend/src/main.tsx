@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import DOMPurify from "dompurify";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
+import { TitleBar } from "./components/TitleBar";
 import { migrateToKeyring } from "./identityStorage";
 import "./styles.css";
 
@@ -21,8 +22,13 @@ if (import.meta.env.DEV || import.meta.env.VITE_ACCORD_AUTOMATION === "1") {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
+    <div className="app-shell">
+      <TitleBar />
+      <div className="app-viewport">
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </div>
+    </div>
   </React.StrictMode>
 );

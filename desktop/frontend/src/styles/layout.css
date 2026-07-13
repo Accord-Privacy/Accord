@@ -1,7 +1,82 @@
 /* =================== App Layout =================== */
-.app {
+
+/* Frameless-window shell: custom title bar on top, the app fills the rest. */
+.app-shell {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
+  overflow: hidden;
+}
+.app-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Custom title bar (window runs with decorations:false). */
+.titlebar {
+  flex: 0 0 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-darkest);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  height: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.titlebar-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+.titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.titlebar-controls {
+  display: flex;
+  height: 100%;
+}
+.titlebar-btn {
+  width: 46px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.titlebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.titlebar-close:hover {
+  background: var(--red);
+  color: #fff;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+  width: 100%;
   overflow: hidden;
 }

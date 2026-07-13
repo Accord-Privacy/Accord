@@ -213,6 +213,35 @@ export function initTheme(): void {
   applyTheme(getSavedTheme());
   applyAccentColor(getSavedAccentColor());
   applyFontSize(getSavedFontSize());
+  applyDensity(getSavedDensity());
+}
+
+/* ============ Message Density ============ */
+const DENSITY_STORAGE_KEY = 'accord_message_density';
+export type MessageDensity = 'compact' | 'comfortable' | 'cozy';
+const DENSITY_SPACING: Record<MessageDensity, string> = {
+  compact: '2px',
+  comfortable: '8px',
+  cozy: '16px',
+};
+
+export function getSavedDensity(): MessageDensity {
+  const v = localStorage.getItem(DENSITY_STORAGE_KEY);
+  return v === 'compact' || v === 'cozy' ? v : 'comfortable';
+}
+
+/**
+ * Apply message density: set the spacing variable and a single `density-*` class
+ * on <body> (global, so the CSS applies everywhere without each view re-declaring
+ * it). Persisted so it survives a reload — the old code only set this while the
+ * Settings modal was open, so density silently reset on boot.
+ */
+export function applyDensity(density: MessageDensity): void {
+  document.documentElement.style.setProperty('--message-spacing', DENSITY_SPACING[density]);
+  const body = document.body;
+  body.classList.remove('density-compact', 'density-comfortable', 'density-cozy');
+  body.classList.add(`density-${density}`);
+  localStorage.setItem(DENSITY_STORAGE_KEY, density);
 }
 
 /* ============ Accent Color ============ */
