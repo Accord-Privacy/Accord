@@ -480,6 +480,10 @@ pub enum WsMessageType {
         encrypted_data: String,
         #[serde(default)]
         reply_to: Option<Uuid>,
+        /// Disappearing messages: sender-computed expiry (unix seconds) from the
+        /// channel retention policy. None = keep forever. Relay stores it opaquely.
+        #[serde(default)]
+        expires_at: Option<u64>,
     },
     /// Edit a message (author only)
     EditMessage {

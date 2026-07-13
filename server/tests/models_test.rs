@@ -672,13 +672,14 @@ fn ws_message_type_roundtrip_channel_message() {
         channel_id: id,
         encrypted_data: "payload".to_string(),
         reply_to: Some(reply_id),
+        expires_at: None,
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();
     assert!(
         matches!(
             &back,
-            WsMessageType::ChannelMessage { channel_id, encrypted_data, reply_to }
+            WsMessageType::ChannelMessage { channel_id, encrypted_data, reply_to, .. }
             if *channel_id == id
                 && encrypted_data == "payload"
                 && *reply_to == Some(reply_id)
@@ -694,6 +695,7 @@ fn ws_message_type_roundtrip_channel_message_no_reply() {
         channel_id: id,
         encrypted_data: "enc".to_string(),
         reply_to: None,
+        expires_at: None,
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();

@@ -454,7 +454,7 @@ async fn test_store_message_success() {
 
     let payload = b"encrypted_blob";
     let (msg_id, seq) = db
-        .store_message(channel_id, user.id, payload, None)
+        .store_message(channel_id, user.id, payload, None, None)
         .await
         .unwrap();
 
@@ -476,13 +476,13 @@ async fn test_get_channel_messages_with_messages() {
     let db = test_db().await;
     let (user, _, channel_id) = setup_message_env(&db, "with_msgs").await;
 
-    db.store_message(channel_id, user.id, b"msg1", None)
+    db.store_message(channel_id, user.id, b"msg1", None, None)
         .await
         .unwrap();
-    db.store_message(channel_id, user.id, b"msg2", None)
+    db.store_message(channel_id, user.id, b"msg2", None, None)
         .await
         .unwrap();
-    db.store_message(channel_id, user.id, b"msg3", None)
+    db.store_message(channel_id, user.id, b"msg3", None, None)
         .await
         .unwrap();
 
@@ -496,11 +496,11 @@ async fn test_get_channel_messages_ordering_chronological() {
     let (user, _, channel_id) = setup_message_env(&db, "order").await;
 
     let (id1, _) = db
-        .store_message(channel_id, user.id, b"first", None)
+        .store_message(channel_id, user.id, b"first", None, None)
         .await
         .unwrap();
     let (id2, _) = db
-        .store_message(channel_id, user.id, b"second", None)
+        .store_message(channel_id, user.id, b"second", None, None)
         .await
         .unwrap();
 
@@ -516,9 +516,15 @@ async fn test_get_channel_messages_limit() {
     let (user, _, channel_id) = setup_message_env(&db, "limit").await;
 
     for i in 0..10 {
-        db.store_message(channel_id, user.id, format!("msg{}", i).as_bytes(), None)
-            .await
-            .unwrap();
+        db.store_message(
+            channel_id,
+            user.id,
+            format!("msg{}", i).as_bytes(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     }
 
     let msgs = db.get_channel_messages(channel_id, 5, None).await.unwrap();
@@ -530,13 +536,13 @@ async fn test_get_channel_messages_before_pagination() {
     let db = test_db().await;
     let (user, _, channel_id) = setup_message_env(&db, "before").await;
 
-    db.store_message(channel_id, user.id, b"msg_old", None)
+    db.store_message(channel_id, user.id, b"msg_old", None, None)
         .await
         .unwrap();
     // Small sleep to ensure distinct timestamps
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let (_, _) = db
-        .store_message(channel_id, user.id, b"msg_new", None)
+        .store_message(channel_id, user.id, b"msg_new", None, None)
         .await
         .unwrap();
 
@@ -572,7 +578,7 @@ async fn test_get_message_by_id_found() {
     let (user, _, channel_id) = setup_message_env(&db, "by_id").await;
 
     let (msg_id, _) = db
-        .store_message(channel_id, user.id, b"find_me", None)
+        .store_message(channel_id, user.id, b"find_me", None, None)
         .await
         .unwrap();
 
@@ -596,7 +602,7 @@ async fn test_delete_message_success() {
     let (user, _, channel_id) = setup_message_env(&db, "del_msg").await;
 
     let (msg_id, _) = db
-        .store_message(channel_id, user.id, b"delete_me", None)
+        .store_message(channel_id, user.id, b"delete_me", None, None)
         .await
         .unwrap();
 
@@ -614,7 +620,7 @@ async fn test_update_message_edit_content() {
     let (user, _, channel_id) = setup_message_env(&db, "edit_msg").await;
 
     let (msg_id, _) = db
-        .store_message(channel_id, user.id, b"original", None)
+        .store_message(channel_id, user.id, b"original", None, None)
         .await
         .unwrap();
 
@@ -635,15 +641,15 @@ async fn test_sequence_numbers_monotonically_increase() {
     let (user, _, channel_id) = setup_message_env(&db, "seq").await;
 
     let (_, seq1) = db
-        .store_message(channel_id, user.id, b"m1", None)
+        .store_message(channel_id, user.id, b"m1", None, None)
         .await
         .unwrap();
     let (_, seq2) = db
-        .store_message(channel_id, user.id, b"m2", None)
+        .store_message(channel_id, user.id, b"m2", None, None)
         .await
         .unwrap();
     let (_, seq3) = db
-        .store_message(channel_id, user.id, b"m3", None)
+        .store_message(channel_id, user.id, b"m3", None, None)
         .await
         .unwrap();
 
@@ -874,10 +880,10 @@ async fn test_count_messages() {
     let db = test_db().await;
     let (user, _, channel_id) = setup_message_env(&db, "cnt_msgs").await;
     let baseline = db.count_messages().await.unwrap();
-    db.store_message(channel_id, user.id, b"a", None)
+    db.store_message(channel_id, user.id, b"a", None, None)
         .await
         .unwrap();
-    db.store_message(channel_id, user.id, b"b", None)
+    db.store_message(channel_id, user.id, b"b", None, None)
         .await
         .unwrap();
     let count = db.count_messages().await.unwrap();

@@ -4569,6 +4569,7 @@ async fn handle_ws_message(
             channel_id,
             encrypted_data,
             reply_to,
+            expires_at,
         } => {
             // Check if this is a DM channel; enforce participation and blocks
             let is_dm = state.db.is_dm_channel(channel_id).await.unwrap_or(false);
@@ -4683,7 +4684,13 @@ async fn handle_ws_message(
 
             let (message_id, seq) = state
                 .db
-                .store_message(channel_id, sender_user_id, &encrypted_payload, reply_to)
+                .store_message(
+                    channel_id,
+                    sender_user_id,
+                    &encrypted_payload,
+                    reply_to,
+                    expires_at,
+                )
                 .await
                 .map_err(|e| {
                     tracing::error!("Failed to store message: {}", e);
@@ -4742,6 +4749,7 @@ async fn handle_ws_message(
                 "encrypted_data": encrypted_data, "message_id": message_id,
                 "seq": seq,
                 "timestamp": ws_message.timestamp, "reply_to": reply_to,
+                "expires_at": expires_at,
                 "encrypted_display_name": sender_display_name_b64,
                 "sender_display_name": sender_display_name,
                 // Lets a recipient with a stale DM list know to refresh it —
@@ -6285,6 +6293,97 @@ pub async fn delete_message_handler(
             }),
         )),
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct PurgeBeforeRequest {
+    /// Delete every message in the channel created before this unix-seconds cutoff.
+    pub before: u64,
+}
+
+/// Retroactively purge a channel's messages older than `before` (unix seconds).
+/// Backs the "wipe-old" path when disappearing messages is first enabled on a
+/// channel that already has history. Requires ManageChannels on the owning node,
+/// or DM participation. Timestamp-only — the relay never reads message content.
+pub async fn purge_channel_before_handler(
+    Path(channel_id): Path<String>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<SharedState>,
+    Json(req): Json<PurgeBeforeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let channel_id = Uuid::parse_str(&channel_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid channel ID format".into(),
+                code: 400,
+            }),
+        )
+    })?;
+
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
+
+    // Authorize: a DM participant, or ManageChannels on the owning node.
+    let is_dm = state.db.is_dm_channel(channel_id).await.unwrap_or(false);
+    if is_dm {
+        match state.db.get_dm_channel(channel_id).await {
+            Ok(Some(dm)) if dm.user1_id == user_id || dm.user2_id == user_id => {}
+            _ => {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Not a participant of this DM channel".into(),
+                        code: 403,
+                    }),
+                ))
+            }
+        }
+    } else {
+        let node_id = match state.db.get_channel(channel_id).await {
+            Ok(Some(ch)) => ch.node_id,
+            _ => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: "Channel not found".into(),
+                        code: 404,
+                    }),
+                ))
+            }
+        };
+        check_node_permission(&state, user_id, node_id, Permission::ManageChannels).await?;
+    }
+
+    let removed = state
+        .db
+        .delete_messages_before(channel_id, req.before)
+        .await
+        .map_err(|e| {
+            error!("Failed to purge messages: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to purge messages".into(),
+                    code: 500,
+                }),
+            )
+        })?;
+
+    // Tell live clients to drop these messages locally right away.
+    let ev = serde_json::json!({
+        "type": "messages_purged",
+        "channel_id": channel_id,
+        "before": req.before,
+        "timestamp": now_secs()
+    });
+    if let Err(e) = state.send_to_channel(channel_id, ev.to_string()).await {
+        error!("Failed to broadcast messages_purged: {}", e);
+    }
+
+    Ok(Json(
+        serde_json::json!({ "success": true, "removed": removed }),
+    ))
 }
 
 /// Extract user ID from request headers (Authorization: Bearer token)

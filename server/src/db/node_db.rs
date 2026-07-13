@@ -142,6 +142,20 @@ impl NodeDatabase {
         .await
         .ok();
 
+        // Disappearing messages: optional per-message expiry (unix seconds). The
+        // sender computes this from the channel's retention policy; the relay only
+        // sees an opaque timestamp and never the policy itself. NULL = keep forever.
+        sqlx::query("ALTER TABLE messages ADD COLUMN expires_at INTEGER")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at) WHERE expires_at IS NOT NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
         // Sender Key distributions (store-and-forward for offline members)
         sqlx::query(
             r#"
@@ -718,6 +732,7 @@ impl NodeDatabase {
         sender_id: Uuid,
         encrypted_payload: &[u8],
         reply_to: Option<Uuid>,
+        expires_at: Option<u64>,
     ) -> Result<(Uuid, i64)> {
         let message_id = Uuid::new_v4();
         let created_at = super::now();
@@ -730,7 +745,7 @@ impl NodeDatabase {
         .await
         .context("Failed to compute next sequence number")?;
 
-        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to, seq) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to, seq, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(message_id.to_string())
             .bind(channel_id.to_string())
             .bind(sender_id.to_string())
@@ -738,10 +753,37 @@ impl NodeDatabase {
             .bind(created_at as i64)
             .bind(reply_to.map(|id| id.to_string()))
             .bind(seq)
+            .bind(expires_at.map(|t| t as i64))
             .execute(&self.pool)
             .await
             .context("Failed to store message")?;
         Ok((message_id, seq))
+    }
+
+    /// Delete every message whose expiry has passed. Timestamp-only: the relay
+    /// enforces the sender-supplied TTL without ever understanding the content.
+    /// Returns the number of rows removed.
+    pub async fn delete_expired_messages(&self, now: u64) -> Result<u64> {
+        let result =
+            sqlx::query("DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ?")
+                .bind(now as i64)
+                .execute(&self.pool)
+                .await
+                .context("Failed to delete expired messages")?;
+        Ok(result.rows_affected())
+    }
+
+    /// Retroactively purge every message in a channel created before `before`
+    /// (unix seconds). Backs the "wipe-old" path when disappearing messages is
+    /// first enabled on a channel that already has history. Returns rows removed.
+    pub async fn delete_messages_before(&self, channel_id: Uuid, before: u64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM messages WHERE channel_id = ? AND created_at < ?")
+            .bind(channel_id.to_string())
+            .bind(before as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to purge messages before cutoff")?;
+        Ok(result.rows_affected())
     }
 
     pub async fn get_channel_messages(
@@ -750,14 +792,17 @@ impl NodeDatabase {
         limit: u32,
         before: Option<u64>,
     ) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
+        let now = super::now() as i64;
         let query = if let Some(before_timestamp) = before {
-            sqlx::query("SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY created_at DESC LIMIT ?")
+            sqlx::query("SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?")
                 .bind(channel_id.to_string())
                 .bind(before_timestamp as i64)
+                .bind(now)
                 .bind(limit as i64)
         } else {
-            sqlx::query("SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?")
+            sqlx::query("SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?")
                 .bind(channel_id.to_string())
+                .bind(now)
                 .bind(limit as i64)
         };
 

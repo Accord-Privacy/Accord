@@ -308,6 +308,20 @@ impl Database {
             .await
             .ok(); // Ignore error if column already exists
 
+        // Disappearing messages: optional per-message expiry (unix seconds). The
+        // sender computes this from the channel's retention policy; the relay only
+        // ever sees an opaque timestamp, never the policy. NULL = keep forever.
+        sqlx::query("ALTER TABLE messages ADD COLUMN expires_at INTEGER")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at) WHERE expires_at IS NOT NULL",
+        )
+        .execute(&self.pool)
+        .await
+        .ok();
+
         // Create node_invites table
         sqlx::query(
             r#"
@@ -3107,6 +3121,7 @@ impl Database {
         sender_id: Uuid,
         encrypted_payload: &[u8],
         reply_to: Option<Uuid>,
+        expires_at: Option<u64>,
     ) -> Result<(Uuid, i64)> {
         let message_id = Uuid::new_v4();
         let created_at = now();
@@ -3120,7 +3135,7 @@ impl Database {
         .await
         .context("Failed to compute next sequence number")?;
 
-        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to, seq) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO messages (id, channel_id, sender_id, encrypted_payload, created_at, reply_to, seq, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(message_id.to_string())
             .bind(channel_id.to_string())
             .bind(sender_id.to_string())
@@ -3128,11 +3143,38 @@ impl Database {
             .bind(created_at as i64)
             .bind(reply_to.map(|id| id.to_string()))
             .bind(seq)
+            .bind(expires_at.map(|t| t as i64))
             .execute(&self.pool)
             .await
             .context("Failed to store message")?;
 
         Ok((message_id, seq))
+    }
+
+    /// Delete every message whose expiry has passed (disappearing messages).
+    /// Timestamp-only: the relay enforces the sender-supplied TTL without ever
+    /// understanding message content. Returns the number of rows removed.
+    pub async fn delete_expired_messages(&self, now: u64) -> Result<u64> {
+        let result =
+            sqlx::query("DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ?")
+                .bind(now as i64)
+                .execute(&self.pool)
+                .await
+                .context("Failed to delete expired messages")?;
+        Ok(result.rows_affected())
+    }
+
+    /// Retroactively purge every message in a channel created before `before`
+    /// (unix seconds). Backs the "wipe-old" path when disappearing messages is
+    /// first enabled on a channel that already has history. Returns rows removed.
+    pub async fn delete_messages_before(&self, channel_id: Uuid, before: u64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM messages WHERE channel_id = ? AND created_at < ?")
+            .bind(channel_id.to_string())
+            .bind(before as i64)
+            .execute(&self.pool)
+            .await
+            .context("Failed to purge messages before cutoff")?;
+        Ok(result.rows_affected())
     }
 
     pub async fn get_channel_messages(
@@ -3141,18 +3183,21 @@ impl Database {
         limit: u32,
         before: Option<u64>,
     ) -> Result<Vec<(Uuid, Uuid, Vec<u8>, u64)>> {
+        let now_ts = now() as i64;
         let query = if let Some(before_timestamp) = before {
             sqlx::query(
-                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? ORDER BY seq DESC, created_at DESC LIMIT ?",
+                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND created_at < ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq DESC, created_at DESC LIMIT ?",
             )
             .bind(channel_id.to_string())
             .bind(before_timestamp as i64)
+            .bind(now_ts)
             .bind(limit as i64)
         } else {
             sqlx::query(
-                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? ORDER BY seq DESC, created_at DESC LIMIT ?",
+                "SELECT id, sender_id, encrypted_payload, created_at FROM messages WHERE channel_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq DESC, created_at DESC LIMIT ?",
             )
             .bind(channel_id.to_string())
+            .bind(now_ts)
             .bind(limit as i64)
         };
 
@@ -6758,7 +6803,7 @@ mod tests {
 
         let encrypted_data = b"encrypted_message_data";
         let (message_id, seq) = db
-            .store_message(channel.id, user.id, encrypted_data, None)
+            .store_message(channel.id, user.id, encrypted_data, None, None)
             .await
             .unwrap();
         assert_eq!(seq, 1);
@@ -6767,5 +6812,70 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].0, message_id);
         assert_eq!(messages[0].2, encrypted_data.to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_disappearing_messages_expiry() {
+        let db = Database::new(":memory:").await.unwrap();
+        let user = db.create_user("dk", "").await.unwrap();
+        let node = db.create_node("N", user.id, None).await.unwrap();
+        let channel = db.create_channel("c", node.id, user.id).await.unwrap();
+
+        let now = now();
+        // One already-expired, one still-valid, one that never expires.
+        db.store_message(channel.id, user.id, b"gone", None, Some(now - 10))
+            .await
+            .unwrap();
+        db.store_message(channel.id, user.id, b"live", None, Some(now + 3600))
+            .await
+            .unwrap();
+        db.store_message(channel.id, user.id, b"keep", None, None)
+            .await
+            .unwrap();
+
+        // The read path hides expired rows even before the sweep runs.
+        let visible = db.get_channel_messages(channel.id, 10, None).await.unwrap();
+        assert_eq!(visible.len(), 2, "expired message must not be served");
+        let payloads: Vec<_> = visible.iter().map(|m| m.2.clone()).collect();
+        assert!(!payloads.contains(&b"gone".to_vec()));
+        assert!(payloads.contains(&b"live".to_vec()));
+        assert!(payloads.contains(&b"keep".to_vec()));
+
+        // The sweep physically removes only the expired row.
+        let removed = db.delete_expired_messages(now).await.unwrap();
+        assert_eq!(removed, 1);
+        // Second sweep is a no-op (idempotent).
+        assert_eq!(db.delete_expired_messages(now).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_retroactive_purge_before() {
+        let db = Database::new(":memory:").await.unwrap();
+        let user = db.create_user("pk", "").await.unwrap();
+        let node = db.create_node("N", user.id, None).await.unwrap();
+        let channel = db.create_channel("c", node.id, user.id).await.unwrap();
+
+        for _ in 0..3 {
+            db.store_message(channel.id, user.id, b"old", None, None)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            db.get_channel_messages(channel.id, 10, None)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+
+        // Everything is older than a far-future cutoff → all purged.
+        let cutoff = now() + 3600;
+        let removed = db.delete_messages_before(channel.id, cutoff).await.unwrap();
+        assert_eq!(removed, 3);
+        assert!(db
+            .get_channel_messages(channel.id, 10, None)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

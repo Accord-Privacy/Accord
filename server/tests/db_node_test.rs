@@ -50,7 +50,7 @@ async fn create_channel(node_db: &NodeDatabase, name: &str) -> Uuid {
 async fn store_msg(node_db: &NodeDatabase, channel_id: Uuid, payload: &[u8]) -> (Uuid, i64) {
     let sender = Uuid::new_v4();
     node_db
-        .store_message(channel_id, sender, payload, None)
+        .store_message(channel_id, sender, payload, None, None)
         .await
         .expect("store_message failed")
 }
@@ -404,7 +404,7 @@ async fn test_store_message_returns_id_and_seq() {
     let sender = Uuid::new_v4();
 
     let (msg_id, seq) = node_db
-        .store_message(channel_id, sender, b"hello", None)
+        .store_message(channel_id, sender, b"hello", None, None)
         .await
         .unwrap();
 
@@ -419,15 +419,15 @@ async fn test_store_message_seq_increments() {
     let sender = Uuid::new_v4();
 
     let (_, s1) = node_db
-        .store_message(channel_id, sender, b"m1", None)
+        .store_message(channel_id, sender, b"m1", None, None)
         .await
         .unwrap();
     let (_, s2) = node_db
-        .store_message(channel_id, sender, b"m2", None)
+        .store_message(channel_id, sender, b"m2", None, None)
         .await
         .unwrap();
     let (_, s3) = node_db
-        .store_message(channel_id, sender, b"m3", None)
+        .store_message(channel_id, sender, b"m3", None, None)
         .await
         .unwrap();
 
@@ -453,11 +453,11 @@ async fn test_get_channel_messages_returns_stored() {
     let sender = Uuid::new_v4();
 
     node_db
-        .store_message(channel_id, sender, b"payload1", None)
+        .store_message(channel_id, sender, b"payload1", None, None)
         .await
         .unwrap();
     node_db
-        .store_message(channel_id, sender, b"payload2", None)
+        .store_message(channel_id, sender, b"payload2", None, None)
         .await
         .unwrap();
 
@@ -476,7 +476,13 @@ async fn test_get_channel_messages_respects_limit() {
 
     for i in 0..10 {
         node_db
-            .store_message(channel_id, sender, format!("msg-{}", i).as_bytes(), None)
+            .store_message(
+                channel_id,
+                sender,
+                format!("msg-{}", i).as_bytes(),
+                None,
+                None,
+            )
             .await
             .unwrap();
     }
@@ -495,11 +501,11 @@ async fn test_get_channel_messages_ordered_chronologically() {
     let sender = Uuid::new_v4();
 
     let (id1, _) = node_db
-        .store_message(channel_id, sender, b"first", None)
+        .store_message(channel_id, sender, b"first", None, None)
         .await
         .unwrap();
     let (id2, _) = node_db
-        .store_message(channel_id, sender, b"second", None)
+        .store_message(channel_id, sender, b"second", None, None)
         .await
         .unwrap();
 
@@ -519,11 +525,11 @@ async fn test_get_channel_messages_paginated_raw() {
     let sender = Uuid::new_v4();
 
     node_db
-        .store_message(channel_id, sender, b"page1", None)
+        .store_message(channel_id, sender, b"page1", None, None)
         .await
         .unwrap();
     node_db
-        .store_message(channel_id, sender, b"page2", None)
+        .store_message(channel_id, sender, b"page2", None, None)
         .await
         .unwrap();
 
@@ -541,7 +547,7 @@ async fn test_get_message_details_found() {
     let sender = Uuid::new_v4();
 
     let (msg_id, _) = node_db
-        .store_message(channel_id, sender, b"detail-me", None)
+        .store_message(channel_id, sender, b"detail-me", None, None)
         .await
         .unwrap();
 
@@ -567,7 +573,7 @@ async fn test_edit_message_updates_payload_and_edited_at() {
     let sender = Uuid::new_v4();
 
     let (msg_id, _) = node_db
-        .store_message(channel_id, sender, b"original", None)
+        .store_message(channel_id, sender, b"original", None, None)
         .await
         .unwrap();
 
@@ -589,7 +595,7 @@ async fn test_edit_message_wrong_sender_returns_false() {
     let other = Uuid::new_v4();
 
     let (msg_id, _) = node_db
-        .store_message(channel_id, sender, b"original", None)
+        .store_message(channel_id, sender, b"original", None, None)
         .await
         .unwrap();
 
@@ -607,7 +613,7 @@ async fn test_delete_message_by_author() {
     let sender = Uuid::new_v4();
 
     let (msg_id, _) = node_db
-        .store_message(channel_id, sender, b"delete-me", None)
+        .store_message(channel_id, sender, b"delete-me", None, None)
         .await
         .unwrap();
 
@@ -629,7 +635,7 @@ async fn test_force_delete_message() {
     let sender = Uuid::new_v4();
 
     let (msg_id, _) = node_db
-        .store_message(channel_id, sender, b"force-delete-me", None)
+        .store_message(channel_id, sender, b"force-delete-me", None, None)
         .await
         .unwrap();
 
@@ -661,12 +667,12 @@ async fn test_store_message_with_reply_to() {
     let sender = Uuid::new_v4();
 
     let (parent_id, _) = node_db
-        .store_message(channel_id, sender, b"parent", None)
+        .store_message(channel_id, sender, b"parent", None, None)
         .await
         .unwrap();
 
     let (reply_id, _) = node_db
-        .store_message(channel_id, sender, b"reply", Some(parent_id))
+        .store_message(channel_id, sender, b"reply", Some(parent_id), None)
         .await
         .unwrap();
 
@@ -682,11 +688,11 @@ async fn test_search_messages_raw_by_channel_name() {
     let sender = Uuid::new_v4();
 
     node_db
-        .store_message(channel_id, sender, b"encrypted1", None)
+        .store_message(channel_id, sender, b"encrypted1", None, None)
         .await
         .unwrap();
     node_db
-        .store_message(channel_id, sender, b"encrypted2", None)
+        .store_message(channel_id, sender, b"encrypted2", None, None)
         .await
         .unwrap();
 
@@ -706,11 +712,11 @@ async fn test_search_messages_raw_with_channel_filter() {
     let sender = Uuid::new_v4();
 
     node_db
-        .store_message(chan1, sender, b"msg-in-find", None)
+        .store_message(chan1, sender, b"msg-in-find", None, None)
         .await
         .unwrap();
     node_db
-        .store_message(chan2, sender, b"msg-in-other", None)
+        .store_message(chan2, sender, b"msg-in-other", None, None)
         .await
         .unwrap();
 
@@ -1109,16 +1115,16 @@ async fn test_get_message_thread_raw_with_replies() {
     let sender = Uuid::new_v4();
 
     let (parent_id, _) = node_db
-        .store_message(channel_id, sender, b"parent", None)
+        .store_message(channel_id, sender, b"parent", None, None)
         .await
         .unwrap();
 
     node_db
-        .store_message(channel_id, sender, b"reply1", Some(parent_id))
+        .store_message(channel_id, sender, b"reply1", Some(parent_id), None)
         .await
         .unwrap();
     node_db
-        .store_message(channel_id, sender, b"reply2", Some(parent_id))
+        .store_message(channel_id, sender, b"reply2", Some(parent_id), None)
         .await
         .unwrap();
 
@@ -1324,11 +1330,11 @@ async fn test_mark_channel_read_updates_on_second_call() {
     let sender = Uuid::new_v4();
 
     let (msg1, _) = node_db
-        .store_message(channel_id, sender, b"first", None)
+        .store_message(channel_id, sender, b"first", None, None)
         .await
         .unwrap();
     let (msg2, _) = node_db
-        .store_message(channel_id, sender, b"second", None)
+        .store_message(channel_id, sender, b"second", None, None)
         .await
         .unwrap();
 
@@ -1354,7 +1360,7 @@ async fn test_get_channel_read_receipts_multiple_users() {
     let sender = Uuid::new_v4();
 
     let (msg_id, _) = node_db
-        .store_message(channel_id, sender, b"msg", None)
+        .store_message(channel_id, sender, b"msg", None, None)
         .await
         .unwrap();
 
@@ -1380,7 +1386,7 @@ async fn test_get_unread_count_no_receipt() {
 
     for _ in 0..3 {
         node_db
-            .store_message(channel_id, sender, b"msg", None)
+            .store_message(channel_id, sender, b"msg", None, None)
             .await
             .unwrap();
     }
