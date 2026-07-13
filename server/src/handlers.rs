@@ -218,8 +218,9 @@ pub async fn register_handler(
                         "user",
                         Some(user_id),
                         Some(
-                            &serde_json::json!({"display_name": display_name, "flow": "v2"})
-                                .to_string(),
+                            // No display_name: it is NMK-protected per-node metadata
+                            // the relay must not retain in plaintext (see GOVERNANCE.md).
+                            &serde_json::json!({"flow": "v2"}).to_string(),
                         ),
                         Some(&client_ip),
                     )
@@ -282,8 +283,8 @@ pub async fn register_handler(
                         "user",
                         Some(user_id),
                         Some(
-                            &serde_json::json!({"display_name": display_name, "flow": "v1"})
-                                .to_string(),
+                            // No display_name: NMK-protected, not retained plaintext.
+                            &serde_json::json!({"flow": "v1"}).to_string(),
                         ),
                         Some(&client_ip),
                     )
@@ -4398,9 +4399,9 @@ async fn handle_ws_message(
                 .create_channel(name.clone(), node_id, sender_user_id)
                 .await?;
 
-            // Log audit event
+            // Log audit event. No channel_name: channel names are NMK-encrypted
+            // metadata the relay stores only as opaque blobs — keep just the id.
             let details = serde_json::json!({
-                "channel_name": name,
                 "channel_id": channel.id
             });
             log_audit_event(
