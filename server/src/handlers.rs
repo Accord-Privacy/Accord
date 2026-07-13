@@ -4598,7 +4598,12 @@ async fn handle_ws_message(
             // Check SEND_MESSAGES permission and build hash allowlist.
             // DM channels sit under the memberless DM system node, so node
             // permissions don't apply — participation was verified above.
-            if let Ok(Some(channel)) = state.db.get_channel(channel_id).await.map(|c| c.filter(|_| !is_dm)) {
+            if let Ok(Some(channel)) = state
+                .db
+                .get_channel(channel_id)
+                .await
+                .map(|c| c.filter(|_| !is_dm))
+            {
                 // Check build hash allowlist
                 state
                     .check_build_hash_for_node(sender_user_id, channel.node_id)

@@ -40,6 +40,7 @@ import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
 import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, saveOwnMessages, loadOwnMessages, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
 import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, type DecryptedMetadata } from "./e2ee/metadata";
+import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { initKeyboardShortcuts } from "./keyboard";
 import { initTheme } from "./themes";
 import { setCustomEmojis } from "./markdown";
@@ -577,6 +578,13 @@ function App() {
       const userId = localStorage.getItem('accord_user_id') || '';
       const password = passwordRef.current;
       const toBase64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+
+      // Fetch the storage master key (OS keyring) BEFORE loading any encrypted
+      // store — every at-rest key is derived as HKDF(password, salt = SMK), so
+      // the SMK must be cached first or loads silently fall back to legacy.
+      if (userId) {
+        await initStorageMasterKey(userId);
+      }
 
       // Try to load persisted identity keys
       const storedKeys = password && userId ? loadIdentityKeys(userId, password) : null;
@@ -3162,7 +3170,10 @@ function App() {
     clearToken();
     localStorage.removeItem('accord_user_id');
     passwordRef.current = "";
-    
+    // Drop the cached storage master key so encrypted stores can't be read
+    // without a fresh keyring fetch on next login.
+    clearStorageMasterKey();
+
     // Clear in-memory encryption state but keep keypair in localStorage for re-login
     setKeyPair(null);
     clearChannelKeyCache();

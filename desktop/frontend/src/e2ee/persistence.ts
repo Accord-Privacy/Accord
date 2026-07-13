@@ -2,18 +2,18 @@
  * @module persistence
  * Encrypted persistence for E2EE identity keys and sender key store.
  *
- * Keys are encrypted at rest using AES-256-GCM with a key derived from
- * SHA-256(password || domain-separator). This mirrors the pattern used
- * in session.ts for Double Ratchet session persistence.
+ * At-rest keys come from ./storageKey (deriveAtRestKey): two-factor
+ * HKDF(password, salt = OS-keyring SMK) on desktop, legacy SHA-256(password‖
+ * domain) on web. Blobs written with the SMK carry a 1-byte version tag so
+ * legacy data still reads and is migrated to v2 on the next save.
  */
 
 // @ts-ignore
 import { gcm } from '@noble/ciphers/aes.js';
-// @ts-ignore
-import { sha256 } from '@noble/hashes/sha2.js';
 
 import type { IdentityKeyPair, SignedPreKeyPair, OneTimePreKeyPair } from './keys';
 import { SenderKeyStore } from './senderKeys';
+import { deriveAtRestKey, hasStorageMasterKey, AT_REST_V2_TAG } from './storageKey';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -43,21 +43,21 @@ function fromBase64(b64: string): Uint8Array {
   return bytes;
 }
 
-function deriveKey(password: string, domain: string): Uint8Array {
-  const passBytes = new TextEncoder().encode(password);
-  const domainBytes = new TextEncoder().encode(domain);
-  const material = new Uint8Array(passBytes.length + domainBytes.length);
-  material.set(passBytes, 0);
-  material.set(domainBytes, passBytes.length);
-  return sha256(material);
-}
-
 function encryptData(data: string, password: string, domain: string): string {
-  const key = deriveKey(password, domain);
+  const key = deriveAtRestKey(password, domain);
   const iv = randomBytes(12);
   const plaintext = new TextEncoder().encode(data);
   const cipher = gcm(key, iv);
   const ciphertext = cipher.encrypt(plaintext);
+  if (hasStorageMasterKey()) {
+    // v2: [tag][iv(12)][ct]
+    const combined = new Uint8Array(1 + 12 + ciphertext.length);
+    combined[0] = AT_REST_V2_TAG;
+    combined.set(iv, 1);
+    combined.set(ciphertext, 13);
+    return toBase64(combined);
+  }
+  // legacy (web, no SMK): [iv(12)][ct]
   const combined = new Uint8Array(12 + ciphertext.length);
   combined.set(iv, 0);
   combined.set(ciphertext, 12);
@@ -65,13 +65,24 @@ function encryptData(data: string, password: string, domain: string): string {
 }
 
 function decryptData(encrypted: string, password: string, domain: string): string {
-  const key = deriveKey(password, domain);
   const combined = fromBase64(encrypted);
+  // v2 blobs are tag-prefixed. Try v2 first when tagged; the GCM auth tag makes
+  // a misread (a legacy blob whose first byte happens to be the tag) safe — it
+  // fails authentication and we fall back to the legacy layout.
+  if (combined[0] === AT_REST_V2_TAG) {
+    try {
+      const key = deriveAtRestKey(password, domain);
+      const iv = combined.slice(1, 13);
+      const ciphertext = combined.slice(13);
+      return new TextDecoder().decode(gcm(key, iv).decrypt(ciphertext));
+    } catch {
+      // fall through to legacy interpretation
+    }
+  }
+  const key = deriveAtRestKey(password, domain, /* forceLegacy */ true);
   const iv = combined.slice(0, 12);
   const ciphertext = combined.slice(12);
-  const cipher = gcm(key, iv);
-  const plaintext = cipher.decrypt(ciphertext);
-  return new TextDecoder().decode(plaintext);
+  return new TextDecoder().decode(gcm(key, iv).decrypt(ciphertext));
 }
 
 // ─── Identity Key Persistence ───────────────────────────────────────────────

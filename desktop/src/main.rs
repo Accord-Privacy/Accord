@@ -156,6 +156,52 @@ fn delete_token() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Storage master key (at-rest key hardening)
+// ---------------------------------------------------------------------------
+//
+// A per-user random 256-bit secret held in the OS keyring. The frontend mixes
+// it (as an HKDF salt) with the user's password to derive the keys that
+// encrypt local stores. This makes at-rest encryption two-factor: deriving
+// anything requires BOTH the password (knowledge) AND this device secret
+// (possession). A locked, seized device cannot recover history without the
+// password, and a leaked password is useless without the device's keyring.
+
+const SMK_SERVICE: &str = "accord-smk";
+
+/// Fetch the user's storage master key, creating a fresh random one on first
+/// use. Returned base64-encoded (32 random bytes).
+#[tauri::command]
+fn get_or_create_smk(user_id: String) -> Result<String, String> {
+    use base64::Engine;
+    let entry = keyring::Entry::new(SMK_SERVICE, &user_id).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(existing) => Ok(existing),
+        Err(keyring::Error::NoEntry) => {
+            let mut bytes = [0u8; 32];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut bytes);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+            entry
+                .set_password(&b64)
+                .map_err(|e| format!("Failed to store storage master key: {e}"))?;
+            Ok(b64)
+        }
+        Err(e) => Err(format!("Failed to read storage master key: {e}")),
+    }
+}
+
+/// Delete the user's storage master key (used by account deletion / panic-wipe).
+#[tauri::command]
+fn delete_smk(user_id: String) -> Result<(), String> {
+    let entry = keyring::Entry::new(SMK_SERVICE, &user_id).map_err(|e| e.to_string())?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Failed to delete storage master key: {e}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Identity keyring storage
 // ---------------------------------------------------------------------------
 
@@ -359,6 +405,8 @@ fn main() {
             list_identities,
             get_device_identity,
             set_voice_capture_armed,
+            get_or_create_smk,
+            delete_smk,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

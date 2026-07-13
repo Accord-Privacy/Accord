@@ -23,6 +23,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 // @ts-ignore
 import { gcm } from '@noble/ciphers/aes.js';
+import { deriveAtRestKey, hasStorageMasterKey, AT_REST_V2_TAG } from './storageKey';
 
 const METADATA_VERSION = 1;
 const NONCE_SIZE = 12;
@@ -133,16 +134,8 @@ export class NodeMetadataKey {
 const NMK_STORAGE_PREFIX = 'accord_e2ee_nmk_';
 const NMK_DOMAIN = 'accord-e2ee-nmk-storage';
 
-function deriveStorageKey(password: string): Uint8Array {
-  const passBytes = new TextEncoder().encode(password);
-  const domainBytes = new TextEncoder().encode(NMK_DOMAIN);
-  const material = new Uint8Array(passBytes.length + domainBytes.length);
-  material.set(passBytes, 0);
-  material.set(domainBytes, passBytes.length);
-  return sha256(material);
-}
-
-/** Persist a map of nodeId → NodeMetadataKey, encrypted with the user's password. */
+/** Persist a map of nodeId → NodeMetadataKey. At-rest key is two-factor
+ *  HKDF(password, SMK) on desktop; see ./storageKey. v2 blobs are tag-prefixed. */
 export function saveNmkStore(
   userId: string,
   store: Map<string, NodeMetadataKey>,
@@ -153,14 +146,22 @@ export function saveNmkStore(
     for (const [nodeId, key] of store) {
       entries[nodeId] = toBase64(key.asBytes());
     }
-    const key = deriveStorageKey(password);
+    const key = deriveAtRestKey(password, NMK_DOMAIN);
     const nonce = randomBytes(NONCE_SIZE);
     const plaintext = new TextEncoder().encode(JSON.stringify(entries));
     const ciphertext = gcm(key, nonce).encrypt(plaintext);
-    const combined = new Uint8Array(NONCE_SIZE + ciphertext.length);
-    combined.set(nonce, 0);
-    combined.set(ciphertext, NONCE_SIZE);
-    localStorage.setItem(`${NMK_STORAGE_PREFIX}${userId}`, toBase64(combined));
+    if (hasStorageMasterKey()) {
+      const combined = new Uint8Array(1 + NONCE_SIZE + ciphertext.length);
+      combined[0] = AT_REST_V2_TAG;
+      combined.set(nonce, 1);
+      combined.set(ciphertext, 1 + NONCE_SIZE);
+      localStorage.setItem(`${NMK_STORAGE_PREFIX}${userId}`, toBase64(combined));
+    } else {
+      const combined = new Uint8Array(NONCE_SIZE + ciphertext.length);
+      combined.set(nonce, 0);
+      combined.set(ciphertext, NONCE_SIZE);
+      localStorage.setItem(`${NMK_STORAGE_PREFIX}${userId}`, toBase64(combined));
+    }
   } catch (e) {
     console.warn('Failed to persist NMK store:', e);
   }
@@ -175,16 +176,29 @@ export function loadNmkStore(
     const stored = localStorage.getItem(`${NMK_STORAGE_PREFIX}${userId}`);
     if (!stored) return null;
     const combined = fromBase64(stored);
-    const key = deriveStorageKey(password);
+    const parse = (plaintext: Uint8Array): Map<string, NodeMetadataKey> => {
+      const entries: Record<string, string> = JSON.parse(new TextDecoder().decode(plaintext));
+      const store = new Map<string, NodeMetadataKey>();
+      for (const [nodeId, b64] of Object.entries(entries)) {
+        store.set(nodeId, NodeMetadataKey.fromBytes(fromBase64(b64)));
+      }
+      return store;
+    };
+    // v2 (tag-prefixed) first; GCM auth makes a misread safe (fall back to legacy).
+    if (combined[0] === AT_REST_V2_TAG) {
+      try {
+        const key = deriveAtRestKey(password, NMK_DOMAIN);
+        const nonce = combined.slice(1, 1 + NONCE_SIZE);
+        const ciphertext = combined.slice(1 + NONCE_SIZE);
+        return parse(gcm(key, nonce).decrypt(ciphertext));
+      } catch {
+        // fall through
+      }
+    }
+    const key = deriveAtRestKey(password, NMK_DOMAIN, /* forceLegacy */ true);
     const nonce = combined.slice(0, NONCE_SIZE);
     const ciphertext = combined.slice(NONCE_SIZE);
-    const plaintext = gcm(key, nonce).decrypt(ciphertext);
-    const entries: Record<string, string> = JSON.parse(new TextDecoder().decode(plaintext));
-    const store = new Map<string, NodeMetadataKey>();
-    for (const [nodeId, b64] of Object.entries(entries)) {
-      store.set(nodeId, NodeMetadataKey.fromBytes(fromBase64(b64)));
-    }
-    return store;
+    return parse(gcm(key, nonce).decrypt(ciphertext));
   } catch (e) {
     console.warn('Failed to load NMK store:', e);
     return null;

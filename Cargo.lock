@@ -98,6 +98,7 @@ version = "0.1.0"
 dependencies = [
  "accord-core",
  "anyhow",
+ "base64 0.21.7",
  "dirs 5.0.1",
  "ed25519-dalek",
  "hex",
