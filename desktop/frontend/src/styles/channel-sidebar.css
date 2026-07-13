@@ -356,6 +356,37 @@
 
 .dm-header-add-btn:hover { color: var(--text-primary); }
 
+.friend-requests {
+  margin: 0 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.friend-request-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.friend-request-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.friend-request-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .dm-item {
   display: flex;
   align-items: center;

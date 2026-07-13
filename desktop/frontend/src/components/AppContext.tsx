@@ -350,6 +350,9 @@ export interface AppContextType {
   handleCreateNode: () => Promise<void>;
   handleDmChannelSelect: (dmChannel: DmChannelWithInfo) => void;
   openDmWithUser: (user: User) => Promise<void>;
+  friendRequests: Array<{ id: string; from_user_id: string; node_id: string }>;
+  acceptFriendRequest: (requestId: string) => Promise<void>;
+  rejectFriendRequest: (requestId: string) => Promise<void>;
   handleSaveDisplayName: () => Promise<void>;
   handleSaveCustomStatus: () => Promise<void>;
   handleServerConnect: () => Promise<void>;
@@ -376,7 +379,7 @@ export interface AppContextType {
   loadChannels: (nodeId: string) => Promise<void>;
   loadRoles: (nodeId: string) => Promise<void>;
   loadNodes: () => Promise<void>;
-  loadDmChannels: () => Promise<void>;
+  loadDmChannels: () => Promise<DmChannelWithInfo[]>;
 
   // Permission helpers
   hasPermission: (nodeId: string, permission: 'CreateChannel' | 'DeleteChannel' | 'ManageMembers' | 'KickMembers' | 'ManageInvites' | 'ManageNode') => boolean;

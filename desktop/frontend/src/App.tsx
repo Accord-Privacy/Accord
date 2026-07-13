@@ -397,6 +397,9 @@ function App() {
   // channelId → set of peer userIds we've already sent our sender key to.
   // Prevents infinite reciprocation and redundant re-sends.
   const sentSenderKeyToRef = useRef<Map<string, Set<string>>>(new Map());
+  // Distribution retry bookkeeping: "channelId:memberId" → attempt count.
+  const distRetryRef = useRef<Map<string, number>>(new Map());
+  const sendSenderKeyToRef = useRef<((socket: AccordWebSocket, channelId: string, sk: SenderKeyPrivate, memberId: string) => Promise<boolean>) | null>(null);
   // messageId → plaintext of our own sent messages. We can't decrypt our own
   // sender-key envelopes, so this (persisted encrypted) keeps history readable.
   const ownMessagesRef = useRef<Map<string, string>>(new Map());
@@ -710,6 +713,7 @@ function App() {
       let sent = sentSenderKeyToRef.current.get(channelId);
       if (!sent) { sent = new Set(); sentSenderKeyToRef.current.set(channelId, sent); }
       sent.add(memberId);
+      distRetryRef.current.delete(`${channelId}:${memberId}`);
       // Piggyback the Node Metadata Key if we hold it, so the member can
       // decrypt node/channel names (metadata privacy Phase 2). Rides the same
       // DR-encrypted distribution queue; the session now exists.
@@ -723,9 +727,23 @@ function App() {
       return true;
     } catch (err) {
       console.warn(`Failed to distribute sender key to ${memberId}:`, err);
+      // A fresh peer may not have published their prekey bundle yet (they
+      // publish right after first login, we distribute the moment they join).
+      // Retry with backoff instead of leaving them permanently keyless.
+      const retryKey = `${channelId}:${memberId}`;
+      const attempts = distRetryRef.current.get(retryKey) ?? 0;
+      if (attempts < 5) {
+        distRetryRef.current.set(retryKey, attempts + 1);
+        setTimeout(() => {
+          const currentKey = senderKeyStoreRef.current.getMyKey(channelId);
+          if (currentKey) void sendSenderKeyToRef.current?.(socket, channelId, currentKey, memberId);
+        }, 2000 * (attempts + 1));
+      }
       return false;
     }
   }, [getPeerBundle]);
+  // Self-reference so the retry timeout always calls the latest callback.
+  useEffect(() => { sendSenderKeyToRef.current = sendSenderKeyTo; }, [sendSenderKeyTo]);
 
   // Send my sender key back to a peer who just sent me theirs, if I haven't
   // already sent mine. This is the responder half of the single-initiator
@@ -757,14 +775,19 @@ function App() {
     const manager = e2eeManagerRef.current;
     const myId = localStorage.getItem('accord_user_id');
     if (!manager || !myId) return;
+    const alreadySent = sentSenderKeyToRef.current.get(channelId);
     const targets = membersRef.current
       .map(m => m.user_id)
       .filter((id): id is string =>
         !!id && id !== myId && id !== excludeUserId &&
+        // Skip peers who already have this key (covers re-runs when the
+        // member list changes; rotation clears the set first).
+        !alreadySent?.has(id) &&
         // Send if a session already exists (safe 'dr'), or if I'm the designated
         // initiator for first contact (lower userId). Otherwise the peer
         // initiates and I reciprocate on receive.
         (manager.hasSession(id) || myId < id));
+    console.info(`[e2ee] distribute sender key ch=${channelId.slice(0, 8)} members=${membersRef.current.length} targets=${targets.length}`);
     await Promise.all(targets.map(id => sendSenderKeyTo(socket, channelId, sk, id)));
   }, [sendSenderKeyTo]);
 
@@ -791,12 +814,26 @@ function App() {
   // Bootstrap channel group E2EE: once E2EE is ready and members are known,
   // create + distribute a sender key for the selected channel if we don't
   // have one yet. Without this, sender keys never activate for fresh accounts.
+  // When a key already exists, re-run distribution for any member it hasn't
+  // reached — the key may have been created (on channel select or first send)
+  // before the member list finished loading, which would otherwise leave
+  // those members permanently unable to decrypt our messages.
   useEffect(() => {
-    if (!ws || !selectedChannelId || !encryptionEnabled || !e2eeReady) return;
-    if (members.length === 0) return;
-    if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) return;
-    bootstrapChannelSenderKeys(ws, selectedChannelId);
-  }, [ws, selectedChannelId, members, encryptionEnabled, e2eeReady, bootstrapChannelSenderKeys]);
+    if (!ws || !selectedChannelId || !encryptionEnabled || !e2eeReady) {
+      console.info(`[e2ee] bootstrap skipped ch=${selectedChannelId?.slice(0, 8)} ws=${!!ws} enc=${encryptionEnabled} ready=${e2eeReady}`);
+      return;
+    }
+    if (members.length === 0) {
+      console.info(`[e2ee] bootstrap deferred ch=${selectedChannelId.slice(0, 8)} — members not loaded yet`);
+      return;
+    }
+    const existing = senderKeyStoreRef.current.getMyKey(selectedChannelId);
+    if (!existing) {
+      bootstrapChannelSenderKeys(ws, selectedChannelId);
+    } else {
+      void distributeSenderKeyToMembers(ws, selectedChannelId, existing);
+    }
+  }, [ws, selectedChannelId, members, encryptionEnabled, e2eeReady, bootstrapChannelSenderKeys, distributeSenderKeyToMembers]);
 
   // ── Metadata privacy (NMK) ──
 
@@ -982,12 +1019,28 @@ function App() {
       // Check if this is a DM message
       const isIncomingDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
 
-      if (isIncomingDm && e2eeManagerRef.current?.isInitialized && data.from) {
+      const echoMyId = localStorage.getItem('accord_user_id');
+      if (isIncomingDm && data.from && data.from === echoMyId) {
+        // Own DM echo: we can't decrypt our own DR envelope. The temp-message
+        // replacement below restores the plaintext; don't warn.
+        const cached = data.message_id ? ownMessagesRef.current.get(data.message_id) : undefined;
+        if (cached !== undefined) content = cached;
+        isEncrypted = true;
+        e2eeType = 'double-ratchet';
+      } else if (isIncomingDm && e2eeManagerRef.current?.isInitialized && data.from) {
         // DM: try Double Ratchet E2EE decryption (base64 on the wire)
         try {
           content = e2eeManagerRef.current.decryptEnvelope(data.from, fromWirePayload(data.encrypted_data));
           isEncrypted = true;
           e2eeType = 'double-ratchet';
+          // Cache the plaintext (encrypted at rest): DR envelopes cannot be
+          // decrypted again later, so history rendering depends on this.
+          if (data.message_id) {
+            ownMessagesRef.current.set(data.message_id, content);
+            const uid = localStorage.getItem('accord_user_id');
+            const pwd = passwordRef.current;
+            if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
+          }
         } catch (error) {
           console.warn('E2EE decrypt failed, trying symmetric fallback:', error);
           // Fallback to symmetric
@@ -1003,6 +1056,15 @@ function App() {
           }
         }
       } else if (encryptionEnabled && keyPairRef.current && data.channel_id) {
+        // Own echo: we can't decrypt our own sender-key envelope. The temp
+        // message replacement below restores the plaintext; don't warn.
+        const myUserId = localStorage.getItem('accord_user_id');
+        if (data.from && data.from === myUserId && isSenderKeyEnvelope(data.encrypted_data)) {
+          const cached = data.message_id ? ownMessagesRef.current.get(data.message_id) : undefined;
+          if (cached !== undefined) content = cached;
+          isEncrypted = true;
+          e2eeType = 'sender-keys';
+        } else
         // Channel: try sender keys first, fall back to symmetric
         if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
           try {
@@ -1128,8 +1190,9 @@ function App() {
                 _status: 'sent',
               };
               // Cache our own plaintext under the real message id so history
-              // renders after re-login (we can't decrypt our own SK envelopes).
-              if (data.message_id && localTemp.e2eeType === 'sender-keys') {
+              // renders after re-login (we can't decrypt our own SK envelopes,
+              // nor our own — or anyone's — old DR envelopes).
+              if (data.message_id && (localTemp.e2eeType === 'sender-keys' || localTemp.e2eeType === 'double-ratchet')) {
                 ownMessagesRef.current.set(data.message_id, localTemp.content);
                 const uid = localStorage.getItem('accord_user_id');
                 const pwd = passwordRef.current;
@@ -1354,6 +1417,7 @@ function App() {
 
     // Handle member joined — update members list in real-time
     socket.on('member_joined' as any, (data: any) => {
+      console.info(`[e2ee] member_joined user=${String(data.user_id).slice(0, 8)} node=${String(data.node_id).slice(0, 8)}`);
       if (data.user_id && data.node_id) {
         // Add new member to the members list if we're viewing this node
         const currentNodeId = nodesRef.current.find(n => 
@@ -1440,14 +1504,43 @@ function App() {
     // A new member joined. Under the single-initiator rule the lower-userId side
     // initiates: if that's me, send my key now (establishing the session); if the
     // newcomer is lower, they initiate and I reciprocate on receive.
+    // This event is the authoritative trigger for key exchange — it must not
+    // depend on UI state (selected channel / loaded member list), which may
+    // lag or never materialize for channels the user hasn't opened.
     socket.on('sender_key_new_member' as any, async (data: any) => {
+      console.info(`[e2ee] sender_key_new_member ch=${String(data.channel_id).slice(0, 8)} new=${String(data.new_user_id).slice(0, 8)}`);
       if (!data.channel_id || !data.new_user_id) return;
       const myId = localStorage.getItem('accord_user_id');
-      if (!myId || data.new_user_id === myId || !(myId < data.new_user_id)) return;
-      const sk = senderKeyStoreRef.current.getMyKey(data.channel_id);
-      if (sk) {
-        await sendSenderKeyTo(socket, data.channel_id, sk, data.new_user_id);
+      if (!myId) return;
+
+      if (data.new_user_id === myId) {
+        // I just joined: initiate toward every existing member whose id is
+        // higher than mine (lower id initiates); lower-id members initiate
+        // toward me via their branch below. Fetch the member list over REST
+        // so this works before any UI state exists.
+        if (!data.node_id || !tokenRef.current) return;
+        try {
+          const nodeMembers = await api.getNodeMembers(data.node_id, tokenRef.current);
+          const sk = senderKeyStoreRef.current.getOrCreateMyKey(data.channel_id);
+          persistSenderKeyStore();
+          const targets = nodeMembers
+            .map(m => m.user_id)
+            .filter((id): id is string => !!id && id !== myId && myId < id);
+          console.info(`[e2ee] self-join init ch=${String(data.channel_id).slice(0, 8)} members=${nodeMembers.length} targets=${targets.length}`);
+          await Promise.all(targets.map(id => sendSenderKeyTo(socket, data.channel_id, sk, id)));
+        } catch (err) {
+          console.warn('[e2ee] self-join key init failed:', err);
+        }
+        return;
       }
+
+      if (!(myId < data.new_user_id)) return;
+      // Existing member, and I'm the designated initiator toward the newcomer.
+      // Create my key on demand — the newcomer needs it even if I've never
+      // opened this channel.
+      const sk = senderKeyStoreRef.current.getOrCreateMyKey(data.channel_id);
+      persistSenderKeyStore();
+      await sendSenderKeyTo(socket, data.channel_id, sk, data.new_user_id);
     });
 
     // On (re)connect, drain sender key distributions queued while we were offline
@@ -1682,10 +1775,11 @@ function App() {
   // Decrypt a message's encrypted_payload using sender keys or symmetric channel key
   const decryptPayload = useCallback(async (encrypted: string, channelId: string, senderId?: string, messageId?: string): Promise<{ content: string; isEncrypted: boolean }> => {
     if (encryptionEnabled && keyPair && channelId) {
-      // Own messages: we can't decrypt our own sender-key envelope, so read the
-      // plaintext from our local cache (keyed by message id).
-      const myId = localStorage.getItem('accord_user_id');
-      if (messageId && senderId && senderId === myId) {
+      // Local plaintext cache (encrypted at rest, keyed by message id). Holds
+      // our own sender-key messages (we can't decrypt our own envelopes) and
+      // all Double Ratchet DMs (old DR envelopes are undecryptable by design —
+      // forward secrecy — so live-decrypted plaintext is kept for history).
+      if (messageId) {
         const cached = ownMessagesRef.current.get(messageId);
         if (cached !== undefined) return { content: cached, isEncrypted: true };
       }
@@ -2068,36 +2162,101 @@ function App() {
     }
   }, [loadChannels, loadMembers, loadRoles, loadBots, batchMemberToUiMember]);
 
-  const loadDmChannels = useCallback(async () => {
-    if (!appState.token || !serverAvailable) return;
-    
+  // Reads the token through tokenRef (not appState.token) because WebSocket
+  // handlers capture this callback once at connect time — a state-based guard
+  // would be permanently stale (null) in those closures.
+  const loadDmChannels = useCallback(async (): Promise<DmChannelWithInfo[]> => {
+    const token = tokenRef.current;
+    if (!token) return [];
+
     try {
-      const response = await api.getDmChannels(appState.token);
+      const response = await api.getDmChannels(token);
       setDmChannels(response.dm_channels);
+      return response.dm_channels;
     } catch (error) {
       console.error('Failed to load DM channels:', error);
       handleApiError(error);
       setDmChannels([]);
+      return [];
     }
-  }, [appState.token, serverAvailable]);
+  }, []);
 
-  // Create or open DM channel with a user
+  // Create or open DM channel with a user. New DM channels require
+  // friendship; when that's missing, send a friend request instead so the
+  // flow is one click rather than a dead-end error.
   const createDmChannel = useCallback(async (targetUserId: string) => {
     if (!appState.token || !serverAvailable) return null;
-    
+
     try {
       const dmChannel = await api.createDmChannel(targetUserId, appState.token);
-      
+
       // Reload DM channels to get the updated list with user info
       await loadDmChannels();
-      
+
       return dmChannel;
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('Must be friends')) {
+        const nodeId = selectedNodeId;
+        if (!nodeId) {
+          setError('You can only send friend requests to members of a shared node.');
+          return null;
+        }
+        try {
+          await api.sendFriendRequest(targetUserId, nodeId);
+          setError('Not friends yet — friend request sent. You can DM once they accept.');
+        } catch (frError) {
+          const frMsg = frError instanceof Error ? frError.message : String(frError);
+          setError(frMsg.includes('already')
+            ? 'Friend request already pending.'
+            : `Could not send friend request: ${frMsg}`);
+        }
+        return null;
+      }
       console.error('Failed to create DM channel:', error);
       handleApiError(error);
       return null;
     }
-  }, [appState.token, serverAvailable, loadDmChannels]);
+  }, [appState.token, serverAvailable, loadDmChannels, selectedNodeId]);
+
+  // Incoming friend requests: poll while authenticated (the relay has no WS
+  // push for these yet), and refresh after accept/reject.
+  const [friendRequests, setFriendRequests] = useState<Array<{ id: string; from_user_id: string; node_id: string }>>([]);
+  const refreshFriendRequests = useCallback(async () => {
+    if (!appState.token || !serverAvailable) return;
+    const myId = localStorage.getItem('accord_user_id');
+    try {
+      const requests = await api.listFriendRequests();
+      setFriendRequests(requests.filter(r => r.status === 'pending' && r.to_user_id === myId));
+    } catch {
+      // Non-fatal; next poll retries
+    }
+  }, [appState.token, serverAvailable]);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    refreshFriendRequests();
+    const timer = setInterval(refreshFriendRequests, 15000);
+    return () => clearInterval(timer);
+  }, [isAuthenticated, refreshFriendRequests]);
+
+  const acceptFriendRequest = useCallback(async (requestId: string) => {
+    try {
+      await api.acceptFriendRequest(requestId);
+      await refreshFriendRequests();
+      await loadDmChannels();
+    } catch (error) {
+      handleApiError(error);
+    }
+  }, [refreshFriendRequests, loadDmChannels]);
+
+  const rejectFriendRequest = useCallback(async (requestId: string) => {
+    try {
+      await api.rejectFriendRequest(requestId);
+      await refreshFriendRequests();
+    } catch (error) {
+      handleApiError(error);
+    }
+  }, [refreshFriendRequests]);
 
   // Handle DM channel selection
   const handleDmChannelSelect = useCallback((dmChannel: DmChannelWithInfo) => {
@@ -2126,14 +2285,16 @@ function App() {
   const openDmWithUser = useCallback(async (user: User) => {
     const dmChannel = await createDmChannel(user.id);
     if (dmChannel) {
-      // Find the DM channel with info from our loaded channels
-      await loadDmChannels(); // Refresh to get the channel with user info
-      const dmChannelWithInfo = dmChannels.find(dm => dm.id === dmChannel.id);
+      // Use the freshly returned list — the `dmChannels` state variable is a
+      // stale closure here, so reading it right after the refresh silently
+      // failed to select the new channel.
+      const refreshed = await loadDmChannels();
+      const dmChannelWithInfo = refreshed.find(dm => dm.id === dmChannel.id);
       if (dmChannelWithInfo) {
         handleDmChannelSelect(dmChannelWithInfo);
       }
     }
-  }, [createDmChannel, loadDmChannels, dmChannels, handleDmChannelSelect]);
+  }, [createDmChannel, loadDmChannels, handleDmChannelSelect]);
 
   // Save display name
   const handleSaveDisplayName = async () => {
@@ -3989,6 +4150,7 @@ function App() {
     handleKickMember, handleDeleteChannelConfirmed,
     handleJoinNode, handleCreateNode,
     handleDmChannelSelect, openDmWithUser,
+    friendRequests, acceptFriendRequest, rejectFriendRequest,
     handleSaveDisplayName, handleSaveCustomStatus,
     handleServerConnect, handleInviteLinkSubmit, handleInviteRegister,
     handleRecover,

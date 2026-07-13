@@ -597,6 +597,30 @@ const StatusEmojiPicker: React.FC<{ onSelect: (emoji: string) => void }> = ({ on
   );
 };
 
+const FriendRequestRow: React.FC<{ request: { id: string; from_user_id: string } }> = ({ request }) => {
+  const ctx = useAppContext();
+  const [name, setName] = React.useState<string>("");
+  React.useEffect(() => {
+    let cancelled = false;
+    api.getUserProfile(request.from_user_id)
+      .then((p: any) => { if (!cancelled) setName(p?.display_name || p?.profile?.display_name || ""); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [request.from_user_id]);
+  const label = name || `${request.from_user_id.slice(0, 8)}…`;
+  return (
+    <div className="friend-request-row" role="listitem">
+      <span className="friend-request-name" title={request.from_user_id}>
+        {label} wants to be friends
+      </span>
+      <span className="friend-request-actions">
+        <button className="btn btn-green btn-sm" title="Accept friend request" onClick={() => ctx.acceptFriendRequest(request.id)}>✓</button>
+        <button className="btn btn-outline btn-sm" title="Reject friend request" onClick={() => ctx.rejectFriendRequest(request.id)}>×</button>
+      </span>
+    </div>
+  );
+};
+
 const DMSection: React.FC = () => {
   const ctx = useAppContext();
   const [hiddenDms, setHiddenDms] = React.useState<Set<string>>(() => {
@@ -633,7 +657,15 @@ const DMSection: React.FC = () => {
         Direct Messages
         <button onClick={() => ctx.setShowDmChannelCreate(!ctx.showDmChannelCreate)} className="dm-header-add-btn" title="New Direct Message" aria-label="Create direct message">+</button>
       </div>
-      
+
+      {ctx.friendRequests.length > 0 && (
+        <div className="friend-requests" role="list" aria-label="Pending friend requests">
+          {ctx.friendRequests.map((req) => (
+            <FriendRequestRow key={req.id} request={req} />
+          ))}
+        </div>
+      )}
+
       <div className="dm-list">
         {sortedDms.map((dmChannel) => {
           const isActive = ctx.selectedDmChannel?.id === dmChannel.id;
@@ -657,8 +689,10 @@ const DMSection: React.FC = () => {
                 <span className={`presence-dot presence-${ctx.getPresenceStatus(dmChannel.other_user?.id || '')}`} />
               </div>
               <div className="dm-item-info">
-                <div className={`dm-name ${hasUnread && !isActive ? 'dm-name-unread' : ''}`}>{dmChannel.other_user_profile.display_name}</div>
-                {dmChannel.last_message && (
+                <div className={`dm-name ${hasUnread && !isActive ? 'dm-name-unread' : ''}`}>{dmChannel.other_user_profile?.display_name || `${(dmChannel.other_user?.id || 'unknown').slice(0, 8)}…`}</div>
+                {dmChannel.last_message?.content && (
+                  // E2EE DMs have no plaintext preview — content is ciphertext
+                  // or absent; only show it when it's real text.
                   <div className="dm-last-message">{dmChannel.last_message.content.substring(0, 30)}</div>
                 )}
               </div>

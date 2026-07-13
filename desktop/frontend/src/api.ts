@@ -620,6 +620,46 @@ export class AccordApi {
     );
   }
 
+  // Friend operations (friendship is required to open a new DM channel)
+
+  async sendFriendRequest(toUserId: string, nodeId: string): Promise<{ status: string; request_id: string }> {
+    return this.request<{ status: string; request_id: string }>(
+      `/friends/request`, {
+        method: 'POST',
+        body: JSON.stringify({ to_user_id: toUserId, node_id: nodeId }),
+      }
+    );
+  }
+
+  async acceptFriendRequest(requestId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/friends/accept`, {
+        method: 'POST',
+        body: JSON.stringify({ request_id: requestId }),
+      }
+    );
+  }
+
+  async rejectFriendRequest(requestId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(
+      `/friends/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ request_id: requestId }),
+      }
+    );
+  }
+
+  /** Friendships as {user_a_hash, user_b_hash} pairs (match against member public_key_hash). */
+  async listFriends(): Promise<Array<{ user_a_hash: string; user_b_hash: string }>> {
+    const result = await this.request<any>(`/friends`);
+    return Array.isArray(result?.friends) ? result.friends : [];
+  }
+
+  async listFriendRequests(): Promise<Array<{ id: string; from_user_id: string; to_user_id: string; node_id: string; status: string }>> {
+    const result = await this.request<any>(`/friends/requests`);
+    return Array.isArray(result?.requests) ? result.requests : [];
+  }
+
   // Direct Message operations
 
   // Create or get DM channel with a user
