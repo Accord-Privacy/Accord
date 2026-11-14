@@ -152,11 +152,7 @@ pub fn verify_proof(
     }
 
     let pk_b = UnparsedPublicKey::new(&signature::ED25519, user_b_public_key);
-    if pk_b.verify(&canonical, &proof.signature_b).is_err() {
-        return Ok(false);
-    }
-
-    Ok(true)
+    Ok(pk_b.verify(&canonical, &proof.signature_b).is_ok())
 }
 
 #[cfg(test)]
