@@ -301,7 +301,9 @@ impl VoiceProcessor {
                     .crypto
                     .decrypt_voice_packet(voice_key, &packet.encrypted_audio)?;
 
-                // Convert bytes back to samples
+                // Convert bytes back to samples. `as_chunks` needs Rust 1.88;
+                // the workspace MSRV is 1.86.
+                #[allow(clippy::chunks_exact_to_as_chunks)]
                 let samples: Vec<i16> = audio_bytes
                     .chunks_exact(2)
                     .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
