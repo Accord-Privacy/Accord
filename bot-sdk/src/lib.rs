@@ -1,6 +1,6 @@
 //! # Accord Bot SDK
 //!
-//! A Rust SDK for building bots on the [Accord](https://accord.chat) platform.
+//! A Rust SDK for building bots on the [Accord](https://github.com/Accord-Privacy/Accord) platform.
 //!
 //! ## Quick Start
 //!

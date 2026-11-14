@@ -7,6 +7,8 @@ assignees: ''
 
 ---
 
+> **⚠️ Security vulnerabilities:** do NOT file a public issue. Report them privately at https://github.com/Accord-Privacy/Accord/security/advisories/new (**Report a vulnerability** on the repository's Security tab).
+
 ## 🐛 Bug Description
 A clear and concise description of what the bug is.
 

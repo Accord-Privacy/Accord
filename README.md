@@ -11,7 +11,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust 1.86+](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](https://www.rust-lang.org/)
 
-[Website](https://accord.chat) · [Quick Start](#quick-start) · [Self-Hosting](docs/SELF-HOSTING.md) · [Governance](GOVERNANCE.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Security Audit](SECURITY-AUDIT.md) · [Roadmap](ROADMAP.md)
+[Releases](https://github.com/Accord-Privacy/Accord/releases) · [Quick Start](#quick-start) · [Self-Hosting](docs/SELF-HOSTING.md) · [Governance](GOVERNANCE.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Security Audit](SECURITY-AUDIT.md) · [Roadmap](ROADMAP.md)
 
 </div>
 
@@ -19,7 +19,9 @@
 
 ## What is Accord?
 
-Accord fills the gap between **Discord** (great features, no privacy) and **Signal** (great privacy, no community features). It's an open-source, end-to-end encrypted platform where the relay server **never** has access to your messages, voice, or files.
+Accord fills the gap between **Discord** (great features, no privacy) and **Signal** (great privacy, no community features). It's an open-source platform built on end-to-end encryption, designed so that the relay server can't read what you send.
+
+**It does not fully meet that goal yet.** Files are not end-to-end encrypted, relay-mode voice is readable by the relay operator, and a malicious relay can intercept encrypted sessions when they are set up. See [Current security limitations](#current-security-limitations).
 
 > **The relay admin is just a landlord — they provide the building but can't enter your apartment.**
 
@@ -28,17 +30,16 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 ### 🔐 End-to-End Encryption
 - **Double Ratchet + X3DH** for DMs (Signal protocol foundations)
 - **Sender Keys** for channel group messaging — the relay stores only opaque `{v,sk,iv,ct}` envelopes it cannot read
-- **AES-256-GCM** for channel content and files
+- **AES-256-GCM** for channel content
 - **Forward secrecy** — keys rotate per message
-- **NMK metadata privacy** — node/channel names, descriptions, and per-node policies are encrypted under a Node Metadata Key the relay never sees
-- **SRTP voice encryption** with periodic key rotation
-- **Encrypted file sharing** — relay stores only opaque blobs
+- **NMK metadata privacy** — channel/category names and per-node policies are encrypted under a Node Metadata Key the relay never sees (node names and descriptions are visible to the relay by design)
 - **Client-side encrypted search** — messages are decrypted locally before indexing
+- **Not yet end-to-end encrypted:** files and voice — see [Current security limitations](#current-security-limitations)
 
 ### 🎙️ Voice Channels
-- **WebRTC** with relay-routed default for NAT traversal
-- **P2P mesh** for small groups (≤4), relay fallback for larger ones
-- SRTP encryption on all voice traffic
+- **Relay mode** (the default) — audio goes through the relay, encrypted with AES-256-GCM, but the keys go through the relay too, so **relay-mode voice is readable by the relay operator**
+- **P2P mode** — browser WebRTC connections directly between participants; **P2P voice and P2P screen sharing reveal your IP address to other participants and can be intercepted by the relay**. They also contact public STUN servers run by Google, which learn your IP address; starting a screen share does this even in relay mode
+- The mode is set per channel and other users can change it, so joining any voice channel can expose your IP address
 - Mute/deafen controls, speaking indicators, Opus codec
 - Jitter buffer for smooth audio
 
@@ -101,7 +102,7 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 - **Build hash verification** — clients display trust indicators
 - **Reproducible builds** — verify you're running unmodified code
 - **Push notifications** — FCM, UnifiedPush, and APNs with encrypted payloads
-- **Landing page** at [accord.chat](https://accord.chat) ([`website/`](website/))
+- **Landing page** source in [`website/`](website/)
 
 ---
 
@@ -130,11 +131,11 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 └──────────┘                                    └──────────┘
 ```
 
-**Relay** — routes encrypted blobs. Has no decryption keys. Handles auth and presence; node/channel metadata is encrypted under a Node Metadata Key it never sees. Blind to node membership and content — see [GOVERNANCE.md](GOVERNANCE.md).
+**Relay** — routes encrypted blobs. It is not meant to hold decryption keys, but today it can decrypt files and relay-mode voice (see [Current security limitations](#current-security-limitations)). Handles auth and presence; channel metadata is encrypted under a Node Metadata Key it never sees (node names and descriptions are visible to it by design). It does not show node membership to the relay owner — see [GOVERNANCE.md](GOVERNANCE.md).
 
-**Node** — a community space (like a Discord server). All content is E2E encrypted; the relay sees only opaque ciphertext.
+**Node** — a community space (like a Discord server). Messages and channel metadata are E2E encrypted (node names and descriptions are visible to the relay by design); files and voice are not yet (see [Current security limitations](#current-security-limitations)).
 
-**Desktop** — Tauri app (Rust backend + React/TypeScript UI). All crypto keys stay local.
+**Desktop** — Tauri app (Rust backend + React/TypeScript UI). Identity private keys stay local.
 
 **Mobile** — Native iOS (SwiftUI) and Android (Jetpack Compose) apps with full E2EE via FFI/JNI to the Rust `core` crate.
 
@@ -159,13 +160,23 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 Accord's security is built on a zero-knowledge architecture:
 
 1. **Registration requires only a keypair** — no PII ever touches the relay
-2. **All messages and files are E2E encrypted** before leaving the client
+2. **Messages are E2E encrypted** before leaving the client. Files are encrypted too, but not end to end (see below)
 3. **DMs use the Double Ratchet** (X3DH key agreement, per-message forward secrecy)
 4. **Channel messages use AES-256-GCM** with shared channel keys
-5. **Voice uses SRTP** with periodic key rotation
-6. **The relay stores only encrypted blobs** — it cannot read messages, files, or voice
+5. **Voice is not E2E encrypted** — see below
+6. **The relay stores encrypted blobs** — it is designed not to read messages, but today it can read files and relay-mode voice (see below)
 7. **Per-Node profiles** ensure the relay can't correlate your identity across communities
 8. **Push notification payloads are encrypted** with 3 privacy levels (full, sender-only, minimal)
+
+### Current security limitations
+
+The current release falls short of this design in three ways:
+
+- **Files (attachments) are not end-to-end encrypted.** They are encrypted under a key derived from the channel ID, which the relay knows, so the relay operator, or anyone with the relay's database, file storage or a backup, can decrypt and replace them, including files uploaded in the past.
+- **Voice is not end-to-end encrypted.** Relay-mode voice (the default) is readable by the relay operator, because each participant's key is sent through the relay in a form the relay can read. P2P voice and P2P screen sharing reveal your IP address to other participants and can be intercepted by the relay.
+- **A malicious relay can intercept encrypted sessions when they are set up.** Until identity verification ships, nothing checks that a contact's keys really belong to that contact, so a malicious relay can substitute its own keys when an end-to-end-encrypted (Double Ratchet) session is set up.
+
+[SECURITY.md](SECURITY.md#known-limitations) describes these limits in detail.
 
 For full details, see **[SECURITY.md](SECURITY.md)**, **[SECURITY-AUDIT.md](SECURITY-AUDIT.md)**, and **[docs/metadata-privacy.md](docs/metadata-privacy.md)**.
 
@@ -232,7 +243,7 @@ cd desktop/frontend && npm install && npx vite build
 ./accord-server --port 8443 --frontend desktop/frontend/dist
 ```
 
-Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side — your keys never leave the browser.
+Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side and your private keys never leave the browser, but voice and files are not end-to-end encrypted (see [Current security limitations](#current-security-limitations)).
 
 ---
 
@@ -253,16 +264,18 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
 | | Accord | Discord | Signal | Matrix | Fluxer |
 |---|:---:|:---:|:---:|:---:|:---:|
-| E2E encryption | ✅ | ❌ | ✅ | ✅ | ❌ |
+| E2E encryption | ⚠️² | ❌ | ✅ | ✅ | ❌ |
 | Community features | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Voice channels | ✅ | ✅ | ❌ | ⚠️ | ✅ |
-| Zero-knowledge server | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Zero-knowledge server | ⚠️² | ❌ | ✅ | ❌ | ❌ |
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ | ✅ |
 | No PII required | ✅ | ❌ | ❌ | ❌ | ❌ |
 | No paywalled features | ✅ | ❌ | ✅ | ✅ | ⚠️¹ |
 | Open source | ✅ | ❌ | ✅ | ✅ | ✅ |
 
 > ¹ Fluxer is fully open source — all features are available when self-hosted. Paywalling only applies to their official hosted servers.
+>
+> ² Messages only. Files and voice are not end-to-end encrypted yet, and a malicious relay can intercept encrypted sessions when they are set up — see [Current security limitations](#current-security-limitations).
 
 ---
 
@@ -288,15 +301,13 @@ We welcome contributions! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for setup i
 
 For security design details and vulnerability reporting, see **[SECURITY.md](SECURITY.md)**. For the latest audit results, see **[SECURITY-AUDIT.md](SECURITY-AUDIT.md)**.
 
-**Never** open a public issue for security vulnerabilities — use [GitHub Security Advisories](https://github.com/Accord-Privacy/Accord/security/advisories).
+**Never** open a public issue for security vulnerabilities — report them privately at <https://github.com/Accord-Privacy/Accord/security/advisories/new> (**Report a vulnerability** on the repository's Security tab).
 
 ## Funding & Philosophy
 
 Accord is **donationware**. Every feature is available to every user — there are no premium tiers, no paywalled functionality, and no plans for monetization. We believe privacy tools should be accessible to everyone, not just those who can afford a subscription.
 
-Development is sustained entirely by community donations. If Accord is useful to you, consider supporting the project:
-
-- **[Donate →](https://accord.chat/donate)** *(coming soon)*
+Development is meant to be sustained entirely by community donations. Donations are not open yet, and there is no official donation link.
 
 This is a deliberate choice: the moment a privacy tool has paying customers, incentives shift from protecting users to retaining subscribers. We'd rather build something good and let people support it voluntarily.
 
@@ -318,6 +329,6 @@ You can use, modify, and distribute Accord, but any modifications to the server 
 
 <div align="center">
 
-**Built with ❤️ for privacy-conscious communities** · [accord.chat](https://accord.chat)
+**Built with ❤️ for privacy-conscious communities** · [github.com/Accord-Privacy/Accord](https://github.com/Accord-Privacy/Accord)
 
 </div>

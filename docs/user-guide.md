@@ -26,7 +26,7 @@ Welcome to **Accord** — a privacy-first chat platform that gives you Discord-s
 
 ### Downloading the App
 
-Download the Accord desktop app for your operating system from [accord.chat](https://accord.chat). Accord is available for **Windows**, **macOS**, and **Linux**.
+Download the Accord desktop app for your operating system from the [GitHub releases page](https://github.com/Accord-Privacy/Accord/releases). Accord is available for **Windows**, **macOS**, and **Linux**.
 
 ### First-Run Setup
 
@@ -230,10 +230,12 @@ In **Settings → Appearance**, you can also adjust:
 ## Privacy & Security
 
 ### End-to-End Encryption
-All messages and files in Accord are **end-to-end encrypted**. This means:
+Messages in Accord are **end-to-end encrypted**. This means:
 - Your messages are encrypted on your device before they leave.
 - The relay server only sees encrypted data — it **cannot** read your messages.
 - Only the intended recipients can decrypt and read them.
+
+**Files are not end-to-end encrypted.** They are encrypted before upload, but with a key the relay can compute, so the relay operator can read and replace them. Voice is not end-to-end encrypted either, and a malicious relay can intercept encrypted sessions when they are set up. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations) before sharing anything sensitive.
 
 Accord uses industry-standard cryptography (the same foundations as the Signal protocol) to protect your conversations.
 

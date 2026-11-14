@@ -12,10 +12,10 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
-authors = ["Accord Privacy <hello@accord.chat>"]
+authors = ["Accord Privacy"]
 edition = "2021"
 license = "AGPL-3.0-or-later"
-homepage = "https://accord.chat"
+homepage = "https://github.com/Accord-Privacy/Accord"
 repository = "https://github.com/Accord-Privacy/Accord"
 description = "Privacy-first community communication platform"
 keywords = ["privacy", "encryption", "chat", "discord", "e2e"]

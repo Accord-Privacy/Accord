@@ -4,7 +4,7 @@
 > **Base URL:** `http(s)://<host>:<port>`  
 > **Authentication:** Most endpoints require `?token=<auth_token>` query parameter or `Authorization: Bearer <auth_token>` header.  
 > **Content-Type:** `application/json` unless noted (file uploads use `multipart/form-data`).  
-> **Zero-Knowledge Design:** The server cannot decrypt user content. Encrypted payloads are base64-encoded opaque blobs.
+> **Zero-Knowledge Design:** The server is designed so that it cannot decrypt user content. Encrypted payloads are base64-encoded opaque blobs. The current release has exceptions: files are not end-to-end encrypted (see [Files](#files)), and relay-mode voice keys pass through the relay in a form it can read. See [SECURITY.md](../SECURITY.md#known-limitations).
 
 ---
 
@@ -1009,6 +1009,8 @@ curl "http://localhost:8080/nodes/{node_id}/search?token=AUTH_TOKEN&q=hello&limi
 
 ## Files
 
+> **Not end-to-end encrypted.** Current clients encrypt file contents and names with a key derived from the channel ID, which the relay knows, so the relay can decrypt and replace them. If encryption fails or is not active, the desktop client uploads the file and its name unencrypted. See [SECURITY.md](../SECURITY.md#known-limitations).
+
 ### `POST /channels/:id/files` — Upload encrypted file
 
 **Auth required:** Yes (token or Bearer, channel member)  
@@ -1559,11 +1561,11 @@ Voice is handled entirely over WebSocket. See the [WebSocket API](#websocket-api
 - `GetVoiceParticipants`
 - `VoicePacket` (encrypted audio relay)
 - `VoiceSpeakingState`
-- `VoiceKeyExchange` (SRTP key exchange, opaque to server)
-- `SrtpVoicePacket` (SRTP encrypted audio, opaque to server)
+- `VoiceKeyExchange` (relay-mode voice key exchange; the key is readable by the relay, not end-to-end)
+- `SrtpVoicePacket` (unused by current clients)
 - `SetVoiceMode` / `GetVoiceMode` (switch between relay and P2P mode)
 - `VoiceOffer` / `VoiceAnswer` / `VoiceIceCandidate` (WebRTC signaling for P2P mode)
-- `P2PSignal` (legacy generic WebRTC signaling, opaque to server)
+- `P2PSignal` (generic WebRTC signaling, used by current clients for P2P voice and screen sharing; not encrypted, so the relay can read and alter it)
 
 ---
 
@@ -2203,7 +2205,7 @@ These endpoints support X3DH / Double Ratchet key exchange for end-to-end encryp
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `identity_key` | string | Yes | Base64-encoded identity key |
-| `signed_prekey` | string | Yes | Base64-encoded signed prekey |
+| `signed_prekey` | string | Yes | Base64-encoded prekey (named `signed_prekey`, but not signed yet; see [SECURITY.md](../SECURITY.md#known-limitations)) |
 | `one_time_prekeys` | string[] | Yes | Array of base64-encoded one-time prekeys |
 
 **Response (200):**
@@ -2920,8 +2922,8 @@ All client → server messages use this envelope:
 | `GetVoiceParticipants` | `channel_id` | List voice participants |
 | `VoicePacket` | `channel_id`, `encrypted_audio`, `sequence` | Send encrypted audio |
 | `VoiceSpeakingState` | `channel_id`, `user_id`, `speaking` | Speaking state |
-| `VoiceKeyExchange` | `channel_id`, `wrapped_key`, `target_user_id?`, `sender_ssrc`, `key_generation` | SRTP key exchange |
-| `SrtpVoicePacket` | `channel_id`, `packet_data` | SRTP audio packet |
+| `VoiceKeyExchange` | `channel_id`, `wrapped_key`, `target_user_id?`, `sender_ssrc`, `key_generation` | Relay-mode voice key exchange; the key is readable by the relay, not end-to-end |
+| `SrtpVoicePacket` | `channel_id`, `packet_data` | Unused by current clients |
 | `SetVoiceMode` | `channel_id`, `mode` | Set voice mode (`"relay"` or `"p2p"`) |
 | `GetVoiceMode` | `channel_id` | Get current voice mode for channel |
 | `P2PSignal` | `channel_id`, `target_user_id`, `signal_data` | Legacy generic WebRTC signaling |
@@ -2961,8 +2963,8 @@ All client → server messages use this envelope:
 | `voice_participants` | Voice participant list |
 | `voice_packet` | Encrypted audio from peer |
 | `voice_speaking_state` | Peer speaking state change |
-| `voice_key_exchange` | SRTP key exchange relay |
-| `srtp_voice_packet` | SRTP audio relay |
+| `voice_key_exchange` | Relay-mode voice key exchange; the key is readable by the relay, not end-to-end |
+| `srtp_voice_packet` | Unused by current clients |
 | `p2p_signal` | WebRTC signaling relay |
 | `voice_offer` | WebRTC SDP offer relay (P2P mode) |
 | `voice_answer` | WebRTC SDP answer relay (P2P mode) |

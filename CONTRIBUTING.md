@@ -228,7 +228,7 @@ Crypto happens on the client. The server never touches plaintext. If you're temp
 
 ### No Central Moderation
 
-Accord performs **no** relay-side or otherwise centralized moderation, and it never will — the relay cannot read node content, and it must not be able to. Moderation is the **node owner's** duty and runs client-side or within the node's own trust boundary. The relay owner is a landlord (localhost access = authority) who can see node names/descriptions, create/delete nodes, and ban an IP for abuse defense — nothing about who is inside a node, and no end user's IP is ever exposed to node owners, admins, or other users. Any feature that gives the relay content inspection, cross-node ban lists, keyword scanning, or IP↔node correlation is a non-starter. Read **[GOVERNANCE.md](GOVERNANCE.md)** before proposing anything that touches moderation or the relay.
+Accord performs **no** relay-side or otherwise centralized moderation, and it never will — the relay is designed not to read node content (today it can still read files and relay-mode voice; see [SECURITY.md](SECURITY.md#known-limitations)), and it must not be able to. Moderation is the **node owner's** duty and runs client-side or within the node's own trust boundary. The relay owner is a landlord (localhost access = authority) who can see node names/descriptions, create/delete nodes, and ban an IP for abuse defense — nothing about who is inside a node, and the connection log is not shown to node owners or admins (P2P voice and P2P screen sharing do reveal IP addresses to other call participants; see [SECURITY.md](SECURITY.md#known-limitations)). Any feature that gives the relay content inspection, cross-node ban lists, keyword scanning, or IP↔node correlation is a non-starter. Read **[GOVERNANCE.md](GOVERNANCE.md)** before proposing anything that touches moderation or the relay.
 
 ---
 
@@ -240,7 +240,7 @@ The `core/` crate is the most security-sensitive part of the codebase.
 - **Crypto changes require extra review** — tag security-sensitive PRs
 - **Prefer well-maintained, audited crates** for cryptographic primitives
 - **Run `cargo audit`** before adding any new dependency
-- **Report vulnerabilities** via [GitHub Security Advisories](https://github.com/Accord-Privacy/Accord/security/advisories), not public issues
+- **Report vulnerabilities** privately at <https://github.com/Accord-Privacy/Accord/security/advisories/new> (**Report a vulnerability** on the repository's Security tab), not in public issues
 
 ---
 

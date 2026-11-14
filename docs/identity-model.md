@@ -183,7 +183,7 @@ Invite-only Nodes are the most effective anti-abuse measure. Even if someone eva
 | Device fingerprint | ❌ Only SHA-256 hash | Node admins only |
 | Who is in which Node | ✅ Membership table (UUIDs) — never shown in the admin surface | ✅ |
 | Ban list | ✅ Hashes only | Admins see encrypted reasons |
-| IP address | ✅ Transport layer; relay-owner connection log only, never node-correlated, never shown to node owners/users | ❌ |
+| IP address | ✅ Transport layer; relay-owner connection log only, never node-correlated, not shown to node owners; P2P voice and P2P screen sharing reveal it to other participants | ❌ |
 | Message timestamps | ✅ | ✅ |
 | Message sender UUID | ✅ | ✅ |
 

@@ -2,9 +2,11 @@
 
 This guide covers installation, configuration, deployment, and ongoing administration of an Accord relay server.
 
-> **Key concept:** The Accord relay is a *zero-knowledge* routing layer. It never decrypts user content. As an admin, you manage infrastructure, not user data.
+> **Key concept:** The Accord relay is designed as a *zero-knowledge* routing layer. It never decrypts user content. As an admin, you manage infrastructure, not user data.
 >
-> **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and no end user's IP is ever exposed to node owners or other users. See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
+> **Current limitation:** files (attachments) are not end-to-end encrypted. Their key is derived from the channel ID, so anyone with the database, the file store or a backup can decrypt them, and relay-mode voice keys pass through the relay. Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
+>
+> **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and the connection log is not shown to node owners. Note that P2P voice and P2P screen sharing reveal users' IP addresses to other call participants (see [../SECURITY.md](../SECURITY.md#known-limitations)). See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
 
 ---
 
@@ -422,7 +424,8 @@ GET /channels/:id/effective-permissions  — view computed result
 ## 7. Moderation
 
 > **Moderation is the node owner's job, not the relay's.** The relay performs no
-> content moderation and cannot — it never sees plaintext. Everything below is
+> content moderation and cannot — it is not meant to see plaintext (except files
+> and relay-mode voice today; see [../SECURITY.md](../SECURITY.md#known-limitations)). Everything below is
 > operated by node owners/moderators; the relay only routes or stores opaque
 > values it can't interpret. See [../GOVERNANCE.md](../GOVERNANCE.md).
 
@@ -551,6 +554,8 @@ accord-server backup -d /var/lib/accord/accord.db --output /backups/accord-$(dat
 
 The backup command produces a `.tar.gz` archive containing the database and (if encrypted) handles SQLCipher transparently.
 
+> **Backups contain decryptable files.** Files are not end-to-end encrypted today, so anyone who has a backup together with the file store can decrypt every attachment. Store backups as carefully as the live server.
+
 ### Restore
 
 ```bash
@@ -676,4 +681,4 @@ docker compose down -v
 - **Logs first:** 90% of issues are visible in `journalctl -u accord` or `docker compose logs`
 - **Health check:** `curl localhost:8080/health` — if this fails, the server isn't running
 - **GitHub Issues:** [github.com/Accord-Privacy/Accord/issues](https://github.com/Accord-Privacy/Accord/issues)
-- **Security issues:** Use [GitHub Security Advisories](https://github.com/Accord-Privacy/Accord/security/advisories) — never public issues
+- **Security issues:** Report privately at <https://github.com/Accord-Privacy/Accord/security/advisories/new> (**Report a vulnerability** on the repository's Security tab) — never public issues

@@ -126,4 +126,4 @@ Initial development spanning Phases 1–5 of the roadmap.
 - `scripts/pre-push-qa.sh` — mandatory fmt, clippy, test, audit gate
 - Reproducible builds, build hash verification
 - Docker deployment support
-- Landing page at [accord.chat](https://accord.chat)
+- Landing page at accord.chat

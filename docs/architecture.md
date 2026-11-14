@@ -18,6 +18,15 @@ Accord exists because no platform combines Discord's community features with Sig
 
 4. **No PII collected.** No phone numbers, emails, usernames, or personally identifiable information. Registration requires only a public key and a password. You exist because you have a keypair.
 
+> **Where the current release falls short.** These principles are goals, and the current release does not meet all of them:
+>
+> - Files are encrypted under a key derived from the channel ID, which the relay can compute, so files are not end-to-end encrypted.
+> - Relay-mode voice (the default) is readable by the relay operator, because each participant's voice key is sent through the relay in a form the relay can read.
+> - P2P voice and P2P screen sharing reveal IP addresses to other participants and can be intercepted by the relay.
+> - Until identity verification ships, a malicious relay can intercept end-to-end-encrypted (Double Ratchet) sessions when they are set up, by substituting keys.
+>
+> See [section 9](#9-what-the-relay-sees-vs-doesnt-see) and [SECURITY.md](../SECURITY.md#known-limitations).
+
 ---
 
 ## 2. Architecture Overview
@@ -263,7 +272,7 @@ The relay owner **cannot**:
 - Read any message content, or decrypt any metadata
 - See node membership, channels, roles, or a user roster
 - See any per-node governance (kicks, bans, role changes)
-- Correlate an IP to a node, or expose any end user's IP to node owners or others
+- Correlate an IP to a node (by design; P2P voice and screen sharing still reveal IPs to other participants, see section 9)
 - Access any node as a member (unless explicitly invited)
 
 ### Permission Hierarchy (Relay Owner vs Node Owner)
@@ -301,15 +310,16 @@ it; if you want a trusted space, create one and invite only people you know. See
 | Channel / category names | ❌ Encrypted blob | ✅ Plaintext (Node members only) |
 | Per-node policy (retention, screenshot, word filters) | ❌ Encrypted `encrypted_settings` blob | ✅ Plaintext (Node members only) |
 | Ban reasons | ❌ Encrypted blob | ✅ Plaintext (Node admins only) |
-| File names | ❌ Encrypted | ✅ Plaintext (client only) |
-| Voice audio | ❌ SRTP encrypted | ✅ Audio (participants only) |
+| File names and contents | ✅ Readable today: encrypted under a key derived from the channel ID, which the relay can compute (not end-to-end) | — |
+| Voice audio (relay mode, the default) | ✅ Readable today: the voice keys are sent through the relay in a form it can read (not end-to-end) | — |
+| Voice audio and screen sharing (P2P mode) | ❌ Not routed through the relay, but the relay can intercept the connection setup | ✅ Audio and video (participants, who also learn each other's IP addresses) |
 | Public key + hash | ✅ | — |
 | User UUID | ✅ | — |
 | Password | ❌ Only Argon2id hash | — |
 | Node membership (UUIDs) | ✅ (routing) — never exposed in the admin surface | — |
 | Message timestamps | ✅ | — |
 | Message sender UUID | ✅ | — |
-| IP address | ✅ (transport; relay-owner connection log only, never node-correlated, never shown to node owners/users) | — |
+| IP address | ✅ (transport; relay-owner connection log only, never node-correlated, not shown to node owners). P2P voice and P2P screen sharing also reveal it to other participants | — |
 | Device fingerprint | ❌ Only SHA-256 hash | — |
 | Device hardware details | ❌ | — |
 
@@ -318,6 +328,10 @@ it; if you want a trusted space, create one and invite only people you know. See
 The relay **does** see:
 - **Membership graphs** — which UUIDs belong to which Nodes. This is inherent to relay routing. Mitigated by UUIDs being pseudonymous.
 - **IP addresses** — standard for any TCP connection. Users who care should use Tor or a VPN.
+- **Files** — not end-to-end encrypted today: the file key is derived from the channel ID, which the relay knows, so the relay can decrypt and replace files and file names, including past uploads.
+- **Relay-mode voice** — not end-to-end encrypted today: relay-mode voice is readable by the relay operator, because each participant's key is sent through the relay in a form it can read.
+- **P2P voice and P2P screen sharing** — reveal IP addresses to other participants, and can be intercepted by the relay, because the connection setup passes through the relay unauthenticated. The voice mode is set per channel and other users can change it. These connections also contact public STUN servers run by Google, which learn your IP address; starting a screen share does this even in relay mode.
+- **Encrypted sessions at setup** — until identity verification ships, a malicious relay can substitute keys when an end-to-end-encrypted (Double Ratchet) session is set up, and read everything sent over it, including channel keys and Node Metadata Keys.
 - **Message timing** — timestamps are stored for ordering. Timing patterns can leak metadata. Future mitigation: onion routing (Phase 7).
 - **Traffic volume** — the relay knows how active a Node is, even if it can't read content.
 
@@ -331,7 +345,9 @@ The relay **does** see:
 | Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
 | Metadata encryption | AES-256-GCM | Channel/category names, display names, per-node policy blob (node name/description are relay-visible by design) |
 | Key derivation | HKDF-SHA256 | Deriving per-purpose keys from shared secrets |
-| Voice encryption | SRTP (AES-128-CTR + HMAC-SHA1) | Per-packet voice encryption with 30s key rotation |
+| Relay-mode audio | AES-256-GCM | Per-frame audio encryption. The key is sent through the relay in a form it can read, so this is not end-to-end encryption |
+| P2P voice and screen sharing | Browser WebRTC (DTLS-SRTP) | Direct connections between participants. Reveals IP addresses to other participants; the relay can intercept the setup |
+| File encryption | AES-256-GCM | Key derived from the channel ID, which the relay can compute, so this is not end-to-end encryption |
 | Identity keys | Ed25519 | Long-term identity for users and servers |
 | Password hashing | Argon2id | Server-side password verification |
 
@@ -360,7 +376,7 @@ Each Node has one NMK. The NMK is distributed to new members via the existing Do
 
 ### Forward Secrecy
 
-The Double Ratchet provides per-message forward secrecy: compromising a key reveals only the single message it encrypted. Past and future messages remain secure. Voice uses 30-second key rotation via SRTP.
+The Double Ratchet provides per-message forward secrecy: compromising a key reveals only the single message it encrypted. Past and future messages remain secure. Voice keys are not protected by the Double Ratchet: in relay mode they are sent through the relay in a form it can read (see section 9).
 
 ### Future: Post-Quantum
 
@@ -373,7 +389,7 @@ Phase 7 will add hybrid key exchange (X25519 + ML-KEM/Kyber) to protect against 
 | Tradeoff | Why We Accept It |
 |----------|-----------------|
 | **Relay sees membership graphs** | Inherent to relay routing. UUIDs are pseudonymous. Full mitigation requires onion routing (Phase 7). |
-| **Relay sees IP addresses** | Standard TCP. Users can use Tor/VPN. The relay owner keeps a node-correlation-free connection log (IP + connect/disconnect) purely for DoS/DDoS defense and IP bans; IPs are never linked to nodes and never exposed to node owners or other users. |
+| **Relay sees IP addresses** | Standard TCP. Users can use Tor/VPN. The relay owner keeps a node-correlation-free connection log (IP + connect/disconnect) purely for DoS/DDoS defense and IP bans; IPs are never linked to nodes in that log and are not shown to node owners. Exception: P2P voice and P2P screen sharing reveal IP addresses to other participants. |
 | **Relay sees message timing** | Required for message ordering. Timing analysis is a known metadata risk. Onion routing planned for Phase 7. |
 | **Device bans defeated by factory reset** | Closing this gap requires invasive hardware-level tracking that contradicts our privacy principles. The high barrier (new device or factory reset) is sufficient for most abuse scenarios. Invite-only Nodes provide the strongest defense. |
 | **NMK shared to all Node members** | A compromised member can decrypt metadata. This is inherent to group encryption. Revoking a member requires NMK rotation (planned). |

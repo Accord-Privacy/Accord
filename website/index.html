@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Accord — Privacy-First Community Communication</title>
-  <meta name="description" content="Discord-level features with Signal-level security. End-to-end encrypted messaging, voice channels, and community nodes. Open source and self-hostable.">
+  <meta name="description" content="Open-source, self-hostable community chat with community nodes, voice channels and end-to-end encrypted messages. Files and voice are not end-to-end encrypted yet.">
   <link rel="icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -26,9 +26,9 @@
 <section class="hero">
   <div class="container">
     <h1><span>Privacy-First</span><br>Community Communication</h1>
-    <p>Discord-level features with Signal-level security. End-to-end encrypted messaging, voice channels, and communities — without the surveillance.</p>
+    <p>Discord-style communities with end-to-end encrypted messages. Voice channels and file sharing are included but are not end-to-end encrypted yet — <a href="https://github.com/Accord-Privacy/Accord/blob/main/SECURITY.md#known-limitations">read the known limitations</a>.</p>
     <div class="hero-buttons">
-      <a href="#get-started" class="btn btn-primary">Download</a>
+      <a href="https://github.com/Accord-Privacy/Accord/releases" class="btn btn-primary">Download</a>
       <a href="#get-started" class="btn btn-secondary">Self-Host →</a>
     </div>
   </div>
@@ -47,7 +47,7 @@
       <div class="feature-card">
         <span class="feature-icon">🎙️</span>
         <h3>Voice Channels</h3>
-        <p>Relay-routed by default so your IP address is never exposed to other participants. Real-time voice without the metadata leaks.</p>
+        <p>Real-time voice, relay-routed by default. Voice is not end-to-end encrypted yet: the relay operator can listen to relay-mode calls, and P2P mode and screen sharing reveal your IP address to other participants.</p>
       </div>
       <div class="feature-card">
         <span class="feature-icon">🏠</span>
@@ -81,7 +81,7 @@
       <div class="how-step">
         <div class="how-num">1</div>
         <h3>Relays Are Dumb Pipes</h3>
-        <p>Relays route encrypted blobs between clients. They can't read, log, or analyze your content. If a relay is compromised, your messages stay safe.</p>
+        <p>Relays route encrypted blobs between clients and are designed so they can't read your messages. Today a relay can still read files and relay-mode voice, and a malicious relay can intercept encrypted sessions when they are set up.</p>
       </div>
       <div class="how-step">
         <div class="how-num">2</div>
@@ -90,8 +90,8 @@
       </div>
       <div class="how-step">
         <div class="how-num">3</div>
-        <h3>Everything Is E2EE</h3>
-        <p>Messages are encrypted on your device and decrypted on the recipient's. Keys never leave your machine. It's that simple.</p>
+        <h3>Messages Are E2EE</h3>
+        <p>Messages are encrypted on your device and decrypted on the recipient's. Your private keys never leave your machine. Files and voice are not end-to-end encrypted yet.</p>
       </div>
     </div>
   </div>
@@ -112,7 +112,7 @@
         <div class="trust-node neutral">
           <span class="icon">📡</span>
           <h4>Relay</h4>
-          <p>Routes encrypted blobs. Sees metadata only. Cannot read messages.</p>
+          <p>Routes encrypted blobs and sees metadata. Today it can also read files and relay-mode voice, and a malicious relay can intercept encrypted sessions when they are set up.</p>
           <div class="trust-label yellow">◆ Untrusted by design</div>
         </div>
         <div class="trust-node neutral">
@@ -124,7 +124,7 @@
       </div>
       <p style="text-align:center; color: var(--text-muted); margin-top: 32px; font-size: .95rem;">
         <strong style="color: var(--text);">No analytics. No tracking. No telemetry.</strong><br>
-        We don't collect data because the architecture makes it impossible.
+        The clients send no analytics. See the <a href="https://github.com/Accord-Privacy/Accord/blob/main/SECURITY.md#known-limitations">known limitations</a> for what a relay can read today.
       </p>
     </div>
   </div>
