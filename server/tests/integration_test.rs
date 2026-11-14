@@ -33,6 +33,9 @@ use accord_server::{
     state::{AppState, SharedState},
 };
 
+/// Password of every test account. Registration requires one (SPEC-01 REQ-4).
+const TEST_PASSWORD: &str = "test-password";
+
 /// Test server instance
 struct TestServer {
     base_url: String,
@@ -156,7 +159,8 @@ impl TestServer {
             .client
             .post(&self.url("/register"))
             .json(&json!({
-                "public_key": public_key
+                "public_key": public_key,
+                "password": TEST_PASSWORD
             }))
             .send()
             .await
@@ -173,7 +177,7 @@ impl TestServer {
         // Use username as a unique public key for tests
         let public_key = format!("fake_public_key_{}", username);
         self.register_user(username, &public_key).await;
-        self.auth_user_by_pk(&public_key, "").await
+        self.auth_user_by_pk(&public_key, TEST_PASSWORD).await
     }
 
     /// Authenticate a user by public_key and return the token
@@ -256,7 +260,8 @@ async fn test_user_registration_duplicate_public_key() {
         .client
         .post(&server.url("/register"))
         .json(&json!({
-            "public_key": "fake_public_key_123"
+            "public_key": "fake_public_key_123",
+            "password": TEST_PASSWORD
         }))
         .send()
         .await
@@ -268,7 +273,8 @@ async fn test_user_registration_duplicate_public_key() {
         .client
         .post(&server.url("/register"))
         .json(&json!({
-            "public_key": "fake_public_key_123"
+            "public_key": "fake_public_key_123",
+            "password": TEST_PASSWORD
         }))
         .send()
         .await
@@ -289,7 +295,8 @@ async fn test_user_registration_empty_fields() {
         .client
         .post(&server.url("/register"))
         .json(&json!({
-            "public_key": ""
+            "public_key": "",
+            "password": TEST_PASSWORD
         }))
         .send()
         .await
@@ -315,7 +322,7 @@ async fn test_authentication_success() {
         .post(&server.url("/auth"))
         .json(&json!({
             "public_key": "fake_public_key",
-            "password": ""
+            "password": TEST_PASSWORD
         }))
         .send()
         .await
@@ -364,7 +371,9 @@ async fn test_websocket_connection_with_valid_token() {
     server
         .register_user("ws_test_user", "fake_public_key_ws")
         .await;
-    let token = server.auth_user_by_pk("fake_public_key_ws", "").await;
+    let token = server
+        .auth_user_by_pk("fake_public_key_ws", TEST_PASSWORD)
+        .await;
 
     // Connect via WebSocket with the token
     let ws_url = format!("{}?token={}", server.ws_url("/ws"), token);
@@ -471,8 +480,8 @@ async fn test_message_routing_between_two_clients() {
     let user1_id = server.register_user("user1", "public_key_1").await;
     let _user2_id = server.register_user("user2", "public_key_2").await;
 
-    let token1 = server.auth_user_by_pk("public_key_1", "").await;
-    let token2 = server.auth_user_by_pk("public_key_2", "").await;
+    let token1 = server.auth_user_by_pk("public_key_1", TEST_PASSWORD).await;
+    let token2 = server.auth_user_by_pk("public_key_2", TEST_PASSWORD).await;
 
     // Create a shared Node + channel. Node creation auto-creates owner membership.
     let node_raw = server
@@ -621,8 +630,12 @@ async fn test_channel_join_leave_and_messaging() {
         .register_user("channel_user2", "ch_public_key_2")
         .await;
 
-    let token1 = server.auth_user_by_pk("ch_public_key_1", "").await;
-    let token2 = server.auth_user_by_pk("ch_public_key_2", "").await;
+    let token1 = server
+        .auth_user_by_pk("ch_public_key_1", TEST_PASSWORD)
+        .await;
+    let token2 = server
+        .auth_user_by_pk("ch_public_key_2", TEST_PASSWORD)
+        .await;
 
     // Connect both users via WebSocket
     let ws_url1 = format!("{}?token={}", server.ws_url("/ws"), token1);
@@ -1211,8 +1224,8 @@ async fn test_ban_enforcement() {
     server.register_user("owner", owner_pk).await;
     server.register_user("banned_user", banned_pk).await;
 
-    let owner_token = server.auth_user_by_pk(owner_pk, "").await;
-    let banned_token = server.auth_user_by_pk(banned_pk, "").await;
+    let owner_token = server.auth_user_by_pk(owner_pk, TEST_PASSWORD).await;
+    let banned_token = server.auth_user_by_pk(banned_pk, TEST_PASSWORD).await;
 
     // Owner creates a node via REST
     let create_resp = server
@@ -1425,7 +1438,7 @@ impl FullTestServer {
         let resp = self
             .client
             .post(&self.url("/register"))
-            .json(&json!({ "public_key": pk }))
+            .json(&json!({ "public_key": pk, "password": TEST_PASSWORD }))
             .send()
             .await
             .unwrap();
@@ -1436,7 +1449,7 @@ impl FullTestServer {
         let resp = self
             .client
             .post(&self.url("/auth"))
-            .json(&json!({ "public_key": pk, "password": "" }))
+            .json(&json!({ "public_key": pk, "password": TEST_PASSWORD }))
             .send()
             .await
             .unwrap();
@@ -2308,7 +2321,7 @@ async fn test_rate_limiting_registration() {
             .client
             .post(&server.url("/register"))
             .header("X-Forwarded-For", "10.0.0.99")
-            .json(&json!({ "public_key": format!("rate_pk_{}", i) }))
+            .json(&json!({ "public_key": format!("rate_pk_{}", i), "password": TEST_PASSWORD }))
             .send()
             .await
             .unwrap();
@@ -2320,7 +2333,7 @@ async fn test_rate_limiting_registration() {
         .client
         .post(&server.url("/register"))
         .header("X-Forwarded-For", "10.0.0.99")
-        .json(&json!({ "public_key": "rate_pk_overflow" }))
+        .json(&json!({ "public_key": "rate_pk_overflow", "password": TEST_PASSWORD }))
         .send()
         .await
         .unwrap();
@@ -2337,7 +2350,7 @@ async fn test_rate_limiting_registration() {
         .client
         .post(&server.url("/register"))
         .header("X-Forwarded-For", "10.0.0.100")
-        .json(&json!({ "public_key": "rate_pk_different_ip" }))
+        .json(&json!({ "public_key": "rate_pk_different_ip", "password": TEST_PASSWORD }))
         .send()
         .await
         .unwrap();

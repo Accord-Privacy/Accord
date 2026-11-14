@@ -147,7 +147,9 @@ fn bench_node_operations(c: &mut Criterion) {
             let state_ref = &state;
             let node_id = node.id;
             async move {
-                let uid = state_ref.register_user(pk, "".into()).await.unwrap();
+                // Accounts are created without a password hash (stored locked):
+                // registration's Argon2 cost would swamp the join being measured.
+                let uid = state_ref.db.create_user(&pk, "").await.unwrap().id;
                 state_ref.join_node(uid, node_id).await.unwrap();
                 black_box(());
             }
@@ -210,7 +212,7 @@ fn bench_broadcast(c: &mut Criterion) {
                 let state = rt.block_on(AppState::new_in_memory()).unwrap();
                 let state = Arc::new(state);
                 let owner = rt
-                    .block_on(state.register_user("pk".into(), "".into()))
+                    .block_on(state.register_user("pk".into(), "pw".into()))
                     .unwrap();
                 let node = rt
                     .block_on(state.create_node("bc_node".into(), owner, None))
@@ -221,9 +223,11 @@ fn bench_broadcast(c: &mut Criterion) {
 
                 // Register users and add WebSocket connections (broadcast senders)
                 for i in 0..n {
+                    // Locked accounts: no Argon2 cost in the setup loop.
                     let uid = rt
-                        .block_on(state.register_user(format!("bc_pk_{i}"), "".into()))
-                        .unwrap();
+                        .block_on(state.db.create_user(&format!("bc_pk_{i}"), ""))
+                        .unwrap()
+                        .id;
                     rt.block_on(state.join_node(uid, node.id)).unwrap();
                     rt.block_on(state.join_channel(uid, channel.id)).unwrap();
                     let (tx, _rx) = tokio::sync::broadcast::channel(16);

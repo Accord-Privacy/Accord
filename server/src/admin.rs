@@ -1108,7 +1108,7 @@ mod tests {
         let _g = set_admin_token(Some("admin-pass")).await;
         let state = make_test_state().await;
         let user_id = state
-            .register_user("nodeowner-key".into(), "".into())
+            .register_user("nodeowner-key".into(), "pw".into())
             .await
             .unwrap();
         state

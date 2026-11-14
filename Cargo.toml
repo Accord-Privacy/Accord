@@ -79,6 +79,14 @@ strip = true
 [profile.dev]
 debug = 1 # Reduce debug info for faster builds
 
+# Unoptimized Argon2 is very slow, and every test account hashes its password
+# with the production parameters (SPEC-01 REQ-2(b)). The test profile inherits these.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 # Security-focused profile for production builds
 [profile.secure]
 inherits = "release"

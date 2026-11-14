@@ -43,7 +43,7 @@ pub async fn migrate_single_to_per_node(
         let created_at: i64 = row.get("created_at");
 
         sqlx::query("INSERT OR IGNORE INTO users (id, public_key_hash, public_key, password_hash, created_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(&id).bind(&pkh).bind(&pk).bind(&pw).bind(created_at)
+            .bind(&id).bind(&pkh).bind(&pk).bind(crate::admission::storable_password_hash(&pw)).bind(created_at)
             .execute(&relay_db.pool)
             .await?;
     }
