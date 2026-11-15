@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { api } from "./api";
 import { decryptMessage, getChannelKey } from "./crypto";
+import { classifyFor } from "./e2ee/plaintext";
 import { Channel, Message } from "./types";
 import { Icon } from "./components/Icon";
+import { attachmentSummary } from "./attachments/view";
+import { relayOrigin } from "./attachments/envelope";
 
 const PAGE_SIZE = 25;
 
-interface SearchResult {
+export interface SearchResult {
   message_id: string;
   channel_id: string;
   channel_name: string;
@@ -15,6 +18,27 @@ interface SearchResult {
   created_at: number;
   encrypted_payload: string;
   decrypted_content?: string;
+}
+
+/**
+ * One server search result as the overlay keeps it (SPEC-02 REQ-51): an
+ * explicit field list, each checked for its type; the relay object is never
+ * spread, and `files`, `attachments` and `attachment_ids` are never copied.
+ * Search results are not decoded in stage 1 and show no attachment UI.
+ */
+export function searchResultFromRelay(raw: unknown, decrypted_content: string | undefined): SearchResult {
+  const r = (typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+  const s = (v: unknown) => (typeof v === 'string' ? v : '');
+  return {
+    message_id: s(r.message_id),
+    channel_id: s(r.channel_id),
+    channel_name: s(r.channel_name),
+    sender_id: s(r.sender_id),
+    sender_public_key_hash: s(r.sender_public_key_hash),
+    created_at: typeof r.created_at === 'number' && Number.isFinite(r.created_at) ? r.created_at : 0,
+    encrypted_payload: s(r.encrypted_payload),
+    decrypted_content,
+  };
 }
 
 interface LocalSearchResult {
@@ -116,14 +140,20 @@ function clearCacheIfChannelChanged(channelId?: string) {
   }
 }
 
-/** Check if a message has a certain attachment type */
+/**
+ * Check if a message has a certain content type. `has:file` and `has:image`
+ * read the attachment store, which only the decode function writes, and only
+ * the entry this message's own decode produced: a `Message` carries no
+ * descriptors (SPEC-02 REQ-51, `attachments/render.ts`).
+ */
 function messageHasType(msg: Message, type: string): boolean {
   switch (type) {
-    case "file": return !!(msg.files && msg.files.length > 0);
-    case "image": return !!(msg.files && msg.files.some(f =>
-      /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(f.encrypted_filename || "")
-    ));
     case "link": return /https?:\/\/\S+/.test(msg.content || "");
+    case "file":
+    case "image": {
+      const summary = attachmentSummary(msg, relayOrigin(api.getBaseUrl()) ?? "");
+      return type === "file" ? summary.usable > 0 : summary.images > 0;
+    }
     default: return false;
   }
 }
@@ -326,12 +356,16 @@ export const SearchOverlay: React.FC<SearchOverlayProps> = ({
           if (encryptionEnabled && keyPair && r.encrypted_payload) {
             try {
               const channelKey = await getChannelKey(keyPair.privateKey, r.channel_id);
-              decrypted_content = await decryptMessage(channelKey, r.encrypted_payload);
+              const plaintext = await decryptMessage(channelKey, r.encrypted_payload);
+              // SPEC-02 REQ-53, REQ-11: search shows legacy text only. Control
+              // payloads and content envelopes (whose descriptors stay out of
+              // search) are not shown from here.
+              decrypted_content = classifyFor('display', plaintext)?.class === 'legacy_text' ? plaintext : undefined;
             } catch {
               // Decryption failed - leave undefined
             }
           }
-          return { ...r, decrypted_content };
+          return searchResultFromRelay(r, decrypted_content);
         })
       );
 

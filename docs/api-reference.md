@@ -3,8 +3,8 @@
 > **Version:** 0.1.x  
 > **Base URL:** `http(s)://<host>:<port>`  
 > **Authentication:** Most endpoints require `?token=<auth_token>` query parameter or `Authorization: Bearer <auth_token>` header.  
-> **Content-Type:** `application/json` unless noted (file uploads use `multipart/form-data`).  
-> **Zero-Knowledge Design:** The server is designed so that it cannot decrypt user content. Encrypted payloads are base64-encoded opaque blobs. The current release has exceptions: files are not end-to-end encrypted (see [Files](#files)), and relay-mode voice keys pass through the relay in a form it can read. See [SECURITY.md](../SECURITY.md#known-limitations).
+> **Content-Type:** `application/json` unless noted. Attachment blobs are uploaded as `application/octet-stream`; avatar, node icon and custom emoji uploads use `multipart/form-data`.  
+> **Zero-Knowledge Design:** The server is designed so that it cannot decrypt user content. Encrypted payloads are base64-encoded opaque blobs. The current release has exceptions: legacy file uploads from before end-to-end-encrypted attachments are not end-to-end encrypted (see [Files](#files)), the relay sees attachment metadata, and relay-mode voice keys pass through the relay in a form it can read. See [SECURITY.md](../SECURITY.md#known-limitations).
 
 ---
 
@@ -833,6 +833,8 @@ curl "http://localhost:8080/channels/{channel_id}/messages?token=AUTH_TOKEN&limi
 { "success": true }
 ```
 
+A message that has claimed attachments cannot be edited: its author gets **409** with reason `attachments_not_editable` and the stored payload is unchanged.
+
 ```bash
 curl -X PATCH "http://localhost:8080/messages/{msg_id}?token=AUTH_TOKEN" \
   -H "Content-Type: application/json" \
@@ -1048,68 +1050,104 @@ curl "http://localhost:8080/nodes/{node_id}/search?token=AUTH_TOKEN&q=hello&limi
 
 ## Files
 
-> **Not end-to-end encrypted.** Current clients encrypt file contents and names with a key derived from the channel ID, which the relay knows, so the relay can decrypt and replace them. If encryption fails or is not active, the desktop client uploads the file and its name unencrypted. See [SECURITY.md](../SECURITY.md#known-limitations).
+Attachments are end-to-end encrypted (relays that advertise `attachments/2` in [`GET /health`](#get-health--health-check)). The client encrypts each file with a fresh random key, uploads the encrypted blob, and sends the key, file name, MIME type and ciphertext SHA-256 only inside the end-to-end-encrypted message that claims the blob (WebSocket `ChannelMessage` with `attachment_ids`, see [WebSocket API](#websocket-api)). The relay stores nameless blobs, links each to its message and deletes it with the message. It still sees attachment metadata: that a message has attachments and how many, padded blob sizes, the uploader and upload time, the channel and message, and who downloads each blob, when and from which IP address. It does not see file names, MIME types, contents, keys or exact sizes.
 
-### `POST /channels/:id/files` — Upload encrypted file
+Limits: attachments are exactly as private and as authentic as the message that carries them. Until identity verification and key-recipient checks ship, a relay that injects its own sender key into a channel, or intercepts a Double Ratchet session when it is set up, can read attachments and forge them, attributed to the member it impersonates. Clients obey the relay's `message_delete`, `messages_purged` and expiry signals, which are not authenticated, so a malicious relay can make a device delete attachment keys; for a DM that can be the device's only copy of a file's key. See [SECURITY.md](../SECURITY.md#known-limitations).
 
-**Auth required:** Yes (token or Bearer, channel member)  
-**Content-Type:** `multipart/form-data`
+A reverse proxy in front of the relay must raise its request body limit to at least `attachment_max_blob_bytes` (100 MiB by default) for `POST /channels/:id/attachments`; see [Request body size for attachments](SELF-HOSTING.md#request-body-size-for-attachments).
 
-**Form fields:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `encrypted_filename` | bytes | Encrypted original filename |
-| `file` | file | Encrypted file data |
+Errors of the routes below, and the new or changed errors of the legacy routes and of `PATCH /messages/:id`, use the body `{"error": "<text>", "code": <status>, "reason": "<code>"}`, plus `retry_after` (seconds) with 429. `error` and `code` keep their meaning, so older clients still show `error`. The attachment routes authenticate only from `Authorization: Bearer <token>`; `?token=` alone gets 401.
 
-**Response (200):**
+### `POST /channels/:id/attachments` — Upload an encrypted attachment blob
+
+**Auth required:** Bearer only. The requester must be allowed to send attachments in the channel: in a DM, a participant not blocked by the other one; in a node channel, `VIEW_CHANNEL`, `SEND_MESSAGES` and `ATTACH_FILES`, the node's build allowlist, and no active slow-mode cooldown. Every check runs before the body is read, and any error while checking refuses the upload.
+
+**Headers:** `Content-Type: application/octet-stream` and `Content-Length` (at least 16, at most `attachment_max_blob_bytes`). The body is the encrypted blob; no file name, type or other metadata is accepted.
+
+**Response (201):**
 ```json
-{ "file_id": "uuid", "message": "File uploaded successfully" }
+{
+  "attachment_id": "6f1c2b7e-0d4a-4f53-9b8e-2a6d3c1e9f04",
+  "blob_size": 21,
+  "blob_sha256": "1fd4278e2fb28271798c55e7801ed95d7f57b5c16f417e87ce74eed0dfd71aa6",
+  "pending_expires_at": 1791680400
+}
 ```
 
+`blob_sha256` is lowercase hex computed by the relay; clients compare it and `blob_size` with their own values. The attachment stays pending until a message claims it, at the latest until `pending_expires_at` (unix seconds, `attachment_pending_ttl_secs` after the upload). Pending blobs are never served.
+
+| Status | `reason` | When |
+|---|---|---|
+| 400 | `bad_request` | Malformed channel id, `Content-Length` below 16, or a body shorter than `Content-Length` |
+| 401 | — | No or invalid Bearer token, including `?token=`-only requests |
+| 403 | `forbidden` | Not allowed to attach in the channel |
+| 403 | `blocked` | The DM peer has blocked the requester |
+| 404 | `not_found` | The channel does not exist |
+| 408 | `timeout` | The upload was not complete within 30 minutes |
+| 411 | `length_required` | No `Content-Length` |
+| 413 | `too_large` | Above `attachment_max_blob_bytes` |
+| 415 | `unsupported_media_type` | A content type other than `application/octet-stream` |
+| 429 | `rate_limited`, `slow_mode`, `too_many_pending` | With `Retry-After` in seconds: from the per-user upload rate limit (10 a minute), the remaining slow-mode cooldown, or the time until the user's oldest pending upload expires |
+| 507 | `quota_exceeded`, `storage_full` | A per-user or per-node quota, or the free-space floor |
+| 500 | `internal` | A storage or database error; nothing is kept |
+
 ```bash
-curl -X POST "http://localhost:8080/channels/{channel_id}/files?token=AUTH_TOKEN" \
-  -F "encrypted_filename=@enc_name.bin" \
-  -F "file=@encrypted_file.bin"
+curl -X POST "http://localhost:8080/channels/{channel_id}/attachments" \
+  -H "Authorization: Bearer AUTH_TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @blob.bin
 ```
 
 ---
 
-### `GET /channels/:id/files` — List channel files
+### `GET /attachments/:id` — Download an attachment blob
 
-**Auth required:** Yes (token or Bearer, channel member)
+**Auth required:** Bearer only.
 
-**Response (200):** Array of `FileMetadata` objects.
-
-```bash
-curl "http://localhost:8080/channels/{channel_id}/files?token=AUTH_TOKEN"
-```
+**Response (200):** the blob, with `Content-Type: application/octet-stream`, the exact `Content-Length`, `Content-Disposition: attachment; filename="<id>"` and `Cache-Control: no-store`. Served only when the attachment is claimed by a message that exists and has not expired, and the requester can access its channel (in a DM: a participant). Every other case answers 404 `not_found`, including pending blobs, other channels and any error while checking.
 
 ---
 
-### `GET /files/:id` — Download file
+### `DELETE /attachments/:id` — Delete a pending attachment
 
-**Auth required:** Yes (token or Bearer, channel member)
+**Auth required:** Bearer only.
 
-**Response:** Raw binary file data with `application/octet-stream` content type.
-
-```bash
-curl -o file.bin "http://localhost:8080/files/{file_id}?token=AUTH_TOKEN"
-```
+**Response:** 204 when the requester uploaded the pending attachment (the blob is deleted). 409 `claimed` only to the uploader of a claimed attachment: claimed attachments are deleted with their message. 404 `not_found` in every other case, so the route reveals nothing about attachments the requester did not upload.
 
 ---
 
-### `DELETE /files/:id` — Delete file
+### Legacy file routes (uploads from before version 2)
 
-**Auth required:** Yes (token or Bearer, uploader or admin)
+Files uploaded before `attachments/2` were encrypted under a key derived from the channel ID, which the relay can compute; they are **not end-to-end encrypted**. They are read-only and are retired (deleted) `legacy_attachments_retire_after_days` after the relay's upgrade, when the operator sets `legacy_attachments = "retired"`, or with `accord-server purge-legacy-attachments`. After retirement every legacy route answers 410 with reason `legacy_retired`.
 
-**Response (200):**
+#### `POST /channels/:id/files`
+
+Always **410** with reason `legacy_uploads_removed`; nothing is stored. Use `POST /channels/:id/attachments`.
+
+#### `GET /channels/:id/files` — List legacy files
+
+**Auth required:** Yes (token or Bearer). The requester must be able to access the channel (in a DM: a participant); otherwise 404.
+
+**Query:** `limit` (1 to 100, default 50; larger values are clamped to 100) and `before=<created_at>:<id>` to page back. Results are ordered by `created_at`, then `id`, newest first.
+
+**Response (200):** a JSON array:
 ```json
-{ "message": "File deleted successfully" }
+[
+  { "id": "…", "channel_id": "…", "uploader_id": "…",
+    "encrypted_filename": "<the stored name as a UTF-8 string, or \"\">",
+    "file_size_bytes": 1040, "created_at": 1791600000 }
+]
 ```
 
-```bash
-curl -X DELETE "http://localhost:8080/files/{file_id}?token=AUTH_TOKEN"
-```
+`encrypted_filename` is `""` when the stored value is not valid UTF-8 or exceeds 4,096 bytes. `uploader_id` is what the relay reports. Rows carry no `storage_path` or `content_hash`.
+
+#### `GET /files/:id` — Download a legacy file
+
+**Auth required:** Yes (token or Bearer), with access to the file's channel; otherwise 404. Returns the stored bytes (IV ‖ ciphertext ‖ tag) with `Cache-Control: no-store`.
+
+#### `DELETE /files/:id` — Delete a legacy file
+
+**Auth required:** Yes (token or Bearer). Allowed for the uploader, or in a node channel for holders of `MANAGE_MESSAGES` (role permissions; channel overrides apply). In a DM only the uploader may delete. Others get 403; requesters without access to the channel get 404.
 
 ---
 
@@ -3046,8 +3084,9 @@ All require token auth + ManageNode permission.
   "database_ok": true,
   "websocket_connections": 12,
   "memory_usage_bytes": 52428800,
-  "features": ["admission/1"],
-  "admission_since": 1700000000
+  "features": ["admission/1", "attachments/2"],
+  "admission_since": 1700000000,
+  "attachment_limits": { "max_blob_bytes": 104857600, "max_per_message": 10 }
 }
 ```
 
@@ -3056,7 +3095,7 @@ All require token auth + ManageNode permission.
   | Token | Meaning |
   |---|---|
   | `admission/1` | Relay admission: invite-only joins, join requests, `expires_in_seconds` on invite creation, the [reason codes](#reason-codes); `GET /health` also carries `admission_since` |
-  | `attachments/2` | Version-2 attachment routes (not implemented yet) |
+  | `attachments/2` | End-to-end-encrypted attachments: the [attachment routes](#files), `attachment_ids` on `ChannelMessage`, the `attachment_claim_failed` and `attachments_not_editable` error frames; `GET /health` also carries `attachment_limits` |
   | `keys-status/1` | `GET /keys/status` (not implemented yet) |
   | `ctl-queue/1` | Non-destructive prekey queue (not implemented yet) |
   | `identity/1` | Identity registration and reset (not implemented yet) |
@@ -3064,6 +3103,7 @@ All require token auth + ManageNode permission.
   | `screen/1` | End-to-end-encrypted screen sharing through the relay (not implemented yet) |
 
   A relay lists a token only when it implements everything the token stands for. On a relay without `admission/1`, clients use only `POST /invites/:code/join` and integer `expires_in_hours`.
+- `attachment_limits` — the relay's `attachment_max_blob_bytes` and the per-message maximum of 10. They guide the client's interface only; clients keep their own limits (100 MiB per blob).
 - `admission_since` — when this relay began enforcing admission, in Unix seconds (the first boot of the admission release). It is an unauthenticated hint: members whose `joined_at` (`GET /nodes/:id/members`) is earlier may have joined by node id alone, before invites were enforced.
 
 ```bash
@@ -3185,9 +3225,9 @@ All client → server messages use this envelope:
 | `JoinChannel` | `channel_id` | Subscribe to channel messages |
 | `LeaveChannel` | `channel_id` | Unsubscribe from channel |
 | `CreateChannel` | `node_id`, `name` | Create a channel |
-| `ChannelMessage` | `channel_id`, `encrypted_data`, `reply_to?` | Send encrypted message |
+| `ChannelMessage` | `channel_id`, `encrypted_data`, `reply_to?`, `expires_at?`, `attachment_ids?` | Send encrypted message. `attachment_ids` (at most 10 distinct lowercase UUIDs) claims the sender's pending attachments in the same transaction that stores the message; any refusal stores nothing and answers `attachment_claim_failed` |
 | `DirectMessage` | `to_user`, `encrypted_data` | Send encrypted DM |
-| `EditMessage` | `message_id`, `encrypted_data` | Edit a message |
+| `EditMessage` | `message_id`, `encrypted_data` | Edit a message. Refused with `attachments_not_editable` for messages that have claimed attachments |
 | `DeleteMessage` | `message_id` | Delete a message |
 | `AddReaction` | `message_id`, `emoji` | Add reaction |
 | `RemoveReaction` | `message_id`, `emoji` | Remove reaction |
@@ -3224,7 +3264,7 @@ All client → server messages use this envelope:
 |--------------|-------------|
 | `hello` | Welcome with server info |
 | `authenticated` | Auth confirmed |
-| `channel_message` | Message in channel (includes `from`, `channel_id`, `encrypted_data`, `message_id`, `timestamp`, `reply_to`, `sender_display_name`) |
+| `channel_message` | Message in channel (includes `from`, `channel_id`, `encrypted_data`, `message_id`, `timestamp`, `reply_to`, `sender_display_name`, and `attachment_ids` when the message claimed attachments; recipients never build attachment state from it, the sender uses it to recognise its own echo) |
 | `message_edit` | Message edited (includes `message_id`, `channel_id`, `encrypted_data`, `edited_at`) |
 | `message_delete` | Message deleted (includes `message_id`, `channel_id`) |
 | `reaction_add` | Reaction added (includes `message_id`, `channel_id`, `user_id`, `emoji`, `reactions`) |
@@ -3268,6 +3308,8 @@ All client → server messages use this envelope:
 | `prekey_messages` | Pending prekey messages |
 | `pong` | Heartbeat response |
 | `error` | Error (includes `message`, optional `code`) |
+| `error` with `code: "attachment_claim_failed"` | A `ChannelMessage` with `attachment_ids` was refused; nothing was stored or broadcast. Sent to the sending connection only, with `reason` (`invalid`, `forbidden`, `blocked`, `allowlist`, `slow_mode`, `unavailable` or `internal`), the request's `attachment_ids` (omitted only for `invalid` lists over 10 entries or with over-long entries), `unavailable_ids` for `unavailable`, `retry_after` for `slow_mode`, and `request_id` |
+| `error` with `code: "attachments_not_editable"` | An `EditMessage` targeted a message with attachments (`message_id`, `request_id`) |
 | `server_shutdown` | Server shutting down |
 | `presence_update` | User presence changed |
 

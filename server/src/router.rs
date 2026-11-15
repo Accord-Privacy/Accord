@@ -6,6 +6,12 @@
 //! test that starts the relay.
 
 use crate::admin;
+use crate::attachments::http::{
+    delete_attachment_handler, download_attachment_handler, upload_attachment_handler,
+};
+use crate::attachments::legacy::{
+    legacy_delete_handler, legacy_download_handler, legacy_list_handler, legacy_upload_handler,
+};
 use crate::batch_handlers;
 use crate::bot_api;
 use crate::federation;
@@ -16,34 +22,33 @@ use crate::handlers::{
     create_channel_category_handler, create_channel_handler, create_dm_channel_handler,
     create_invite_handler, create_node_handler, create_role_handler,
     delete_channel_category_handler, delete_channel_handler, delete_channel_overwrite_handler,
-    delete_custom_emoji_handler, delete_file_handler, delete_message_handler, delete_role_handler,
-    deny_join_request_handler, deregister_push_token_handler, download_file_handler,
-    edit_message_handler, fetch_key_bundle_handler, get_blocked_users_handler,
-    get_build_allowlist_handler, get_channel_messages_handler, get_channel_threads_handler,
-    get_dm_channels_handler, get_effective_permissions_handler, get_emoji_image_handler,
-    get_member_roles_handler, get_message_reactions_handler, get_message_thread_handler,
-    get_node_audit_log_handler, get_node_handler, get_node_icon_handler, get_node_members_handler,
-    get_node_presence_handler, get_node_user_profiles_handler, get_pending_sender_keys_handler,
-    get_pinned_messages_handler, get_prekey_messages_handler, get_slow_mode_handler,
-    get_user_avatar_handler, get_user_profile_handler, health_handler,
-    import_discord_template_handler, invite_preview_handler, join_node_handler, kick_user_handler,
-    leave_node_handler, link_preview_handler, list_bans_handler, list_channel_files_handler,
-    list_channel_overwrites_handler, list_custom_emojis_handler, list_friend_requests_handler,
-    list_friends_handler, list_invites_handler, list_join_requests_handler,
-    list_node_channels_handler, list_roles_handler, list_user_nodes_handler,
-    mark_channel_read_handler, pin_message_handler, publish_key_bundle_handler,
-    purge_channel_before_handler, register_handler, register_push_token_handler,
-    reject_friend_request_handler, remove_build_allowlist_handler, remove_friend_handler,
-    remove_member_role_handler, remove_reaction_handler, reorder_channels_handler,
-    reorder_roles_handler, revoke_invite_by_code_handler, revoke_invite_handler,
-    search_messages_handler, send_friend_request_handler, set_build_allowlist_handler,
-    set_channel_overwrite_handler, set_node_user_profile_handler, set_slow_mode_handler,
-    store_prekey_message_handler, store_sender_key_handler, unban_user_handler,
-    unblock_user_handler, unpin_message_handler, update_channel_category_handler,
-    update_channel_handler, update_node_handler, update_push_preferences_handler,
-    update_role_handler, update_user_profile_handler, upload_custom_emoji_handler,
-    upload_file_handler, upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler,
-    withdraw_join_request_handler, ws_handler,
+    delete_custom_emoji_handler, delete_message_handler, delete_role_handler,
+    deny_join_request_handler, deregister_push_token_handler, edit_message_handler,
+    fetch_key_bundle_handler, get_blocked_users_handler, get_build_allowlist_handler,
+    get_channel_messages_handler, get_channel_threads_handler, get_dm_channels_handler,
+    get_effective_permissions_handler, get_emoji_image_handler, get_member_roles_handler,
+    get_message_reactions_handler, get_message_thread_handler, get_node_audit_log_handler,
+    get_node_handler, get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
+    get_node_user_profiles_handler, get_pending_sender_keys_handler, get_pinned_messages_handler,
+    get_prekey_messages_handler, get_slow_mode_handler, get_user_avatar_handler,
+    get_user_profile_handler, health_handler, import_discord_template_handler,
+    invite_preview_handler, join_node_handler, kick_user_handler, leave_node_handler,
+    link_preview_handler, list_bans_handler, list_channel_overwrites_handler,
+    list_custom_emojis_handler, list_friend_requests_handler, list_friends_handler,
+    list_invites_handler, list_join_requests_handler, list_node_channels_handler,
+    list_roles_handler, list_user_nodes_handler, mark_channel_read_handler, pin_message_handler,
+    publish_key_bundle_handler, purge_channel_before_handler, register_handler,
+    register_push_token_handler, reject_friend_request_handler, remove_build_allowlist_handler,
+    remove_friend_handler, remove_member_role_handler, remove_reaction_handler,
+    reorder_channels_handler, reorder_roles_handler, revoke_invite_by_code_handler,
+    revoke_invite_handler, search_messages_handler, send_friend_request_handler,
+    set_build_allowlist_handler, set_channel_overwrite_handler, set_node_user_profile_handler,
+    set_slow_mode_handler, store_prekey_message_handler, store_sender_key_handler,
+    unban_user_handler, unblock_user_handler, unpin_message_handler,
+    update_channel_category_handler, update_channel_handler, update_node_handler,
+    update_push_preferences_handler, update_role_handler, update_user_profile_handler,
+    upload_custom_emoji_handler, upload_node_icon_handler, upload_user_avatar_handler,
+    use_invite_handler, withdraw_join_request_handler, ws_handler,
 };
 use crate::metadata;
 use crate::state::SharedState;
@@ -126,8 +131,11 @@ pub fn build_public_router_with(state: SharedState, config: &RouterConfig) -> Ro
             .layer(SetResponseHeaderLayer::overriding(
                 axum::http::header::CONTENT_SECURITY_POLICY,
                 HeaderValue::from_static(
+                    // SPEC-02 §6.8: audio and video previews of verified
+                    // attachments play from `blob:` URLs. `script-src`
+                    // stays without `blob:`.
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                     img-src 'self' data: blob:; connect-src 'self' http: https: wss: ws:; frame-ancestors 'none'",
+                     img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' http: https: wss: ws:; frame-ancestors 'none'",
                 ),
             ))
             .layer(SetResponseHeaderLayer::overriding(
@@ -330,11 +338,20 @@ fn public_routes() -> Router<SharedState> {
             "/channels/:id/effective-permissions",
             get(get_effective_permissions_handler),
         )
-        // File sharing endpoints
-        .route("/channels/:id/files", post(upload_file_handler))
-        .route("/channels/:id/files", get(list_channel_files_handler))
-        .route("/files/:id", get(download_file_handler))
-        .route("/files/:id", delete(delete_file_handler))
+        // Version-2 attachments (SPEC-02 section 6.4). The upload handler
+        // reads the raw body stream, so no body limit or buffering applies.
+        .route("/channels/:id/attachments", post(upload_attachment_handler))
+        .route(
+            "/attachments/:id",
+            get(download_attachment_handler).delete(delete_attachment_handler),
+        )
+        // Legacy file routes, read-only since SPEC-02 (sections 6.4.4,
+        // 6.4.5): uploads answer 410, and every route answers 410 once legacy
+        // files are retired (section 7.7).
+        .route("/channels/:id/files", post(legacy_upload_handler))
+        .route("/channels/:id/files", get(legacy_list_handler))
+        .route("/files/:id", get(legacy_download_handler))
+        .route("/files/:id", delete(legacy_delete_handler))
         // Search endpoints
         .route("/nodes/:id/search", get(search_messages_handler))
         // Link preview endpoint

@@ -8,6 +8,7 @@
 //! and RG-C001-10 of section 10.3. Every test serves the production router; every account
 //! has a password and every membership comes from an owner-created invite.
 
+use accord_server::attachments::AttachmentConfig;
 use accord_server::db::{DbOptions, DM_SYSTEM_NODE_ID, DM_SYSTEM_USER_ID};
 use accord_server::faults::FaultKind;
 use accord_server::files::FileConfig;
@@ -582,6 +583,7 @@ async fn t16_dm_creation_is_atomic_and_never_involves_the_reserved_user() {
                 storage_dir: files,
                 max_file_size: 1024 * 1024,
             }),
+            attachments: Some(AttachmentConfig::with_dir(dir.path().join("attachments"))),
         },
     )
     .await
@@ -800,6 +802,8 @@ async fn t17_dm_access_is_by_participation_only() {
     )
     .await;
     assert!(status == 403 || status == 404, "{status}");
+    // The legacy list answers 404 to anyone who cannot access the channel
+    // (SPEC-02 REQ-30).
     let (status, _) = call(
         &f.relay,
         reqwest::Method::GET,
@@ -808,7 +812,7 @@ async fn t17_dm_access_is_by_participation_only() {
         None,
     )
     .await;
-    assert_eq!(status, 403);
+    assert_eq!(status, 404);
 }
 
 /// T-17b (REQ-17(c)), RG-C001-9: DM authorization fails closed. A send
@@ -1089,6 +1093,7 @@ async fn rg_c001_3_reserved_node_join_reaches_no_dm() {
     assert!(v.wait_for("channel_message", OBSERVE).await.is_some());
     assert!(w.frames_for(OBSERVE).await.is_empty());
 
+    // A legacy DM file answers 404 to the hijacker (SPEC-02 REQ-30).
     let (status, _) = call(
         &f.relay,
         reqwest::Method::GET,
@@ -1097,7 +1102,7 @@ async fn rg_c001_3_reserved_node_join_reaches_no_dm() {
         None,
     )
     .await;
-    assert_eq!(status, 403);
+    assert_eq!(status, 404);
 }
 
 /// The reply to `Authenticate` with `token` on a fresh socket, after which
@@ -1291,6 +1296,7 @@ async fn rg_c001_6_hijacker_reaches_nothing_after_restart() {
             storage_dir: files.clone(),
             max_file_size: 1024 * 1024,
         }),
+        attachments: Some(AttachmentConfig::with_dir(dir.path().join("attachments"))),
     };
     let state = AppState::new_with_options(&db_path, options())
         .await

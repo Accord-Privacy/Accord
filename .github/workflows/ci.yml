@@ -139,3 +139,36 @@ jobs:
     - name: Build
       run: npm run build
       working-directory: desktop/frontend
+  two-client:
+    name: Two-Client Integration (SPEC-02)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build the relay
+      run: cargo build -p accord-server --bin accord-server
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: desktop/frontend/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+      working-directory: desktop/frontend
+
+    - name: Run the two-client tests against the real relay
+      run: npm run test:integration
+      working-directory: desktop/frontend
+      env:
+        ACCORD_SERVER_BIN: ${{ github.workspace }}/target/debug/accord-server

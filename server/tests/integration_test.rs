@@ -1560,6 +1560,9 @@ async fn test_invite_create_use_join() {
 
 // ── Test 3: File Upload and Download ──
 
+/// SPEC-02: the legacy multipart upload answers 410 and stores nothing; a
+/// version-2 blob is uploaded with `POST /channels/{id}/attachments`, claimed
+/// by the message that carries it, and then downloaded unchanged.
 #[tokio::test]
 async fn test_file_upload_download() {
     let server = FullTestServer::new().await;
@@ -1575,20 +1578,16 @@ async fn test_file_upload_download() {
         .await
         .unwrap();
 
-    // Upload a file via multipart
-    let file_content = b"encrypted_file_data_here_12345";
-    let encrypted_filename = b"encrypted_name.bin";
-
+    // The legacy multipart route is gone.
     let form = reqwest::multipart::Form::new()
         .part(
             "encrypted_filename",
-            reqwest::multipart::Part::bytes(encrypted_filename.to_vec()),
+            reqwest::multipart::Part::bytes(b"encrypted_name.bin".to_vec()),
         )
         .part(
             "file",
-            reqwest::multipart::Part::bytes(file_content.to_vec()),
+            reqwest::multipart::Part::bytes(b"encrypted_file_data_here_12345".to_vec()),
         );
-
     let resp = server
         .client
         .post(&format!(
@@ -1599,23 +1598,71 @@ async fn test_file_upload_download() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200, "Upload should succeed");
+    assert_eq!(resp.status(), 410, "legacy uploads are removed");
     let body: Value = resp.json().await.unwrap();
-    let file_id = body["file_id"].as_str().unwrap();
+    assert_eq!(body["reason"], "legacy_uploads_removed");
 
-    // Download the file
+    // Upload a version-2 blob.
+    let blob = b"0123456789abcdef: sealed blob bytes".to_vec();
     let resp = server
         .client
-        .get(&format!(
-            "{}/files/{}?token={}",
-            server.base_url, file_id, token
+        .post(&format!(
+            "{}/channels/{}/attachments",
+            server.base_url, channel_id
         ))
+        .bearer_auth(&token)
+        .header("content-type", "application/octet-stream")
+        .body(blob.clone())
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200, "Download should succeed");
+    assert_eq!(resp.status(), 201, "upload should succeed");
+    let body: Value = resp.json().await.unwrap();
+    let attachment_id = body["attachment_id"].as_str().unwrap().to_string();
+
+    // The message that carries it claims it.
+    let (mut sink, mut stream) = server.connect_ws(&token).await;
+    let message = json!({
+        "message_type": { "ChannelMessage": {
+            "channel_id": channel_id,
+            "encrypted_data": "ZW5jcnlwdGVkX3Rlc3RfbWVzc2FnZQ==",
+            "attachment_ids": [attachment_id],
+        }},
+        "message_id": Uuid::new_v4(),
+        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    });
+    sink.send(WsMessage::Text(message.to_string()))
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no channel_message echo"
+        );
+        if let Some(frame) = FullTestServer::next_ws_msg(&mut stream, 500).await {
+            if frame["type"] == "channel_message" {
+                assert_eq!(frame["attachment_ids"], json!([attachment_id]));
+                break;
+            }
+            assert_ne!(frame["type"], "error", "{frame}");
+        }
+    }
+
+    // Download it.
+    let resp = server
+        .client
+        .get(&format!(
+            "{}/attachments/{}",
+            server.base_url, attachment_id
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "download should succeed");
     let downloaded = resp.bytes().await.unwrap();
-    assert_eq!(downloaded.as_ref(), file_content, "Content should match");
+    assert_eq!(downloaded.as_ref(), blob.as_slice(), "content should match");
 }
 
 // ── Test 4: Roles & Hierarchy ──

@@ -14,10 +14,12 @@ use crate::admission::{
     self as admission, auth_error, AdmissionContext, AdmissionEntry, AdmissionError,
     AdmissionOutcome, ApiError,
 };
+use crate::attachments::claim::{self as attachment_claim, ClaimFailure};
+use crate::db::attachments::{ClaimOutcome, MessageGate, MessageWithAttachments};
 use crate::models::{
     ApiErrorResponse, AuditLogResponse, AuthRequest, AuthResponse, CreateInviteResponse,
-    CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
-    MessageReactionsResponse, RegisterRequest, RegisterResponse, WsMessage, WsMessageType,
+    CreateNodeRequest, EditMessageRequest, ErrorResponse, HealthResponse, MessageReactionsResponse,
+    RegisterRequest, RegisterResponse, WsMessage, WsMessageType,
 };
 use crate::node::NodeInfo;
 use crate::permissions::Permission;
@@ -29,7 +31,7 @@ use axum::{
         Multipart, Path, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
     Json,
 };
 use base64::Engine;
@@ -128,6 +130,11 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
             .repair_report()
             .admission_since
             .and_then(|t| u64::try_from(t).ok()),
+        // SPEC-02 §6.4.6 (REQ-44): the limits that go with `attachments/2`.
+        attachment_limits: crate::models::AttachmentLimits {
+            max_blob_bytes: state.attachments.config().max_blob_bytes,
+            max_per_message: crate::attachments::MAX_ATTACHMENTS_PER_MESSAGE,
+        },
     })
 }
 
@@ -4098,7 +4105,7 @@ async fn websocket_handler_inner(
             Ok(Message::Text(text)) => {
                 // Record activity for idle detection
                 let _ = state.record_user_activity(user_id).await;
-                if let Err(err) = handle_ws_message(&text, user_id, &state).await {
+                if let Err(err) = handle_ws_message(&text, user_id, &state, &tx).await {
                     error!("Error handling WebSocket message: {}", err);
                     let error_msg = serde_json::json!({ "error": err, "type": "error" });
                     let _ = tx.send(error_msg.to_string());
@@ -4153,10 +4160,415 @@ async fn websocket_handler_inner(
     info!("WebSocket handler terminated for user: {}", user_id);
 }
 
+/// The fields of a WS `ChannelMessage` other than `attachment_ids`.
+struct ChannelMessageFields {
+    channel_id: Uuid,
+    encrypted_data: String,
+    reply_to: Option<Uuid>,
+    expires_at: Option<u64>,
+    gate_users: Option<Vec<Uuid>>,
+    gate_roles: Option<Vec<Uuid>>,
+    gate_ttl_secs: Option<u64>,
+}
+
+/// A WS `ChannelMessage` that claims version-2 attachments (SPEC-02 §6.5.1).
+struct ClaimRequest {
+    sender: Uuid,
+    /// The envelope `message_id`, echoed as `request_id` in the error frame.
+    request_id: Uuid,
+    /// The envelope `timestamp`, relayed in the broadcast.
+    timestamp: u64,
+    /// `attachment_ids` exactly as received; the error frame echoes it.
+    requested: Vec<String>,
+}
+
+/// A message that was just stored.
+struct StoredChannelMessage {
+    message_id: Uuid,
+    seq: i64,
+    is_dm: bool,
+}
+
+/// Why the message-path checks refused a WS `ChannelMessage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MessageRefusal {
+    /// A lookup or permission computation failed; the text names the check.
+    Internal(&'static str),
+    /// The sender is not one of the DM's two participants.
+    NotParticipant,
+    /// The DM peer has blocked the sender.
+    Blocked,
+    /// The channel does not exist or is in the reserved node.
+    ChannelNotFound,
+    /// The node's build allowlist rejects the sender's client build.
+    Allowlist,
+    /// No SEND_MESSAGES in the channel.
+    NoSendMessages,
+    /// Attachment messages only: no ATTACH_FILES in the channel, or no
+    /// access to it.
+    NoAttach,
+    /// A slow-mode cooldown is active for this many more seconds.
+    SlowMode(u64),
+}
+
+impl MessageRefusal {
+    /// The text of the generic error frame, unchanged for messages without
+    /// attachments.
+    fn text(self) -> String {
+        match self {
+            MessageRefusal::Internal(text) => text.to_string(),
+            MessageRefusal::NotParticipant => "Not a participant of this DM channel".to_string(),
+            MessageRefusal::Blocked => {
+                "Cannot send message: you have been blocked by this user".to_string()
+            }
+            MessageRefusal::ChannelNotFound => "Channel not found".to_string(),
+            MessageRefusal::Allowlist => "Build not allowed by Node admin".to_string(),
+            MessageRefusal::NoSendMessages => {
+                "Permission denied: you do not have SEND_MESSAGES in this channel".to_string()
+            }
+            MessageRefusal::NoAttach => {
+                "Permission denied: you cannot attach files in this channel".to_string()
+            }
+            MessageRefusal::SlowMode(remaining) => format!(
+                "Slow mode active. Wait {} more seconds before sending another message.",
+                remaining
+            ),
+        }
+    }
+
+    /// The typed failure of a message that claims attachments (SPEC-02
+    /// §6.5.3).
+    fn claim_failure(self) -> ClaimFailure {
+        match self {
+            MessageRefusal::Internal(_) => ClaimFailure::Internal,
+            MessageRefusal::NotParticipant
+            | MessageRefusal::ChannelNotFound
+            | MessageRefusal::NoSendMessages
+            | MessageRefusal::NoAttach => ClaimFailure::Forbidden,
+            MessageRefusal::Blocked => ClaimFailure::Blocked,
+            MessageRefusal::Allowlist => ClaimFailure::Allowlist,
+            MessageRefusal::SlowMode(retry_after) => ClaimFailure::SlowMode { retry_after },
+        }
+    }
+}
+
+/// The message-path checks of a WS `ChannelMessage`, every one failing
+/// closed (SPEC-01 REQ-17 (c)): DM participation and blocks for a DM channel;
+/// for a node channel, the channel itself, the node's build allowlist,
+/// SEND_MESSAGES and slow mode. A message that claims attachments also needs
+/// `user_can_access_channel` and ATTACH_FILES in a node channel, the rights
+/// its upload needed (SPEC-02 REQ-32, REQ-35). The slow-mode cooldown is
+/// checked here and recorded only once the message is stored. Returns
+/// whether the channel is a DM channel.
+async fn authorize_channel_message(
+    state: &SharedState,
+    sender: Uuid,
+    channel_id: Uuid,
+    attachments: bool,
+) -> Result<bool, MessageRefusal> {
+    // One lookup decides "not a DM" or the DM's participants; a lookup error
+    // refuses and is never taken for "not a DM".
+    let dm = state
+        .db
+        .dm_participants(channel_id)
+        .await
+        .map_err(|_| MessageRefusal::Internal("Message refused: channel lookup failed"))?;
+    if let Some((user1, user2)) = dm {
+        if user1 != sender && user2 != sender {
+            return Err(MessageRefusal::NotParticipant);
+        }
+        let other = if user1 == sender { user2 } else { user1 };
+        let blocked = state
+            .db
+            .is_user_blocked(other, sender)
+            .await
+            .map_err(|_| MessageRefusal::Internal("Message refused: block check failed"))?;
+        if blocked {
+            return Err(MessageRefusal::Blocked);
+        }
+        return Ok(true);
+    }
+
+    let channel = state
+        .db
+        .get_channel(channel_id)
+        .await
+        .map_err(|_| MessageRefusal::Internal("Message refused: channel lookup failed"))?
+        .ok_or(MessageRefusal::ChannelNotFound)?;
+    if crate::admission::is_reserved_node(channel.node_id) {
+        return Err(MessageRefusal::ChannelNotFound);
+    }
+
+    // The node's build allowlist.
+    let build_hash = state.get_client_build_hash(sender).await;
+    match state
+        .db
+        .is_build_hash_allowed(channel.node_id, build_hash.as_deref().unwrap_or(""))
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => return Err(MessageRefusal::Allowlist),
+        Err(e) => {
+            tracing::error!("Failed to check build allowlist: {}", e);
+            return Err(MessageRefusal::Internal("Failed to check build allowlist"));
+        }
+    }
+
+    if attachments {
+        match state.user_can_access_channel(sender, channel_id).await {
+            Ok(true) => {}
+            Ok(false) => return Err(MessageRefusal::NoAttach),
+            Err(_) => {
+                return Err(MessageRefusal::Internal(
+                    "Message refused: channel access check failed",
+                ))
+            }
+        }
+    }
+
+    let perms = state
+        .db
+        .compute_channel_permissions(channel.node_id, sender, channel_id)
+        .await
+        .map_err(|_| MessageRefusal::Internal("Message refused: permission check failed"))?;
+    if perms & crate::models::permission_bits::SEND_MESSAGES == 0 {
+        return Err(MessageRefusal::NoSendMessages);
+    }
+    if attachments && perms & crate::models::permission_bits::ATTACH_FILES == 0 {
+        return Err(MessageRefusal::NoAttach);
+    }
+
+    // Slow mode. Auto-mod word filtering is client-side (relay is blind to
+    // node content and policy) — see desktop retention.ts checkAutoMod.
+    let slow_mode = state
+        .db
+        .get_channel_slow_mode(channel_id)
+        .await
+        .map_err(|_| MessageRefusal::Internal("Message refused: slow mode check failed"))?;
+    if slow_mode > 0 {
+        let cooldowns = state.slow_mode_cooldowns.read().await;
+        if let Some(&last_sent) = cooldowns.get(&(channel_id, sender)) {
+            let elapsed = now_secs().saturating_sub(last_sent);
+            if elapsed < u64::from(slow_mode) {
+                return Err(MessageRefusal::SlowMode(u64::from(slow_mode) - elapsed));
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// A WS `ChannelMessage` without attachments: the message path, answered on
+/// failure with the generic error frame.
+async fn channel_message_without_attachments(
+    state: &SharedState,
+    sender: Uuid,
+    timestamp: u64,
+    fields: &ChannelMessageFields,
+) -> Result<(), String> {
+    let is_dm = authorize_channel_message(state, sender, fields.channel_id, false)
+        .await
+        .map_err(MessageRefusal::text)?;
+
+    // Decode and store the message
+    let encrypted_payload = base64::engine::general_purpose::STANDARD
+        .decode(&fields.encrypted_data)
+        .map_err(|_| "Invalid base64 encoded data".to_string())?;
+    let (message_id, seq) = state
+        .db
+        .store_message(
+            fields.channel_id,
+            sender,
+            &encrypted_payload,
+            fields.reply_to,
+            fields.expires_at,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to store message: {}", e);
+            "Internal server error".to_string()
+        })?;
+
+    // Read-gated expiry: attach the gate so the sweep holds this message
+    // until its audience has read it (see resolve_read_gates).
+    if let Some(ttl) = fields.gate_ttl_secs {
+        let users = fields.gate_users.clone().unwrap_or_default();
+        let roles = fields.gate_roles.clone().unwrap_or_default();
+        if let Err(e) = state
+            .db
+            .set_message_gate(message_id, &users, &roles, ttl)
+            .await
+        {
+            tracing::error!("Failed to set message read-gate: {}", e);
+        }
+    }
+
+    let stored = StoredChannelMessage {
+        message_id,
+        seq,
+        is_dm,
+    };
+    broadcast_channel_message(state, sender, timestamp, fields, &stored, None).await
+}
+
+/// A WS `ChannelMessage` that claims version-2 attachments (SPEC-02 REQ-35,
+/// REQ-36): validate the list, run every message-path check plus
+/// ATTACH_FILES, failing closed, then store the message, its read gate and
+/// the claims in one transaction. Any refusal stores and broadcasts nothing
+/// and is returned as the typed failure, which the caller sends to the
+/// originating connection only. No attachment id is logged.
+async fn channel_message_with_attachments(
+    state: &SharedState,
+    request: &ClaimRequest,
+    fields: &ChannelMessageFields,
+) -> Result<(), ClaimFailure> {
+    let ids = attachment_claim::parse_attachment_ids(&request.requested)?;
+    let is_dm = authorize_channel_message(state, request.sender, fields.channel_id, true)
+        .await
+        .map_err(MessageRefusal::claim_failure)?;
+    let encrypted_payload = base64::engine::general_purpose::STANDARD
+        .decode(&fields.encrypted_data)
+        .map_err(|_| ClaimFailure::InvalidPayload)?;
+
+    let gate_users = fields.gate_users.clone().unwrap_or_default();
+    let gate_roles = fields.gate_roles.clone().unwrap_or_default();
+    let message = MessageWithAttachments {
+        channel_id: fields.channel_id,
+        sender_id: request.sender,
+        encrypted_payload: &encrypted_payload,
+        reply_to: fields.reply_to,
+        expires_at: fields.expires_at,
+        gate: fields.gate_ttl_secs.map(|ttl_secs| MessageGate {
+            users: &gate_users,
+            roles: &gate_roles,
+            ttl_secs,
+        }),
+        attachment_ids: &ids,
+        now: state.attachments.now(),
+    };
+    let (message_id, seq) = match state.db.store_message_claiming_attachments(&message).await {
+        Ok(ClaimOutcome::Stored { message_id, seq }) => (message_id, seq),
+        Ok(ClaimOutcome::Unavailable(unavailable)) => {
+            return Err(ClaimFailure::Unavailable { ids: unavailable })
+        }
+        Err(_) => {
+            tracing::warn!(
+                target: crate::attachments::LOG_TARGET,
+                "attachment claim: storing the message failed"
+            );
+            return Err(ClaimFailure::Internal);
+        }
+    };
+
+    let stored = StoredChannelMessage {
+        message_id,
+        seq,
+        is_dm,
+    };
+    let claimed: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+    if let Err(e) = broadcast_channel_message(
+        state,
+        request.sender,
+        request.timestamp,
+        fields,
+        &stored,
+        Some(claimed),
+    )
+    .await
+    {
+        // The message is stored and its attachments claimed; only the
+        // delivery failed.
+        error!("Failed to broadcast message: {}", e);
+    }
+    Ok(())
+}
+
+/// Record the sender's slow-mode cooldown and broadcast a stored message as
+/// `channel_message`. A message with claimed attachments carries their ids
+/// (SPEC-02 REQ-36, §6.5.2).
+async fn broadcast_channel_message(
+    state: &SharedState,
+    sender: Uuid,
+    timestamp: u64,
+    fields: &ChannelMessageFields,
+    stored: &StoredChannelMessage,
+    attachment_ids: Option<Vec<String>>,
+) -> Result<(), String> {
+    let channel_id = fields.channel_id;
+
+    // Record slow mode cooldown timestamp
+    state
+        .slow_mode_cooldowns
+        .write()
+        .await
+        .insert((channel_id, sender), now_secs());
+
+    // Look up sender's encrypted display name for this node
+    let sender_display_name_b64 = if let Ok(Some(channel)) = state.db.get_channel(channel_id).await
+    {
+        if let Ok(Some(profile)) = state
+            .db
+            .get_node_user_profile(channel.node_id, sender)
+            .await
+        {
+            profile
+                .encrypted_display_name
+                .map(|b| base64::engine::general_purpose::STANDARD.encode(&b))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Look up sender's plaintext display name from user profile
+    let sender_display_name = state
+        .db
+        .get_user_profile(sender)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|p| {
+            let name = p.display_name;
+            if name.is_empty() {
+                None
+            } else {
+                Some(sanitize_display_name(&name))
+            }
+        });
+
+    let mut relay = serde_json::json!({
+        "type": "channel_message", "from": sender, "channel_id": channel_id,
+        "encrypted_data": fields.encrypted_data, "message_id": stored.message_id,
+        "seq": stored.seq,
+        "timestamp": timestamp, "reply_to": fields.reply_to,
+        "expires_at": fields.expires_at,
+        "read_gated": fields.gate_ttl_secs.is_some(),
+        // Duration (seconds) after which a recipient's own client drops its
+        // copy, measured from when THAT recipient read it. Not secret — the
+        // relay already stores it to compute the shared expiry.
+        "gate_ttl_secs": fields.gate_ttl_secs,
+        "encrypted_display_name": sender_display_name_b64,
+        "sender_display_name": sender_display_name,
+        // Lets a recipient with a stale DM list know to refresh it —
+        // without this, the first message in a new DM channel is
+        // mis-handled as a node channel message.
+        "is_dm": stored.is_dm
+    });
+    if let Some(ids) = attachment_ids {
+        relay["attachment_ids"] = serde_json::json!(ids);
+    }
+    state.send_to_channel(channel_id, relay.to_string()).await
+}
+
+/// Handle one client frame. A returned error becomes the generic
+/// `{"type": "error", "error": …}` frame on the originating connection.
+/// Typed failure frames that must reach only the originating connection
+/// (SPEC-02 §6.5.3) are sent on `reply`, the sender of that connection.
 async fn handle_ws_message(
     message: &str,
     sender_user_id: Uuid,
     state: &SharedState,
+    reply: &broadcast::Sender<String>,
 ) -> Result<(), String> {
     let ws_message: WsMessage =
         serde_json::from_str(message).map_err(|e| format!("Invalid message format: {}", e))?;
@@ -4325,198 +4737,46 @@ async fn handle_ws_message(
             gate_users,
             gate_roles,
             gate_ttl_secs,
+            attachment_ids,
         } => {
-            // DM channels authorize by participation only, and every check
-            // here fails closed (SPEC-01 REQ-17): one lookup decides "not a
-            // DM" or the DM's participants, and any lookup error refuses the
-            // message, so nothing is stored or delivered.
-            let dm = state
-                .db
-                .dm_participants(channel_id)
-                .await
-                .map_err(|_| "Message refused: channel lookup failed".to_string())?;
-            let is_dm = dm.is_some();
-            match dm {
-                Some((user1, user2)) => {
-                    if user1 != sender_user_id && user2 != sender_user_id {
-                        return Err("Not a participant of this DM channel".to_string());
-                    }
-                    let other_user = if user1 == sender_user_id {
-                        user2
-                    } else {
-                        user1
+            let fields = ChannelMessageFields {
+                channel_id,
+                encrypted_data,
+                reply_to,
+                expires_at,
+                gate_users,
+                gate_roles,
+                gate_ttl_secs,
+            };
+            // A message that claims version-2 attachments is stored and its
+            // attachments claimed in one transaction, and every refusal is
+            // one typed frame to this connection (SPEC-02 REQ-35). An empty
+            // list claims nothing and is an ordinary message.
+            match attachment_ids {
+                Some(requested) if !requested.is_empty() => {
+                    let request = ClaimRequest {
+                        sender: sender_user_id,
+                        request_id: ws_message.message_id,
+                        timestamp: ws_message.timestamp,
+                        requested,
                     };
-                    if state
-                        .db
-                        .is_user_blocked(other_user, sender_user_id)
-                        .await
-                        .map_err(|_| "Message refused: block check failed".to_string())?
+                    if let Err(failure) =
+                        channel_message_with_attachments(state, &request, &fields).await
                     {
-                        return Err(
-                            "Cannot send message: you have been blocked by this user".to_string()
-                        );
+                        let frame = failure.frame(&request.requested, request.request_id);
+                        let _ = reply.send(frame.to_string());
                     }
                 }
-                None => {
-                    // Ordinary channel: SEND_MESSAGES, the build allowlist and
-                    // slow mode. A lookup or permission error denies.
-                    let channel = state
-                        .db
-                        .get_channel(channel_id)
-                        .await
-                        .map_err(|_| "Message refused: channel lookup failed".to_string())?
-                        .ok_or_else(|| "Channel not found".to_string())?;
-                    if crate::admission::is_reserved_node(channel.node_id) {
-                        return Err("Channel not found".to_string());
-                    }
-
-                    // Check build hash allowlist
-                    state
-                        .check_build_hash_for_node(sender_user_id, channel.node_id)
-                        .await?;
-
-                    let perms = state
-                        .db
-                        .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)
-                        .await
-                        .map_err(|_| "Message refused: permission check failed".to_string())?;
-                    if perms & crate::models::permission_bits::SEND_MESSAGES == 0 {
-                        return Err(
-                            "Permission denied: you do not have SEND_MESSAGES in this channel"
-                                .to_string(),
-                        );
-                    }
-
-                    // ── Slow mode enforcement ──
-                    let slow_mode = state
-                        .db
-                        .get_channel_slow_mode(channel_id)
-                        .await
-                        .unwrap_or(0);
-                    if slow_mode > 0 {
-                        let current_time = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs();
-                        let cooldowns = state.slow_mode_cooldowns.read().await;
-                        if let Some(&last_sent) = cooldowns.get(&(channel_id, sender_user_id)) {
-                            let elapsed = current_time.saturating_sub(last_sent);
-                            if elapsed < slow_mode as u64 {
-                                let remaining = slow_mode as u64 - elapsed;
-                                return Err(format!(
-                                    "Slow mode active. Wait {} more seconds before sending another message.",
-                                    remaining
-                                ));
-                            }
-                        }
-                        drop(cooldowns);
-                    }
-
-                    // Auto-mod word filtering is client-side (relay is blind to node
-                    // content and policy) — see desktop retention.ts checkAutoMod.
+                _ => {
+                    channel_message_without_attachments(
+                        state,
+                        sender_user_id,
+                        ws_message.timestamp,
+                        &fields,
+                    )
+                    .await?
                 }
             }
-
-            // Decode and store the message
-            let encrypted_payload = base64::engine::general_purpose::STANDARD
-                .decode(&encrypted_data)
-                .map_err(|_| "Invalid base64 encoded data".to_string())?;
-
-            let (message_id, seq) = state
-                .db
-                .store_message(
-                    channel_id,
-                    sender_user_id,
-                    &encrypted_payload,
-                    reply_to,
-                    expires_at,
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to store message: {}", e);
-                    "Internal server error".to_string()
-                })?;
-
-            // Read-gated expiry: attach the gate so the sweep holds this message
-            // until its audience has read it (see resolve_read_gates).
-            if let Some(ttl) = gate_ttl_secs {
-                let users = gate_users.unwrap_or_default();
-                let roles = gate_roles.unwrap_or_default();
-                if let Err(e) = state
-                    .db
-                    .set_message_gate(message_id, &users, &roles, ttl)
-                    .await
-                {
-                    tracing::error!("Failed to set message read-gate: {}", e);
-                }
-            }
-
-            // Record slow mode cooldown timestamp
-            {
-                let current_time = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                state
-                    .slow_mode_cooldowns
-                    .write()
-                    .await
-                    .insert((channel_id, sender_user_id), current_time);
-            }
-
-            // Look up sender's encrypted display name for this node
-            let sender_display_name_b64 =
-                if let Ok(Some(channel)) = state.db.get_channel(channel_id).await {
-                    if let Ok(Some(profile)) = state
-                        .db
-                        .get_node_user_profile(channel.node_id, sender_user_id)
-                        .await
-                    {
-                        profile
-                            .encrypted_display_name
-                            .map(|b| base64::engine::general_purpose::STANDARD.encode(&b))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-            // Look up sender's plaintext display name from user profile
-            let sender_display_name = state
-                .db
-                .get_user_profile(sender_user_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|p| {
-                    let name = p.display_name;
-                    if name.is_empty() {
-                        None
-                    } else {
-                        Some(sanitize_display_name(&name))
-                    }
-                });
-
-            let relay = serde_json::json!({
-                "type": "channel_message", "from": sender_user_id, "channel_id": channel_id,
-                "encrypted_data": encrypted_data, "message_id": message_id,
-                "seq": seq,
-                "timestamp": ws_message.timestamp, "reply_to": reply_to,
-                "expires_at": expires_at,
-                "read_gated": gate_ttl_secs.is_some(),
-                // Duration (seconds) after which a recipient's own client drops its
-                // copy, measured from when THAT recipient read it. Not secret — the
-                // relay already stores it to compute the shared expiry.
-                "gate_ttl_secs": gate_ttl_secs,
-                "encrypted_display_name": sender_display_name_b64,
-                "sender_display_name": sender_display_name,
-                // Lets a recipient with a stale DM list know to refresh it —
-                // without this, the first message in a new DM channel is
-                // mis-handled as a node channel message.
-                "is_dm": is_dm
-            });
-            state.send_to_channel(channel_id, relay.to_string()).await?;
         }
 
         WsMessageType::EditMessage {
@@ -4528,7 +4788,8 @@ async fn handle_ws_message(
                 .decode(&encrypted_data)
                 .map_err(|_| "Invalid base64 encoded data".to_string())?;
 
-            // Attempt to edit the message
+            // Attempt to edit the message. A message with claimed attachments
+            // is never edited (SPEC-02 REQ-37).
             match state
                 .db
                 .edit_message(message_id, sender_user_id, &encrypted_payload)
@@ -4558,9 +4819,23 @@ async fn handle_ws_message(
                         }
                     }
                 }
-                Ok(false) => {
-                    error!("Message edit failed: permission denied or message not found");
-                }
+                Ok(false) => match state
+                    .db
+                    .authored_message_has_attachments(message_id, sender_user_id)
+                    .await
+                {
+                    Ok(true) => {
+                        let frame =
+                            attachment_claim::not_editable_frame(message_id, ws_message.message_id);
+                        let _ = reply.send(frame.to_string());
+                    }
+                    Ok(false) => {
+                        error!("Message edit failed: permission denied or message not found");
+                    }
+                    Err(e) => {
+                        error!("Failed to edit message: {}", e);
+                    }
+                },
                 Err(e) => {
                     error!("Failed to edit message: {}", e);
                 }
@@ -4571,6 +4846,9 @@ async fn handle_ws_message(
             // Attempt to delete the message
             match state.db.delete_message(message_id, sender_user_id).await {
                 Ok(Some((channel_id, sender_id))) => {
+                    // The message's attachments are removed by the GC
+                    // (SPEC-02 REQ-40).
+                    state.attachments.request_gc();
                     // Broadcast the message delete event to channel members
                     let delete_event = serde_json::json!({
                         "type": "message_delete",
@@ -5448,447 +5726,30 @@ async fn handle_ws_message(
 }
 
 // ── File Sharing Endpoints ──
+//
+// The legacy file routes (`/channels/:id/files`, `/files/:id`) are read-only
+// since SPEC-02 and live in `crate::attachments::legacy`.
 
-/// Upload an encrypted file to a channel
-pub async fn upload_file_handler(
-    State(state): State<SharedState>,
-    Path(channel_id): Path<Uuid>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-    mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = match extract_user_from_request(&state, &headers, &params).await {
-        Ok(user_id) => user_id,
-        Err(_) => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Authentication required".into(),
-                    code: 401,
-                }),
-            ))
-        }
-    };
-
-    // Check if user is member of the channel
-    match state.db.get_channel_members(channel_id).await {
-        Ok(members) if members.contains(&user_id) => {}
-        Ok(_) => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Not a member of this channel".into(),
-                    code: 403,
-                }),
-            ))
-        }
-        Err(_) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Channel not found".into(),
-                    code: 404,
-                }),
-            ))
-        }
-    }
-
-    // Extract file data from multipart
-    let mut encrypted_filename: Option<Vec<u8>> = None;
-    let mut file_data: Option<Vec<u8>> = None;
-
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("");
-        match name {
-            "encrypted_filename" => {
-                if let Ok(data) = field.bytes().await {
-                    encrypted_filename = Some(data.to_vec());
-                }
-            }
-            "file" => {
-                if let Ok(data) = field.bytes().await {
-                    file_data = Some(data.to_vec());
-                }
-            }
-            _ => continue,
-        }
-    }
-
-    let encrypted_filename = encrypted_filename.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Missing encrypted filename".into(),
-                code: 400,
-            }),
-        )
-    })?;
-
-    let file_data = file_data.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Missing file data".into(),
-                code: 400,
-            }),
-        )
-    })?;
-
-    // Store file and metadata
-    let file_id = Uuid::new_v4();
-    match state.file_handler.store_file(file_id, &file_data).await {
-        Ok((storage_path, content_hash)) => {
-            // Store metadata in database
-            if let Err(e) = state
-                .db
-                .store_file_metadata(
-                    file_id,
-                    channel_id,
-                    user_id,
-                    &encrypted_filename,
-                    file_data.len() as i64,
-                    &content_hash,
-                    &storage_path,
-                )
-                .await
-            {
-                // Clean up stored file if database insertion fails
-                let _ = state.file_handler.delete_file(&storage_path).await;
-                error!("Failed to store file metadata: {}", e);
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "Failed to store file metadata".into(),
-                        code: 500,
-                    }),
-                ));
-            }
-
-            info!("File uploaded: {} to channel {}", file_id, channel_id);
-            Ok(Json(serde_json::json!({
-                "file_id": file_id,
-                "message": "File uploaded successfully"
-            })))
-        }
-        Err(e) => {
-            error!("Failed to store file: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: {
-                        tracing::error!("Failed to store file: {}", e);
-                        "Internal server error".to_string()
-                    },
-                    code: 500,
-                }),
-            ))
-        }
-    }
-}
-
-/// Download an encrypted file by ID
-pub async fn download_file_handler(
-    State(state): State<SharedState>,
-    Path(file_id): Path<Uuid>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Response<Body>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = match extract_user_from_request(&state, &headers, &params).await {
-        Ok(user_id) => user_id,
-        Err(_) => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Authentication required".into(),
-                    code: 401,
-                }),
-            ))
-        }
-    };
-
-    // Get file metadata
-    let file_metadata = match state.db.get_file_metadata(file_id).await {
-        Ok(Some(metadata)) => metadata,
-        Ok(None) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "File not found".into(),
-                    code: 404,
-                }),
-            ))
-        }
-        Err(e) => {
-            error!("Failed to get file metadata: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to get file metadata".into(),
-                    code: 500,
-                }),
-            ));
-        }
-    };
-
-    // Authorize through the channel access check: participation for a DM
-    // channel, failing closed on lookup errors (SPEC-01 REQ-17(a)).
-    match state
-        .user_can_access_channel(user_id, file_metadata.channel_id)
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Not a member of this channel".into(),
-                    code: 403,
-                }),
-            ))
-        }
-        Err(_) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to check channel membership".into(),
-                    code: 500,
-                }),
-            ))
-        }
-    }
-
-    // Read file data
-    match state
-        .file_handler
-        .read_file(&file_metadata.storage_path)
-        .await
-    {
-        Ok(file_data) => {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::CONTENT_TYPE,
-                "application/octet-stream".parse().unwrap(),
-            );
-            headers.insert(
-                header::CONTENT_LENGTH,
-                file_data.len().to_string().parse().unwrap(),
-            );
-            headers.insert(
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", file_id)
-                    .parse()
-                    .unwrap(),
-            );
-
-            Ok((headers, file_data).into_response())
-        }
-        Err(e) => {
-            error!("Failed to read file: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to read file".into(),
-                    code: 500,
-                }),
-            ))
-        }
-    }
-}
-
-/// List files in a channel
-pub async fn list_channel_files_handler(
-    State(state): State<SharedState>,
-    Path(channel_id): Path<Uuid>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<Vec<FileMetadata>>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = match extract_user_from_request(&state, &headers, &params).await {
-        Ok(user_id) => user_id,
-        Err(_) => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Authentication required".into(),
-                    code: 401,
-                }),
-            ))
-        }
-    };
-
-    // Authorize through the channel access check: participation for a DM
-    // channel, failing closed on lookup errors (SPEC-01 REQ-17(a)).
-    match state.user_can_access_channel(user_id, channel_id).await {
-        Ok(true) => {}
-        Ok(false) => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Not a member of this channel".into(),
-                    code: 403,
-                }),
-            ))
-        }
-        Err(_) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Channel not found".into(),
-                    code: 404,
-                }),
-            ))
-        }
-    }
-
-    // Get file list
-    match state.db.list_channel_files(channel_id).await {
-        Ok(files) => Ok(Json(files)),
-        Err(e) => {
-            error!("Failed to list channel files: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to list channel files".into(),
-                    code: 500,
-                }),
-            ))
-        }
-    }
-}
-
-/// Delete a file
-pub async fn delete_file_handler(
-    State(state): State<SharedState>,
-    Path(file_id): Path<Uuid>,
-    headers: HeaderMap,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = match extract_user_from_request(&state, &headers, &params).await {
-        Ok(user_id) => user_id,
-        Err(_) => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "Authentication required".into(),
-                    code: 401,
-                }),
-            ))
-        }
-    };
-
-    // Get file metadata
-    let file_metadata = match state.db.get_file_metadata(file_id).await {
-        Ok(Some(metadata)) => metadata,
-        Ok(None) => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "File not found".into(),
-                    code: 404,
-                }),
-            ))
-        }
-        Err(e) => {
-            error!("Failed to get file metadata: {}", e);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to get file metadata".into(),
-                    code: 500,
-                }),
-            ));
-        }
-    };
-
-    // The caller must be able to access the file's channel: participation
-    // for a DM channel, failing closed on lookup errors (SPEC-01 REQ-17(a)).
-    if !matches!(
-        state
-            .user_can_access_channel(user_id, file_metadata.channel_id)
-            .await,
-        Ok(true)
-    ) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Not a member of this channel".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    // Check permissions - only uploader or admin can delete
-    let is_uploader = file_metadata.uploader_id == user_id;
-
-    // Check if user is admin of the node containing this channel
-    let is_admin = match state.db.get_channel(file_metadata.channel_id).await {
-        Ok(Some(channel)) => match state.db.get_node_member(channel.node_id, user_id).await {
-            Ok(Some(member)) => matches!(member.role, crate::node::NodeRole::Admin),
-            _ => false,
-        },
-        _ => false,
-    };
-
-    if !is_uploader && !is_admin {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Only the uploader or admins can delete files".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    // Delete from filesystem
-    if let Err(e) = state
-        .file_handler
-        .delete_file(&file_metadata.storage_path)
-        .await
-    {
-        error!("Failed to delete file from disk: {}", e);
-        // Continue with database deletion even if file deletion fails
-    }
-
-    // Delete from database
-    match state.db.delete_file_metadata(file_id).await {
-        Ok(()) => {
-            info!("File deleted: {}", file_id);
-            Ok(Json(serde_json::json!({
-                "message": "File deleted successfully"
-            })))
-        }
-        Err(e) => {
-            error!("Failed to delete file metadata: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to delete file metadata".into(),
-                    code: 500,
-                }),
-            ))
-        }
-    }
-}
-
-/// Edit message endpoint
+/// Edit message endpoint. A message with claimed version-2 attachments is
+/// never edited: 409 `attachments_not_editable` (SPEC-02 §6.4.7, REQ-37).
 pub async fn edit_message_handler(
     Path(message_id): Path<String>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     State(state): State<SharedState>,
     Json(request): Json<EditMessageRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
     let message_id = Uuid::parse_str(&message_id).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Invalid message ID format".into(),
-                code: 400,
-            }),
+            Json(ApiErrorResponse::plain(400, "Invalid message ID format")),
         )
     })?;
 
     // Extract user_id from validated auth token, not from request body (C5 fix)
-    let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
+    let user_id = extract_user_from_header_or_token(&state, &headers, &params)
+        .await
+        .map_err(|(status, Json(body))| (status, Json(ApiErrorResponse::from(body))))?;
 
     // Decode the encrypted payload
     let encrypted_payload = base64::engine::general_purpose::STANDARD
@@ -5896,10 +5757,7 @@ pub async fn edit_message_handler(
         .map_err(|_| {
             (
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "Invalid base64 encoded data".into(),
-                    code: 400,
-                }),
+                Json(ApiErrorResponse::plain(400, "Invalid base64 encoded data")),
             )
         })?;
 
@@ -5914,22 +5772,42 @@ pub async fn edit_message_handler(
             error!("Failed to edit message: {}", e);
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to edit message".into(),
-                    code: 500,
-                }),
+                Json(ApiErrorResponse::plain(500, "Failed to edit message")),
             ));
         }
     };
 
     if !success {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Message not found or you don't have permission to edit it".into(),
-                code: 403,
-            }),
-        ));
+        // The author's message with claimed attachments: 409; the stored
+        // payload is unchanged (SPEC-02 REQ-37).
+        return match state
+            .db
+            .authored_message_has_attachments(message_id, user_id)
+            .await
+        {
+            Ok(true) => Err((
+                StatusCode::CONFLICT,
+                Json(ApiErrorResponse::with_reason(
+                    409,
+                    attachment_claim::NOT_EDITABLE,
+                    attachment_claim::NOT_EDITABLE_TEXT,
+                )),
+            )),
+            Ok(false) => Err((
+                StatusCode::FORBIDDEN,
+                Json(ApiErrorResponse::plain(
+                    403,
+                    "Message not found or you don't have permission to edit it",
+                )),
+            )),
+            Err(e) => {
+                error!("Failed to edit message: {}", e);
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiErrorResponse::plain(500, "Failed to edit message")),
+                ))
+            }
+        };
     }
 
     // Get the updated message details for broadcasting
@@ -5996,6 +5874,9 @@ pub async fn delete_message_handler(
 
     match result {
         Some((channel_id, sender_id)) => {
+            // The message's attachments are removed by the GC (SPEC-02
+            // REQ-40).
+            state.attachments.request_gc();
             // Broadcast the message delete event to channel members
             let delete_event = serde_json::json!({
                 "type": "message_delete",
@@ -6110,6 +5991,10 @@ pub async fn purge_channel_before_handler(
             )
         })?;
 
+    // The purged messages' attachments are removed by the GC (SPEC-02
+    // REQ-40).
+    state.attachments.request_gc();
+
     // Tell live clients to drop these messages locally right away.
     let ev = serde_json::json!({
         "type": "messages_purged",
@@ -6124,20 +6009,6 @@ pub async fn purge_channel_before_handler(
     Ok(Json(
         serde_json::json!({ "success": true, "removed": removed }),
     ))
-}
-
-/// Extract user ID from request headers (Authorization: Bearer token)
-async fn extract_user_from_request(
-    state: &SharedState,
-    headers: &HeaderMap,
-    params: &HashMap<String, String>,
-) -> Result<Uuid, anyhow::Error> {
-    let token = extract_token_from_headers_or_params(headers, params)
-        .ok_or_else(|| anyhow::anyhow!("Missing authentication token"))?;
-    state
-        .validate_token(token)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("Invalid or expired token"))
 }
 
 fn now_secs() -> u64 {

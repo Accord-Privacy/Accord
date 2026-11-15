@@ -8,6 +8,8 @@
     windows_subsystem = "windows"
 )]
 
+mod save_attachment;
+
 use accord_core::{init, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -420,6 +422,7 @@ fn main() {
             set_content_protected,
             get_or_create_smk,
             delete_smk,
+            save_attachment::save_attachment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

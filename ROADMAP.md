@@ -98,7 +98,7 @@
 | Mobile apps | ✅ | ✅ | ✅ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
 
-> ¹ Messages only. Files and voice are not end-to-end encrypted yet, and a malicious relay can intercept encrypted sessions when they are set up — see [SECURITY.md](SECURITY.md#known-limitations).
+> ¹ Messages and attachments (desktop and web). Attachments are only as authentic as their message and the relay sees their metadata, files uploaded before encrypted attachments shipped stay readable by the relay until they are retired, voice is not end-to-end encrypted yet, and a malicious relay can intercept encrypted sessions when they are set up — see [SECURITY.md](SECURITY.md#known-limitations).
 
 ## Architecture
 

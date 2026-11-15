@@ -107,7 +107,21 @@ You can share files in two ways:
 - **Click the attachment button** (📎) next to the message input to browse and select files.
 - **Drag and drop** files directly into the chat window.
 
-Selected files appear as previews below the message input before you send. You can remove a staged file by clicking the ✕ on its preview.
+Selected files appear as previews below the message input before you send. You can remove a staged file by clicking the ✕ on its preview. A message holds up to 10 files of up to 100 MiB each (your relay may set a lower limit).
+
+Each file is encrypted on your device with its own random key before it is uploaded, and the key, the file name and the file type are sent only inside the end-to-end-encrypted message. The relay stores a nameless, padded blob and deletes it with the message. It still sees that the message has attachments, how many, their approximate (padded) sizes, who uploaded them and when, in which channel, and who downloads them, when and from which IP address. It does not see file names, types, contents, keys or exact sizes.
+
+**Limits.** Attachments are exactly as private and as authentic as the message that carries them. Until identity verification and key-recipient checks ship, a relay that injects its own sender key into a channel, or intercepts a direct-message session when it is set up, can read the attachments sent there and can forge attachments, with its own file, name and type, attributed to the member it impersonates. The relay's deletion and expiry signals are not authenticated: a malicious relay can make your device delete a message together with its attachment keys, and for a direct message that can be the device's only copy of a file's key, so the file can no longer be opened on that device. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations).
+
+What to expect:
+- **Previews.** PNG, JPEG, GIF and WebP images, common audio formats and MP4 and WebM video up to 10 MiB preview automatically once they have been checked. Everything else, and larger files, shows a card with a **Download** button. File names are cleaned of invisible and direction-changing characters, and the extension is always shown.
+- **Integrity.** Every downloaded file is checked against the hash in the message. If the check fails, nothing is shown or saved and you see "Attachment failed its integrity check and may have been tampered with".
+- **Sending states.** A message with files shows upload progress, then "sent" once the relay has confirmed it. If it cannot be confirmed within 30 seconds it shows "not confirmed yet" with **Retry**. Some failures (for example slow mode) offer **Retry**; others (no permission, blocked, a node that only accepts approved app builds) offer only **Delete**.
+- **No edits.** Messages with attachments cannot be edited, and direct messages cannot be edited in this release.
+- **Relays that are not updated.** On a relay that does not support end-to-end-encrypted attachments, the attach button is disabled and explains why.
+- **Larger uploads that always fail.** If every file over about 1 MiB fails to upload while smaller ones work, the relay sits behind a reverse proxy whose request body limit is too low. The relay operator must raise it (for nginx, `client_max_body_size`); see [Request body size for attachments](SELF-HOSTING.md#request-body-size-for-attachments).
+- **When attachments may not appear.** A direct-message attachment sent while you were offline, and other members' channel attachments after the channel's history reloads, are not shown yet.
+- **Legacy uploads.** Files uploaded before this release are not end-to-end encrypted. The Files panel lists them only after you turn on "Show legacy uploads (not end-to-end encrypted)", with a warning on each, and asks before downloading one. They disappear when the relay retires them.
 
 ### Link Previews
 When you share a URL, Accord will automatically generate a preview showing the page title and description (when available).
@@ -235,7 +249,7 @@ Messages in Accord are **end-to-end encrypted**. This means:
 - The relay server only sees encrypted data — it **cannot** read your messages.
 - Only the intended recipients can decrypt and read them.
 
-**Files are not end-to-end encrypted.** They are encrypted before upload, but with a key the relay can compute, so the relay operator can read and replace them. Voice is not end-to-end encrypted either, and a malicious relay can intercept encrypted sessions when they are set up. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations) before sharing anything sensitive.
+**Attachments are end-to-end encrypted, with limits.** They are exactly as private and as authentic as the message that carries them, the relay sees their metadata (how many, their padded sizes, who downloads them), and files uploaded before this release are readable by the relay until they are retired. Voice is not end-to-end encrypted, and a malicious relay can intercept encrypted sessions when they are set up. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations) before sharing anything sensitive.
 
 Accord uses industry-standard cryptography (the same foundations as the Signal protocol) to protect your conversations.
 

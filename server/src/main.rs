@@ -10,7 +10,9 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 // The binary uses the library crate, so the relay and its tests share one
 // module tree, one `SharedState` type and one route table (SPEC-01 §10.1).
 use accord_server::{
-    admin, backup, db, federation, rate_limit, relay_mesh,
+    admin,
+    attachments::{self, AttachmentConfig},
+    backup, db, federation, rate_limit, relay_mesh,
     router::{self, RouterConfig},
     state::{self, AppState, AppStateOptions, SharedState},
 };
@@ -59,6 +61,13 @@ enum Command {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Retire legacy (pre-version-2) attachments now: delete every legacy
+    /// file and its blob, and answer every legacy file route with 410 from
+    /// then on (SPEC-02 section 7.7). Uses the relay's --database, --config
+    /// and attachment options, given before the subcommand. A relay running
+    /// on the same database answers 410 on its next legacy request, and its
+    /// next storage reconciliation deletes anything left behind.
+    PurgeLegacyAttachments,
 }
 
 #[derive(Parser, Debug)]
@@ -151,6 +160,57 @@ struct Args {
     #[arg(long, default_value_t = accord_server::rate_limit::DEFAULT_PREVIEW_LIMIT)]
     preview_rate_limit: usize,
 
+    /// Directory of version-2 attachment blobs (SPEC-02). The relay refuses
+    /// to start if it is the database's directory or an ancestor of it,
+    /// overlaps the legacy file directory, or is a non-empty directory
+    /// without the marker file it writes.
+    #[arg(long, default_value = "./data/attachments")]
+    attachments_dir: String,
+
+    /// Largest accepted attachment blob, in bytes.
+    #[arg(long, default_value_t = 104_857_600)]
+    attachment_max_blob_bytes: u64,
+
+    /// Lifetime of an uploaded attachment that no message has claimed, in
+    /// seconds (300 to 86400).
+    #[arg(long, default_value_t = 3600)]
+    attachment_pending_ttl_secs: u64,
+
+    /// Pending and uploading attachments allowed per user.
+    #[arg(long, default_value_t = 32)]
+    attachment_max_pending_per_user: u64,
+
+    /// Attachment bytes per uploader (uploading, pending and claimed); 0 means
+    /// unlimited.
+    #[arg(long, default_value_t = 1_073_741_824)]
+    attachment_quota_user_bytes: u64,
+
+    /// Attachment bytes per node, DM channels excluded; 0 means unlimited.
+    #[arg(long, default_value_t = 10_737_418_240)]
+    attachment_quota_node_bytes: u64,
+
+    /// Refuse attachment uploads when less than this many bytes would stay
+    /// free.
+    #[arg(long, default_value_t = 1_073_741_824)]
+    attachments_min_free_bytes: u64,
+
+    /// Attachment garbage-collection interval in seconds (1 to 3600).
+    #[arg(long, default_value_t = 60)]
+    attachment_gc_interval_secs: u64,
+
+    /// Attachment storage reconciliation interval in seconds (60 to 86400).
+    #[arg(long, default_value_t = 3600)]
+    attachment_reconcile_interval_secs: u64,
+
+    /// Legacy attachments (uploads before version 2): 'read-only' or 'retired'.
+    #[arg(long, default_value = "read-only")]
+    legacy_attachments: String,
+
+    /// Days after the first start of this version after which legacy
+    /// attachments are retired.
+    #[arg(long, default_value_t = 90)]
+    legacy_attachments_retire_after_days: u64,
+
     /// Enable relay mesh networking for cross-relay DMs
     #[arg(long)]
     mesh_enabled: bool,
@@ -196,6 +256,17 @@ struct FileConfig {
     metadata_mode: Option<String>,
     frontend: Option<String>,
     build_hash_enforcement: Option<String>,
+    attachments_dir: Option<String>,
+    attachment_max_blob_bytes: Option<u64>,
+    attachment_pending_ttl_secs: Option<u64>,
+    attachment_max_pending_per_user: Option<u64>,
+    attachment_quota_user_bytes: Option<u64>,
+    attachment_quota_node_bytes: Option<u64>,
+    attachments_min_free_bytes: Option<u64>,
+    attachment_gc_interval_secs: Option<u64>,
+    attachment_reconcile_interval_secs: Option<u64>,
+    legacy_attachments: Option<String>,
+    legacy_attachments_retire_after_days: Option<u64>,
     mesh_enabled: Option<bool>,
     mesh_port: Option<u16>,
     mesh_peers: Option<String>,
@@ -244,6 +315,17 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
     apply!(database_encryption, true);
     apply!(metadata_mode, "standard");
     apply!(build_hash_enforcement, "off");
+    apply!(attachments_dir, "./data/attachments");
+    apply!(attachment_max_blob_bytes, 104_857_600);
+    apply!(attachment_pending_ttl_secs, 3600);
+    apply!(attachment_max_pending_per_user, 32);
+    apply!(attachment_quota_user_bytes, 1_073_741_824);
+    apply!(attachment_quota_node_bytes, 10_737_418_240);
+    apply!(attachments_min_free_bytes, 1_073_741_824);
+    apply!(attachment_gc_interval_secs, 60);
+    apply!(attachment_reconcile_interval_secs, 3600);
+    apply!(legacy_attachments, "read-only");
+    apply!(legacy_attachments_retire_after_days, 90);
     apply!(mesh_port, 9443);
     apply!(mesh_peers, "");
     apply!(mesh_data_dir, "mesh_data");
@@ -270,6 +352,60 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
             args.mesh_enabled = true;
         }
     }
+}
+
+/// The version-2 attachment settings (SPEC-02 section 6.6.4). Errors name
+/// the setting.
+fn attachment_config(args: &Args) -> Result<AttachmentConfig> {
+    let config = AttachmentConfig {
+        dir: std::path::PathBuf::from(&args.attachments_dir),
+        max_blob_bytes: args.attachment_max_blob_bytes,
+        pending_ttl_secs: args.attachment_pending_ttl_secs,
+        max_pending_per_user: args.attachment_max_pending_per_user,
+        quota_user_bytes: args.attachment_quota_user_bytes,
+        quota_node_bytes: args.attachment_quota_node_bytes,
+        min_free_bytes: args.attachments_min_free_bytes,
+        gc_interval_secs: args.attachment_gc_interval_secs,
+        reconcile_interval_secs: args.attachment_reconcile_interval_secs,
+        legacy_mode: args
+            .legacy_attachments
+            .parse()
+            .map_err(|e: String| anyhow::anyhow!(e))?,
+        legacy_retire_after_days: args.legacy_attachments_retire_after_days,
+        ..AttachmentConfig::default()
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+/// `accord-server purge-legacy-attachments` (SPEC-02 section 7.7): open the
+/// relay's database and storage as the server does, retire every legacy file
+/// now, and record the `spec02_legacy_retired` ledger row.
+async fn purge_legacy_attachments(args: &Args) -> Result<()> {
+    let attachment_settings = attachment_config(args)?;
+    let state = AppState::new_with_options(
+        &args.database,
+        AppStateOptions {
+            database_encryption: args.database_encryption,
+            db: db::DbOptions {
+                legacy_invite_grace_secs: args.legacy_invite_grace_hours.saturating_mul(3600),
+                keep_legacy_permanent_invites: args.keep_legacy_permanent_invites,
+                ..db::DbOptions::default()
+            },
+            file_config: Some(accord_server::files::FileConfig::default()),
+            attachments: Some(attachment_settings),
+        },
+    )
+    .await?;
+    let report = state
+        .attachments
+        .retire_legacy_now(&state.db, &state.file_handler)
+        .await?;
+    info!(
+        "Legacy attachments retired: {} files and {} blobs deleted, {} blobs left for the reconciliation",
+        report.rows, report.blobs, report.blob_failures
+    );
+    Ok(())
 }
 
 /// Generate or reuse a self-signed TLS certificate for local/dev use.
@@ -405,7 +541,7 @@ async fn main() -> Result<()> {
             backup::restore_backup(archive_path, db_path, encryption_key.as_deref(), *yes)?;
             return Ok(());
         }
-        Some(Command::Serve) | None => {
+        Some(Command::Serve) | Some(Command::PurgeLegacyAttachments) | None => {
             // Continue to server startup below
         }
     }
@@ -415,6 +551,10 @@ async fn main() -> Result<()> {
         let cfg = FileConfig::load(config_path)?;
         info!("Loaded config from: {}", config_path);
         merge_args_with_config(&mut args, cfg);
+    }
+
+    if matches!(args.command, Some(Command::PurgeLegacyAttachments)) {
+        return purge_legacy_attachments(&args).await;
     }
 
     info!("Starting Accord Relay Server");
@@ -454,12 +594,17 @@ async fn main() -> Result<()> {
         keep_legacy_permanent_invites: args.keep_legacy_permanent_invites,
         ..db::DbOptions::default()
     };
+    // The attachment directory is checked before the database is opened
+    // (SPEC-02 REQ-42); a misconfiguration stops the relay here.
+    let attachment_settings = attachment_config(&args)?;
     let mut app_state = AppState::new_with_options(
         &args.database,
         AppStateOptions {
             database_encryption: args.database_encryption,
             db: db_options,
-            file_config: None,
+            // The legacy blob directory stays `./data/files`.
+            file_config: Some(accord_server::files::FileConfig::default()),
+            attachments: Some(attachment_settings),
         },
     )
     .await?;
@@ -510,6 +655,10 @@ async fn main() -> Result<()> {
     // database was opened above.
 
     let state: SharedState = Arc::new(app_state);
+
+    // Version-2 attachment garbage collection and storage reconciliation
+    // (SPEC-02 REQ-40 to REQ-42).
+    attachments::lifecycle::spawn_background_tasks(&state);
 
     // Start mesh service if enabled
     if args.mesh_enabled {
@@ -670,15 +819,13 @@ async fn main() -> Result<()> {
                     .unwrap_or(0);
                 // Start the fresh timer on any read-gated message whose audience
                 // has now seen it, then sweep everything whose expiry has passed.
-                match sweep_state.db.resolve_read_gates(now).await {
-                    Ok(n) if n > 0 => info!("Started expiry timer on {} read-gated messages", n),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("Read-gate sweep error: {}", e),
+                // The attachment GC runs right after (SPEC-02 REQ-40).
+                let (started, swept) = sweep_state.run_expiry_sweep(now).await;
+                if started > 0 {
+                    info!("Started expiry timer on {} read-gated messages", started);
                 }
-                match sweep_state.db.delete_expired_messages(now).await {
-                    Ok(n) if n > 0 => info!("Swept {} expired (disappearing) messages", n),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("Disappearing-messages sweep error: {}", e),
+                if swept > 0 {
+                    info!("Swept {} expired (disappearing) messages", swept);
                 }
             }
         });
@@ -844,4 +991,179 @@ async fn main() -> Result<()> {
 
     info!("Server shut down cleanly.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use accord_server::attachments::LegacyAttachmentsMode;
+    use std::path::PathBuf;
+
+    /// SPEC-02 section 7.7: `purge-legacy-attachments` is a subcommand that
+    /// takes the relay's options given before it.
+    #[test]
+    fn purge_legacy_attachments_is_a_subcommand() {
+        let args = Args::try_parse_from([
+            "accord-server",
+            "--database",
+            "relay.db",
+            "--legacy-attachments",
+            "read-only",
+            "purge-legacy-attachments",
+        ])
+        .unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::PurgeLegacyAttachments)
+        ));
+        assert_eq!(args.database, "relay.db");
+        assert!(attachment_config(&args).is_ok());
+    }
+
+    /// SPEC-02 section 6.6.4 (OD-35): each attachment setting is a CLI flag
+    /// and a TOML key of the same name, with the decided defaults; the CLI
+    /// wins over the file, and a value out of range names its setting.
+    #[test]
+    fn attachment_settings_are_flags_and_toml_keys() {
+        let defaults =
+            attachment_config(&Args::try_parse_from(["accord-server"]).unwrap()).unwrap();
+        assert_eq!(defaults.dir, PathBuf::from("./data/attachments"));
+        assert_eq!(defaults.max_blob_bytes, 104_857_600);
+        assert_eq!(defaults.pending_ttl_secs, 3600);
+        assert_eq!(defaults.max_pending_per_user, 32);
+        assert_eq!(defaults.quota_user_bytes, 1_073_741_824);
+        assert_eq!(defaults.quota_node_bytes, 10_737_418_240);
+        assert_eq!(defaults.min_free_bytes, 1_073_741_824);
+        assert_eq!(defaults.gc_interval_secs, 60);
+        assert_eq!(defaults.reconcile_interval_secs, 3600);
+        assert_eq!(defaults.legacy_mode, LegacyAttachmentsMode::ReadOnly);
+        assert_eq!(defaults.legacy_retire_after_days, 90);
+
+        let flags = Args::try_parse_from([
+            "accord-server",
+            "--attachments-dir",
+            "/srv/blobs",
+            "--attachment-max-blob-bytes",
+            "1000",
+            "--attachment-pending-ttl-secs",
+            "600",
+            "--attachment-max-pending-per-user",
+            "5",
+            "--attachment-quota-user-bytes",
+            "0",
+            "--attachment-quota-node-bytes",
+            "0",
+            "--attachments-min-free-bytes",
+            "7",
+            "--attachment-gc-interval-secs",
+            "2",
+            "--attachment-reconcile-interval-secs",
+            "120",
+            "--legacy-attachments",
+            "retired",
+            "--legacy-attachments-retire-after-days",
+            "30",
+        ])
+        .unwrap();
+        let config = attachment_config(&flags).unwrap();
+        assert_eq!(config.dir, PathBuf::from("/srv/blobs"));
+        assert_eq!(
+            (
+                config.max_blob_bytes,
+                config.pending_ttl_secs,
+                config.max_pending_per_user
+            ),
+            (1000, 600, 5)
+        );
+        assert_eq!(
+            (
+                config.quota_user_bytes,
+                config.quota_node_bytes,
+                config.min_free_bytes
+            ),
+            (0, 0, 7)
+        );
+        assert_eq!(
+            (config.gc_interval_secs, config.reconcile_interval_secs),
+            (2, 120)
+        );
+        assert_eq!(config.legacy_mode, LegacyAttachmentsMode::Retired);
+        assert_eq!(config.legacy_retire_after_days, 30);
+
+        let file: FileConfig = toml::from_str(
+            r#"
+            attachments_dir = "/srv/toml"
+            attachment_max_blob_bytes = 2000
+            attachment_pending_ttl_secs = 900
+            attachment_max_pending_per_user = 8
+            attachment_quota_user_bytes = 11
+            attachment_quota_node_bytes = 12
+            attachments_min_free_bytes = 13
+            attachment_gc_interval_secs = 5
+            attachment_reconcile_interval_secs = 300
+            legacy_attachments = "retired"
+            legacy_attachments_retire_after_days = 10
+            "#,
+        )
+        .unwrap();
+        let mut args =
+            Args::try_parse_from(["accord-server", "--attachment-gc-interval-secs", "9"]).unwrap();
+        merge_args_with_config(&mut args, file);
+        let config = attachment_config(&args).unwrap();
+        assert_eq!(config.dir, PathBuf::from("/srv/toml"));
+        assert_eq!(config.max_blob_bytes, 2000);
+        assert_eq!(config.pending_ttl_secs, 900);
+        assert_eq!(config.max_pending_per_user, 8);
+        assert_eq!(
+            (
+                config.quota_user_bytes,
+                config.quota_node_bytes,
+                config.min_free_bytes
+            ),
+            (11, 12, 13)
+        );
+        // The flag given on the command line wins over the file.
+        assert_eq!(config.gc_interval_secs, 9);
+        assert_eq!(config.reconcile_interval_secs, 300);
+        assert_eq!(config.legacy_mode, LegacyAttachmentsMode::Retired);
+        assert_eq!(config.legacy_retire_after_days, 10);
+
+        for (flag, value, setting) in [
+            (
+                "--attachment-pending-ttl-secs",
+                "299",
+                "attachment_pending_ttl_secs",
+            ),
+            (
+                "--attachment-pending-ttl-secs",
+                "86401",
+                "attachment_pending_ttl_secs",
+            ),
+            (
+                "--attachment-gc-interval-secs",
+                "0",
+                "attachment_gc_interval_secs",
+            ),
+            (
+                "--attachment-gc-interval-secs",
+                "3601",
+                "attachment_gc_interval_secs",
+            ),
+            (
+                "--attachment-reconcile-interval-secs",
+                "59",
+                "attachment_reconcile_interval_secs",
+            ),
+            (
+                "--attachment-reconcile-interval-secs",
+                "86401",
+                "attachment_reconcile_interval_secs",
+            ),
+            ("--legacy-attachments", "readonly", "legacy_attachments"),
+        ] {
+            let args = Args::try_parse_from(["accord-server", flag, value]).unwrap();
+            let error = attachment_config(&args).unwrap_err().to_string();
+            assert!(error.contains(setting), "{flag} {value}: {error}");
+        }
+    }
 }

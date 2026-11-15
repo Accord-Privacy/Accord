@@ -518,6 +518,13 @@ pub enum WsMessageType {
         gate_roles: Option<Vec<Uuid>>,
         #[serde(default)]
         gate_ttl_secs: Option<u64>,
+        /// Version-2 attachments this message claims (SPEC-02 §6.5.1): at
+        /// most 10 distinct lowercase UUIDs. Read as plain strings and
+        /// validated by the handler (REQ-35), so a malformed entry is
+        /// answered with `attachment_claim_failed` instead of a frame parse
+        /// error. Relays older than SPEC-02 ignore the member.
+        #[serde(default)]
+        attachment_ids: Option<Vec<String>>,
     },
     /// Edit a message (author only)
     EditMessage {
@@ -931,6 +938,28 @@ impl From<ErrorResponse> for ApiErrorResponse {
     }
 }
 
+/// Error body of the version-2 attachment routes and of the attachment
+/// answers of existing routes (SPEC-02 section 6.4): `{"error", "code",
+/// "reason"}`, plus `retry_after` on 429 answers. It is the batch error body
+/// of SPEC-01 section 6.2, so it shares `error` and `code` with
+/// [`ErrorResponse`] and existing clients that read `error` keep working.
+pub type AttachmentErrorResponse = ApiErrorResponse;
+
+/// `201` answer of `POST /channels/{channel_id}/attachments` (SPEC-02
+/// section 6.4.1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentUploadResponse {
+    /// The relay-assigned id, a lowercase UUID.
+    pub attachment_id: Uuid,
+    /// The number of bytes the relay stored.
+    pub blob_size: u64,
+    /// Lowercase hex SHA-256 of the stored bytes, computed by the relay.
+    pub blob_sha256: String,
+    /// When the attachment expires unless a message claims it, in Unix
+    /// seconds.
+    pub pending_expires_at: u64,
+}
+
 /// Permission denied error response
 #[derive(Debug, Serialize)]
 pub struct PermissionDeniedResponse {
@@ -971,6 +1000,36 @@ pub struct HealthResponse {
     /// `applied_at` of the `spec01_legacy_invite_expiry` ledger row, T0 of
     /// REQ-46 (SPEC-01 REQ-42). An unauthenticated hint only.
     pub admission_since: Option<u64>,
+    /// The version-2 attachment limits that go with `attachments/2`
+    /// (SPEC-02 §6.4.6, REQ-44). They guide the client's interface only.
+    pub attachment_limits: AttachmentLimits,
+}
+
+/// `attachment_limits` of `GET /health` (SPEC-02 §6.4.6).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentLimits {
+    /// `attachment_max_blob_bytes`: the largest blob the relay accepts.
+    pub max_blob_bytes: u64,
+    /// The most attachments one message may claim.
+    pub max_per_message: usize,
+}
+
+/// One row of the legacy list `GET /channels/{id}/files` (SPEC-02 §6.4.5).
+/// Unlike [`FileMetadata`] it carries neither `storage_path` nor
+/// `content_hash`, and `encrypted_filename` is a string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LegacyFileEntry {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    /// The uploader the relay stores; clients label it as reported by the
+    /// relay (REQ-27).
+    pub uploader_id: Uuid,
+    /// The stored name as a UTF-8 string, or `""` when the stored bytes are
+    /// not valid UTF-8 or exceed 4 096 bytes. Never `null`: clients older
+    /// than SPEC-02 call `split` on it.
+    pub encrypted_filename: String,
+    pub file_size_bytes: i64,
+    pub created_at: u64,
 }
 
 /// User profile information
@@ -2012,6 +2071,10 @@ mod tests {
             memory_usage_bytes: 1024,
             features: vec!["admission/1".into()],
             admission_since: Some(1_700_000_000),
+            attachment_limits: AttachmentLimits {
+                max_blob_bytes: 104_857_600,
+                max_per_message: 10,
+            },
         };
         let json = serde_json::to_string(&resp).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -2020,5 +2083,9 @@ mod tests {
         assert_eq!(v["websocket_connections"], 42);
         assert_eq!(v["features"], serde_json::json!(["admission/1"]));
         assert_eq!(v["admission_since"], 1_700_000_000u64);
+        assert_eq!(
+            v["attachment_limits"],
+            serde_json::json!({ "max_blob_bytes": 104_857_600u64, "max_per_message": 10 })
+        );
     }
 }

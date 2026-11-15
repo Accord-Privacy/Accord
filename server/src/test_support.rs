@@ -334,25 +334,56 @@ pub fn count_frames(frames: &[Value], frame_type: &str) -> usize {
 
 /// Captures formatted log events in memory.
 ///
-/// [`LogCapture::start`] installs a formatting subscriber with
-/// `tracing::subscriber::set_default`, which covers the current thread: the
-/// whole relay when the test runs on tokio's default current-thread runtime.
-/// Start it after setup, so that it records only the tested actions.
+/// [`LogCapture::start`] records the events emitted on the current thread
+/// (the whole relay when the test runs on tokio's default current-thread
+/// runtime) until its guard is dropped. Start it after setup, so that it
+/// records only the tested actions.
+///
+/// Captures are routed through one process-wide subscriber whose filter asks,
+/// for every event, whether the emitting thread has an active capture. Thread
+/// scoped subscribers (`tracing::subscriber::set_default`) are not used:
+/// tracing caches each callsite's interest process-wide, and a callsite first
+/// reached on another test's thread while a capture was being installed could
+/// stay cached as "never", silently dropping that capture's events when
+/// tests run in parallel. If another global subscriber is already installed,
+/// the capture falls back to a thread-scoped one.
 #[derive(Clone, Default)]
 pub struct LogCapture {
     buffer: Arc<Mutex<Vec<u8>>>,
 }
 
-/// Writer handed to the formatting layer; appends to the shared buffer.
+type CaptureBuffer = Arc<Mutex<Vec<u8>>>;
+
+thread_local! {
+    /// The captures active on this thread with their most verbose level,
+    /// innermost last.
+    static ACTIVE_CAPTURES: std::cell::RefCell<Vec<(CaptureBuffer, tracing::Level)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Whether the innermost capture of this thread records events at `level`.
+fn capture_records(level: &tracing::Level) -> bool {
+    ACTIVE_CAPTURES.with(|active| {
+        active
+            .borrow()
+            .last()
+            .is_some_and(|(_, max_level)| level <= max_level)
+    })
+}
+
+/// Writer handed to the formatting layer; appends to a capture buffer, or
+/// discards when there is none.
 pub struct CaptureWriter {
-    buffer: Arc<Mutex<Vec<u8>>>,
+    buffer: Option<CaptureBuffer>,
 }
 
 impl std::io::Write for CaptureWriter {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-        match self.buffer.lock() {
-            Ok(mut buffer) => buffer.extend_from_slice(data),
-            Err(poisoned) => poisoned.into_inner().extend_from_slice(data),
+        if let Some(buffer) = &self.buffer {
+            match buffer.lock() {
+                Ok(mut buffer) => buffer.extend_from_slice(data),
+                Err(poisoned) => poisoned.into_inner().extend_from_slice(data),
+            }
         }
         Ok(data.len())
     }
@@ -367,7 +398,70 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
 
     fn make_writer(&'a self) -> Self::Writer {
         CaptureWriter {
-            buffer: self.buffer.clone(),
+            buffer: Some(self.buffer.clone()),
+        }
+    }
+}
+
+/// The writer of the process-wide subscriber: the innermost capture of the
+/// emitting thread.
+struct CaptureRouter;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CaptureRouter {
+    type Writer = CaptureWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        CaptureWriter {
+            buffer: ACTIVE_CAPTURES
+                .with(|active| active.borrow().last().map(|(buffer, _)| buffer.clone())),
+        }
+    }
+}
+
+/// Install the process-wide routing subscriber once. False if another global
+/// subscriber was installed first.
+fn routing_installed() -> bool {
+    static INSTALLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *INSTALLED.get_or_init(|| {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer;
+        // The dynamic filter registers every callsite as "sometimes", so no
+        // interest is ever cached as "never", and checks each event.
+        let layer = tracing_subscriber::fmt::layer()
+            .with_writer(CaptureRouter)
+            .with_ansi(false)
+            .with_target(true)
+            .with_filter(tracing_subscriber::filter::dynamic_filter_fn(
+                |metadata, _| capture_records(metadata.level()),
+            ));
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer)).is_ok()
+    })
+}
+
+/// Keeps a capture active until dropped. Like tracing's own default guard it
+/// belongs to the thread that started the capture.
+pub struct CaptureGuard {
+    kind: CaptureGuardKind,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+enum CaptureGuardKind {
+    Routed(CaptureBuffer),
+    Scoped(#[allow(dead_code)] tracing::subscriber::DefaultGuard),
+}
+
+impl Drop for CaptureGuard {
+    fn drop(&mut self) {
+        if let CaptureGuardKind::Routed(buffer) = &self.kind {
+            ACTIVE_CAPTURES.with(|active| {
+                let mut active = active.borrow_mut();
+                if let Some(index) = active
+                    .iter()
+                    .rposition(|(candidate, _)| Arc::ptr_eq(candidate, buffer))
+                {
+                    active.remove(index);
+                }
+            });
         }
     }
 }
@@ -379,14 +473,24 @@ impl LogCapture {
 
     /// Record events at `max_level` and above on this thread until the
     /// returned guard is dropped. Each line carries the level and the target.
-    pub fn start(&self, max_level: tracing::Level) -> tracing::subscriber::DefaultGuard {
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(self.clone())
-            .with_ansi(false)
-            .with_target(true)
-            .with_max_level(max_level)
-            .finish();
-        tracing::subscriber::set_default(subscriber)
+    pub fn start(&self, max_level: tracing::Level) -> CaptureGuard {
+        let kind = if routing_installed() {
+            ACTIVE_CAPTURES
+                .with(|active| active.borrow_mut().push((self.buffer.clone(), max_level)));
+            CaptureGuardKind::Routed(self.buffer.clone())
+        } else {
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(self.clone())
+                .with_ansi(false)
+                .with_target(true)
+                .with_max_level(max_level)
+                .finish();
+            CaptureGuardKind::Scoped(tracing::subscriber::set_default(subscriber))
+        };
+        CaptureGuard {
+            kind,
+            _not_send: std::marker::PhantomData,
+        }
     }
 
     /// Everything captured so far.
@@ -438,6 +542,28 @@ mod tests {
         let lines = capture.lines_with_target("accord::admission");
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].contains("WARN") && lines[0].contains("during 1"));
+    }
+
+    #[test]
+    fn log_capture_records_only_its_own_thread_and_innermost_capture() {
+        let outer = LogCapture::new();
+        let inner = LogCapture::new();
+        let _outer = outer.start(tracing::Level::INFO);
+        std::thread::spawn(|| tracing::warn!(target: "accord::admission", "other thread"))
+            .join()
+            .unwrap();
+        {
+            let _inner = inner.start(tracing::Level::WARN);
+            tracing::warn!(target: "accord::admission", "inner");
+            tracing::info!(target: "accord::admission", "below the inner level");
+        }
+        tracing::info!(target: "accord::admission", "outer again");
+        assert_eq!(inner.lines().len(), 1, "{:?}", inner.lines());
+        assert!(inner.text().contains("inner"));
+        let outer_text = outer.text();
+        assert!(outer_text.contains("outer again"), "{outer_text}");
+        assert!(!outer_text.contains("other thread"), "{outer_text}");
+        assert!(!outer_text.contains("inner"), "{outer_text}");
     }
 
     #[tokio::test]

@@ -21,7 +21,7 @@
 
 Accord fills the gap between **Discord** (great features, no privacy) and **Signal** (great privacy, no community features). It's an open-source platform built on end-to-end encryption, designed so that the relay server can't read what you send.
 
-**It does not fully meet that goal yet.** Files are not end-to-end encrypted, relay-mode voice is readable by the relay operator, and a malicious relay can intercept encrypted sessions when they are set up. See [Current security limitations](#current-security-limitations).
+**It does not fully meet that goal yet.** Relay-mode voice is readable by the relay operator, a malicious relay can intercept encrypted sessions when they are set up (and then read and forge the messages and attachments sent over them), and files uploaded before end-to-end-encrypted attachments shipped stay readable by the relay until they are retired. See [Current security limitations](#current-security-limitations).
 
 > **The relay admin is just a landlord — they provide the building but can't enter your apartment.**
 
@@ -34,7 +34,8 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 - **Forward secrecy** — keys rotate per message
 - **NMK metadata privacy** — channel/category names and per-node policies are encrypted under a Node Metadata Key the relay never sees (node names and descriptions are visible to the relay by design)
 - **Client-side encrypted search** — messages are decrypted locally before indexing
-- **Not yet end-to-end encrypted:** files and voice — see [Current security limitations](#current-security-limitations)
+- **End-to-end encrypted attachments** (desktop and web) — every file gets its own random key, which travels only inside the encrypted message that carries the file; the relay stores a nameless, padded blob and deletes it with its message. The relay still sees attachment metadata such as padded sizes — see [Current security limitations](#current-security-limitations)
+- **Not yet end-to-end encrypted:** voice — see [Current security limitations](#current-security-limitations)
 
 ### 🎙️ Voice Channels
 - **Relay mode** (the default) — audio goes through the relay, encrypted with AES-256-GCM, but the keys go through the relay too, so **relay-mode voice is readable by the relay operator**
@@ -131,9 +132,9 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 └──────────┘                                    └──────────┘
 ```
 
-**Relay** — routes encrypted blobs. It is not meant to hold decryption keys, but today it can decrypt files and relay-mode voice (see [Current security limitations](#current-security-limitations)). Handles auth and presence; channel metadata is encrypted under a Node Metadata Key it never sees (node names and descriptions are visible to it by design). It does not show node membership to the relay owner — see [GOVERNANCE.md](GOVERNANCE.md).
+**Relay** — routes encrypted blobs. It is not meant to hold decryption keys, but today it can decrypt relay-mode voice and files uploaded before end-to-end-encrypted attachments shipped (see [Current security limitations](#current-security-limitations)). Handles auth and presence; channel metadata is encrypted under a Node Metadata Key it never sees (node names and descriptions are visible to it by design). It does not show node membership to the relay owner — see [GOVERNANCE.md](GOVERNANCE.md).
 
-**Node** — a community space (like a Discord server). Messages and channel metadata are E2E encrypted (node names and descriptions are visible to the relay by design); files and voice are not yet (see [Current security limitations](#current-security-limitations)).
+**Node** — a community space (like a Discord server). Messages, attachments and channel metadata are E2E encrypted (node names and descriptions are visible to the relay by design); voice is not yet (see [Current security limitations](#current-security-limitations)).
 
 **Desktop** — Tauri app (Rust backend + React/TypeScript UI). Identity private keys stay local.
 
@@ -160,19 +161,20 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 Accord's security is built on a zero-knowledge architecture:
 
 1. **Registration requires only a keypair** — no PII ever touches the relay
-2. **Messages are E2E encrypted** before leaving the client. Files are encrypted too, but not end to end (see below)
+2. **Messages and attachments are E2E encrypted** before leaving the client. Each file is encrypted with its own random key, carried inside the encrypted message; the relay still sees attachment metadata (see below)
 3. **DMs use the Double Ratchet** (X3DH key agreement, per-message forward secrecy)
 4. **Channel messages use AES-256-GCM** with shared channel keys
 5. **Voice is not E2E encrypted** — see below
-6. **The relay stores encrypted blobs** — it is designed not to read messages, but today it can read files and relay-mode voice (see below)
+6. **The relay stores encrypted blobs** — it is designed not to read messages or attachments, but today it can read relay-mode voice and files uploaded before end-to-end-encrypted attachments shipped (see below)
 7. **Per-Node profiles** ensure the relay can't correlate your identity across communities
 8. **Push notification payloads are encrypted** with 3 privacy levels (full, sender-only, minimal)
 
 ### Current security limitations
 
-The current release falls short of this design in three ways:
+The current release falls short of this design in these ways:
 
-- **Files (attachments) are not end-to-end encrypted.** They are encrypted under a key derived from the channel ID, which the relay knows, so the relay operator, or anyone with the relay's database, file storage or a backup, can decrypt and replace them, including files uploaded in the past.
+- **Attachments are end-to-end encrypted, but only as authentic as their message, and their metadata is visible.** Desktop and web clients encrypt every file with a new random key and send the key, the file name and the file type only inside the end-to-end-encrypted message. The relay still sees that a message has attachments, how many, each file's padded size, who uploaded it and when, in which channel and with which message, and who downloads it, when and from which IP address; it does not see file names, types, contents, keys or exact sizes. Attachments are exactly as private and as authentic as the message that carries them: until identity verification and key-recipient checks ship, a relay that injects its own sender key into a channel, or intercepts a Double Ratchet session (below), can read and forge attachments attributed to the member it impersonates. The relay's deletion and expiry signals are not authenticated, so a malicious relay can make your device delete a message together with its attachment keys; for a DM that can be the device's only copy of a file's key.
+- **Files uploaded before end-to-end-encrypted attachments shipped are not end-to-end encrypted.** They were encrypted under a key derived from the channel ID, which the relay knows, so the relay operator, or anyone with the relay's database, file storage or a backup, can decrypt and replace them and their names. The relay keeps them read-only and deletes them after a retirement window (90 days by default); clients show them only in an opt-in, badged "Legacy uploads" section.
 - **Voice is not end-to-end encrypted.** Relay-mode voice (the default) is readable by the relay operator, because each participant's key is sent through the relay in a form the relay can read. P2P voice and P2P screen sharing reveal your IP address to other participants and can be intercepted by the relay.
 - **A malicious relay can intercept encrypted sessions when they are set up.** Until identity verification ships, nothing checks that a contact's keys really belong to that contact, so a malicious relay can substitute its own keys when an end-to-end-encrypted (Double Ratchet) session is set up.
 
@@ -226,6 +228,7 @@ Accord is designed to be self-hosted. A **$5/month VPS** or a spare machine on y
 1. Build `accord-server` (see above) or use Docker (`docker-compose.yml` included)
 2. Open port **8080** (WebSocket)
 3. Point clients at your relay's address
+4. Behind a reverse proxy, raise its request body limit above the relay's attachment limit (100 MiB by default; nginx: `client_max_body_size 101m`), or larger attachment uploads fail with 413 — see [Request body size for attachments](docs/SELF-HOSTING.md#request-body-size-for-attachments)
 
 The relay is lightweight — it never decrypts anything, so resource usage stays low.
 
@@ -243,7 +246,7 @@ cd desktop/frontend && npm install && npx vite build
 ./accord-server --port 8443 --frontend desktop/frontend/dist
 ```
 
-Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side and your private keys never leave the browser, but voice and files are not end-to-end encrypted (see [Current security limitations](#current-security-limitations)).
+Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side and your private keys never leave the browser. Attachments are end-to-end encrypted with the limits listed under [Current security limitations](#current-security-limitations); voice is not end-to-end encrypted. A relay that serves the web client also serves its code, so it can change what the web client does.
 
 ---
 
@@ -275,7 +278,7 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
 > ¹ Fluxer is fully open source — all features are available when self-hosted. Paywalling only applies to their official hosted servers.
 >
-> ² Messages only. Files and voice are not end-to-end encrypted yet, and a malicious relay can intercept encrypted sessions when they are set up — see [Current security limitations](#current-security-limitations).
+> ² Messages and attachments (desktop and web). Voice is not end-to-end encrypted yet, the relay sees attachment metadata such as padded sizes, and a malicious relay can intercept encrypted sessions when they are set up — see [Current security limitations](#current-security-limitations).
 
 ---
 

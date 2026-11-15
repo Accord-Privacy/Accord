@@ -9,9 +9,7 @@ import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Interceptor
-import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
-import okhttp3.RequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
 import retrofit2.Retrofit
@@ -209,12 +207,6 @@ data class RoleResponse(
     val position: Int = 0,
     val permissions: Long = 0,
     val mentionable: Boolean = false,
-)
-
-@JsonClass(generateAdapter = true)
-data class FileUploadResponse(
-    @Json(name = "file_id") val fileId: String,
-    val url: String? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -511,23 +503,10 @@ interface AccordApi {
     suspend fun removeFriend(@Path("userId") userId: String): Response<Unit>
 
     // ── Files ────────────────────────────────────────────────────────
-    @Multipart
-    @POST("channels/{id}/files")
-    suspend fun uploadFile(
-        @Path("id") channelId: String,
-        @Part file: MultipartBody.Part,
-        @Part("filename") filename: RequestBody? = null,
-    ): FileUploadResponse
-
-    @GET("files/{id}")
-    @Streaming
-    suspend fun downloadFile(@Path("id") fileId: String): okhttp3.ResponseBody
-
-    @GET("channels/{id}/files")
-    suspend fun getChannelFiles(@Path("id") channelId: String): List<Map<String, Any>>
-
-    @DELETE("files/{id}")
-    suspend fun deleteFile(@Path("id") fileId: String): Response<Unit>
+    // The legacy multipart file routes are gone (SPEC-02 REQ-45): relays
+    // answer uploads with 410, and their files are not end-to-end encrypted.
+    // Attachments come back only as an implementation of SPEC-02 on the
+    // accord-core reference (core/src/attachment.rs).
 
     // ── Slow Mode ────────────────────────────────────────────────────
     @GET("channels/{id}/slow-mode")

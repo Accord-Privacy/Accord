@@ -1,5 +1,6 @@
 //! Integration tests for file, emoji, avatar, icon, and search handlers.
-//! Tests: upload_file, download_file, delete_file, upload_custom_emoji,
+//! Tests: the legacy file routes (uploads answer 410 since SPEC-02),
+//!        download_file, delete_file, upload_custom_emoji,
 //!        delete_custom_emoji, list_custom_emojis, get_emoji_image,
 //!        upload_user_avatar, get_user_avatar, upload_node_icon,
 //!        get_node_icon, search_messages.
@@ -118,36 +119,32 @@ impl TestServer {
         .await;
     }
 
-    /// Upload a file to a channel (channel member required).
-    /// Returns file_id.
-    async fn upload_file(&self, token: &str, channel_id: Uuid) -> Uuid {
-        let form = multipart::Form::new()
-            .part(
-                "encrypted_filename",
-                multipart::Part::bytes(b"encrypted_name_bytes".to_vec())
-                    .file_name("encrypted_name"),
-            )
-            .part(
-                "file",
-                multipart::Part::bytes(b"fake encrypted file data".to_vec())
-                    .file_name("test.bin")
-                    .mime_str("application/octet-stream")
-                    .unwrap(),
-            );
-
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/channels/{}/files?token={}",
-                self.base_url, channel_id, token
-            ))
-            .multipart(form)
-            .send()
+    /// Seed a legacy file (a `files` row and its blob) uploaded by
+    /// `uploader` to `channel_id`, as relays before SPEC-02 stored them.
+    /// Legacy uploads answer 410 since SPEC-02. Returns the file id.
+    async fn upload_file(&self, uploader: Uuid, channel_id: Uuid) -> Uuid {
+        let file_id = Uuid::new_v4();
+        let data = b"fake encrypted file data";
+        let (storage_path, content_hash) = self
+            .state
+            .file_handler
+            .store_file(file_id, data)
             .await
             .unwrap();
-        assert_eq!(resp.status(), 200, "upload_file failed");
-        let body: Value = resp.json().await.unwrap();
-        Uuid::parse_str(body["file_id"].as_str().unwrap()).unwrap()
+        self.state
+            .db
+            .store_file_metadata(
+                file_id,
+                channel_id,
+                uploader,
+                b"encrypted_name_bytes",
+                data.len() as i64,
+                &content_hash,
+                &storage_path,
+            )
+            .await
+            .unwrap();
+        file_id
     }
 
     /// Upload a custom emoji to a node.
@@ -198,25 +195,14 @@ fn minimal_png() -> Vec<u8> {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  1. File Upload
+//  1. File Upload (legacy route, removed by SPEC-02)
 // ═══════════════════════════════════════════════════════════════
 
-#[tokio::test]
-async fn test_upload_file_success() {
-    let server = TestServer::new().await;
-    let (owner_id, owner_token) = server.register_and_auth("file_up_owner1").await;
-    let node_id = server.create_node(&owner_token, "FileUpNode1").await;
-    let channel_id = server
-        .create_channel(&owner_token, node_id, "file-ch")
-        .await;
-
-    // Owner created the channel — join it so membership is recorded
-    server
-        .state
-        .join_channel(owner_id, channel_id)
-        .await
-        .unwrap();
-
+async fn legacy_upload_status(
+    server: &TestServer,
+    channel_id: Uuid,
+    token: Option<&str>,
+) -> (u16, Value) {
     let form = multipart::Form::new()
         .part(
             "encrypted_filename",
@@ -229,96 +215,34 @@ async fn test_upload_file_success() {
                 .mime_str("application/octet-stream")
                 .unwrap(),
         );
-
-    let resp = server
-        .client
-        .post(&format!(
+    let url = match token {
+        Some(token) => format!(
             "{}/channels/{}/files?token={}",
-            server.base_url, channel_id, owner_token
-        ))
-        .multipart(form)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body: Value = resp.json().await.unwrap();
-    assert!(body["file_id"].is_string(), "expected file_id in response");
-}
-
-#[tokio::test]
-async fn test_upload_file_unauthorized() {
-    let server = TestServer::new().await;
-    let (_, owner_token) = server.register_and_auth("file_up_unauth").await;
-    let node_id = server.create_node(&owner_token, "FileUpUnauthNode").await;
-    let channel_id = server
-        .create_channel(&owner_token, node_id, "file-ch-unauth")
-        .await;
-
-    let form = multipart::Form::new()
-        .part(
-            "encrypted_filename",
-            multipart::Part::bytes(b"name".to_vec()),
-        )
-        .part("file", multipart::Part::bytes(b"data".to_vec()));
-
+            server.base_url, channel_id, token
+        ),
+        None => format!("{}/channels/{}/files", server.base_url, channel_id),
+    };
     let resp = server
         .client
-        .post(&format!(
-            "{}/channels/{}/files",
-            server.base_url, channel_id
-        ))
+        .post(&url)
         .multipart(form)
         .send()
         .await
         .unwrap();
-
-    assert_eq!(resp.status(), 401);
+    let status = resp.status().as_u16();
+    (status, resp.json().await.unwrap_or(Value::Null))
 }
 
+/// SPEC-02 REQ-30: the legacy multipart upload answers 410 and stores
+/// nothing, for members, strangers and unauthenticated callers alike.
 #[tokio::test]
-async fn test_upload_file_not_channel_member() {
+async fn test_upload_file_answers_gone() {
     let server = TestServer::new().await;
-    let (_, owner_token) = server.register_and_auth("file_up_notmem_own").await;
+    let (owner_id, owner_token) = server.register_and_auth("file_up_owner1").await;
     let (_, stranger_token) = server.register_and_auth("file_up_stranger").await;
-    let node_id = server.create_node(&owner_token, "FileUpNotMemNode").await;
+    let node_id = server.create_node(&owner_token, "FileUpNode1").await;
     let channel_id = server
-        .create_channel(&owner_token, node_id, "file-ch-priv")
-        .await;
-
-    let form = multipart::Form::new()
-        .part(
-            "encrypted_filename",
-            multipart::Part::bytes(b"name".to_vec()),
-        )
-        .part("file", multipart::Part::bytes(b"data".to_vec()));
-
-    let resp = server
-        .client
-        .post(&format!(
-            "{}/channels/{}/files?token={}",
-            server.base_url, channel_id, stranger_token
-        ))
-        .multipart(form)
-        .send()
-        .await
-        .unwrap();
-
-    // Stranger not in channel → 403 or 404 (channel found but not member)
-    assert!(
-        resp.status() == 403 || resp.status() == 404,
-        "Expected 403 or 404, got {}",
-        resp.status()
-    );
-}
-
-#[tokio::test]
-async fn test_upload_file_missing_fields() {
-    let server = TestServer::new().await;
-    let (owner_id, owner_token) = server.register_and_auth("file_up_miss").await;
-    let node_id = server.create_node(&owner_token, "FileUpMissNode").await;
-    let channel_id = server
-        .create_channel(&owner_token, node_id, "file-ch-miss")
+        .create_channel(&owner_token, node_id, "file-ch")
         .await;
     server
         .state
@@ -326,24 +250,23 @@ async fn test_upload_file_missing_fields() {
         .await
         .unwrap();
 
-    // Missing 'file' field
-    let form = multipart::Form::new().part(
-        "encrypted_filename",
-        multipart::Part::bytes(b"name".to_vec()),
-    );
-
-    let resp = server
-        .client
-        .post(&format!(
-            "{}/channels/{}/files?token={}",
-            server.base_url, channel_id, owner_token
-        ))
-        .multipart(form)
-        .send()
+    for token in [
+        Some(owner_token.as_str()),
+        Some(stranger_token.as_str()),
+        None,
+    ] {
+        let (status, body) = legacy_upload_status(&server, channel_id, token).await;
+        assert_eq!(status, 410, "{body}");
+        assert_eq!(body["reason"], "legacy_uploads_removed");
+        assert_eq!(body["code"], 410);
+    }
+    assert!(server
+        .state
+        .db
+        .list_channel_files(channel_id)
         .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 400);
+        .unwrap()
+        .is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -364,7 +287,7 @@ async fn test_download_file_success() {
         .await
         .unwrap();
 
-    let file_id = server.upload_file(&owner_token, channel_id).await;
+    let file_id = server.upload_file(owner_id, channel_id).await;
 
     let resp = server
         .client
@@ -377,18 +300,21 @@ async fn test_download_file_success() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    };
     assert!(
-        ct.contains("application/octet-stream"),
+        header("content-type").contains("application/octet-stream"),
         "Expected octet-stream, got: {}",
-        ct
+        header("content-type")
     );
+    assert_eq!(header("cache-control"), "no-store");
     let body = resp.bytes().await.unwrap();
-    assert!(!body.is_empty());
+    assert_eq!(body.as_ref(), b"fake encrypted file data");
 }
 
 #[tokio::test]
@@ -404,7 +330,7 @@ async fn test_download_file_unauthorized() {
         .join_channel(owner_id, channel_id)
         .await
         .unwrap();
-    let file_id = server.upload_file(&owner_token, channel_id).await;
+    let file_id = server.upload_file(owner_id, channel_id).await;
 
     let resp = server
         .client
@@ -435,8 +361,9 @@ async fn test_download_file_not_found() {
     assert_eq!(resp.status(), 404);
 }
 
+/// SPEC-02 §6.4.4: a caller who cannot access the file's channel gets 404.
 #[tokio::test]
-async fn test_download_file_forbidden_non_member() {
+async fn test_download_file_not_found_for_non_member() {
     let server = TestServer::new().await;
     let (owner_id, owner_token) = server.register_and_auth("file_dl_frb_own").await;
     let (_, stranger_token) = server.register_and_auth("file_dl_frb_str").await;
@@ -449,7 +376,7 @@ async fn test_download_file_forbidden_non_member() {
         .join_channel(owner_id, channel_id)
         .await
         .unwrap();
-    let file_id = server.upload_file(&owner_token, channel_id).await;
+    let file_id = server.upload_file(owner_id, channel_id).await;
 
     let resp = server
         .client
@@ -461,7 +388,7 @@ async fn test_download_file_forbidden_non_member() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), 403);
+    assert_eq!(resp.status(), 404);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -481,7 +408,7 @@ async fn test_delete_file_by_uploader_success() {
         .join_channel(owner_id, channel_id)
         .await
         .unwrap();
-    let file_id = server.upload_file(&owner_token, channel_id).await;
+    let file_id = server.upload_file(owner_id, channel_id).await;
 
     let resp = server
         .client
@@ -495,16 +422,21 @@ async fn test_delete_file_by_uploader_success() {
 
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
-    // Response contains either "status": "deleted" or "message": "File deleted successfully"
     assert!(
-        body["status"] == "deleted"
-            || body["message"]
-                .as_str()
-                .map(|s| s.contains("deleted"))
-                .unwrap_or(false),
+        body["message"]
+            .as_str()
+            .map(|s| s.contains("deleted"))
+            .unwrap_or(false),
         "Expected delete confirmation, got: {}",
         body
     );
+    assert!(server
+        .state
+        .db
+        .get_file_metadata(file_id)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -520,7 +452,7 @@ async fn test_delete_file_unauthorized() {
         .join_channel(owner_id, channel_id)
         .await
         .unwrap();
-    let file_id = server.upload_file(&owner_token, channel_id).await;
+    let file_id = server.upload_file(owner_id, channel_id).await;
 
     let resp = server
         .client
@@ -574,9 +506,9 @@ async fn test_delete_file_forbidden_non_uploader() {
         .await
         .unwrap();
 
-    let file_id = server.upload_file(&owner_token, channel_id).await;
+    let file_id = server.upload_file(owner_id, channel_id).await;
 
-    // member is not uploader or admin → 403
+    // A member without MANAGE_MESSAGES who is not the uploader → 403
     let resp = server
         .client
         .delete(&format!(
@@ -588,6 +520,8 @@ async fn test_delete_file_forbidden_non_uploader() {
         .unwrap();
 
     assert_eq!(resp.status(), 403);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["reason"], "forbidden");
 }
 
 // ═══════════════════════════════════════════════════════════════
