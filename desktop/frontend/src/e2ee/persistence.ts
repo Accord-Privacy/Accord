@@ -211,10 +211,14 @@ export function loadSenderKeyStore(
 // We keep the plaintext of our own sent messages, encrypted at rest with the
 // user's password, so history renders correctly after re-login.
 
-/** Persist the own-message plaintext cache (messageId → plaintext). */
+/**
+ * Persist the own-message plaintext cache. Values are SPEC-02 §6.2.4 cache
+ * records; entries written before SPEC-02 are plain strings, which are kept
+ * and shown as text only (REQ-19).
+ */
 export function saveOwnMessages(
   userId: string,
-  messages: Map<string, string>,
+  messages: Map<string, unknown>,
   password: string,
 ): void {
   try {
@@ -226,16 +230,21 @@ export function saveOwnMessages(
   }
 }
 
-/** Load the own-message plaintext cache. Returns an empty map if none/failed. */
+/**
+ * Load the own-message plaintext cache. Returns an empty map if none/failed.
+ * Values are raw: read them with `readCacheValue` (attachments/envelope.ts).
+ */
 export function loadOwnMessages(
   userId: string,
   password: string,
-): Map<string, string> {
+): Map<string, unknown> {
   try {
     const encrypted = localStorage.getItem(ownMessagesStorageKey(userId));
     if (!encrypted) return new Map();
     const json = decryptData(encrypted, password, OWNMSGS_DOMAIN);
-    return new Map(Object.entries(JSON.parse(json)));
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+    return new Map(Object.entries(parsed as Record<string, unknown>));
   } catch (e) {
     console.warn('Failed to load own-message cache:', e);
     return new Map();

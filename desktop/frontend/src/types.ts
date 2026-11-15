@@ -72,6 +72,8 @@ export interface Node {
   description?: string;
   created_at: number;
   icon_hash?: string;
+  /** `invite` (default) or `request` (SPEC-01 REQ-29). */
+  join_policy?: 'invite' | 'request';
 }
 
 export interface NodeMember {
@@ -136,14 +138,16 @@ export interface CreateChannelRequest {
 // WebSocket message types
 export type WsMessageType =
   | { CreateNode: { name: string; description?: string } }
-  | { JoinNode: { node_id: string } }
+  // SPEC-01 REQ-21: the optional invite and node-scoped device fingerprint
+  // (64 lowercase hex characters) follow the rules of POST /nodes/:id/join.
+  | { JoinNode: { node_id: string; invite_code?: string; device_fingerprint_hash?: string } }
   | { LeaveNode: { node_id: string } }
   | { GetNodeInfo: { node_id: string } }
   | { JoinChannel: { channel_id: string } }
   | { LeaveChannel: { channel_id: string } }
   | { CreateChannel: { node_id: string; name: string } }
   | { DirectMessage: { to_user: string; encrypted_data: string } }
-  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string; expires_at?: number; gate_users?: string[]; gate_roles?: string[]; gate_ttl_secs?: number } }
+  | { ChannelMessage: { channel_id: string; encrypted_data: string; reply_to?: string; expires_at?: number; gate_users?: string[]; gate_roles?: string[]; gate_ttl_secs?: number; attachment_ids?: string[] } }
   | { EditMessage: { message_id: string; encrypted_data: string } }
   | { DeleteMessage: { message_id: string } }
   | { AddReaction: { message_id: string; emoji: string } }
@@ -234,6 +238,10 @@ export interface UpdateProfileRequest {
 export interface ErrorResponse {
   error: string;
   code: number;
+  /** Machine-readable reason (SPEC-01 §6.4), on routes that send one. */
+  reason?: string;
+  /** Seconds to wait, with `rate_limited`. */
+  retry_after?: number;
 }
 
 // Health check response
@@ -241,6 +249,23 @@ export interface HealthResponse {
   status: string;
   version: string;
   uptime_seconds: number;
+  /** Relay capability tokens (SPEC-01 §6.8); test membership only. */
+  features?: string[];
+  /** When the relay began enforcing admission, Unix seconds (SPEC-01 REQ-42). */
+  admission_since?: number | null;
+  /** Present when `features` holds `attachments/2` (SPEC-02 §6.4.6). */
+  attachment_limits?: AttachmentLimits;
+}
+
+/** An invite as `GET /nodes/:id/invites` lists it (SPEC-01 §6.2). */
+export interface InviteListItem {
+  id: string;
+  invite_code: string;
+  created_at: number;
+  max_uses: number | null;
+  current_uses: number;
+  expires_at: number | null;
+  created_by?: string;
 }
 
 // App state types
@@ -255,7 +280,31 @@ export interface AppState {
   isConnected: boolean;
 }
 
-export type MessageDeliveryStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+/**
+ * Delivery status of an own message (SPEC-02 REQ-49, §8.1). `sent` only after
+ * the relay's echo or a history item pairs with the pending send;
+ * `unconfirmed` when nothing paired within 30 s.
+ */
+export type MessageDeliveryStatus = 'sending' | 'unconfirmed' | 'sent' | 'delivered' | 'read' | 'failed';
+
+/** Why an own message failed, and what the user can do about it (SPEC-02 §8.1). */
+export interface MessageFailure {
+  /** Text shown next to the message. */
+  readonly text: string;
+  /** Whether Retry is offered; Delete is always offered. */
+  readonly retryable: boolean;
+}
+
+/**
+ * A placeholder shown instead of a body (SPEC-02 §8.2): the plaintext could
+ * not be shown, and nothing else of it is rendered.
+ */
+export type MessagePlaceholder =
+  | 'invalid_format'
+  | 'newer_version'
+  | 'wrong_conversation'
+  | 'edited_unverified'
+  | 'other_session';
 
 export interface Message {
   id: string;
@@ -281,14 +330,42 @@ export interface Message {
   reply_to?: string;
   replied_message?: RepliedMessage;
   reply_count?: number;
-  files?: FileMetadata[];
+  // No `files`, `attachments` or `attachment_ids`: attachment state lives only
+  // in the attachment store, which only the decode function writes (SPEC-02
+  // REQ-51). Leaving the field out lets the type checker enforce that.
   sender_public_key_hash?: string;
   sender_id?: string;
   display_name?: string;
-  /** Delivery status for own messages (optimistic send tracking). */
+  /** Delivery status for own messages (SPEC-02 REQ-49). */
   _status?: MessageDeliveryStatus;
-  /** Original send parameters for retry on failure. */
-  _retryPayload?: { channelId: string; content: string; replyTo?: string };
+  /**
+   * The id of this message's pending-send record (`attachments/send.ts`).
+   * Retry and Delete act on that record, which alone holds what a resend
+   * needs; a `Message` never holds a payload to resend (SPEC-02 REQ-48).
+   */
+  _pendingId?: string;
+  /** Status text while sending, for example "Waiting for connection". */
+  _statusText?: string;
+  /** Set when `_status` is `failed`. */
+  _failure?: MessageFailure;
+  /** Set when the decode function showed a placeholder instead of a body. */
+  _placeholder?: MessagePlaceholder;
+  /** An untrusted envelope carried descriptors that were ignored (SPEC-02 §8.2). */
+  _attachmentsIgnored?: boolean;
+  /**
+   * How many attachments the message carries: decoded ones (whose state is in
+   * the attachment store) or, for an own pending send, staged ones. A count
+   * only; descriptors never live on a `Message` (REQ-51).
+   */
+  _attachmentCount?: number;
+  /**
+   * The opaque `ref` of the attachment-store entry this message's own decode
+   * produced. Views show attachments only when the entry under the message's
+   * key still has this ref, its sender and its count (`attachments/render.ts`),
+   * so a later decode under the same id never lends its attachments to this
+   * message, and this message never shows an entry it did not produce.
+   */
+  _attachmentRef?: number;
 }
 
 export interface RepliedMessage {
@@ -319,12 +396,37 @@ export interface MessagePaginationResponse {
 }
 
 // File types
-export interface FileMetadata {
+
+/**
+ * One row of the legacy file list, `GET /channels/{id}/files` (SPEC-02
+ * §6.4.5). Legacy files were encrypted under a key the relay can compute, so
+ * every field is relay-controlled: the name may be empty (shown as "(name
+ * unavailable)") and the uploader is only what the relay reports (REQ-27).
+ */
+export interface LegacyFileRow {
   id: string;
+  channel_id: string;
+  uploader_id: string;
+  /** Base64 of the legacy-encrypted name, or "" when the relay has none. */
   encrypted_filename: string;
   file_size_bytes: number;
   created_at: number;
-  uploader_id: string;
+}
+
+/** What `POST /channels/{id}/attachments` answers with 201 (SPEC-02 §6.4.1). */
+export interface UploadAttachmentResponse {
+  attachment_id: string;
+  blob_size: number;
+  /** Lowercase hex SHA-256 computed by the relay. */
+  blob_sha256: string;
+  /** Unix seconds. */
+  pending_expires_at: number;
+}
+
+/** The relay's attachment limits from `GET /health` (SPEC-02 §6.4.6); interface guidance only. */
+export interface AttachmentLimits {
+  max_blob_bytes: number;
+  max_per_message: number;
 }
 
 export interface UploadProgress {

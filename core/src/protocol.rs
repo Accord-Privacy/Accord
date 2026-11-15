@@ -86,6 +86,7 @@ pub enum MessageType {
 }
 
 /// Message payload containing the actual data
+#[allow(deprecated)] // FileUpload and FileChunk keep their variants for bincode compatibility (C177)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessagePayload {
     // Connection Messages
@@ -165,6 +166,7 @@ pub struct HeartbeatPayload {
     pub latency_check: Option<u64>,
 }
 
+#[allow(deprecated)] // `attachments` keeps the deprecated `AttachmentInfo` for bincode compatibility
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextMessagePayload {
     pub content: Vec<u8>, // Encrypted message content
@@ -182,6 +184,9 @@ pub enum TextMessageType {
     Edit,
 }
 
+#[deprecated(
+    note = "unused; superseded by SPEC-02 version-2 attachments (accord_core::attachment). Kept only because removal changes bincode discriminants (C177)."
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttachmentInfo {
     pub file_id: Uuid,
@@ -290,6 +295,9 @@ pub struct BotResponsePayload {
     pub response: BotResponse,
 }
 
+#[deprecated(
+    note = "unused; superseded by SPEC-02 version-2 attachments (accord_core::attachment). Kept only because removal changes bincode discriminants (C177)."
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileUploadPayload {
     pub file_id: Uuid,
@@ -301,6 +309,9 @@ pub struct FileUploadPayload {
     pub encrypted_metadata: Vec<u8>,
 }
 
+#[deprecated(
+    note = "unused; superseded by SPEC-02 version-2 attachments (accord_core::attachment). Kept only because removal changes bincode discriminants (C177)."
+)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileChunkPayload {
     pub file_id: Uuid,
@@ -567,6 +578,7 @@ impl MessageValidator {
             MessagePayload::TextMessage(text) if text.content.is_empty() => {
                 return Err(anyhow::anyhow!("Empty text message"));
             }
+            #[allow(deprecated)]
             MessagePayload::FileChunk(chunk) if chunk.encrypted_data.is_empty() => {
                 return Err(anyhow::anyhow!("Empty file chunk"));
             }
@@ -627,6 +639,7 @@ impl MessageSerializer {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // the tests still cover the deprecated attachment types
 mod tests {
     use super::*;
 

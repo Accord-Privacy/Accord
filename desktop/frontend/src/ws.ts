@@ -1,6 +1,27 @@
 // WebSocket client with reconnection logic and event emitter pattern
 
 import { WsMessage, WsMessageType, WsIncomingMessage } from './types';
+import { isSealedPayload, type SealedPayload } from './e2ee/sealed';
+
+/**
+ * What the private send primitive reports (SPEC-02 REQ-48, shared with
+ * SPEC-03 REQ-37 and SPEC-06 §6.8): whether the frame was handed to an open,
+ * authenticated socket, and the envelope `message_id` it generated. A frame
+ * that was not handed off is dropped, never queued.
+ */
+export interface SendResult {
+  readonly handedOff: boolean;
+  readonly messageId: string;
+}
+
+/** Optional members of a `ChannelMessage` frame. */
+export interface ChannelSendOptions {
+  readonly replyTo?: string;
+  readonly expiresAt?: number;
+  readonly gate?: { readonly users?: readonly string[]; readonly roles?: readonly string[]; readonly ttlSecs: number };
+  /** The descriptor `blob_id`s of the envelope (SPEC-02 §6.5.1); omitted when empty. */
+  readonly attachmentIds?: readonly string[];
+}
 
 // Event types for the WebSocket client
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
@@ -20,9 +41,18 @@ export interface WsEvents {
   message: (message: WsIncomingMessage) => void;
   error: (error: Error) => void;
   auth_error: () => void;
+  hello: (data: any) => void;
   node_created: (data: any) => void;
+  // SPEC-01 REQ-21, REQ-30 to REQ-34: join and leave answers, carrying
+  // `request_id`, and the join-request notifications. `node_joined` is a hint
+  // for the UI only (REQ-43).
   node_joined: (data: any) => void;
+  join_pending: (data: any) => void;
+  join_failed: (data: any) => void;
   node_left: (data: any) => void;
+  leave_failed: (data: any) => void;
+  join_request_created: (data: any) => void;
+  join_request_denied: (data: any) => void;
   node_info: (data: any) => void;
   channel_created: (data: any) => void;
   direct_message: (data: any) => void;
@@ -57,6 +87,17 @@ export interface WsEvents {
 
 type EventListener<T = any> = (data: T) => void;
 
+/** Whether a raw frame is a `ChannelMessage` or `EditMessage`. */
+function carriesMessagePayload(raw: string): boolean {
+  try {
+    const frame = JSON.parse(raw) as { message_type?: unknown } | null;
+    const t = frame?.message_type;
+    return !!t && typeof t === 'object' && ('ChannelMessage' in t || 'EditMessage' in t || 'DirectMessage' in t);
+  } catch {
+    return false;
+  }
+}
+
 export class AccordWebSocket {
   private ws: WebSocket | null = null;
   private token: string;
@@ -74,6 +115,9 @@ export class AccordWebSocket {
   private messageQueue: string[] = [];
   private onlineHandler: (() => void) | null = null;
   private offlineHandler: (() => void) | null = null;
+  // The relay's capability tokens from this socket's `hello` (SPEC-01 §6.8),
+  // forgotten on disconnect. Clients test membership only.
+  private features: string[] = [];
 
   constructor(token: string, baseUrl?: string) {
     this.token = token;
@@ -135,6 +179,15 @@ export class AccordWebSocket {
       reconnectAttempt: this.reconnectAttempts,
       maxReconnectAttempts: this.maxReconnectAttempts,
     });
+  }
+
+  /**
+   * The `features` of the relay's `hello` on the current socket (SPEC-01
+   * §6.8); empty before the first `hello` and after a disconnect. Test
+   * membership only, for example `relayFeatures().includes('admission/1')`.
+   */
+  relayFeatures(): readonly string[] {
+    return this.features;
   }
 
   getConnectionInfo(): ConnectionInfo {
@@ -226,6 +279,14 @@ export class AccordWebSocket {
           return;
         }
 
+        // Remember the relay's capability tokens until the socket closes.
+        if (message.type === 'hello') {
+          const features = (message as any).features;
+          this.features = Array.isArray(features)
+            ? features.filter((f: unknown): f is string => typeof f === 'string')
+            : [];
+        }
+
         // Handle server auth confirmation — NOW we're truly connected
         if (message.type === 'authenticated') {
           this.isConnected = true;
@@ -254,6 +315,7 @@ export class AccordWebSocket {
 
     this.ws.onclose = (event) => {
       this.isConnected = false;
+      this.features = [];
       this.stopPingInterval();
       
       // Auth rejection from server (4401 or 4403)
@@ -330,28 +392,39 @@ export class AccordWebSocket {
   }
 
   // Message sending methods
-  private sendMessage(messageType: WsMessageType): void {
-    if (!this.isConnected || !this.ws) {
-      console.warn('WebSocket not connected, cannot send message');
-      return;
+  /**
+   * Send one frame on the open, authenticated socket. Reports whether it was
+   * handed off and never queues: a frame for a closed socket is dropped and
+   * reported, so callers can resend it themselves (SPEC-02 REQ-48).
+   */
+  private sendMessage(messageType: WsMessageType): SendResult {
+    const messageId = this.generateId();
+    if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return { handedOff: false, messageId };
     }
 
     const message: WsMessage = {
       message_type: messageType,
-      message_id: this.generateId(),
+      message_id: messageId,
       timestamp: Math.floor(Date.now() / 1000),
     };
 
     try {
       this.ws.send(JSON.stringify(message));
-    } catch (error) {
-      console.error('Error sending WebSocket message:', error);
+      return { handedOff: true, messageId };
+    } catch {
       this.emit('error', new Error('Failed to send message'));
+      return { handedOff: false, messageId };
     }
   }
 
-  // Generic send method for custom messages (queues if offline)
+  // Generic send method for custom messages (queues if offline). Message and
+  // edit frames never go through it: they must carry a sealed payload and
+  // must not be queued (SPEC-02 REQ-48).
   send(message: string): void {
+    if (carriesMessagePayload(message)) {
+      throw new TypeError('message and edit frames must use sendChannelMessage or sendEditMessage');
+    }
     if (!this.isConnected || !this.ws) {
       // Queue message for later delivery
       this.messageQueue.push(message);
@@ -388,8 +461,16 @@ export class AccordWebSocket {
     this.sendMessage({ CreateNode: { name, description } });
   }
 
-  joinNode(nodeId: string): void {
-    this.sendMessage({ JoinNode: { node_id: nodeId } });
+  // Join a node by id (SPEC-01 REQ-21); the relay answers with exactly one
+  // `node_joined`, `join_pending` or `join_failed` frame.
+  joinNode(nodeId: string, opts: { inviteCode?: string; deviceFingerprintHash?: string } = {}): void {
+    this.sendMessage({
+      JoinNode: {
+        node_id: nodeId,
+        ...(opts.inviteCode ? { invite_code: opts.inviteCode } : {}),
+        ...(opts.deviceFingerprintHash ? { device_fingerprint_hash: opts.deviceFingerprintHash } : {}),
+      },
+    });
   }
 
   leaveNode(nodeId: string): void {
@@ -418,28 +499,33 @@ export class AccordWebSocket {
     throw new Error('DirectMessage is deprecated. Use DM channels with sendChannelMessage instead.');
   }
 
-  sendChannelMessage(
-    channelId: string,
-    encryptedData: string,
-    replyTo?: string,
-    expiresAt?: number,
-    gate?: { users?: string[]; roles?: string[]; ttlSecs: number },
-  ): void {
-    this.sendMessage({
+  /**
+   * Send a channel or DM message. The payload must be a `SealedPayload`
+   * (SPEC-02 REQ-48): only the E2EE sealing functions produce one, so no
+   * plaintext can reach the relay through this call. Returns whether the
+   * frame was handed to an open socket.
+   */
+  sendChannelMessage(channelId: string, sealed: SealedPayload, options: ChannelSendOptions = {}): SendResult {
+    if (!isSealedPayload(sealed)) throw new TypeError('sendChannelMessage accepts only a sealed payload');
+    const ids = options.attachmentIds && options.attachmentIds.length > 0 ? [...options.attachmentIds] : undefined;
+    return this.sendMessage({
       ChannelMessage: {
         channel_id: channelId,
-        encrypted_data: encryptedData,
-        reply_to: replyTo,
-        expires_at: expiresAt,
-        gate_users: gate?.users && gate.users.length ? gate.users : undefined,
-        gate_roles: gate?.roles && gate.roles.length ? gate.roles : undefined,
-        gate_ttl_secs: gate?.ttlSecs,
+        encrypted_data: sealed.wire,
+        reply_to: options.replyTo,
+        expires_at: options.expiresAt,
+        gate_users: options.gate?.users && options.gate.users.length ? [...options.gate.users] : undefined,
+        gate_roles: options.gate?.roles && options.gate.roles.length ? [...options.gate.roles] : undefined,
+        gate_ttl_secs: options.gate?.ttlSecs,
+        attachment_ids: ids,
       },
     });
   }
 
-  sendEditMessage(messageId: string, encryptedData: string): void {
-    this.sendMessage({ EditMessage: { message_id: messageId, encrypted_data: encryptedData } });
+  /** Send an edit. The payload must be a `SealedPayload` (SPEC-02 REQ-48). */
+  sendEditMessage(messageId: string, sealed: SealedPayload): SendResult {
+    if (!isSealedPayload(sealed)) throw new TypeError('sendEditMessage accepts only a sealed payload');
+    return this.sendMessage({ EditMessage: { message_id: messageId, encrypted_data: sealed.wire } });
   }
 
   sendDeleteMessage(messageId: string): void {

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay, probeServerUrl } from "./api";
+import { registerAdmissionHandlers, redeemInvite, joinErrorMessage, inviteCreateErrorMessage, admissionErrorMessage } from "./admission";
+import { errorReason } from "./apiError";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry, PresenceStatus } from "./types";
 import {
@@ -20,8 +22,6 @@ import {
   hasStoredKeyPair,
   getStoredPublicKey,
   setActiveIdentity,
-  encryptFile,
-  encryptFilename,
 } from "./crypto";
 import { storeToken as _storeToken, getToken, clearToken } from "./tokenStorage";
 
@@ -31,15 +31,36 @@ async function storeToken(token: string, lifetimeMs?: number): Promise<void> {
   return _storeToken(token, lifetimeMs);
 }
 import { getRelayManager, RelayManager } from "./RelayManager";
-import { StagedFile } from "./FileManager";
+import { StagedFile, ATTACHMENTS_UNAVAILABLE_TEXT } from "./FileManager";
+import { pinnedMessageFromRelay, threadMessageFromRelay } from "./relayMessage";
+import { decodeHistoryItem, historyWireItem } from "./attachments/history";
+import { decodeMessage, decodeEdit, wireSha256, type DecodedMessage, type Decryptors, type PlaintextCacheAccess } from "./attachments/decode";
+import { attachmentStore } from "./attachments/store";
+import { relayOrigin, MAX_ATTACHMENTS_PER_MESSAGE } from "./attachments/envelope";
+import {
+  PendingSendManager,
+  ATTACHMENTS_FEATURE,
+  fitsBlobLimit,
+  effectiveMaxBlobBytes,
+  type Conversation,
+  type ConversationSealer,
+  type PendingEvent,
+  type PendingView,
+  type RelayAttachmentLimits,
+} from "./attachments/send";
+import { createConversationSealer } from "./attachments/sealer";
+import { forgetMessages } from "./attachments/lifecycle";
+import { decodedFields, pendingStatusFields } from "./attachments/messageFields";
+import { canOfferEdit, sealEdit, OwnEditEchoes, type EditFacts } from "./attachments/edit";
 import { notificationManager, NotificationPreferences } from "./notifications";
 import type { SetupResult } from "./SetupWizard";
 import { getDeviceInfo } from "./deviceIdentity";
 const SetupWizard = React.lazy(() => import("./SetupWizard").then(m => ({ default: m.SetupWizard })));
 import { listIdentities } from "./identityStorage";
 import { initHashVerifier, getKnownHashes, onHashListUpdate } from "./hashVerifier";
-import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, encryptChannelMessage, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, saveOwnMessages, loadOwnMessages, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
+import { E2EEManager, type PreKeyBundle, type SenderKeyPrivate, SenderKeyStore, isSenderKeyEnvelope, decryptChannelMessage, buildDistributionMessage, parseDistributionMessage, saveIdentityKeys, loadIdentityKeys, saveSenderKeyStore, loadSenderKeyStore, saveOwnMessages, loadOwnMessages, generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle } from "./e2ee";
 import { NodeMetadataKey, decryptMetadataBundle, saveNmkStore, loadNmkStore, type DecryptedMetadata } from "./e2ee/metadata";
+import { readKeyDistribution } from "./e2ee/plaintext";
 import { initStorageMasterKey, clearStorageMasterKey } from "./e2ee/storageKey";
 import { wipeLocalData } from "./wipe";
 import { setDuressPassword, isDuressConfigured } from "./duress";
@@ -117,6 +138,21 @@ function fromWirePayload(s: string): string {
   } catch {
     return s; // backward compat: pre-base64 payloads
   }
+}
+
+/** A Double Ratchet wire envelope (`x3dh` or `dr`), checked before any ratchet state is touched. */
+function isDoubleRatchetEnvelope(json: string): boolean {
+  try {
+    const env = JSON.parse(json) as { t?: unknown; ct?: unknown } | null;
+    return !!env && (env.t === 'x3dh' || env.t === 'dr') && env.ct !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** The relay origin that keys the attachment store and cache records. */
+function currentOrigin(): string {
+  return relayOrigin(api.getBaseUrl()) ?? '';
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -227,11 +263,6 @@ function App() {
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [oldestMessageCursor, setOldestMessageCursor] = useState<string | undefined>(undefined);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-
-  const handleStartEdit = (messageId: string, content: string) => {
-    setEditingMessageId(messageId);
-    setEditingContent(content);
-  };
 
   // Role-based permission state
   const [userRoles, setUserRoles] = useState<Record<string, 'admin' | 'moderator' | 'member'>>({});
@@ -407,55 +438,198 @@ function App() {
   // Distribution retry bookkeeping: "channelId:memberId" → attempt count.
   const distRetryRef = useRef<Map<string, number>>(new Map());
   const sendSenderKeyToRef = useRef<((socket: AccordWebSocket, channelId: string, sk: SenderKeyPrivate, memberId: string) => Promise<boolean>) | null>(null);
-  // messageId → plaintext of our own sent messages. We can't decrypt our own
-  // sender-key envelopes, so this (persisted encrypted) keeps history readable.
-  const ownMessagesRef = useRef<Map<string, string>>(new Map());
+  // The plaintext cache (persisted encrypted): relay message id → SPEC-02
+  // §6.2.4 record (own sends paired under REQ-49, Double Ratchet plaintext).
+  // Entries from before SPEC-02 are plain strings, shown as text only (REQ-19).
+  const ownMessagesRef = useRef<Map<string, unknown>>(new Map());
   // nodeId → ms timestamp of our last local settings publish. Used to ignore the
   // metadata_updated echo of our own change (our local state is authoritative).
   const settingsPublishedAtRef = useRef<Map<string, number>>(new Map());
 
-  // Disappearing messages: drop the given message ids from the own-message
-  // plaintext cache and re-persist, so expired/purged messages leave no local
-  // trace. Uses only refs, so it's safe to call from stale WS-handler closures.
-  const purgeOwnMessages = useCallback((ids: string[]) => {
-    let changed = false;
-    for (const id of ids) {
-      if (ownMessagesRef.current.delete(id)) changed = true;
-    }
-    if (changed) {
+  // ── SPEC-02 attachments: relay capability, decode and send wiring ──
+  const wsRef = useRef<AccordWebSocket | null>(null);
+  useEffect(() => { wsRef.current = ws; }, [ws]);
+  // The rendered messages, readable from WS handlers (edit targets, deletions).
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = appState.messages;
+  const appStateUserRef = useRef(appState.user);
+  appStateUserRef.current = appState.user;
+  // relay message id → channel and time, for REQ-24 cleanup of messages that
+  // are not rendered (purges by cutoff).
+  const messageTimesRef = useRef<Map<string, { channelId: string; ts: number }>>(new Map());
+  // `attachments/2` from the relay's hello, and its limits from /health (REQ-17).
+  const [attachmentCaps, setAttachmentCaps] = useState<RelayAttachmentLimits>({ available: false, maxBlobBytes: null });
+  const attachmentCapsRef = useRef(attachmentCaps);
+  useEffect(() => { attachmentCapsRef.current = attachmentCaps; }, [attachmentCaps]);
+  // The upload route answered 404 or 405: attachment sending stays off for
+  // this relay origin whatever later hellos advertise (REQ-17).
+  const uploadRouteMissingRef = useRef<Set<string>>(new Set());
+  // Own edits by target message id and sealed-payload hash: our own Sender
+  // Keys envelopes do not decrypt for us, so an own edit echo shows the text
+  // we sealed only when it targets the message we edited and carries exactly
+  // those bytes (as REQ-49 pairs sends). A replay of the payload against
+  // another own message matches nothing.
+  const ownEditsRef = useRef<OwnEditEchoes>(new OwnEditEchoes());
+  // Keys the attachment store; read at render, like the decode paths do.
+  const attachmentOrigin = currentOrigin();
+  const getPeerBundleRef = useRef<((peerId: string, token: string) => Promise<PreKeyBundle | undefined>) | null>(null);
+  const bootstrapSenderKeysRef = useRef<((socket: AccordWebSocket, channelId: string) => boolean) | null>(null);
+  const persistSenderKeyStoreRef = useRef<(() => void) | null>(null);
+
+  const persistOwnMessages = useCallback(() => {
+    const uid = localStorage.getItem('accord_user_id');
+    const pwd = passwordRef.current;
+    if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
+  }, []);
+
+  // The plaintext cache as the decode function and the send module see it.
+  const [plaintextCache] = useState<PlaintextCacheAccess>(() => ({
+    get: (id: string) => ownMessagesRef.current.get(id),
+    put: (record) => {
+      ownMessagesRef.current.set(record.message_id, record);
       const uid = localStorage.getItem('accord_user_id');
       const pwd = passwordRef.current;
       if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
-    }
-  }, []);
+    },
+  }));
+
+  // REQ-7, REQ-12: the only encryption a message can go out under
+  // (`attachments/sealer.ts`). Neither the Double Ratchet nor Sender Keys
+  // depends on the legacy `keyPair` (D26); text alone may use the opt-in.
+  const [sealer] = useState<ConversationSealer>(() => createConversationSealer({
+    e2ee: () => e2eeManagerRef.current,
+    senderKeys: () => senderKeyStoreRef.current,
+    bootstrapSenderKey: (channelId) => {
+      const socket = wsRef.current;
+      return !!socket && !!bootstrapSenderKeysRef.current?.(socket, channelId);
+    },
+    fetchBundle: async (peerId) => {
+      const token = tokenRef.current;
+      return token && getPeerBundleRef.current ? getPeerBundleRef.current(peerId, token) : undefined;
+    },
+    persistSenderKeys: () => persistSenderKeyStoreRef.current?.(),
+    legacyText: () => {
+      const kp = keyPairRef.current;
+      if (!legacyChannelCryptoEnabled() || !kp) return null;
+      // Explicit compatibility opt-in only: relay-derivable key, NOT E2EE.
+      return async (channelId, text) => encryptMessage(await getChannelKey(kp.privateKey, channelId), text);
+    },
+  }));
+
+  // The decode function's decryptors (REQ-8). Double Ratchet and Sender Keys
+  // do not depend on `keyPair` or `encryptionEnabled` (D26); only the legacy
+  // channel key does, and its plaintext never creates attachment state.
+  const makeDecryptors = useCallback((opts: { doubleRatchet: boolean }): Decryptors => ({
+    doubleRatchet: opts.doubleRatchet ? (senderId: string, payload: string) => {
+      const mgr = e2eeManagerRef.current;
+      if (!mgr?.isInitialized || !senderId) return null;
+      // Our own DR envelopes were encrypted for the peer; trying them would run
+      // the X3DH responder against our own prekeys.
+      if (senderId === localStorage.getItem('accord_user_id')) return null;
+      const json = fromWirePayload(payload);
+      if (!isDoubleRatchetEnvelope(json)) return null;
+      return mgr.decryptEnvelope(senderId, json);
+    } : undefined,
+    senderKeys: (channelId: string, senderId: string, payload: string) => {
+      if (!senderId || !isSenderKeyEnvelope(payload)) return null;
+      return decryptChannelMessage(senderKeyStoreRef.current, channelId, senderId, payload);
+    },
+    legacyChannelKey: async (channelId: string, payload: string) => {
+      if (!keyPairRef.current) return null;
+      const key = await getChannelKey(keyPairRef.current.privateKey, channelId);
+      return decryptMessage(key, payload);
+    },
+  }), []);
+
+  /** Decode one live frame or history item for the conversation being rendered. */
+  const decodeFor = useCallback((item: { channelId: string; messageId: string; senderId: string; payload: string; editedAt?: number | null }, renderedChannelId: string, opts: { doubleRatchet: boolean }, timestampMs: number): Promise<DecodedMessage> => {
+    if (item.messageId) messageTimesRef.current.set(item.messageId, { channelId: renderedChannelId, ts: timestampMs });
+    return decodeMessage(
+      { origin: currentOrigin(), renderedChannelId, ownUserId: localStorage.getItem('accord_user_id') },
+      item,
+      { decryptors: makeDecryptors(opts), cache: plaintextCache, store: attachmentStore },
+    );
+  }, [makeDecryptors, plaintextCache]);
+
+  /**
+   * REQ-24: drop the attachment state and cache records of removed messages:
+   * store entries (whose `removed` events revoke URLs and abort downloads)
+   * and §6.2.4 records, then re-persist the cache.
+   */
+  const dropMessageState = useCallback((ids: string[]) => {
+    forgetMessages(ids, {
+      store: attachmentStore,
+      origin: currentOrigin(),
+      cache: ownMessagesRef.current,
+      extra: messageTimesRef.current,
+      persist: persistOwnMessages,
+    });
+  }, [persistOwnMessages]);
+
+  const [pendingSends] = useState(() => new PendingSendManager({
+    transport: {
+      async upload(channelId, blob, onProgress) {
+        try {
+          return await api.uploadAttachment(channelId, blob, onProgress);
+        } catch (e) {
+          // REQ-17: a relay without the upload route disables attachment sending.
+          const status = (e as { status?: unknown } | null)?.status;
+          if (status === 404 || status === 405) {
+            uploadRouteMissingRef.current.add(currentOrigin());
+            setAttachmentCaps(prev => ({ ...prev, available: false }));
+          }
+          throw e;
+        }
+      },
+      deleteAttachment: (id) => api.deleteAttachment(id),
+      sendFrame: (channelId, sealed, options) => {
+        const socket = wsRef.current;
+        return socket ? socket.sendChannelMessage(channelId, sealed, options) : { handedOff: false, messageId: '' };
+      },
+      async history(channelId, before) {
+        const page = await api.getChannelMessages(channelId, tokenRef.current || '', 50, before);
+        return {
+          items: (page.messages as unknown as Array<Record<string, unknown>>).map(m => ({
+            messageId: String(m.id ?? ''),
+            channelId: typeof m.channel_id === 'string' ? m.channel_id : '',
+            senderId: typeof m.sender_id === 'string' ? m.sender_id : '',
+            payload: typeof m.encrypted_payload === 'string' ? m.encrypted_payload : '',
+            createdAt: typeof m.created_at === 'number' ? m.created_at : 0,
+          })),
+          nextCursor: page.next_cursor,
+          hasMore: !!page.has_more,
+        };
+      },
+    },
+    sealer,
+    cache: plaintextCache,
+    ownUserId: () => localStorage.getItem('accord_user_id'),
+    origin: () => relayOrigin(api.getBaseUrl()),
+    limits: () => attachmentCapsRef.current,
+  }));
 
   // Remove every message whose per-message expiry has passed, from both the
-  // rendered state and the own-message cache. Complements the relay-side sweep
-  // so a device that stays open still drops disappearing messages on time.
+  // rendered state and the own-message cache, and drop its attachment state
+  // (SPEC-02 REQ-24). Complements the relay-side sweep so a device that stays
+  // open still drops disappearing messages on time.
   const sweepExpiredMessages = useCallback(() => {
     const now = Math.floor(Date.now() / 1000);
-    let expiredIds: string[] = [];
+    const current = messagesRef.current;
+    const expiredIds = current
+      .filter(m => m.expires_at !== undefined && m.expires_at <= now && !m._pendingId)
+      .map(m => m.id);
     // Per-recipient read-gated copies that this device has counted down. These get
     // tombstoned (not just dropped) so a relay refetch can't resurrect them.
-    let locallyExpiredIds: string[] = [];
-    setAppState(prev => {
-      expiredIds = prev.messages
-        .filter(m => m.expires_at !== undefined && m.expires_at <= now)
-        .map(m => m.id);
-      locallyExpiredIds = prev.messages
-        .filter(m => m.local_expires_at !== undefined && m.local_expires_at <= now)
-        .map(m => m.id);
-      const gone = new Set([...expiredIds, ...locallyExpiredIds]);
-      if (gone.size === 0) return prev;
-      return { ...prev, messages: prev.messages.filter(m => !gone.has(m.id)) };
-    });
+    const locallyExpiredIds = current
+      .filter(m => m.local_expires_at !== undefined && m.local_expires_at <= now)
+      .map(m => m.id);
+    const gone = new Set([...expiredIds, ...locallyExpiredIds]);
+    if (gone.size === 0) return;
+    setAppState(prev => ({ ...prev, messages: prev.messages.filter(m => !gone.has(m.id)) }));
     if (locallyExpiredIds.length > 0) tombstone(locallyExpiredIds);
-    const allGone = [...expiredIds, ...locallyExpiredIds];
-    if (allGone.length > 0) {
-      purgeOwnMessages(allGone);
-      setForceUpdate(prev => prev + 1);
-    }
-  }, [purgeOwnMessages]);
+    dropMessageState([...gone]);
+    setForceUpdate(prev => prev + 1);
+  }, [dropMessageState]);
 
   // This device just read a channel: start the per-recipient countdown on any
   // read-gated messages it hasn't already stamped (skipping our own messages).
@@ -927,6 +1101,10 @@ function App() {
     }
     return true;
   }, [distributeSenderKeyToMembers, persistSenderKeyStore]);
+  // The send module's sealer reaches these through refs (it is created once).
+  getPeerBundleRef.current = getPeerBundle;
+  bootstrapSenderKeysRef.current = bootstrapChannelSenderKeys;
+  persistSenderKeyStoreRef.current = persistSenderKeyStore;
 
   // Bootstrap channel group E2EE: once E2EE is ready and members are known,
   // create + distribute a sender key for the selected channel if we don't
@@ -1085,11 +1263,36 @@ function App() {
       setConnectedSince(Date.now());
       // Reload nodes on reconnect to prevent stale/missing node list
       loadNodesRef.current?.();
+      // REQ-47, §6.5.4: resend frames that never left, resolve unconfirmed sends.
+      pendingSends.onReconnect();
     });
 
     socket.on('hello' as any, (data: any) => {
       if (data.server_version) setServerHelloVersion(data.server_version);
       if (data.server_build_hash) setServerBuildHash(data.server_build_hash);
+      // SPEC-02 REQ-17: attachments only on relays that advertise attachments/2
+      // (a membership test); /health adds the limits, which guide the UI only.
+      const features: unknown[] = Array.isArray(data.features) ? data.features : [];
+      const available = features.includes(ATTACHMENTS_FEATURE) && !uploadRouteMissingRef.current.has(currentOrigin());
+      setAttachmentCaps(prev => ({ available, maxBlobBytes: available ? prev.maxBlobBytes : null }));
+      if (available) {
+        api.relayCapabilities()
+          .then(caps => {
+            if (!caps.features.includes(ATTACHMENTS_FEATURE)) return;
+            setAttachmentCaps(prev => (prev.available ? { available: true, maxBlobBytes: caps.attachmentLimits?.max_blob_bytes ?? null } : prev));
+          })
+          .catch(() => { /* limits are guidance only (REQ-16) */ });
+      }
+    });
+
+    // Relay admission (SPEC-01 REQ-43): `node_joined` only reloads the node
+    // list. It is a hint and never sends a sender key or NMK by itself.
+    registerAdmissionHandlers(socket, {
+      reloadNodes: () => { loadNodesRef.current?.(); },
+      onNotice: (message) => {
+        setError(message);
+        setTimeout(() => setError(''), 5000);
+      },
     });
 
     socket.on('disconnected', () => {
@@ -1102,6 +1305,17 @@ function App() {
     });
 
     socket.on('error', (err: any) => {
+      // SPEC-02 §6.5.3: a rejected attachment message marks exactly the
+      // pending send whose attachment_ids match; its status shows the reason.
+      if (err && typeof err === 'object' && err.code === 'attachment_claim_failed') {
+        pendingSends.onClaimFailed(err);
+        return;
+      }
+      if (err && typeof err === 'object' && err.code === 'attachments_not_editable') {
+        setError("Messages with attachments can't be edited");
+        setTimeout(() => setError(''), 5000);
+        return;
+      }
       // Server-sent errors (auto-mod, slow mode) have { type: "error", error: "..." }
       if (err && typeof err === 'object' && err.error && typeof err.error === 'string') {
         // Show as a user-facing message error toast
@@ -1136,204 +1350,102 @@ function App() {
     });
 
     socket.on('channel_message', async (data) => {
-      // Handle incoming channel messages
       // This device already read-and-expired its copy; don't let a relay refetch
       // or late echo resurrect it (the relay still holds it for the unread).
       if (data.message_id && isLocallyExpired(data.message_id)) return;
-      let content = data.encrypted_data;
-      let isEncrypted = false;
-      let e2eeType: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none' = 'none';
+      const channelId: string = typeof data.channel_id === 'string' ? data.channel_id : '';
+      const senderId: string = typeof data.from === 'string' ? data.from : '';
+      const messageId: string = typeof data.message_id === 'string' ? data.message_id : '';
+      const payload: string = typeof data.encrypted_data === 'string' ? data.encrypted_data : '';
+      if (!channelId || !messageId) return;
+      const currentUserId = localStorage.getItem('accord_user_id');
+      const isOwnMessage = !!currentUserId && senderId === currentUserId;
 
-      // Check if this is a DM message
-      const isIncomingDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
+      // REQ-49: own frames pair with a pending send by exact ciphertext hash, in
+      // every channel, open or not. A paired echo is rendered by the pending
+      // send listener; an unpaired one is an own message from another session.
+      if (isOwnMessage && pendingSends.pairLiveEcho({ channelId, messageId, senderId, payload }, data)) return;
 
-      const echoMyId = localStorage.getItem('accord_user_id');
-      if (isIncomingDm && data.from && data.from === echoMyId) {
-        // Own DM echo: we can't decrypt our own DR envelope. The temp-message
-        // replacement below restores the plaintext; don't warn.
-        const cached = data.message_id ? ownMessagesRef.current.get(data.message_id) : undefined;
-        if (cached !== undefined) content = cached;
-        isEncrypted = true;
-        e2eeType = 'double-ratchet';
-      } else if (isIncomingDm && e2eeManagerRef.current?.isInitialized && data.from) {
-        // DM: try Double Ratchet E2EE decryption (base64 on the wire)
-        try {
-          content = e2eeManagerRef.current.decryptEnvelope(data.from, fromWirePayload(data.encrypted_data));
-          isEncrypted = true;
-          e2eeType = 'double-ratchet';
-          // Cache the plaintext (encrypted at rest): DR envelopes cannot be
-          // decrypted again later, so history rendering depends on this.
-          if (data.message_id) {
-            ownMessagesRef.current.set(data.message_id, content);
-            const uid = localStorage.getItem('accord_user_id');
-            const pwd = passwordRef.current;
-            if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
-          }
-        } catch (error) {
-          console.warn('E2EE decrypt failed, trying symmetric fallback:', error);
-          // Fallback to symmetric
-          if (encryptionEnabled && keyPairRef.current && data.channel_id) {
-            try {
-              const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
-              content = await decryptMessage(channelKey, data.encrypted_data);
-              isEncrypted = true;
-              e2eeType = 'symmetric';
-            } catch (e2) {
-              console.warn('Symmetric decrypt also failed:', e2);
-            }
-          }
-        }
-      } else if (encryptionEnabled && keyPairRef.current && data.channel_id) {
-        // Own echo: we can't decrypt our own sender-key envelope. The temp
-        // message replacement below restores the plaintext; don't warn.
-        const myUserId = localStorage.getItem('accord_user_id');
-        if (data.from && data.from === myUserId && isSenderKeyEnvelope(data.encrypted_data)) {
-          const cached = data.message_id ? ownMessagesRef.current.get(data.message_id) : undefined;
-          if (cached !== undefined) content = cached;
-          isEncrypted = true;
-          e2eeType = 'sender-keys';
-        } else
-        // Channel: try sender keys first, fall back to symmetric
-        if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
-          try {
-            content = decryptChannelMessage(
-              senderKeyStoreRef.current, data.channel_id, data.from, data.encrypted_data);
-            isEncrypted = true;
-            e2eeType = 'sender-keys';
-          } catch (skError) {
-            console.warn('Sender key decrypt failed, trying symmetric fallback:', skError);
-            try {
-              const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
-              content = await decryptMessage(channelKey, data.encrypted_data);
-              isEncrypted = true;
-              e2eeType = 'symmetric';
-            } catch (error) {
-              console.warn('Failed to decrypt message, showing encrypted data:', error);
-            }
-          }
-        } else {
-          try {
-            const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
-            content = await decryptMessage(channelKey, data.encrypted_data);
-            isEncrypted = true;
-            e2eeType = 'symmetric';
-          } catch (error) {
-            console.warn('Failed to decrypt message, showing encrypted data:', error);
-          }
-        }
-      }
+      const isDm = !!data.is_dm || dmChannelsRef.current.some(dm => dm.id === channelId);
+      const timestampMs = (typeof data.timestamp === 'number' ? data.timestamp : Date.now() / 1000) * 1000;
+      // REQ-8: the decode function is the only path from a frame to content
+      // and attachment state. The Double Ratchet is tried for DM frames only.
+      const decoded = await decodeFor({ channelId, messageId, senderId, payload, editedAt: null }, channelId, { doubleRatchet: isDm }, timestampMs);
+      // REQ-53: plaintext the display path does not accept leaves no trace.
+      if (decoded.display === 'hidden') return;
 
       // Use display name from server payload, fall back to member list, then fingerprint
-      const senderMember = membersRef.current.find(m => m.user_id === data.from);
+      const senderMember = membersRef.current.find(m => m.user_id === senderId);
       const senderName = data.sender_display_name
         || (senderMember && (senderMember.user?.display_name || senderMember.profile?.display_name))
-        || fingerprint(senderMember?.public_key_hash || data.from || '');
+        || fingerprint(senderMember?.public_key_hash || senderId || '');
 
       const newMessage: Message = {
-        id: data.message_id || Math.random().toString(),
+        id: messageId,
         author: senderName,
-        sender_id: data.from,
-        content: content,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestamp: data.timestamp * 1000,
-        channel_id: data.channel_id,
-        isEncrypted: isEncrypted,
-        e2eeType: e2eeType,
+        sender_id: senderId,
+        ...decodedFields(decoded, isDm),
+        time: new Date(timestampMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: timestampMs,
+        channel_id: channelId,
         expires_at: data.expires_at ?? undefined,
         read_gated: data.read_gated ?? undefined,
         gate_ttl_secs: data.gate_ttl_secs ?? undefined,
-        local_expires_at: getLocalExpiry(data.message_id),
+        local_expires_at: getLocalExpiry(messageId),
         reply_to: data.reply_to,
+        // REQ-51: the replied-message preview carries no relay text or attachments.
         replied_message: data.replied_message ? {
           id: data.replied_message.id,
           sender_id: data.replied_message.sender_id,
           sender_public_key_hash: data.replied_message.sender_public_key_hash || '',
           encrypted_payload: data.replied_message.encrypted_payload,
           created_at: data.replied_message.created_at,
-          content: data.replied_message.content,
+          content: typeof data.replied_message.content === 'string' ? data.replied_message.content : undefined,
         } : undefined,
       };
 
       // Track last message time for presence heuristic
-      if (data.from) {
-        recordMessageTime(data.from);
+      if (senderId) {
+        recordMessageTime(senderId);
       }
 
-      // Check if this is a DM message
-      const isDm = data.is_dm || dmChannelsRef.current.some(dm => dm.id === data.channel_id);
-      
       if (isDm) {
         // Handle DM message - refresh DM channels to update last message
         loadDmChannels();
-        
+
         // Add to notifications for DM
-        const dmChannel = dmChannelsRef.current.find(dm => dm.id === data.channel_id);
+        const dmChannel = dmChannelsRef.current.find(dm => dm.id === channelId);
         if (dmChannel) {
-          notificationManager.addMessage(`dm-${dmChannel.id}`, data.channel_id, newMessage, true);
+          notificationManager.addMessage(`dm-${dmChannel.id}`, channelId, newMessage, true);
           setForceUpdate(prev => prev + 1);
         }
       } else {
         // Find which node this channel belongs to for regular messages
-        const nodeId = nodesRef.current.find(node => 
-          channelsRef.current.some(channel => channel.id === data.channel_id && channel.node_id === node.id)
+        const nodeId = nodesRef.current.find(node =>
+          channelsRef.current.some(channel => channel.id === channelId && channel.node_id === node.id)
         )?.id;
 
         // Add message to notification system
         if (nodeId) {
-          notificationManager.addMessage(nodeId, data.channel_id, newMessage);
+          notificationManager.addMessage(nodeId, channelId, newMessage);
           setForceUpdate(prev => prev + 1); // Trigger re-render for unread badges
         }
       }
 
       // Check if this message belongs to the currently selected channel
       const currentChannelId = selectedDmChannelRef.current?.id || selectedChannelIdRef.current;
-      const isCurrentChannel = data.channel_id === currentChannelId;
+      const isCurrentChannel = channelId === currentChannelId;
 
       // Check if user is scrolled to the bottom before adding new message
       const container = messagesContainerRef.current;
-      const wasAtBottom = container ? 
+      const wasAtBottom = container ?
         (container.scrollHeight - container.scrollTop - container.clientHeight < 100) : true;
-
-      const currentUserId = localStorage.getItem('accord_user_id');
-      const isOwnMessage = data.from === currentUserId;
 
       if (isCurrentChannel) {
         setAppState(prev => {
           // Dedup: check if message with this ID already exists
-          if (data.message_id && prev.messages.some(m => m.id === data.message_id)) {
-            return prev;
-          }
-          if (isOwnMessage) {
-            // Replace the oldest optimistic temp message with the real server message.
-            // Keep the locally-known plaintext: with sender keys the author cannot
-            // decrypt their own broadcast envelope (own key lives in myKeys, not
-            // peerKeys), so newMessage.content here is undecryptable ciphertext.
-            const tempIdx = prev.messages.findIndex(
-              m => m.id.startsWith('temp_') && m.channel_id === data.channel_id && m.sender_id === currentUserId
-            );
-            if (tempIdx !== -1) {
-              const updated = [...prev.messages];
-              const localTemp = updated[tempIdx];
-              updated[tempIdx] = {
-                ...newMessage,
-                content: localTemp.content,
-                isEncrypted: localTemp.isEncrypted,
-                e2eeType: localTemp.e2eeType,
-                _status: 'sent',
-              };
-              // Cache our own plaintext under the real message id so history
-              // renders after re-login (we can't decrypt our own SK envelopes,
-              // nor our own — or anyone's — old DR envelopes).
-              if (data.message_id && (localTemp.e2eeType === 'sender-keys' || localTemp.e2eeType === 'double-ratchet')) {
-                ownMessagesRef.current.set(data.message_id, localTemp.content);
-                const uid = localStorage.getItem('accord_user_id');
-                const pwd = passwordRef.current;
-                if (uid && pwd) saveOwnMessages(uid, ownMessagesRef.current, pwd);
-              }
-              return { ...prev, messages: updated };
-            }
-            // No temp message found — might be from another tab/device, add it
-          }
+          if (prev.messages.some(m => m.id === messageId)) return prev;
+          // No position-based pairing with temporary messages (REQ-49).
           return { ...prev, messages: [...prev.messages, newMessage] };
         });
       }
@@ -1344,11 +1456,11 @@ function App() {
           container.scrollTop = container.scrollHeight;
         }, 0);
         // Send read receipt for the new message since user is at bottom
-        if (data.channel_id === selectedChannelIdRef.current && newMessage.id) {
-          sendReadReceipt(data.channel_id, newMessage.id, appState.token);
-          stampGatedReadsForChannel(data.channel_id);
+        if (channelId === selectedChannelIdRef.current && newMessage.id) {
+          sendReadReceipt(channelId, newMessage.id, appState.token);
+          stampGatedReadsForChannel(channelId);
         }
-      } else {
+      } else if (!isOwnMessage) {
         // User is scrolled up — increment unread count
         setNewMessageCount(prev => prev + 1);
       }
@@ -1366,70 +1478,68 @@ function App() {
       }
     });
 
-    // Handle message edit events
+    // Handle message edit events (SPEC-02 REQ-50): an edit never creates,
+    // replaces or removes attachment state, and its sender is the event's
+    // `sender_id`, which must equal the target's sender.
     socket.on('message_edit', async (data) => {
-      
-      try {
-        // Try to decrypt the new content if we have encryption enabled
-        let content = data.encrypted_data;
-        if (encryptionEnabled && keyPairRef.current) {
-          if (isSenderKeyEnvelope(data.encrypted_data) && data.from) {
-            try {
-              content = decryptChannelMessage(
-                senderKeyStoreRef.current, data.channel_id, data.from, data.encrypted_data);
-            } catch {
-              const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
-              content = await decryptMessage(channelKey, data.encrypted_data);
-            }
-          } else {
-            const channelKey = await getChannelKey(keyPairRef.current.privateKey, data.channel_id);
-            content = await decryptMessage(channelKey, data.encrypted_data);
-          }
+      const messageId: string = typeof data.message_id === 'string' ? data.message_id : '';
+      const target = messagesRef.current.find(m => m.id === messageId);
+      if (!target || !target.sender_id || !target.channel_id) return;
+      const payload: string = typeof data.encrypted_data === 'string' ? data.encrypted_data : '';
+      const ownId = localStorage.getItem('accord_user_id');
+      if (ownId && data.sender_id === ownId && target.sender_id === ownId) {
+        const hash = wireSha256(payload);
+        const text = hash !== null && !(target._attachmentCount && target._attachmentCount > 0)
+          ? ownEditsRef.current.take(target.id, hash)
+          : undefined;
+        if (text !== undefined) {
+          setAppState(prev => ({
+            ...prev,
+            messages: prev.messages.map(msg => msg.id === messageId ? { ...msg, content: text, edited_at: data.edited_at, _placeholder: undefined } : msg),
+          }));
+          return;
         }
-
-        setAppState(prev => ({
-          ...prev,
-          messages: prev.messages.map(msg => 
-            msg.id === data.message_id
-              ? { 
-                  ...msg, 
-                  content, 
-                  edited_at: data.edited_at,
-                  isEncrypted: encryptionEnabled 
-                }
-              : msg
-          ),
-        }));
-
-        // Message editing functionality removed
-      } catch (error) {
-        console.warn('Failed to decrypt edited message:', error);
-        // Update message anyway, just keep encrypted data
-        setAppState(prev => ({
-          ...prev,
-          messages: prev.messages.map(msg => 
-            msg.id === data.message_id
-              ? { 
-                  ...msg, 
-                  content: data.encrypted_data, 
-                  edited_at: data.edited_at,
-                  isEncrypted: true 
-                }
-              : msg
-          ),
-        }));
       }
-    });
-
-    // Handle message delete events
-    socket.on('message_delete', (data) => {
-
+      const isDm = dmChannelsRef.current.some(dm => dm.id === target.channel_id);
+      const decision = await decodeEdit(
+        { origin: currentOrigin(), renderedChannelId: target.channel_id, ownUserId: localStorage.getItem('accord_user_id') },
+        {
+          channelId: typeof data.channel_id === 'string' ? data.channel_id : target.channel_id,
+          messageId,
+          senderId: typeof data.sender_id === 'string' ? data.sender_id : '',
+          payload: typeof data.encrypted_data === 'string' ? data.encrypted_data : '',
+        },
+        { messageId: target.id, channelId: target.channel_id, senderId: target.sender_id },
+        { decryptors: makeDecryptors({ doubleRatchet: isDm }), store: attachmentStore },
+      );
+      if (decision.action === 'drop') return;
       setAppState(prev => ({
         ...prev,
-        messages: prev.messages.filter(msg => msg.id !== data.message_id),
+        messages: prev.messages.map(msg =>
+          msg.id === messageId && !(msg._attachmentCount && msg._attachmentCount > 0)
+            ? {
+                ...msg,
+                content: decision.body,
+                edited_at: data.edited_at,
+                isEncrypted: decision.verified || decision.source === 'legacy_key',
+                e2eeType: decision.source === 'dr' ? 'double-ratchet' : decision.source === 'sk' ? 'sender-keys' : decision.source === 'legacy_key' ? 'symmetric' : 'none',
+                _placeholder: undefined,
+              }
+            : msg
+        ),
       }));
+    });
 
-      // Message editing/deletion functionality removed
+    // Handle message delete events: drop the message and, REQ-24, its
+    // attachment state, object URLs and cache record.
+    socket.on('message_delete', (data) => {
+      const messageId: string = typeof data.message_id === 'string' ? data.message_id : '';
+      if (!messageId) return;
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.filter(msg => msg.id !== messageId),
+      }));
+      dropMessageState([messageId]);
     });
 
     // A node's encrypted metadata changed (e.g. an admin updated the
@@ -1444,20 +1554,23 @@ function App() {
     // purge the own-message plaintext cache so nothing survives on this device.
     socket.on('messages_purged', (data) => {
       const cutoffMs = (data.before as number) * 1000;
-      let removedIds: string[] = [];
-      setAppState(prev => {
-        removedIds = prev.messages
+      const removed = new Set(
+        messagesRef.current
           .filter(m => m.channel_id === data.channel_id && m.timestamp < cutoffMs)
-          .map(m => m.id);
-        return {
-          ...prev,
-          messages: prev.messages.filter(
-            m => !(m.channel_id === data.channel_id && m.timestamp < cutoffMs)
-          ),
-        };
-      });
-      if (removedIds.length > 0) {
-        purgeOwnMessages(removedIds);
+          .map(m => m.id),
+      );
+      // Decoded messages of this channel that are no longer rendered (REQ-24).
+      for (const [id, info] of messageTimesRef.current) {
+        if (info.channelId === data.channel_id && info.ts < cutoffMs) removed.add(id);
+      }
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.filter(
+          m => !(m.channel_id === data.channel_id && m.timestamp < cutoffMs)
+        ),
+      }));
+      if (removed.size > 0) {
+        dropMessageState([...removed]);
         setForceUpdate(prev => prev + 1);
       }
     });
@@ -1574,8 +1687,9 @@ function App() {
       }
     });
 
-    socket.on('error', (error: Error) => {
-      console.error('WebSocket error:', error);
+    socket.on('error', (error: unknown) => {
+      // Relay error frames are handled above; log only transport errors.
+      if (error instanceof Error) console.error('WebSocket error:', error.message);
     });
 
     // Handle member joined — update members list in real-time
@@ -1624,7 +1738,11 @@ function App() {
       try {
         // Decrypt the DR-encrypted payload (base64 on the wire)
         const decrypted = e2eeManagerRef.current.decryptEnvelope(data.from_user_id, fromWirePayload(data.payload));
-        const distMsg = JSON.parse(decrypted);
+        // SPEC-02 REQ-53: classify before parsing. Anything the key path does
+        // not accept is discarded silently (and still acknowledged below);
+        // SPEC-05's v2 key bodies have no handler yet.
+        const read = readKeyDistribution(decrypted);
+        const distMsg: any = read?.kind === 'legacy' ? read.message : {};
         if (distMsg.type === 'skdm') {
           const { state } = parseDistributionMessage(distMsg);
           senderKeyStoreRef.current.setPeerKey(distMsg.ch, data.from_user_id, state);
@@ -1641,8 +1759,9 @@ function App() {
           socket.ackSenderKeys([data.distribution_id]);
         }
         persistSenderKeyStore();
-      } catch (err) {
-        console.warn('Failed to process sender key distribution:', err);
+      } catch {
+        // REQ-53: no error derived from the plaintext is logged.
+        console.warn('Failed to process sender key distribution');
       }
     });
 
@@ -1720,7 +1839,9 @@ function App() {
       for (const dist of sorted) {
         try {
           const decrypted = e2eeManagerRef.current.decryptEnvelope(dist.from_user_id, fromWirePayload(dist.encrypted_payload));
-          const distMsg = JSON.parse(decrypted);
+          // SPEC-02 REQ-53: classify before parsing; discarded items are acknowledged.
+          const read = readKeyDistribution(decrypted);
+          const distMsg: any = read?.kind === 'legacy' ? read.message : {};
           if (distMsg.type === 'skdm') {
             const { state } = parseDistributionMessage(distMsg);
             senderKeyStoreRef.current.setPeerKey(distMsg.ch, dist.from_user_id, state);
@@ -1729,8 +1850,9 @@ function App() {
             acceptNmk(distMsg.node, NodeMetadataKey.fromBytes(base64ToBytes(distMsg.key)));
           }
           ackIds.push(dist.id);
-        } catch (err) {
-          console.warn('Failed to process pending sender key distribution:', err);
+        } catch {
+          // REQ-53: no error derived from the plaintext is logged.
+          console.warn('Failed to process pending sender key distribution');
         }
       }
       if (ackIds.length > 0) {
@@ -1739,7 +1861,7 @@ function App() {
       }
     });
 
-  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, reciprocateSenderKey, persistSenderKeyStore, acceptNmk]);
+  }, [encryptionEnabled, distributeSenderKeyToMembers, sendSenderKeyTo, reciprocateSenderKey, persistSenderKeyStore, acceptNmk, decodeFor, makeDecryptors, dropMessageState, pendingSends]);
 
   // Centralized WebSocket connection — disconnects any existing socket before creating a new one.
   // ALL code paths that need a WebSocket MUST use this instead of `new AccordWebSocket` directly.
@@ -1935,63 +2057,137 @@ function App() {
     }
   }, [selectedNodeId, appState.token]);
 
-  // Decrypt a message's encrypted_payload using sender keys or symmetric channel key
-  const decryptPayload = useCallback(async (encrypted: string, channelId: string, senderId?: string, messageId?: string): Promise<{ content: string; isEncrypted: boolean }> => {
-    if (encryptionEnabled && keyPair && channelId) {
-      // Local plaintext cache (encrypted at rest, keyed by message id). Holds
-      // our own sender-key messages (we can't decrypt our own envelopes) and
-      // all Double Ratchet DMs (old DR envelopes are undecryptable by design —
-      // forward secrecy — so live-decrypted plaintext is kept for history).
-      if (messageId) {
-        const cached = ownMessagesRef.current.get(messageId);
-        if (cached !== undefined) return { content: cached, isEncrypted: true };
-      }
-      // Try sender keys first if it looks like a sender key envelope
-      if (senderId && isSenderKeyEnvelope(encrypted)) {
-        try {
-          const content = decryptChannelMessage(
-            senderKeyStoreRef.current, channelId, senderId, encrypted);
-          return { content, isEncrypted: true };
-        } catch {
-          // Fall through to symmetric
-        }
-      }
-      try {
-        const channelKey = await getChannelKey(keyPair.privateKey, channelId);
-        const content = await decryptMessage(channelKey, encrypted);
-        return { content, isEncrypted: true };
-      } catch {
-        // Decryption failed — show raw payload (old key or corrupted)
-      }
-    }
-    return { content: encrypted, isEncrypted: false };
-  }, [encryptionEnabled, keyPair]);
-
-  // Map server MessageMetadata to frontend Message type
-  const mapServerMessage = useCallback(async (msg: any, channelId: string): Promise<Message> => {
+  // Map a relay history item to a `Message` (SPEC-02 REQ-8, REQ-51). The
+  // decode function decides content and attachment state through
+  // `decodeHistoryItem` (attachments/history.ts), which the two-client tests
+  // call too; the relay object is copied through an explicit field list and
+  // never spread. Returns null for a plaintext the display path does not
+  // accept (REQ-53). Own items pair with a pending send first (REQ-49), so
+  // the paired send's cache record applies.
+  const mapServerMessage = useCallback(async (msg: any, channelId: string): Promise<Message | null> => {
     // Server returns created_at (seconds), encrypted_payload (base64)
     const ts = (msg.created_at || msg.timestamp || 0) * (msg.created_at ? 1000 : 1); // created_at is seconds, timestamp might already be ms
-    const payload = msg.encrypted_payload || msg.content || '';
-    const senderId = msg.sender_id || msg.from || '';
-    const { content, isEncrypted } = await decryptPayload(payload, channelId, senderId, msg.id);
-    const detectedSK = isEncrypted && isSenderKeyEnvelope(payload);
-    
+    const item = historyWireItem(msg);
+    if (item.editedAt === null) {
+      pendingSends.pairHistoryItem({ messageId: item.messageId, channelId: item.channelId, senderId: item.senderId, payload: item.payload, createdAt: msg.created_at || 0 });
+    }
+    const isDm = dmChannelsRef.current.some(dm => dm.id === channelId);
+    const fields = await decodeHistoryItem(msg, channelId, isDm, (wire, rendered, opts) => decodeFor(wire, rendered, opts, ts));
+    if (fields === null) return null;
     return {
-      ...msg,
-      content,
-      isEncrypted,
-      e2eeType: isEncrypted ? (detectedSK ? 'sender-keys' as const : 'symmetric' as const) : 'none' as const,
+      ...fields,
       author: msg.display_name || msg.author || fingerprint(msg.sender_public_key_hash || msg.sender_id || '') || 'Unknown',
       time: new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timestamp: ts,
-      channel_id: channelId,
-      sender_id: msg.sender_id?.toString(),
-      read_gated: msg.read_gated ?? undefined,
-      gate_ttl_secs: msg.gate_ttl_secs ?? undefined,
       // Restore this device's in-flight per-recipient countdown across reloads.
       local_expires_at: getLocalExpiry(msg.id),
     };
-  }, [decryptPayload]);
+  }, [decodeFor, pendingSends]);
+
+  /** The temporary message of an own pending send (SPEC-02 §6.5.4). */
+  const pendingMessage = useCallback((view: PendingView, extras: Partial<Message> = {}): Message => {
+    const user = appStateUserRef.current;
+    return {
+      id: view.id,
+      author: user?.display_name || fingerprint(user?.public_key_hash || '') || 'You',
+      content: view.body,
+      time: new Date(view.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: view.createdAt,
+      channel_id: view.channelId,
+      sender_id: localStorage.getItem('accord_user_id') || undefined,
+      isEncrypted: true,
+      e2eeType: dmChannelsRef.current.some(dm => dm.id === view.channelId) ? 'double-ratchet' : 'sender-keys',
+      expires_at: view.expiresAt,
+      read_gated: view.readGated,
+      reply_to: view.replyTo,
+      ...extras,
+      ...pendingStatusFields(view),
+      _pendingId: view.id,
+      _attachmentCount: view.attachmentCount > 0 ? view.attachmentCount : undefined,
+    };
+  }, []);
+
+  /** Re-show a channel's own pending sends after its history was (re)loaded. */
+  const withPendingSends = useCallback((channelId: string, messages: Message[]): Message[] => {
+    const present = new Set(messages.map(m => m.id));
+    const pending = pendingSends.listChannel(channelId).filter(v => v.status !== 'sent' && !present.has(v.id));
+    return pending.length === 0 ? messages : [...messages, ...pending.map(v => pendingMessage(v))];
+  }, [pendingSends, pendingMessage]);
+
+  // Reply previews of temporary messages, by pending-send id.
+  const pendingExtrasRef = useRef<Map<string, Partial<Message>>>(new Map());
+  const nextPendingExtrasRef = useRef<Partial<Message>>({});
+
+  // Own pending sends drive their temporary messages (SPEC-02 §6.5.4, §8.1).
+  useEffect(() => pendingSends.subscribe((event: PendingEvent) => {
+    if (event.type === 'progress') {
+      const p = event.progress;
+      setUploadProgress(p ? {
+        fileName: '',
+        loaded: p.loaded,
+        total: p.total,
+        percentage: p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 0,
+        current: p.fileIndex + 1,
+        totalFiles: p.fileCount,
+      } : null);
+      return;
+    }
+    if (event.type === 'removed') {
+      pendingExtrasRef.current.delete(event.id);
+      setAppState(prev => ({ ...prev, messages: prev.messages.filter(m => m.id !== event.id) }));
+      return;
+    }
+    if (event.type === 'updated') {
+      const view = event.view;
+      if (!pendingExtrasRef.current.has(view.id)) {
+        pendingExtrasRef.current.set(view.id, nextPendingExtrasRef.current);
+        nextPendingExtrasRef.current = {};
+      }
+      const extras = pendingExtrasRef.current.get(view.id) ?? {};
+      setAppState(prev => {
+        const idx = prev.messages.findIndex(m => m.id === view.id);
+        if (idx === -1) {
+          const current = selectedDmChannelRef.current?.id || selectedChannelIdRef.current;
+          if (view.channelId !== current) return prev;
+          return { ...prev, messages: [...prev.messages, pendingMessage(view, extras)] };
+        }
+        const next = [...prev.messages];
+        next[idx] = { ...next[idx], ...pendingStatusFields(view) };
+        return { ...prev, messages: next };
+      });
+      return;
+    }
+    // Paired (REQ-49): the cache record is written; decode the relay's copy
+    // through it (REQ-8 (b)) and let it replace the temporary message.
+    const view = event.view;
+    pendingExtrasRef.current.delete(view.id);
+    void (async () => {
+      const isDm = dmChannelsRef.current.some(dm => dm.id === view.channelId);
+      const decoded = await decodeFor(
+        { channelId: view.channelId, messageId: event.messageId, senderId: event.senderId, payload: event.payload, editedAt: null },
+        view.channelId, { doubleRatchet: false }, view.createdAt,
+      );
+      setAppState(prev => {
+        const idx = prev.messages.findIndex(m => m.id === view.id);
+        if (prev.messages.some(m => m.id === event.messageId)) {
+          return idx === -1 ? prev : { ...prev, messages: prev.messages.filter(m => m.id !== view.id) };
+        }
+        if (idx === -1) return prev;
+        if (decoded.display === 'hidden') return { ...prev, messages: prev.messages.filter(m => m.id !== view.id) };
+        const next = [...prev.messages];
+        next[idx] = {
+          ...next[idx],
+          ...decodedFields(decoded, isDm),
+          id: event.messageId,
+          _status: 'sent',
+          _statusText: undefined,
+          _failure: undefined,
+          _pendingId: undefined,
+        };
+        return { ...prev, messages: next };
+      });
+    })();
+  }), [pendingSends, pendingMessage, decodeFor]);
 
   // Load message history for selected channel (initial load)
   const loadMessages = useCallback(async (channelId: string) => {
@@ -2002,16 +2198,21 @@ function App() {
       
       // Format and decrypt messages for display, dropping any this device already
       // read-expired (the relay still serves them for members who haven't read).
-      const formattedMessages = filterTombstoned(await Promise.all(
-        response.messages.map(msg => mapServerMessage(msg, channelId))
-      ));
+      // Decode oldest first so own items pair in send order (REQ-49).
+      const items = [...response.messages].sort((a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
+      const decoded: Message[] = [];
+      for (const msg of items) {
+        const m = await mapServerMessage(msg, channelId);
+        if (m) decoded.push(m);
+      }
+      const formattedMessages = filterTombstoned(decoded);
 
       // Sort messages by timestamp (oldest first for display)
       formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
       
       setAppState(prev => ({
         ...prev,
-        messages: formattedMessages,
+        messages: withPendingSends(channelId, formattedMessages),
       }));
       
       // Update pagination state
@@ -2039,7 +2240,7 @@ function App() {
       setHasMoreMessages(false);
       setOldestMessageCursor(undefined);
     }
-  }, [appState.token, serverAvailable, mapServerMessage]);
+  }, [appState.token, serverAvailable, mapServerMessage, withPendingSends]);
 
   // Load older messages (for pagination)
   const loadOlderMessages = useCallback(async (channelId: string) => {
@@ -2059,9 +2260,13 @@ function App() {
       }
       
       // Format and decrypt messages for display (drop this device's read-expired)
-      const formattedMessages = filterTombstoned(await Promise.all(
-        response.messages.map(msg => mapServerMessage(msg, channelId))
-      ));
+      const items = [...response.messages].sort((a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
+      const decoded: Message[] = [];
+      for (const msg of items) {
+        const m = await mapServerMessage(msg, channelId);
+        if (m) decoded.push(m);
+      }
+      const formattedMessages = filterTombstoned(decoded);
 
       // Sort new messages by timestamp (oldest first)
       formattedMessages.sort((a, b) => a.timestamp - b.timestamp);
@@ -2098,18 +2303,40 @@ function App() {
     }
   }, [appState.token, serverAvailable, isLoadingOlderMessages, hasMoreMessages, oldestMessageCursor, mapServerMessage]);
 
-  // Handle staging files for preview before upload
-  const handleFilesStaged = useCallback((files: StagedFile[]) => {
-    setStagedFiles(prev => [...prev, ...files]);
+  // REQ-16: mark staged files over the limits before anything is read. The
+  // relay's limit can lower the client's, never raise it.
+  const validateStaged = useCallback((all: StagedFile[]): StagedFile[] => {
+    const caps = attachmentCapsRef.current;
+    const limitMiB = Math.floor(effectiveMaxBlobBytes(caps.maxBlobBytes) / 1_048_576);
+    return all.map((f, i) => ({
+      ...f,
+      error: i >= MAX_ATTACHMENTS_PER_MESSAGE
+        ? `Up to ${MAX_ATTACHMENTS_PER_MESSAGE} files per message`
+        : !fitsBlobLimit(f.file.size, caps.maxBlobBytes)
+          ? `Larger than the ${limitMiB} MiB limit`
+          : undefined,
+    }));
   }, []);
+
+  // Handle staging files for preview before sending (REQ-17: only on relays
+  // that advertise attachments/2).
+  const handleFilesStaged = useCallback((files: StagedFile[]) => {
+    if (!attachmentCapsRef.current.available) {
+      files.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
+      setMessageError(ATTACHMENTS_UNAVAILABLE_TEXT);
+      setTimeout(() => setMessageError(''), 5000);
+      return;
+    }
+    setStagedFiles(prev => validateStaged([...prev, ...files]));
+  }, [validateStaged]);
 
   const handleRemoveStagedFile = useCallback((index: number) => {
     setStagedFiles(prev => {
       const removed = prev[index];
       if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-      return prev.filter((_, i) => i !== index);
+      return validateStaged(prev.filter((_, i) => i !== index));
     });
-  }, []);
+  }, [validateStaged]);
 
   const handleClearStagedFiles = useCallback(() => {
     stagedFiles.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
@@ -2602,7 +2829,11 @@ function App() {
       if (expiry && expiry !== 'never') {
         expiresHoursNum = parseFloat(expiry);
       }
-      const response = await api.createInviteWithOptions(selectedNodeId, appState.token, maxUsesNum, expiresHoursNum);
+      // Fractional hours (0.5 = 30 minutes) become `expires_in_seconds` on
+      // relays that advertise admission/1, and whole hours elsewhere.
+      const response = await api.createInviteWithOptions(
+        selectedNodeId, appState.token, maxUsesNum, expiresHoursNum, ws?.relayFeatures?.(),
+      );
       const baseUrl = api.getBaseUrl();
       try {
         const url = new URL(baseUrl);
@@ -2613,7 +2844,8 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to generate invite:', error);
-      handleApiError(error);
+      setError(inviteCreateErrorMessage(error));
+      setTimeout(() => setError(''), 5000);
     } finally {
       setInviteGenerating(false);
     }
@@ -2631,8 +2863,15 @@ function App() {
       // Reload members
       await loadMembers(selectedNodeId);
     } catch (error) {
+      if (errorReason(error) === 'not_member') {
+        // Already gone on the relay (SPEC-01 §8): refresh the member list.
+        await loadMembers(selectedNodeId);
+        return;
+      }
       console.error('Failed to kick member:', error);
-      handleApiError(error);
+      // `rate_limited` and the other reasons map to the SPEC-01 §8 messages.
+      setError(admissionErrorMessage(error, 'Failed to kick member'));
+      setTimeout(() => setError(''), 5000);
     }
   };
 
@@ -2679,10 +2918,11 @@ function App() {
           return;
         }
         const conn = await rm.connectRelay(parsed.relayUrl, publicKey, pw);
-        // Join the node on that relay
-        const joinResult = await conn.api.joinNodeByInvite(code, conn.token!);
-        if (joinResult?.id) {
-          rm.addNodeToRelay(parsed.relayUrl, joinResult.id);
+        // Join the node on that relay, with this installation's fingerprint
+        // for the node; `already_member` counts as success.
+        const joinResult = await redeemInvite(conn.api, code, conn.token!);
+        if (joinResult.nodeId) {
+          rm.addNodeToRelay(parsed.relayUrl, joinResult.nodeId);
         }
         // Set up WS handlers and connect
         if (conn.ws) {
@@ -2732,7 +2972,7 @@ function App() {
         }
 
         api.setToken(token);
-        await api.joinNodeByInvite(code, token);
+        await redeemInvite(api, code, token);
       }
 
       setShowCreateNodeModal(false);
@@ -2741,7 +2981,7 @@ function App() {
       // Reload nodes to show the new one
       await loadNodes();
     } catch (error: any) {
-      setJoinError(error.message || "Failed to join node");
+      setJoinError(joinErrorMessage(error));
     } finally {
       setJoiningNode(false);
     }
@@ -2909,13 +3149,15 @@ function App() {
           }));
           setIsAuthenticated(true);
 
-          // Join node via invite code
+          // Join node via invite code (`already_member` counts as success)
           let joinedNodeId: string | undefined;
           try {
-            const joinResult = await api.joinNodeByInvite(parsed.inviteCode, existingToken);
-            joinedNodeId = joinResult?.id;
-          } catch (_e) {
-            // May already be a member, that's fine
+            const joinResult = await redeemInvite(api, parsed.inviteCode, existingToken);
+            joinedNodeId = joinResult.nodeId;
+          } catch (e) {
+            // Signed in either way; tell the user why the node did not open.
+            setError(joinErrorMessage(e));
+            setTimeout(() => setError(''), 8000);
           }
 
           // Register relay with RelayManager
@@ -3002,13 +3244,15 @@ function App() {
       storeRelayToken(parsedInvite.relayHost, response.token);
       storeRelayUserId(parsedInvite.relayHost, response.user_id);
 
-      // Join node via invite
+      // Join node via invite (`already_member` counts as success)
       let joinedNodeId: string | undefined;
       try {
-        const joinResult = await api.joinNodeByInvite(parsedInvite.inviteCode, response.token);
-        joinedNodeId = joinResult?.id;
-      } catch (_e) {
-        // May already be a member
+        const joinResult = await redeemInvite(api, parsedInvite.inviteCode, response.token);
+        joinedNodeId = joinResult.nodeId;
+      } catch (e) {
+        // The account exists either way; tell the user why the node did not open.
+        setError(joinErrorMessage(e));
+        setTimeout(() => setError(''), 8000);
       }
 
       // Register relay + node with RelayManager
@@ -3338,6 +3582,13 @@ function App() {
     // Clear in-memory encryption state but keep keypair in localStorage for re-login
     setKeyPair(null);
     clearChannelKeyCache();
+    // SPEC-02: drop attachment state, object URLs and pending sends (with
+    // their plaintext and staged files) of this session.
+    pendingSends.clear();
+    attachmentStore.clear();
+    ownEditsRef.current.clear();
+    ownMessagesRef.current = new Map();
+    messageTimesRef.current.clear();
     setHasExistingKey(hasStoredKeyPair());
     
     // Clear navigation state
@@ -3395,10 +3646,17 @@ function App() {
   // Per-message read-gated / disappearing retention chosen in the composer popover.
   const [messageGate, setMessageGate] = useState<import('./components/RetentionPopover').MessageGate | null>(null);
 
-  // Handle sending messages
+  const sendInFlightRef = useRef(false);
+
+  // Handle sending messages (SPEC-02 §5.3). Every message, text or
+  // attachments, goes through the pending-send manager: the preflight before
+  // any file is read, sealed uploads, an envelope sealed with the Double
+  // Ratchet or Sender Keys only, and "sent" only when the relay's copy pairs.
   const handleSendMessage = async (overrideText?: string) => {
     const msgText = overrideText !== undefined ? overrideText : message;
-    if (!msgText.trim() && stagedFiles.length === 0) return;
+    const files = stagedFiles;
+    if (!msgText.trim() && files.length === 0) return;
+    if (sendInFlightRef.current) return;
 
     // Client-side auto-mod word filter (node channels only). The relay never sees
     // this policy — it's enforced here against the plaintext before encryption.
@@ -3411,327 +3669,161 @@ function App() {
       }
     }
 
-    // Upload any staged files first
-    const channelForUpload = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
-    if (stagedFiles.length > 0 && channelForUpload && appState.token) {
-      let hasError = false;
-      for (let i = 0; i < stagedFiles.length; i++) {
-        const sf = stagedFiles[i];
-        try {
-          let fileToUpload = sf.file;
-          let encryptedFilename: string | undefined;
-
-          setUploadProgress({
-            fileName: sf.name,
-            loaded: 0,
-            total: sf.file.size,
-            percentage: 0,
-            current: i + 1,
-            totalFiles: stagedFiles.length,
-          });
-
-          if (encryptionEnabled && keyPair) {
-            try {
-              const channelKey = await getChannelKey(keyPair.privateKey, channelForUpload);
-              const fileBuffer = await sf.file.arrayBuffer();
-              const encryptedBuffer = await encryptFile(channelKey, fileBuffer);
-              encryptedFilename = await encryptFilename(channelKey, sf.file.name);
-              fileToUpload = new File([encryptedBuffer], 'encrypted_file', { type: 'application/octet-stream' });
-            } catch (error) {
-              console.warn('Failed to encrypt file, uploading plaintext:', error);
-            }
-          }
-
-          await api.uploadFile(channelForUpload, fileToUpload, appState.token, encryptedFilename, (loaded, total) => {
-            const percentage = Math.round((loaded / total) * 100);
-            setUploadProgress(prev => prev ? { ...prev, loaded, total, percentage } : null);
-          });
-        } catch (error) {
-          console.error(`Failed to upload ${sf.name}:`, error);
-          const errMsg = error instanceof Error ? error.message : 'Unknown error';
-          setMessageError(`Upload failed: ${sf.name} — ${errMsg}`);
-          setTimeout(() => setMessageError(''), 6000);
-          hasError = true;
-        }
-      }
-      setUploadProgress(null);
-      // Clean up previews
-      stagedFiles.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
-      setStagedFiles([]);
-      if (hasError && !msgText.trim()) return;
-    }
-
-    // If only files were staged with no message text, we're done
-    if (!msgText.trim()) return;
-
     // Determine which channel to use - DM channel takes priority
-    const channelToUse = selectedDmChannel?.id || selectedChannelId || appState.activeChannel;
-    
-    if (ws && ws.isSocketConnected() && channelToUse) {
-      // Send via WebSocket if connected and we have an active channel
-      try {
-        let messageToSend = msgText;
-        let isEncrypted = false;
-        let e2eeType: 'double-ratchet' | 'symmetric' | 'sender-keys' | 'none' = 'none';
+    const channelToUse = selectedDmChannel?.id || selectedChannelId;
+    if (!channelToUse) return;
+    const conversation: Conversation = selectedDmChannel
+      ? { kind: 'dm', channelId: channelToUse, peerId: selectedDmChannel.other_user.id }
+      : { kind: 'channel', channelId: channelToUse };
 
-        // Encrypt: use E2EE (Double Ratchet) for DMs, symmetric for channels
-        const isDmSend = !!selectedDmChannel;
-        if (isDmSend && e2eeManagerRef.current?.isInitialized && appState.token) {
-          // DM: use Double Ratchet E2EE (envelope embeds X3DH handshake on first contact)
-          try {
-            const recipientId = selectedDmChannel!.other_user.id;
-            const mgr = e2eeManagerRef.current;
-            const bundle = mgr.hasSession(recipientId) ? undefined : await getPeerBundle(recipientId, appState.token);
-            messageToSend = toWirePayload(mgr.encryptEnvelope(recipientId, msgText, bundle));
-            isEncrypted = true;
-            e2eeType = 'double-ratchet';
-          } catch (error) {
-            // Fail closed: never silently downgrade a DM below Double Ratchet.
-            console.error('E2EE encrypt failed for DM:', error);
-            setError('Message not sent: could not establish end-to-end encryption with this user');
-            return;
-          }
-        } else if (encryptionEnabled && keyPair && channelToUse) {
-          // Channel group E2EE via sender keys. Bootstrap on demand if this
-          // channel doesn't have keys yet (e.g. first message ever sent here).
-          if (!senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
-            bootstrapChannelSenderKeys(ws, channelToUse);
-          }
-          if (senderKeyStoreRef.current.hasChannelKeys(channelToUse)) {
-            try {
-              const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, channelToUse);
-              messageToSend = encryptFn(msgText);
-              isEncrypted = true;
-              e2eeType = 'sender-keys';
-            } catch (skError) {
-              console.error('Sender key encrypt failed:', skError);
-            }
-          }
-          if (!isEncrypted && legacyChannelCryptoEnabled()) {
-            // Explicit compatibility opt-in only: relay-derivable key, NOT E2EE.
-            try {
-              const channelKey = await getChannelKey(keyPair.privateKey, channelToUse);
-              messageToSend = await encryptMessage(channelKey, msgText);
-              isEncrypted = true;
-              e2eeType = 'symmetric';
-            } catch (error) {
-              console.error('Legacy channel encrypt failed:', error);
-            }
-          }
-          if (!isEncrypted) {
-            // Fail closed: never send channel plaintext.
-            setError('Message not sent: end-to-end encryption is unavailable for this channel');
-            return;
-          }
-        }
+    // Disappearing messages: stamp the sender-computed expiry from this
+    // channel's effective retention policy (DM channels use no node default).
+    // A per-message gate chosen in the composer overrides the channel default.
+    const gateHasReaders = !!messageGate && (messageGate.users.length > 0 || messageGate.roles.length > 0);
+    const gatePayload = gateHasReaders
+      ? { users: messageGate!.users, roles: messageGate!.roles, ttlSecs: messageGate!.ttlSecs }
+      : undefined;
+    // Read-gated messages get no upfront expiry — the relay stamps it once the
+    // required readers have seen it. Plain per-message TTL and the channel default
+    // both stamp immediately.
+    const retentionTtl = messageGate && !gateHasReaders
+      ? messageGate.ttlSecs
+      : effectiveTtl(selectedDmChannel ? undefined : selectedNodeId ?? undefined, channelToUse);
+    const expiresAt = gateHasReaders ? undefined : expiryForNow(retentionTtl);
 
-        // Disappearing messages: stamp the sender-computed expiry from this
-        // channel's effective retention policy (DM channels use no node default).
-        // A per-message gate chosen in the composer overrides the channel default.
-        const gateHasReaders = !!messageGate && (messageGate.users.length > 0 || messageGate.roles.length > 0);
-        const gatePayload = gateHasReaders
-          ? { users: messageGate!.users, roles: messageGate!.roles, ttlSecs: messageGate!.ttlSecs }
-          : undefined;
-        // Read-gated messages get no upfront expiry — the relay stamps it once the
-        // required readers have seen it. Plain per-message TTL and the channel default
-        // both stamp immediately.
-        const retentionTtl = messageGate && !gateHasReaders
-          ? messageGate.ttlSecs
-          : effectiveTtl(isDmSend ? undefined : selectedNodeId ?? undefined, channelToUse);
-        const expiresAt = gateHasReaders ? undefined : expiryForNow(retentionTtl);
-
-        // Add to local messages for immediate display (temp_ prefix for dedup)
-        const tempId = `temp_${Date.now()}_${Math.random()}`;
-        const newMessage: Message = {
-          id: tempId,
-          author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
-          content: msgText, // Show original plaintext locally
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          timestamp: Date.now(),
-          channel_id: channelToUse,
-          sender_id: localStorage.getItem('accord_user_id') || undefined,
-          isEncrypted: isEncrypted,
-          e2eeType: e2eeType,
-          expires_at: expiresAt,
-          read_gated: gateHasReaders,
-          reply_to: replyingTo?.id,
-          replied_message: replyingTo ? {
-            id: replyingTo.id,
-            sender_id: replyingTo.sender_id || replyingTo.author,
-            sender_public_key_hash: '',
-            encrypted_payload: "",
-            created_at: replyingTo.timestamp,
-            content: replyingTo.content,
-          } : undefined,
-          _status: 'sending',
-          _retryPayload: { channelId: channelToUse, content: msgText, replyTo: replyingTo?.id },
-        };
-
-        setAppState(prev => ({
-          ...prev,
-          messages: [...prev.messages, newMessage]
-        }));
-
-        // Auto-scroll to bottom after sending
-        const container = messagesContainerRef.current;
-        if (container) {
-          setTimeout(() => {
-            container.scrollTop = container.scrollHeight;
-          }, 0);
-        }
-
-        // Pass reply_to if we're replying to a message
-        try {
-          ws.sendChannelMessage(channelToUse, messageToSend, replyingTo?.id, expiresAt, gatePayload);
-          // Mark as sent (delivered to server)
-          setAppState(prev => ({
-            ...prev,
-            messages: prev.messages.map(m =>
-              m.id === tempId ? { ...m, _status: 'sent' as const } : m
-            ),
-          }));
-        } catch (sendError) {
-          console.error('Failed to send message:', sendError);
-          setAppState(prev => ({
-            ...prev,
-            messages: prev.messages.map(m =>
-              m.id === tempId ? { ...m, _status: 'failed' as const } : m
-            ),
-          }));
-        }
-
-      } catch (error) {
-        console.error('Failed to send message:', error);
+    // The lock covers the preflight only, so a text typed during a long
+    // upload can still be sent.
+    sendInFlightRef.current = true;
+    let prepared: Awaited<ReturnType<typeof pendingSends.prepare>>;
+    const typedText = message;
+    try {
+      // REQ-12, REQ-16, REQ-17, REQ-52: refuse before reading any file.
+      prepared = await pendingSends.prepare({
+        conversation,
+        body: msgText,
+        files: files.map(f => ({ file: f.file, name: f.name, type: f.file.type })),
+        options: { replyTo: replyingTo?.id, expiresAt, gate: gatePayload },
+      });
+      if (!prepared.ok) {
+        setMessageError(prepared.error.text);
+        setTimeout(() => setMessageError(''), 6000);
+        return;
       }
-    } else {
-      // Add to local messages as fallback
-      const newMessage: Message = {
-        id: Math.random().toString(),
-        author: appState.user?.display_name || fingerprint(appState.user?.public_key_hash || '') || "You",
-        content: msgText,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestamp: Date.now(),
-        isEncrypted: false,
-      };
 
-      setAppState(prev => ({
-        ...prev,
-        messages: [...prev.messages, newMessage]
-      }));
-
-      // Auto-scroll to bottom after sending
-      const container = messagesContainerRef.current;
-      if (container) {
-        setTimeout(() => {
-          container.scrollTop = container.scrollHeight;
-        }, 0);
+      const replyTarget = replyingTo;
+      nextPendingExtrasRef.current = replyTarget ? {
+        replied_message: {
+          id: replyTarget.id,
+          sender_id: replyTarget.sender_id || replyTarget.author,
+          sender_public_key_hash: '',
+          encrypted_payload: '',
+          created_at: replyTarget.timestamp,
+          content: replyTarget.content,
+        },
+      } : {};
+      setMessage("");
+      setReplyingTo(null);
+      // Per-message retention is a one-shot override; the channel default still applies
+      // to subsequent messages unless the user re-opens the popover.
+      setMessageGate(null);
+      setStagedFiles([]);
+      // Start slow mode cooldown if active
+      if (slowModeSeconds > 0) {
+        setSlowModeCooldown(slowModeSeconds);
       }
+    } finally {
+      sendInFlightRef.current = false;
     }
 
-    setMessage("");
-    setReplyingTo(null);
-    // Per-message retention is a one-shot override; the channel default still applies
-    // to subsequent messages unless the user re-opens the popover.
-    setMessageGate(null);
+    // Auto-scroll to bottom after sending
+    const container = messagesContainerRef.current;
+    if (container) setTimeout(() => { container.scrollTop = container.scrollHeight; }, 0);
 
-    // Start slow mode cooldown if active
-    if (slowModeSeconds > 0) {
-      setSlowModeCooldown(slowModeSeconds);
+    const result = await pendingSends.start(prepared.send);
+    if (result.kind === 'aborted') {
+      // REQ-13: nothing was sent; keep the staged files and the text.
+      setStagedFiles(prev => (prev.length === 0 ? files : prev));
+      if (overrideText === undefined) setMessage(prev => (prev === '' ? typedText : prev));
+      setMessageError(result.error.text);
+      setTimeout(() => setMessageError(''), 6000);
+      return;
     }
+    files.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
   };
 
-  // Retry a failed message
+  // Retry an own message (REQ-47): the pending-send record decides between
+  // resolution, a byte-for-byte resend and a fresh encryption; no plaintext
+  // ever goes to a send function.
   const handleRetryMessage = useCallback((messageId: string) => {
     const msg = appState.messages.find(m => m.id === messageId);
-    if (!msg || msg._status !== 'failed' || !msg._retryPayload || !ws) return;
+    if (!msg?._pendingId) return;
+    void pendingSends.retry(msg._pendingId);
+  }, [appState.messages, pendingSends]);
 
-    // Mark as sending again
-    setAppState(prev => ({
-      ...prev,
-      messages: prev.messages.map(m =>
-        m.id === messageId ? { ...m, _status: 'sending' as const } : m
-      ),
-    }));
+  /** What the edit guard needs to know about a message (REQ-18, OD-48). */
+  const editFacts = useCallback((msg: Message): EditFacts => ({
+    isDm: !!msg.channel_id && dmChannelsRef.current.some(dm => dm.id === msg.channel_id),
+    hasAttachmentState: !!msg.channel_id && attachmentStore.has({ origin: currentOrigin(), channelId: msg.channel_id.toLowerCase(), messageId: msg.id }),
+    pendingWithAttachments: !!msg._pendingId && pendingSends.hasAttachments(msg._pendingId),
+  }), [pendingSends]);
 
-    try {
-      ws.sendChannelMessage(msg._retryPayload.channelId, msg._retryPayload.content, msg._retryPayload.replyTo);
-      setAppState(prev => ({
-        ...prev,
-        messages: prev.messages.map(m =>
-          m.id === messageId ? { ...m, _status: 'sent' as const } : m
-        ),
-      }));
-    } catch {
-      setAppState(prev => ({
-        ...prev,
-        messages: prev.messages.map(m =>
-          m.id === messageId ? { ...m, _status: 'failed' as const } : m
-        ),
-      }));
-    }
-  }, [appState.messages, ws]);
+  /**
+   * Whether Edit is offered: own sent text messages in node channels only.
+   * No Edit in DMs until Double Ratchet edits exist (OD-48), and none on
+   * messages with attachments (REQ-18, OD-36) or placeholders.
+   */
+  const canEditMessage = useCallback((msg: Message): boolean => canOfferEdit(msg, editFacts(msg)), [editFacts]);
 
-  // Handle saving message edit
+  // Start editing only an own message the edit guard allows, whichever
+  // control asked (hover button, context menu, Up on an empty composer).
+  const handleStartEdit = (messageId: string, content: string) => {
+    const target = appState.messages.find(m => m.id === messageId);
+    if (!target || !appState.user || target.sender_id !== appState.user.id || !canEditMessage(target)) return;
+    setEditingMessageId(messageId);
+    setEditingContent(content);
+  };
+
+  // Handle saving message edit (REQ-18, REQ-48): sealed with Sender Keys, or
+  // with the legacy opt-in for text; never sent in plaintext, never in DMs,
+  // never for messages with attachments.
   const handleSaveEdit = async () => {
     if (!editingMessageId || !editingContent.trim() || !appState.user) return;
-
+    const target = appState.messages.find(m => m.id === editingMessageId);
+    if (!target) return;
     try {
-      let messageToSend = editingContent;
-
-      // Encrypt message if encryption is enabled and we have keys
-      if (encryptionEnabled && keyPair && selectedChannelId) {
-        let editEncrypted = false;
-        if (!senderKeyStoreRef.current.hasChannelKeys(selectedChannelId) && ws) {
-          bootstrapChannelSenderKeys(ws, selectedChannelId);
-        }
-        if (senderKeyStoreRef.current.hasChannelKeys(selectedChannelId)) {
-          try {
-            const { encryptFn } = encryptChannelMessage(senderKeyStoreRef.current, selectedChannelId);
-            messageToSend = encryptFn(editingContent);
-            editEncrypted = true;
-          } catch (skError) {
-            console.error('Sender key encrypt failed for edit:', skError);
-          }
-        }
-        if (!editEncrypted && legacyChannelCryptoEnabled()) {
-          // Explicit compatibility opt-in only: relay-derivable key, NOT E2EE.
-          try {
-            const channelKey = await getChannelKey(keyPair.privateKey, selectedChannelId);
-            messageToSend = await encryptMessage(channelKey, editingContent);
-            editEncrypted = true;
-          } catch (error) {
-            console.error('Legacy channel encrypt failed for edit:', error);
-          }
-        }
-        if (!editEncrypted) {
-          // Fail closed: never send channel plaintext.
-          setError('Edit not saved: end-to-end encryption is unavailable for this channel');
-          return;
-        }
+      const edit = await sealEdit(target, editFacts(target), editingContent, sealer);
+      if (!edit.ok) {
+        // Nothing is sent: there is no payload to send.
+        setError(edit.text);
+        return;
       }
-
-      if (ws && ws.isSocketConnected()) {
-        // Send via WebSocket
-        ws.sendEditMessage(editingMessageId, messageToSend);
-      } else {
-        // Send via REST API
-        await api.editMessage(editingMessageId, appState.user.id, messageToSend);
-        // Update local state immediately
-        setAppState(prev => ({
-          ...prev,
-          messages: prev.messages.map(msg => 
-            msg.id === editingMessageId
-              ? { ...msg, content: editingContent, edited_at: Date.now() }
-              : msg
-          ),
-        }));
+      ownEditsRef.current.remember(editingMessageId, edit.sealed.wireSha256, editingContent);
+      try {
+        const sent = ws ? ws.sendEditMessage(editingMessageId, edit.sealed) : null;
+        if (!sent?.handedOff) {
+          // Send via REST API
+          await api.editMessage(editingMessageId, appState.user.id, edit.sealed);
+        }
+      } catch (sendError) {
+        // The edit did not go out: no echo may show its text.
+        ownEditsRef.current.forget(editingMessageId, edit.sealed.wireSha256);
+        throw sendError;
       }
+      // Update local state immediately with the text that was sealed.
+      setAppState(prev => ({
+        ...prev,
+        messages: prev.messages.map(msg =>
+          msg.id === editingMessageId
+            ? { ...msg, content: editingContent, edited_at: Math.floor(Date.now() / 1000) }
+            : msg
+        ),
+      }));
 
       // Clear editing state
       setEditingMessageId(null);
       setEditingContent("");
     } catch (error) {
-      console.error('Failed to edit message:', error);
+      console.error('Failed to edit message:', error instanceof Error ? error.message : 'unknown error');
       setError('Failed to edit message');
     }
   };
@@ -3746,6 +3838,15 @@ function App() {
   const handleDeleteMessage = async (messageId: string) => {
     if (!appState.token) return;
 
+    // A failed own send that never reached the relay: abandon it, deleting
+    // its pending uploads (§6.5.4).
+    const local = appState.messages.find(m => m.id === messageId);
+    if (local?._pendingId) {
+      await pendingSends.abandon(local._pendingId);
+      setShowDeleteConfirm(null);
+      return;
+    }
+
     try {
       if (ws && ws.isSocketConnected()) {
         // Send via WebSocket
@@ -3758,6 +3859,7 @@ function App() {
           ...prev,
           messages: prev.messages.filter(msg => msg.id !== messageId),
         }));
+        dropMessageState([messageId]);
       }
 
       setShowDeleteConfirm(null);
@@ -3886,12 +3988,8 @@ function App() {
 
     try {
       const response = await api.getPinnedMessages(selectedChannelId, appState.token);
-      const formattedPinnedMessages = response.pinned_messages.map((msg: any) => ({
-        ...msg,
-        time: new Date(msg.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        pinned_at: msg.pinned_at * 1000, // Convert to milliseconds
-        timestamp: msg.created_at * 1000,
-      }));
+      // REQ-51: copy an explicit field list; never spread the relay object.
+      const formattedPinnedMessages: Message[] = response.pinned_messages.map((msg: unknown) => pinnedMessageFromRelay(msg, fingerprint));
       
       setPinnedMessages(formattedPinnedMessages);
     } catch (error) {
@@ -3907,12 +4005,8 @@ function App() {
     setThreadLoading(true);
     try {
       const response = await api.getMessageThread(msg.id, appState.token || '');
-      setThreadMessages(response.messages.map((m: any) => ({
-        ...m,
-        time: new Date((m.created_at || m.timestamp) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        timestamp: (m.created_at || m.timestamp) * 1000,
-        author: m.author || m.display_name || m.sender_id?.substring(0, 8) || 'Unknown',
-      })));
+      // REQ-51: copy an explicit field list; never spread the relay object.
+      setThreadMessages(response.messages.map((m: unknown) => threadMessageFromRelay(m)));
     } catch (error) {
       console.error('Failed to load thread:', error);
     } finally {
@@ -4421,6 +4515,11 @@ function App() {
 
     // Constants
     COMMON_EMOJIS,
+
+    // Attachments (SPEC-02)
+    attachmentOrigin,
+    attachmentsAvailable: attachmentCaps.available,
+    canEditMessage,
   };
 
   // ---- Early returns for auth/setup screens ----
@@ -4564,7 +4663,12 @@ function App() {
 
           // Join via invite if provided
           if (result.inviteCode) {
-            try { await api.joinNodeByInvite(result.inviteCode, response.token); } catch {}
+            try {
+              await redeemInvite(api, result.inviteCode, response.token);
+            } catch (e) {
+              setError(joinErrorMessage(e));
+              setTimeout(() => setError(''), 8000);
+            }
           }
 
           // Connect WebSocket

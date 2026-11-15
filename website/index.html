@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Accord — Privacy-First Community Communication</title>
-  <meta name="description" content="Open-source, self-hostable community chat with community nodes, voice channels and end-to-end encrypted messages. Files and voice are not end-to-end encrypted yet.">
+  <meta name="description" content="Open-source, self-hostable community chat with community nodes, voice channels and end-to-end encrypted messages and attachments. Voice is not end-to-end encrypted yet.">
   <link rel="icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -26,7 +26,7 @@
 <section class="hero">
   <div class="container">
     <h1><span>Privacy-First</span><br>Community Communication</h1>
-    <p>Discord-style communities with end-to-end encrypted messages. Voice channels and file sharing are included but are not end-to-end encrypted yet — <a href="https://github.com/Accord-Privacy/Accord/blob/main/SECURITY.md#known-limitations">read the known limitations</a>.</p>
+    <p>Discord-style communities with end-to-end encrypted messages and attachments. Attachments are only as authentic as their message and the relay sees their metadata, files uploaded before encrypted attachments shipped stay readable by the relay until they are retired, and voice is not end-to-end encrypted yet — <a href="https://github.com/Accord-Privacy/Accord/blob/main/SECURITY.md#known-limitations">read the known limitations</a>.</p>
     <div class="hero-buttons">
       <a href="https://github.com/Accord-Privacy/Accord/releases" class="btn btn-primary">Download</a>
       <a href="#get-started" class="btn btn-secondary">Self-Host →</a>
@@ -81,7 +81,7 @@
       <div class="how-step">
         <div class="how-num">1</div>
         <h3>Relays Are Dumb Pipes</h3>
-        <p>Relays route encrypted blobs between clients and are designed so they can't read your messages. Today a relay can still read files and relay-mode voice, and a malicious relay can intercept encrypted sessions when they are set up.</p>
+        <p>Relays route encrypted blobs between clients and are designed so they can't read your messages. Today a relay can still read relay-mode voice and files uploaded before encrypted attachments shipped, it sees attachment metadata such as padded sizes, and a malicious relay can intercept encrypted sessions when they are set up.</p>
       </div>
       <div class="how-step">
         <div class="how-num">2</div>
@@ -91,7 +91,7 @@
       <div class="how-step">
         <div class="how-num">3</div>
         <h3>Messages Are E2EE</h3>
-        <p>Messages are encrypted on your device and decrypted on the recipient's. Your private keys never leave your machine. Files and voice are not end-to-end encrypted yet.</p>
+        <p>Messages and attachments are encrypted on your device and decrypted on the recipient's; every file gets its own random key, sent only inside the encrypted message. Your private keys never leave your machine. Voice is not end-to-end encrypted yet.</p>
       </div>
     </div>
   </div>
@@ -112,7 +112,7 @@
         <div class="trust-node neutral">
           <span class="icon">📡</span>
           <h4>Relay</h4>
-          <p>Routes encrypted blobs and sees metadata. Today it can also read files and relay-mode voice, and a malicious relay can intercept encrypted sessions when they are set up.</p>
+          <p>Routes encrypted blobs and sees metadata, including attachment counts, padded sizes and downloads. Today it can also read relay-mode voice and files uploaded before encrypted attachments shipped, and a malicious relay can intercept encrypted sessions when they are set up.</p>
           <div class="trust-label yellow">◆ Untrusted by design</div>
         </div>
         <div class="trust-node neutral">

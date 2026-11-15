@@ -2,8 +2,11 @@
 //!
 //! Verifies the governance rework: the Node owner has every permission, a plain
 //! member only has @everyone, the auto-seeded Admin/Moderator custom roles exist
-//! and grant power, legacy `add_node_member(Admin/Moderator)` callers are bridged
+//! and grant power, rows carrying the legacy Admin/Moderator marker are bridged
 //! onto those roles, and arbitrary single-bit custom roles keep their granularity.
+//!
+//! Memberships here are raw database rows, seeded with the `test-helpers`
+//! function `Database::seed_node_member` (SPEC-01 REQ-18).
 
 use accord_server::models::permission_bits::{ALL_PERMISSIONS, MANAGE_NODE};
 use accord_server::node::NodeRole;
@@ -53,7 +56,7 @@ async fn plain_member_has_only_everyone() {
     let node = state.db.create_node("N", owner, None).await.unwrap();
     state
         .db
-        .add_node_member(node.id, alice, NodeRole::Member)
+        .seed_node_member(node.id, alice, NodeRole::Member)
         .await
         .unwrap();
 
@@ -123,7 +126,7 @@ async fn legacy_admin_member_is_bridged_to_admin_role() {
     // Legacy caller path: add a member as Admin.
     state
         .db
-        .add_node_member(node.id, bob, NodeRole::Admin)
+        .seed_node_member(node.id, bob, NodeRole::Admin)
         .await
         .unwrap();
 
@@ -152,7 +155,7 @@ async fn single_bit_custom_role_grants_only_its_scope() {
     let node = state.db.create_node("N", owner, None).await.unwrap();
     state
         .db
-        .add_node_member(node.id, carol, NodeRole::Member)
+        .seed_node_member(node.id, carol, NodeRole::Member)
         .await
         .unwrap();
 
@@ -189,16 +192,32 @@ async fn single_bit_custom_role_grants_only_its_scope() {
     );
 }
 
+/// The legacy role conversion runs once, through the migration ledger, so
+/// reopening the database never duplicates or re-creates roles
+/// (SPEC-01 REQ-48).
 #[tokio::test]
-async fn migrate_legacy_roles_is_idempotent() {
-    let state = AppState::new_in_memory().await.unwrap();
-    let owner = user(&state, "owner").await;
-    let node = state.db.create_node("N", owner, None).await.unwrap();
+async fn legacy_role_conversion_runs_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("relay.db");
+    let path = path.to_str().unwrap();
+    let node = {
+        let state = AppState::new(path).await.unwrap();
+        let owner = user(&state, "owner").await;
+        state.db.create_node("N", owner, None).await.unwrap()
+    };
 
-    state.db.migrate_legacy_roles().await.unwrap();
-    state.db.migrate_legacy_roles().await.unwrap();
-
-    // Still exactly one Admin and one Moderator role (no duplication).
-    let admins = state.db.get_role_by_name(node.id, "Admin").await.unwrap();
-    assert!(admins.is_some());
+    for _ in 0..2 {
+        let state = AppState::new(path).await.unwrap();
+        assert!(state
+            .db
+            .ledger_applied_at("spec01_legacy_roles")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(state.db.repair_report().ledger_applied.is_empty());
+        let roles = state.db.get_node_roles(node.id).await.unwrap();
+        for name in ["Admin", "Moderator"] {
+            assert_eq!(roles.iter().filter(|r| r.name == name).count(), 1, "{name}");
+        }
+    }
 }

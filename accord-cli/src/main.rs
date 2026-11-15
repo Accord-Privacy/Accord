@@ -45,10 +45,16 @@ enum Commands {
         /// Name of the new Node
         name: String,
     },
-    /// Join a Node
+    /// Join a Node with an invite code or link, or ask to join one by id
     Join {
-        /// Node ID to join
-        node_id: String,
+        /// Invite code, or an invite link (accord://..., https://host/invite/CODE)
+        #[arg(required_unless_present = "request", conflicts_with = "request")]
+        invite: Option<String>,
+        /// Ask to join the Node with this id (POST /nodes/:id/join). On a Node
+        /// that accepts join requests this records a request that a moderator
+        /// must approve; otherwise the relay answers that an invite is required.
+        #[arg(long, value_name = "NODE_ID")]
+        request: Option<String>,
     },
     /// List channels in a Node
     Channels {
@@ -155,11 +161,6 @@ struct CreateNodeRequest {
 }
 
 #[derive(Serialize, Deserialize)]
-struct JoinNodeRequest {
-    node_id: Uuid,
-}
-
-#[derive(Serialize, Deserialize)]
 struct SendMessageRequest {
     encrypted_content: Vec<u8>,
 }
@@ -261,25 +262,19 @@ impl AccordClient {
         Ok(node)
     }
 
-    async fn join_node(&self, token: &str, node_id: &str) -> Result<()> {
-        let node_uuid = Uuid::parse_str(node_id)?;
-        let url = format!("{}/api/nodes/join", self.server_url);
-        let request = JoinNodeRequest { node_id: node_uuid };
+    /// `POST /invites/:code/join` (SPEC-01 REQ-44).
+    async fn join_by_invite(&self, token: &str, code: &str) -> Result<JoinOutcome> {
+        let url = join_by_invite_url(&self.server_url, code);
+        let response = self.client.post(&url).bearer_auth(token).send().await?;
+        join_outcome(response).await
+    }
 
-        let response = self
-            .client
-            .post(&url)
-            .bearer_auth(token)
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(anyhow!("Failed to join node: {}", error_text));
-        }
-
-        Ok(())
+    /// `POST /nodes/:id/join` without an invite: a join request on a Node
+    /// whose policy is `request` (SPEC-01 REQ-44).
+    async fn request_join(&self, token: &str, node_id: Uuid) -> Result<JoinOutcome> {
+        let url = join_request_url(&self.server_url, node_id);
+        let response = self.client.post(&url).bearer_auth(token).send().await?;
+        join_outcome(response).await
     }
 
     async fn get_channels(&self, token: &str, node_id: &str) -> Result<Vec<Channel>> {
@@ -294,6 +289,140 @@ impl AccordClient {
         let channels: Vec<Channel> = response.json().await?;
         Ok(channels)
     }
+}
+
+/// What the relay answered to a join.
+#[derive(Debug, PartialEq)]
+enum JoinOutcome {
+    Joined { node_id: String, node_name: String },
+    Pending { node_id: String },
+}
+
+/// Read a join answer: 200 `joined`, 202 `pending_approval`, or an error body
+/// `{error, code, reason, retry_after?}` (SPEC-01 section 6.2).
+async fn join_outcome(response: reqwest::Response) -> Result<JoinOutcome> {
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    let field = |name: &str| body[name].as_str().unwrap_or_default().to_string();
+    if status.is_success() {
+        return Ok(if body["status"] == "pending_approval" {
+            JoinOutcome::Pending {
+                node_id: field("node_id"),
+            }
+        } else {
+            JoinOutcome::Joined {
+                node_id: field("node_id"),
+                node_name: field("node_name"),
+            }
+        });
+    }
+    let mut message = body["error"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+    if let Some(reason) = body["reason"].as_str() {
+        message.push_str(&format!(" ({reason})"));
+    }
+    if let Some(retry) = body["retry_after"].as_u64() {
+        message.push_str(&format!("; try again in {retry} s"));
+    }
+    Err(anyhow!(message))
+}
+
+/// The redemption URL of an invite code.
+fn join_by_invite_url(server_url: &str, code: &str) -> String {
+    format!("{}/invites/{}/join", server_url.trim_end_matches('/'), code)
+}
+
+/// The URL that asks to join a Node by id.
+fn join_request_url(server_url: &str, node_id: Uuid) -> String {
+    format!(
+        "{}/nodes/{}/join",
+        server_url.trim_end_matches('/'),
+        node_id
+    )
+}
+
+/// A relay invite code: 6 to 32 ASCII letters and digits (SPEC-01 REQ-36).
+fn is_invite_code(code: &str) -> bool {
+    (6..=32).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// The invite code in `input`, which is either a bare code or an invite link
+/// in one of the desktop's forms: `accord://<base64url host>/<code>`,
+/// `accord://<host>/invite/<code>` or `http(s)://<host>/invite/<code>`. A
+/// link that names another relay than `server_url` is refused, so the code is
+/// never redeemed (and the token never used) at the wrong relay.
+fn invite_code_from(input: &str, server_url: &str) -> Result<String> {
+    let input = input.trim();
+    let (link_host, code) = if let Some(rest) = input.strip_prefix("accord://") {
+        let mut parts = rest.trim_end_matches('/').split('/');
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(encoded), Some(code), None, None) => {
+                let host = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(encoded.trim_end_matches('='))
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .ok_or_else(|| anyhow!("Invalid invite link"))?;
+                (Some(host), code.to_string())
+            }
+            (Some(host), Some("invite"), Some(code), None) => {
+                (Some(host.to_string()), code.to_string())
+            }
+            _ => return Err(anyhow!("Invalid invite link")),
+        }
+    } else if input.starts_with("http://") || input.starts_with("https://") {
+        let url = url::Url::parse(input).map_err(|_| anyhow!("Invalid invite link"))?;
+        let segments: Vec<&str> = url
+            .path_segments()
+            .map(|s| s.filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default();
+        match segments.as_slice() {
+            ["invite", code] => {
+                let host = match url.port() {
+                    Some(port) => format!("{}:{}", url.host_str().unwrap_or_default(), port),
+                    None => url.host_str().unwrap_or_default().to_string(),
+                };
+                (Some(host), (*code).to_string())
+            }
+            _ => return Err(anyhow!("Invalid invite link")),
+        }
+    } else {
+        (None, input.to_string())
+    };
+    if !is_invite_code(&code) {
+        return Err(anyhow!(
+            "Invalid invite code (expected 6 to 32 letters and digits)"
+        ));
+    }
+    if let Some(host) = link_host {
+        if !same_relay(server_url, &host) {
+            return Err(anyhow!(
+                "This invite is for the relay at {host}; run `accord --server <that relay's URL> join ...`"
+            ));
+        }
+    }
+    Ok(code)
+}
+
+/// Does `server_url` name the relay at `host` (`name` or `name:port`)? Ports
+/// are compared only when the link names one.
+fn same_relay(server_url: &str, host: &str) -> bool {
+    let Ok(server) = url::Url::parse(server_url) else {
+        return false;
+    };
+    let Ok(link) = url::Url::parse(&format!("http://{host}")) else {
+        return false;
+    };
+    let same_name = server
+        .host_str()
+        .zip(link.host_str())
+        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+    let same_port = match link.port() {
+        Some(port) => server.port_or_known_default() == Some(port),
+        None => true,
+    };
+    same_name && same_port
 }
 
 fn get_token_path() -> Result<PathBuf> {
@@ -612,16 +741,37 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Join { node_id } => {
+        Commands::Join { invite, request } => {
             let token = load_token().map_err(|_| {
                 anyhow!("Not authenticated. Please run 'accord login <username>' first")
             })?;
 
-            println!("🚪 Joining Node {}...", node_id);
+            let outcome = match (invite, request) {
+                (Some(invite), _) => {
+                    let code = invite_code_from(&invite, &client.server_url)?;
+                    println!("🚪 Joining with an invite...");
+                    client.join_by_invite(&token, &code).await
+                }
+                (None, Some(node_id)) => {
+                    let node_id = Uuid::parse_str(&node_id)
+                        .map_err(|_| anyhow!("Invalid Node ID: {}", node_id))?;
+                    println!("🚪 Asking to join Node {}...", node_id);
+                    client.request_join(&token, node_id).await
+                }
+                (None, None) => Err(anyhow!(
+                    "Give an invite code or link, or --request <node_id>"
+                )),
+            };
 
-            match client.join_node(&token, &node_id).await {
-                Ok(()) => {
-                    println!("✅ Successfully joined Node!");
+            match outcome {
+                Ok(JoinOutcome::Joined { node_id, node_name }) => {
+                    println!("✅ Joined Node {} ({})", node_name, node_id);
+                }
+                Ok(JoinOutcome::Pending { node_id }) => {
+                    println!(
+                        "⏳ Request sent. A moderator of Node {} must approve it.",
+                        node_id
+                    );
                 }
                 Err(e) => {
                     println!("❌ Failed to join node: {}", e);
@@ -776,4 +926,68 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SERVER: &str = "https://relay.example.org:8443";
+
+    /// T-44 (SPEC-01 REQ-44): the CLI redeems invites at `/invites/<code>/join`,
+    /// from a bare code and from each invite link form, and asks to join by
+    /// id at `/nodes/<id>/join`.
+    #[test]
+    fn t44_join_urls() {
+        let code = "Ab3dEf6hIj9kLm2nOp5qRs";
+        let compact =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("relay.example.org:8443");
+        for input in [
+            code.to_string(),
+            format!("  {code}  "),
+            format!("accord://{compact}/{code}"),
+            format!("accord://relay.example.org:8443/invite/{code}"),
+            format!("https://relay.example.org:8443/invite/{code}"),
+            format!("https://relay.example.org:8443/invite/{code}/"),
+        ] {
+            let parsed = invite_code_from(&input, SERVER).unwrap();
+            assert_eq!(parsed, code, "{input}");
+            assert_eq!(
+                join_by_invite_url(SERVER, &parsed),
+                format!("{SERVER}/invites/{code}/join")
+            );
+        }
+        assert_eq!(
+            join_by_invite_url("http://localhost:8080/", "ABCDEFGH"),
+            "http://localhost:8080/invites/ABCDEFGH/join"
+        );
+        let node = Uuid::parse_str("6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d").unwrap();
+        assert_eq!(
+            join_request_url(SERVER, node),
+            format!("{SERVER}/nodes/{node}/join")
+        );
+    }
+
+    #[test]
+    fn t44_rejects_bad_codes_and_other_relays() {
+        for bad in [
+            "abc12",
+            "has-dash1",
+            &"a".repeat(33),
+            "",
+            "accord://",
+            "https://relay.example.org:8443/nodes/x",
+        ] {
+            assert!(invite_code_from(bad, SERVER).is_err(), "{bad}");
+        }
+        assert!(invite_code_from("abcdef", SERVER).is_ok());
+        assert!(invite_code_from(&"a".repeat(32), SERVER).is_ok());
+        // A link for another relay is refused, so the token is not used there.
+        assert!(invite_code_from("https://other.example.org/invite/ABCDEFGH", SERVER).is_err());
+        assert!(
+            invite_code_from("accord://relay.example.org:9999/invite/ABCDEFGH", SERVER).is_err()
+        );
+        // A link without a port matches the server by name.
+        assert!(invite_code_from("accord://relay.example.org/invite/ABCDEFGH", SERVER).is_ok());
+    }
 }

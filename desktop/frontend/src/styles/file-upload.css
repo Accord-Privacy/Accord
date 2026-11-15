@@ -607,3 +607,107 @@
   animation: dropzone-fadein 0.15s ease-out;
 }
 
+
+/* ── SPEC-02: attachment states, send states, legacy uploads ── */
+.file-attachment-status {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.file-attachment-error .file-attachment-status,
+.staged-file-error-text,
+.legacy-upload-error {
+  color: var(--red, #e5484d);
+  font-size: 12px;
+}
+.file-attachment-retry,
+.message-send-retry,
+.message-send-delete,
+.legacy-upload-download,
+.legacy-uploads-toggle,
+.legacy-uploads-more,
+.grid-image-load {
+  background: none;
+  border: 1px solid var(--bg-hover);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  margin-left: 6px;
+  padding: 2px 8px;
+}
+.file-attachment-retry:hover,
+.message-send-retry:hover,
+.message-send-delete:hover,
+.legacy-upload-download:hover,
+.legacy-uploads-toggle:hover,
+.legacy-uploads-more:hover,
+.grid-image-load:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.file-attachment-unsupported {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.grid-image-error,
+.grid-image-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+}
+.message-placeholder {
+  font-style: italic;
+  color: var(--text-muted);
+}
+.message-attachments-pending,
+.message-send-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.message-attachments-ignored {
+  margin-left: 4px;
+  color: var(--red, #e5484d);
+  cursor: help;
+}
+.legacy-uploads {
+  border-top: 1px solid var(--bg-hover);
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.legacy-uploads-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.legacy-upload-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bg-hover);
+}
+.legacy-upload-badge {
+  font-size: 11px;
+  color: var(--red, #e5484d);
+}
+.legacy-upload-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.legacy-confirm {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--red, #e5484d);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+.legacy-confirm-actions button {
+  margin-right: 8px;
+}

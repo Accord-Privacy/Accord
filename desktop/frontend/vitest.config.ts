@@ -7,6 +7,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/__tests__/setup.ts'],
-    exclude: ['e2e/**', 'node_modules/**'],
+    // The two-client tests need a relay: `npm run test:integration`.
+    exclude: ['e2e/**', 'node_modules/**', 'src/__integration__/**'],
   },
 });

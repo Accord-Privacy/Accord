@@ -416,6 +416,14 @@ export interface AppContextType {
 
   // Constants
   COMMON_EMOJIS: string[];
+
+  // Attachments (SPEC-02)
+  /** Relay origin that keys the attachment store. */
+  attachmentOrigin: string;
+  /** The relay advertises `attachments/2` (REQ-17). */
+  attachmentsAvailable: boolean;
+  /** Whether Edit is offered for a message (REQ-18, OD-36, OD-48). */
+  canEditMessage: (msg: Message) => boolean;
 }
 
 export const AppContext = createContext<AppContextType>(null as any);

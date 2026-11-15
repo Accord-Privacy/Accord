@@ -45,6 +45,18 @@ pub mod permission_bits {
         | EMBED_LINKS
         | ATTACH_FILES;
 
+    /// The only bits a template import may write to @everyone (SPEC-01
+    /// REQ-49). They grant neither admission authority (`CREATE_INVITE`) nor
+    /// administration; the owner grants such bits afterwards, deliberately.
+    pub const SAFE_EVERYONE: u64 = VIEW_CHANNEL
+        | SEND_MESSAGES
+        | READ_MESSAGE_HISTORY
+        | ADD_REACTIONS
+        | EMBED_LINKS
+        | ATTACH_FILES
+        | CONNECT
+        | SPEAK;
+
     /// All Phase 1 permission bits OR'd together (for masking)
     pub const ALL_PERMISSIONS: u64 = CREATE_INVITE
         | KICK_MEMBERS
@@ -451,8 +463,17 @@ pub enum WsMessageType {
         name: String,
         description: Option<String>,
     },
-    /// Join an existing Node
-    JoinNode { node_id: Uuid },
+    /// Join an existing Node (SPEC-01 REQ-21). Old clients send only
+    /// `node_id`; the optional fields default to absent.
+    JoinNode {
+        node_id: Uuid,
+        /// An invite code of this node, consumed as the grant.
+        #[serde(default)]
+        invite_code: Option<String>,
+        /// Node-scoped device fingerprint, 64 lowercase hex characters.
+        #[serde(default)]
+        device_fingerprint_hash: Option<String>,
+    },
     /// Leave a Node
     LeaveNode { node_id: Uuid },
     /// Request Node info
@@ -497,6 +518,13 @@ pub enum WsMessageType {
         gate_roles: Option<Vec<Uuid>>,
         #[serde(default)]
         gate_ttl_secs: Option<u64>,
+        /// Version-2 attachments this message claims (SPEC-02 §6.5.1): at
+        /// most 10 distinct lowercase UUIDs. Read as plain strings and
+        /// validated by the handler (REQ-35), so a malformed entry is
+        /// answered with `attachment_claim_failed` instead of a frame parse
+        /// error. Relays older than SPEC-02 ignore the member.
+        #[serde(default)]
+        attachment_ids: Option<Vec<String>>,
     },
     /// Edit a message (author only)
     EditMessage {
@@ -809,11 +837,15 @@ pub struct NodeInvite {
     pub created_at: u64,
 }
 
-/// Create Node invite request
-#[derive(Debug, Deserialize)]
-pub struct CreateInviteRequest {
-    pub max_uses: Option<u32>,
-    pub expires_in_hours: Option<u32>,
+/// One pending join request as approvers list it
+/// (`GET /nodes/:id/join-requests`, SPEC-01 REQ-31).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequestInfo {
+    pub user_id: Uuid,
+    pub public_key_hash: String,
+    pub display_name: Option<String>,
+    pub created_at: u64,
+    pub expires_at: u64,
 }
 
 /// Create Node invite response
@@ -868,6 +900,9 @@ pub struct ApiErrorResponse {
     pub code: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Seconds until a rate-limited request may be retried (`rate_limited`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
 }
 
 impl ApiErrorResponse {
@@ -877,6 +912,7 @@ impl ApiErrorResponse {
             error: error.into(),
             code,
             reason: None,
+            retry_after: None,
         }
     }
 
@@ -886,6 +922,7 @@ impl ApiErrorResponse {
             error: error.into(),
             code,
             reason: Some(reason.to_string()),
+            retry_after: None,
         }
     }
 }
@@ -896,8 +933,31 @@ impl From<ErrorResponse> for ApiErrorResponse {
             error: e.error,
             code: e.code,
             reason: None,
+            retry_after: None,
         }
     }
+}
+
+/// Error body of the version-2 attachment routes and of the attachment
+/// answers of existing routes (SPEC-02 section 6.4): `{"error", "code",
+/// "reason"}`, plus `retry_after` on 429 answers. It is the batch error body
+/// of SPEC-01 section 6.2, so it shares `error` and `code` with
+/// [`ErrorResponse`] and existing clients that read `error` keep working.
+pub type AttachmentErrorResponse = ApiErrorResponse;
+
+/// `201` answer of `POST /channels/{channel_id}/attachments` (SPEC-02
+/// section 6.4.1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentUploadResponse {
+    /// The relay-assigned id, a lowercase UUID.
+    pub attachment_id: Uuid,
+    /// The number of bytes the relay stored.
+    pub blob_size: u64,
+    /// Lowercase hex SHA-256 of the stored bytes, computed by the relay.
+    pub blob_sha256: String,
+    /// When the attachment expires unless a message claims it, in Unix
+    /// seconds.
+    pub pending_expires_at: u64,
 }
 
 /// Permission denied error response
@@ -933,6 +993,43 @@ pub struct HealthResponse {
     pub database_ok: bool,
     pub websocket_connections: usize,
     pub memory_usage_bytes: u64,
+    /// The relay capability registry (SPEC-01 §6.8, REQ-42). Clients test
+    /// membership only.
+    pub features: Vec<String>,
+    /// When this relay began enforcing admission, in Unix seconds: the
+    /// `applied_at` of the `spec01_legacy_invite_expiry` ledger row, T0 of
+    /// REQ-46 (SPEC-01 REQ-42). An unauthenticated hint only.
+    pub admission_since: Option<u64>,
+    /// The version-2 attachment limits that go with `attachments/2`
+    /// (SPEC-02 §6.4.6, REQ-44). They guide the client's interface only.
+    pub attachment_limits: AttachmentLimits,
+}
+
+/// `attachment_limits` of `GET /health` (SPEC-02 §6.4.6).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachmentLimits {
+    /// `attachment_max_blob_bytes`: the largest blob the relay accepts.
+    pub max_blob_bytes: u64,
+    /// The most attachments one message may claim.
+    pub max_per_message: usize,
+}
+
+/// One row of the legacy list `GET /channels/{id}/files` (SPEC-02 §6.4.5).
+/// Unlike [`FileMetadata`] it carries neither `storage_path` nor
+/// `content_hash`, and `encrypted_filename` is a string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LegacyFileEntry {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    /// The uploader the relay stores; clients label it as reported by the
+    /// relay (REQ-27).
+    pub uploader_id: Uuid,
+    /// The stored name as a UTF-8 string, or `""` when the stored bytes are
+    /// not valid UTF-8 or exceed 4 096 bytes. Never `null`: clients older
+    /// than SPEC-02 call `split` on it.
+    pub encrypted_filename: String,
+    pub file_size_bytes: i64,
+    pub created_at: u64,
 }
 
 /// User profile information
@@ -1921,10 +2018,14 @@ mod tests {
     #[test]
     fn ws_message_type_roundtrip_with_data() {
         let id = uuid::Uuid::nil();
-        let original = WsMessageType::JoinNode { node_id: id };
+        let original = WsMessageType::JoinNode {
+            node_id: id,
+            invite_code: None,
+            device_fingerprint_hash: None,
+        };
         let json = serde_json::to_string(&original).unwrap();
         let back: WsMessageType = serde_json::from_str(&json).unwrap();
-        assert!(matches!(back, WsMessageType::JoinNode { node_id } if node_id == id));
+        assert!(matches!(back, WsMessageType::JoinNode { node_id, .. } if node_id == id));
     }
 
     // ── Serde round-trips for key request/response types ──
@@ -1968,11 +2069,23 @@ mod tests {
             database_ok: true,
             websocket_connections: 42,
             memory_usage_bytes: 1024,
+            features: vec!["admission/1".into()],
+            admission_since: Some(1_700_000_000),
+            attachment_limits: AttachmentLimits {
+                max_blob_bytes: 104_857_600,
+                max_per_message: 10,
+            },
         };
         let json = serde_json::to_string(&resp).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["status"], "ok");
         assert_eq!(v["database_ok"], true);
         assert_eq!(v["websocket_connections"], 42);
+        assert_eq!(v["features"], serde_json::json!(["admission/1"]));
+        assert_eq!(v["admission_since"], 1_700_000_000u64);
+        assert_eq!(
+            v["attachment_limits"],
+            serde_json::json!({ "max_blob_bytes": 104_857_600u64, "max_per_message": 10 })
+        );
     }
 }

@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { api } from './api';
+import { api, parseInviteLink } from './api';
+import { redeemInvite, joinErrorMessage } from './admission';
 import { Node } from './types';
 import { Button, Modal } from './components/ui';
 
@@ -25,19 +26,24 @@ export function JoinNodeDialog({ isOpen, onClose, onNodeJoined, token }: JoinNod
     setError('');
 
     try {
-      const nodeInfo = await api.joinNodeByInvite(inviteCode.trim(), token);
-      const node: Node = {
-        id: nodeInfo.id,
-        name: nodeInfo.name,
-        owner_id: nodeInfo.owner_id,
-        description: nodeInfo.description,
-        created_at: nodeInfo.created_at,
-      };
-      onNodeJoined(node);
+      const input = inviteCode.trim();
+      const code = parseInviteLink(input)?.inviteCode ?? input;
+      // Sends this installation's fingerprint for the node; `already_member`
+      // counts as success (SPEC-01 REQ-43).
+      const joined = await redeemInvite(api, code, token);
+      if (joined.nodeId) {
+        const node: Node = {
+          id: joined.nodeId,
+          name: joined.status === 'joined' ? joined.nodeName ?? '' : '',
+          owner_id: '',
+          created_at: 0,
+        };
+        onNodeJoined(node);
+      }
       setInviteCode('');
       onClose();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to join Node');
+      setError(joinErrorMessage(error, 'Failed to join Node'));
     } finally {
       setIsLoading(false);
     }

@@ -194,7 +194,7 @@ async fn test_node_join_and_is_member() {
     let user = db.create_user("member3", "").await.unwrap();
     let node = db.create_node("N2", owner.id, None).await.unwrap();
 
-    db.add_node_member(node.id, user.id, NodeRole::Member)
+    db.seed_node_member(node.id, user.id, NodeRole::Member)
         .await
         .unwrap();
     assert!(db.is_node_member(node.id, user.id).await.unwrap());
@@ -207,10 +207,18 @@ async fn test_node_leave_removes_member() {
     let user = db.create_user("member4", "").await.unwrap();
     let node = db.create_node("N3", owner.id, None).await.unwrap();
 
-    db.add_node_member(node.id, user.id, NodeRole::Member)
+    db.seed_node_member(node.id, user.id, NodeRole::Member)
         .await
         .unwrap();
-    db.remove_node_member(node.id, user.id).await.unwrap();
+    // Membership removal goes through the single removal routine (SPEC-01 REQ-50).
+    let removal = db
+        .remove_member(
+            node.id,
+            accord_server::db::admission::Removal::Leave { user_id: user.id },
+        )
+        .await
+        .unwrap();
+    assert_eq!(removal.removed_user, Some(user.id));
     assert!(!db.is_node_member(node.id, user.id).await.unwrap());
 }
 
@@ -222,10 +230,10 @@ async fn test_get_node_members_returns_all() {
     let u2 = db.create_user("m2", "").await.unwrap();
     let node = db.create_node("N4", owner.id, None).await.unwrap();
 
-    db.add_node_member(node.id, u1.id, NodeRole::Member)
+    db.seed_node_member(node.id, u1.id, NodeRole::Member)
         .await
         .unwrap();
-    db.add_node_member(node.id, u2.id, NodeRole::Moderator)
+    db.seed_node_member(node.id, u2.id, NodeRole::Moderator)
         .await
         .unwrap();
 
@@ -240,7 +248,7 @@ async fn test_get_node_member_role() {
     let user = db.create_user("mod1", "").await.unwrap();
     let node = db.create_node("N5", owner.id, None).await.unwrap();
 
-    db.add_node_member(node.id, user.id, NodeRole::Moderator)
+    db.seed_node_member(node.id, user.id, NodeRole::Moderator)
         .await
         .unwrap();
     let member = db.get_node_member(node.id, user.id).await.unwrap().unwrap();
@@ -814,7 +822,7 @@ async fn test_assign_and_get_member_roles() {
     let member = db.create_user("role_member", "").await.unwrap();
     let node = db.create_node("RoleNode", owner.id, None).await.unwrap();
 
-    db.add_node_member(node.id, member.id, NodeRole::Member)
+    db.seed_node_member(node.id, member.id, NodeRole::Member)
         .await
         .unwrap();
 
@@ -840,7 +848,7 @@ async fn test_remove_member_role() {
     let member = db.create_user("rmrole_member", "").await.unwrap();
     let node = db.create_node("RmRoleNode", owner.id, None).await.unwrap();
 
-    db.add_node_member(node.id, member.id, NodeRole::Member)
+    db.seed_node_member(node.id, member.id, NodeRole::Member)
         .await
         .unwrap();
 

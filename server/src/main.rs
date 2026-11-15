@@ -3,186 +3,24 @@
 //! Zero-knowledge relay server that routes encrypted messages
 //! without having access to decrypt user content.
 
-// Federation and Bot API modules are scaffolding — allow unused until fully integrated.
-#![allow(dead_code)]
-
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-mod admin;
-mod admission;
-mod backup;
-mod batch_handlers;
-mod bot_api;
-#[allow(dead_code)]
-mod db;
-mod federation;
-#[allow(dead_code)]
-mod files;
-mod handlers;
-mod metadata;
-#[allow(dead_code)]
-mod models;
-mod node;
-mod permissions;
-pub mod push;
-#[allow(dead_code)]
-mod rate_limit;
-mod relay_mesh;
-mod state;
-mod validation;
-mod webhooks;
-
+// The binary uses the library crate, so the relay and its tests share one
+// module tree, one `SharedState` type and one route table (SPEC-01 §10.1).
+use accord_server::{
+    admin,
+    attachments::{self, AttachmentConfig},
+    backup, db, federation, rate_limit, relay_mesh,
+    router::{self, RouterConfig},
+    state::{self, AppState, AppStateOptions, SharedState},
+};
 use anyhow::Result;
-use axum::http::HeaderValue;
-use axum::{
-    routing::{delete, get, post},
-    Router,
-};
 use clap::Parser;
-use handlers::{
-    accept_friend_request_handler, ack_sender_keys_handler, add_build_allowlist_handler,
-    add_reaction_handler, assign_member_role_handler, auth_handler, ban_check_handler,
-    ban_user_handler, block_user_handler, build_info_handler, create_channel_category_handler,
-    create_channel_handler, create_dm_channel_handler, create_invite_handler, create_node_handler,
-    create_role_handler, delete_channel_category_handler, delete_channel_handler,
-    delete_channel_overwrite_handler, delete_custom_emoji_handler, delete_file_handler,
-    delete_message_handler, delete_role_handler, deregister_push_token_handler,
-    download_file_handler, edit_message_handler, fetch_key_bundle_handler,
-    get_blocked_users_handler, get_build_allowlist_handler, get_channel_messages_handler,
-    get_channel_threads_handler, get_dm_channels_handler, get_effective_permissions_handler,
-    get_emoji_image_handler, get_member_roles_handler, get_message_reactions_handler,
-    get_message_thread_handler, get_node_audit_log_handler, get_node_handler,
-    get_node_icon_handler, get_node_members_handler, get_node_presence_handler,
-    get_node_user_profiles_handler, get_pending_sender_keys_handler, get_pinned_messages_handler,
-    get_prekey_messages_handler, get_slow_mode_handler, get_user_avatar_handler,
-    get_user_profile_handler, health_handler, import_discord_template_handler,
-    invite_preview_handler, join_node_handler, kick_user_handler, leave_node_handler,
-    link_preview_handler, list_bans_handler, list_channel_files_handler,
-    list_channel_overwrites_handler, list_custom_emojis_handler, list_friend_requests_handler,
-    list_friends_handler, list_invites_handler, list_node_channels_handler, list_roles_handler,
-    list_user_nodes_handler, mark_channel_read_handler, pin_message_handler,
-    publish_key_bundle_handler, purge_channel_before_handler, register_handler,
-    register_push_token_handler, reject_friend_request_handler, remove_build_allowlist_handler,
-    remove_friend_handler, remove_member_role_handler, remove_reaction_handler,
-    reorder_channels_handler, reorder_roles_handler, revoke_invite_handler,
-    search_messages_handler, send_friend_request_handler, set_build_allowlist_handler,
-    set_channel_overwrite_handler, set_node_user_profile_handler, set_slow_mode_handler,
-    store_prekey_message_handler, store_sender_key_handler, unban_user_handler,
-    unblock_user_handler, unpin_message_handler, update_channel_category_handler,
-    update_channel_handler, update_node_handler, update_push_preferences_handler,
-    update_role_handler, update_user_profile_handler, upload_custom_emoji_handler,
-    upload_file_handler, upload_node_icon_handler, upload_user_avatar_handler, use_invite_handler,
-    ws_handler,
-};
 use serde::Deserialize;
-use state::{AppState, SharedState};
 use std::sync::Arc;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{AllowOrigin, Any, CorsLayer},
-    services::{ServeDir, ServeFile},
-    set_header::SetResponseHeaderLayer,
-    trace::TraceLayer,
-};
 use tracing::{error, info, warn};
-use webhooks::{
-    create_webhook_handler, delete_webhook_handler, list_webhooks_handler, test_webhook_handler,
-    update_webhook_handler,
-};
-
-mod rate_limit_middleware {
-    use crate::rate_limit::ActionType;
-    use crate::state::SharedState;
-    use axum::{
-        body::Body,
-        extract::State,
-        http::{Request, StatusCode},
-        middleware::Next,
-        response::{IntoResponse, Response},
-    };
-
-    /// Axum middleware that applies rate limiting based on the authenticated user.
-    /// Extracts the token from query params, resolves the user, and checks the rate limiter.
-    pub async fn rate_limit_layer(
-        State(state): State<SharedState>,
-        request: Request<Body>,
-        next: Next,
-    ) -> Response {
-        // Determine action type from the request path/method
-        let action = match (request.method().as_str(), request.uri().path()) {
-            ("POST", path) if path.contains("/files") => Some(ActionType::FileUpload),
-            ("PUT", path) if path.contains("/reactions") => Some(ActionType::Reaction),
-            ("PATCH", "/users/me/profile") => Some(ActionType::ProfileUpdate),
-            ("POST", path) if path.starts_with("/dm/") => Some(ActionType::DirectMessage),
-            ("POST", path) if path.contains("/messages") => Some(ActionType::Message),
-            ("POST", path) if path.contains("/invites") => Some(ActionType::InviteCreate),
-            ("POST", "/nodes") => Some(ActionType::NodeCreate),
-            _ => None,
-        };
-
-        if let Some(action) = action {
-            // Extract token from query string
-            if let Some(query) = request.uri().query() {
-                let token = query.split('&').find_map(|pair| {
-                    let mut parts = pair.splitn(2, '=');
-                    if parts.next() == Some("token") {
-                        parts.next()
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(token) = token {
-                    if let Some(user_id) = state.validate_token(token).await {
-                        if let Err(err) = state.rate_limiter.check(user_id, action).await {
-                            return (
-                                StatusCode::TOO_MANY_REQUESTS,
-                                format!(
-                                    "Rate limit exceeded: {}. Retry after {}s",
-                                    err.message, err.retry_after_secs
-                                ),
-                            )
-                                .into_response();
-                        }
-                    }
-                }
-            }
-        }
-
-        next.run(request).await
-    }
-}
-
-mod ip_ban_middleware {
-    use crate::state::SharedState;
-    use axum::{
-        body::Body,
-        extract::{ConnectInfo, State},
-        http::{Request, StatusCode},
-        middleware::Next,
-        response::{IntoResponse, Response},
-    };
-    use std::net::SocketAddr;
-
-    /// Outermost middleware: reject transport-banned IPs before any routing or
-    /// rate-limit work (cheap DoS/DDoS rejection). Bans key on the real socket
-    /// peer address — never on a spoofable forwarded header. Relay-owner only;
-    /// the ban set is never correlated to a node.
-    pub async fn ip_ban_layer(
-        ConnectInfo(addr): ConnectInfo<SocketAddr>,
-        State(state): State<SharedState>,
-        request: Request<Body>,
-        next: Next,
-    ) -> Response {
-        let ip = addr.ip().to_string();
-        if state.is_ip_banned(&ip).await {
-            return (StatusCode::FORBIDDEN, "IP banned").into_response();
-        }
-        next.run(request).await
-    }
-}
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
@@ -223,6 +61,13 @@ enum Command {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Retire legacy (pre-version-2) attachments now: delete every legacy
+    /// file and its blob, and answer every legacy file route with 410 from
+    /// then on (SPEC-02 section 7.7). Uses the relay's --database, --config
+    /// and attachment options, given before the subcommand. A relay running
+    /// on the same database answers 410 on its next legacy request, and its
+    /// next storage reconciliation deletes anything left behind.
+    PurgeLegacyAttachments,
 }
 
 #[derive(Parser, Debug)]
@@ -298,6 +143,74 @@ struct Args {
     #[arg(long)]
     disable_rate_limits: bool,
 
+    /// Grace period, in hours, after which invites created before the
+    /// admission upgrade without an expiry stop working (applied once, at the
+    /// first boot of this version). 0 makes them expire at once.
+    #[arg(long, default_value_t = 168)]
+    legacy_invite_grace_hours: u64,
+
+    /// Keep invites created before the admission upgrade without an expiry
+    /// permanent. The choice is recorded at the first boot and is final.
+    #[arg(long)]
+    keep_legacy_permanent_invites: bool,
+
+    /// Unauthenticated invite previews allowed per 60 s per client network
+    /// (IPv4 address or IPv6 /64 of the socket peer). 0 disables the limit.
+    /// Loopback peers (a reverse proxy on the same host) are never limited.
+    #[arg(long, default_value_t = accord_server::rate_limit::DEFAULT_PREVIEW_LIMIT)]
+    preview_rate_limit: usize,
+
+    /// Directory of version-2 attachment blobs (SPEC-02). The relay refuses
+    /// to start if it is the database's directory or an ancestor of it,
+    /// overlaps the legacy file directory, or is a non-empty directory
+    /// without the marker file it writes.
+    #[arg(long, default_value = "./data/attachments")]
+    attachments_dir: String,
+
+    /// Largest accepted attachment blob, in bytes.
+    #[arg(long, default_value_t = 104_857_600)]
+    attachment_max_blob_bytes: u64,
+
+    /// Lifetime of an uploaded attachment that no message has claimed, in
+    /// seconds (300 to 86400).
+    #[arg(long, default_value_t = 3600)]
+    attachment_pending_ttl_secs: u64,
+
+    /// Pending and uploading attachments allowed per user.
+    #[arg(long, default_value_t = 32)]
+    attachment_max_pending_per_user: u64,
+
+    /// Attachment bytes per uploader (uploading, pending and claimed); 0 means
+    /// unlimited.
+    #[arg(long, default_value_t = 1_073_741_824)]
+    attachment_quota_user_bytes: u64,
+
+    /// Attachment bytes per node, DM channels excluded; 0 means unlimited.
+    #[arg(long, default_value_t = 10_737_418_240)]
+    attachment_quota_node_bytes: u64,
+
+    /// Refuse attachment uploads when less than this many bytes would stay
+    /// free.
+    #[arg(long, default_value_t = 1_073_741_824)]
+    attachments_min_free_bytes: u64,
+
+    /// Attachment garbage-collection interval in seconds (1 to 3600).
+    #[arg(long, default_value_t = 60)]
+    attachment_gc_interval_secs: u64,
+
+    /// Attachment storage reconciliation interval in seconds (60 to 86400).
+    #[arg(long, default_value_t = 3600)]
+    attachment_reconcile_interval_secs: u64,
+
+    /// Legacy attachments (uploads before version 2): 'read-only' or 'retired'.
+    #[arg(long, default_value = "read-only")]
+    legacy_attachments: String,
+
+    /// Days after the first start of this version after which legacy
+    /// attachments are retired.
+    #[arg(long, default_value_t = 90)]
+    legacy_attachments_retire_after_days: u64,
+
     /// Enable relay mesh networking for cross-relay DMs
     #[arg(long)]
     mesh_enabled: bool,
@@ -343,6 +256,17 @@ struct FileConfig {
     metadata_mode: Option<String>,
     frontend: Option<String>,
     build_hash_enforcement: Option<String>,
+    attachments_dir: Option<String>,
+    attachment_max_blob_bytes: Option<u64>,
+    attachment_pending_ttl_secs: Option<u64>,
+    attachment_max_pending_per_user: Option<u64>,
+    attachment_quota_user_bytes: Option<u64>,
+    attachment_quota_node_bytes: Option<u64>,
+    attachments_min_free_bytes: Option<u64>,
+    attachment_gc_interval_secs: Option<u64>,
+    attachment_reconcile_interval_secs: Option<u64>,
+    legacy_attachments: Option<String>,
+    legacy_attachments_retire_after_days: Option<u64>,
     mesh_enabled: Option<bool>,
     mesh_port: Option<u16>,
     mesh_peers: Option<String>,
@@ -391,6 +315,17 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
     apply!(database_encryption, true);
     apply!(metadata_mode, "standard");
     apply!(build_hash_enforcement, "off");
+    apply!(attachments_dir, "./data/attachments");
+    apply!(attachment_max_blob_bytes, 104_857_600);
+    apply!(attachment_pending_ttl_secs, 3600);
+    apply!(attachment_max_pending_per_user, 32);
+    apply!(attachment_quota_user_bytes, 1_073_741_824);
+    apply!(attachment_quota_node_bytes, 10_737_418_240);
+    apply!(attachments_min_free_bytes, 1_073_741_824);
+    apply!(attachment_gc_interval_secs, 60);
+    apply!(attachment_reconcile_interval_secs, 3600);
+    apply!(legacy_attachments, "read-only");
+    apply!(legacy_attachments_retire_after_days, 90);
     apply!(mesh_port, 9443);
     apply!(mesh_peers, "");
     apply!(mesh_data_dir, "mesh_data");
@@ -417,6 +352,60 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
             args.mesh_enabled = true;
         }
     }
+}
+
+/// The version-2 attachment settings (SPEC-02 section 6.6.4). Errors name
+/// the setting.
+fn attachment_config(args: &Args) -> Result<AttachmentConfig> {
+    let config = AttachmentConfig {
+        dir: std::path::PathBuf::from(&args.attachments_dir),
+        max_blob_bytes: args.attachment_max_blob_bytes,
+        pending_ttl_secs: args.attachment_pending_ttl_secs,
+        max_pending_per_user: args.attachment_max_pending_per_user,
+        quota_user_bytes: args.attachment_quota_user_bytes,
+        quota_node_bytes: args.attachment_quota_node_bytes,
+        min_free_bytes: args.attachments_min_free_bytes,
+        gc_interval_secs: args.attachment_gc_interval_secs,
+        reconcile_interval_secs: args.attachment_reconcile_interval_secs,
+        legacy_mode: args
+            .legacy_attachments
+            .parse()
+            .map_err(|e: String| anyhow::anyhow!(e))?,
+        legacy_retire_after_days: args.legacy_attachments_retire_after_days,
+        ..AttachmentConfig::default()
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+/// `accord-server purge-legacy-attachments` (SPEC-02 section 7.7): open the
+/// relay's database and storage as the server does, retire every legacy file
+/// now, and record the `spec02_legacy_retired` ledger row.
+async fn purge_legacy_attachments(args: &Args) -> Result<()> {
+    let attachment_settings = attachment_config(args)?;
+    let state = AppState::new_with_options(
+        &args.database,
+        AppStateOptions {
+            database_encryption: args.database_encryption,
+            db: db::DbOptions {
+                legacy_invite_grace_secs: args.legacy_invite_grace_hours.saturating_mul(3600),
+                keep_legacy_permanent_invites: args.keep_legacy_permanent_invites,
+                ..db::DbOptions::default()
+            },
+            file_config: Some(accord_server::files::FileConfig::default()),
+            attachments: Some(attachment_settings),
+        },
+    )
+    .await?;
+    let report = state
+        .attachments
+        .retire_legacy_now(&state.db, &state.file_handler)
+        .await?;
+    info!(
+        "Legacy attachments retired: {} files and {} blobs deleted, {} blobs left for the reconciliation",
+        report.rows, report.blobs, report.blob_failures
+    );
+    Ok(())
 }
 
 /// Generate or reuse a self-signed TLS certificate for local/dev use.
@@ -552,7 +541,7 @@ async fn main() -> Result<()> {
             backup::restore_backup(archive_path, db_path, encryption_key.as_deref(), *yes)?;
             return Ok(());
         }
-        Some(Command::Serve) | None => {
+        Some(Command::Serve) | Some(Command::PurgeLegacyAttachments) | None => {
             // Continue to server startup below
         }
     }
@@ -562,6 +551,10 @@ async fn main() -> Result<()> {
         let cfg = FileConfig::load(config_path)?;
         info!("Loaded config from: {}", config_path);
         merge_args_with_config(&mut args, cfg);
+    }
+
+    if matches!(args.command, Some(Command::PurgeLegacyAttachments)) {
+        return purge_legacy_attachments(&args).await;
     }
 
     info!("Starting Accord Relay Server");
@@ -593,10 +586,33 @@ async fn main() -> Result<()> {
 
     // Initialize shared state with database
     info!("Initializing database: {}", args.database);
-    let mut app_state =
-        AppState::new_with_encryption(&args.database, args.database_encryption).await?;
+    // Opening the database runs the admission boot repair, creates the
+    // admission triggers and applies the one-time ledger migrations
+    // (SPEC-01 §6.6). Any failure there stops the relay before it serves.
+    let db_options = db::DbOptions {
+        legacy_invite_grace_secs: args.legacy_invite_grace_hours.saturating_mul(3600),
+        keep_legacy_permanent_invites: args.keep_legacy_permanent_invites,
+        ..db::DbOptions::default()
+    };
+    // The attachment directory is checked before the database is opened
+    // (SPEC-02 REQ-42); a misconfiguration stops the relay here.
+    let attachment_settings = attachment_config(&args)?;
+    let mut app_state = AppState::new_with_options(
+        &args.database,
+        AppStateOptions {
+            database_encryption: args.database_encryption,
+            db: db_options,
+            // The legacy blob directory stays `./data/files`.
+            file_config: Some(accord_server::files::FileConfig::default()),
+            attachments: Some(attachment_settings),
+        },
+    )
+    .await?;
     app_state.metadata_mode = metadata_mode;
     app_state.federation_enabled = args.mesh_enabled;
+    app_state
+        .rate_limiter
+        .set_preview_limit(args.preview_rate_limit);
     if args.disable_rate_limits {
         // This flag also disables the per-device account cap and registration
         // throttling. Gate it behind --no-tls so it cannot be enabled on a
@@ -612,6 +628,9 @@ async fn main() -> Result<()> {
         warn!("║ Dev/load-testing ONLY. NEVER run this in production.           ║");
         warn!("╚══════════════════════════════════════════════════════════════╝");
         app_state.rate_limiter = rate_limit::RateLimiter::new_disabled();
+        app_state
+            .rate_limiter
+            .set_preview_limit(args.preview_rate_limit);
     }
 
     // Parse build hash enforcement mode
@@ -631,14 +650,15 @@ async fn main() -> Result<()> {
     // Load the IP ban cache (DoS/DDoS defense) before serving.
     app_state.load_ip_bans().await;
 
-    // Migrate any pre-existing nodes to the custom-role model: seed the
-    // owner-editable Admin/Moderator roles and assign them to members that carry
-    // the legacy node_members.role marker. Idempotent — safe on every boot.
-    if let Err(e) = app_state.db.migrate_legacy_roles().await {
-        warn!("Legacy role migration failed (continuing): {}", e);
-    }
+    // The legacy role conversion is not run here: it ran once, as the
+    // ledger-gated step `spec01_legacy_roles` (SPEC-01 REQ-48), when the
+    // database was opened above.
 
     let state: SharedState = Arc::new(app_state);
+
+    // Version-2 attachment garbage collection and storage reconciliation
+    // (SPEC-02 REQ-40 to REQ-42).
+    attachments::lifecycle::spawn_background_tasks(&state);
 
     // Start mesh service if enabled
     if args.mesh_enabled {
@@ -696,400 +716,18 @@ async fn main() -> Result<()> {
     // create/delete), the relay log stream, and the build-hash allowlist. It must
     // never expose node membership, a user list, per-node governance, or any end
     // user's IP beyond the node-correlation-free connection log.
-    let admin_app = Router::new()
-        .route("/admin", get(admin::admin_page_handler))
-        .route("/admin/stats", get(admin::admin_stats_handler))
-        .route("/admin/nodes", get(admin::admin_nodes_handler))
-        .route("/admin/connections", get(admin::admin_connections_handler))
-        .route(
-            "/admin/ip-bans",
-            get(admin::admin_ip_bans_list_handler).post(admin::admin_ip_ban_add_handler),
-        )
-        .route(
-            "/admin/ip-bans/:ip",
-            delete(admin::admin_ip_ban_remove_handler),
-        )
-        .route(
-            "/api/admin/build-allowlist",
-            get(admin::admin_build_allowlist_get_handler)
-                .put(admin::admin_build_allowlist_set_handler)
-                .post(admin::admin_build_allowlist_add_handler),
-        )
-        .route(
-            "/api/admin/build-allowlist/:hash",
-            delete(admin::admin_build_allowlist_remove_handler),
-        )
-        .with_state(state.clone())
-        .merge(
-            Router::new()
-                .route("/admin/logs", get(admin::admin_logs_ws_handler))
-                .with_state(log_tx_arc.clone()),
-        );
+    let admin_app = router::build_admin_router(state.clone(), log_tx_arc.clone());
 
-    // Build the public router (admin routes are NOT mounted here).
-    let app = Router::new()
-        .route("/health", get(health_handler))
-        .route("/api/build-info", get(build_info_handler))
-        .route("/register", post(register_handler))
-        .route("/auth", post(auth_handler))
-        // Node endpoints
-        .route(
-            "/nodes",
-            get(list_user_nodes_handler).post(create_node_handler),
-        )
-        .route("/nodes/:id", get(get_node_handler))
-        .route("/nodes/:id", axum::routing::patch(update_node_handler))
-        .route(
-            "/nodes/:id/channels",
-            get(list_node_channels_handler).post(create_channel_handler),
-        )
-        .route("/nodes/:id/join", post(join_node_handler))
-        .route("/nodes/:id/leave", post(leave_node_handler))
-        .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-        // Ban endpoints
-        .route("/nodes/:id/bans", post(ban_user_handler))
-        .route("/nodes/:id/bans", delete(unban_user_handler))
-        .route("/nodes/:id/bans", get(list_bans_handler))
-        .route("/nodes/:id/ban-check", get(ban_check_handler))
-        .route("/api/presence/:id", get(get_node_presence_handler))
-        // Build hash allowlist
-        .route(
-            "/nodes/:id/build-allowlist",
-            get(get_build_allowlist_handler)
-                .put(set_build_allowlist_handler)
-                .post(add_build_allowlist_handler),
-        )
-        .route(
-            "/nodes/:id/build-allowlist/:hash",
-            delete(remove_build_allowlist_handler),
-        )
-        // Node user profile endpoints
-        .route(
-            "/nodes/:id/profile",
-            axum::routing::put(set_node_user_profile_handler),
-        )
-        .route("/nodes/:id/profiles", get(get_node_user_profiles_handler))
-        // Channel category endpoints
-        .route(
-            "/nodes/:id/categories",
-            post(create_channel_category_handler),
-        )
-        .route(
-            "/categories/:id",
-            axum::routing::patch(update_channel_category_handler),
-        )
-        .route("/categories/:id", delete(delete_channel_category_handler))
-        // ── Role endpoints ──
-        .route(
-            "/nodes/:id/roles",
-            get(list_roles_handler).post(create_role_handler),
-        )
-        .route(
-            "/nodes/:id/roles/reorder",
-            axum::routing::patch(reorder_roles_handler),
-        )
-        .route(
-            "/nodes/:id/roles/:role_id",
-            axum::routing::patch(update_role_handler).delete(delete_role_handler),
-        )
-        // ── Discord template import ──
-        .route(
-            "/nodes/:id/import-discord-template",
-            post(import_discord_template_handler),
-        )
-        // ── Member role endpoints ──
-        .route(
-            "/nodes/:id/members/:user_id/roles",
-            get(get_member_roles_handler),
-        )
-        .route(
-            "/nodes/:id/members/:user_id/roles/:role_id",
-            axum::routing::put(assign_member_role_handler).delete(remove_member_role_handler),
-        )
-        // Custom emoji endpoints
-        .route(
-            "/nodes/:id/emojis",
-            get(list_custom_emojis_handler).post(upload_custom_emoji_handler),
-        )
-        .route(
-            "/nodes/:id/emojis/:emoji_id",
-            delete(delete_custom_emoji_handler),
-        )
-        .route("/api/emojis/:content_hash", get(get_emoji_image_handler))
-        // Auto-mod is client-side (relay blind to node policy) — no relay endpoints.
-        // Channel endpoints
-        .route(
-            "/nodes/:id/channels/reorder",
-            axum::routing::put(reorder_channels_handler),
-        )
-        .route(
-            "/channels/:id",
-            axum::routing::patch(update_channel_handler),
-        )
-        .route(
-            "/channels/:id/slow-mode",
-            axum::routing::put(set_slow_mode_handler).get(get_slow_mode_handler),
-        )
-        .route("/channels/:id", delete(delete_channel_handler))
-        .route("/channels/:id/messages", get(get_channel_messages_handler))
-        .route("/channels/:id/read", post(mark_channel_read_handler))
-        // ── Message editing and deletion ──
-        .route("/messages/:id", axum::routing::patch(edit_message_handler))
-        .route("/messages/:id", delete(delete_message_handler))
-        .route(
-            "/channels/:id/purge_before",
-            post(purge_channel_before_handler),
-        )
-        // ── Message threading ──
-        .route("/channels/:id/threads", get(get_channel_threads_handler))
-        .route("/messages/:id/thread", get(get_message_thread_handler))
-        // ── Message reactions ──
-        .route(
-            "/messages/:id/reactions",
-            get(get_message_reactions_handler),
-        )
-        .route(
-            "/messages/:id/reactions/:emoji",
-            axum::routing::put(add_reaction_handler),
-        )
-        .route(
-            "/messages/:id/reactions/:emoji",
-            delete(remove_reaction_handler),
-        )
-        // ── Message pinning ──
-        .route("/messages/:id/pin", axum::routing::put(pin_message_handler))
-        .route("/messages/:id/pin", delete(unpin_message_handler))
-        .route("/channels/:id/pins", get(get_pinned_messages_handler))
-        // ── Channel permission overwrite endpoints ──
-        .route(
-            "/channels/:id/permissions",
-            get(list_channel_overwrites_handler),
-        )
-        .route(
-            "/channels/:id/permissions/:role_id",
-            axum::routing::put(set_channel_overwrite_handler)
-                .delete(delete_channel_overwrite_handler),
-        )
-        .route(
-            "/channels/:id/effective-permissions",
-            get(get_effective_permissions_handler),
-        )
-        // File sharing endpoints
-        .route("/channels/:id/files", post(upload_file_handler))
-        .route("/channels/:id/files", get(list_channel_files_handler))
-        .route("/files/:id", get(download_file_handler))
-        .route("/files/:id", delete(delete_file_handler))
-        // Search endpoints
-        .route("/nodes/:id/search", get(search_messages_handler))
-        // Link preview endpoint
-        .route("/api/link-preview", get(link_preview_handler))
-        // User profile endpoints
-        .route("/users/:id/profile", get(get_user_profile_handler))
-        .route(
-            "/users/me/profile",
-            axum::routing::patch(update_user_profile_handler),
-        )
-        // Icon / Avatar endpoints
-        .route(
-            "/nodes/:id/icon",
-            axum::routing::put(upload_node_icon_handler).get(get_node_icon_handler),
-        )
-        .route(
-            "/users/me/avatar",
-            axum::routing::put(upload_user_avatar_handler),
-        )
-        .route("/users/:id/avatar", get(get_user_avatar_handler))
-        .route("/nodes/:id/members", get(get_node_members_handler))
-        // Audit log endpoints
-        .route("/nodes/:id/audit-log", get(get_node_audit_log_handler))
-        // Node invite endpoints
-        .route("/nodes/:id/invites", post(create_invite_handler))
-        .route("/nodes/:id/invites", get(list_invites_handler))
-        .route("/invites/:invite_id", delete(revoke_invite_handler))
-        .route("/invites/:code/join", post(use_invite_handler))
-        .route("/invites/:code/preview", get(invite_preview_handler))
-        // Webhook endpoints
-        .route(
-            "/nodes/:id/webhooks",
-            get(list_webhooks_handler).post(create_webhook_handler),
-        )
-        .route(
-            "/webhooks/:id",
-            axum::routing::patch(update_webhook_handler).delete(delete_webhook_handler),
-        )
-        .route("/webhooks/:id/test", post(test_webhook_handler))
-        // Key bundle endpoints (Double Ratchet / X3DH)
-        .route("/keys/bundle", post(publish_key_bundle_handler))
-        .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
-        .route("/keys/prekey-message", post(store_prekey_message_handler))
-        .route("/keys/prekey-messages", get(get_prekey_messages_handler))
-        // Sender Key distribution endpoints (E2EE Sender Keys)
-        .route("/channels/:id/sender-keys", post(store_sender_key_handler))
-        .route("/sender-keys/pending", get(get_pending_sender_keys_handler))
-        .route("/sender-keys/ack", post(ack_sender_keys_handler))
-        // Push notification endpoints
-        .route("/push/register", post(register_push_token_handler))
-        .route("/push/register", delete(deregister_push_token_handler))
-        .route(
-            "/push/preferences",
-            axum::routing::put(update_push_preferences_handler),
-        )
-        // Batch API endpoints (N+1 elimination)
-        .route(
-            "/api/nodes/:node_id/members/batch",
-            get(batch_handlers::batch_members_handler),
-        )
-        .route(
-            "/api/nodes/:node_id/channels/batch",
-            get(batch_handlers::batch_channels_handler),
-        )
-        .route(
-            "/api/nodes/:node_id/overview",
-            get(batch_handlers::node_overview_handler),
-        )
-        // Encrypted metadata (opaque NMK blobs — relay never decrypts)
-        .route(
-            "/api/nodes/:node_id/metadata/encrypted",
-            get(metadata::get_encrypted_metadata_handler)
-                .put(metadata::update_encrypted_metadata_handler),
-        )
-        // Bot API v2 endpoints (airgapped command architecture)
-        .route(
-            "/api/nodes/:node_id/bots",
-            get(bot_api::list_bots_handler).post(bot_api::install_bot_handler),
-        )
-        .route(
-            "/api/nodes/:node_id/bots/:bot_id",
-            delete(bot_api::uninstall_bot_handler),
-        )
-        .route(
-            "/api/nodes/:node_id/bots/:bot_id/commands",
-            get(bot_api::get_bot_commands_handler),
-        )
-        .route(
-            "/api/nodes/:node_id/bots/:bot_id/invoke",
-            post(bot_api::invoke_command_handler),
-        )
-        .route("/api/bots/respond", post(bot_api::bot_respond_handler))
-        // Friend system endpoints
-        .route("/friends/request", post(send_friend_request_handler))
-        .route("/friends/accept", post(accept_friend_request_handler))
-        .route("/friends/reject", post(reject_friend_request_handler))
-        .route("/friends", get(list_friends_handler))
-        .route("/friends/requests", get(list_friend_requests_handler))
-        .route("/friends/:user_id", delete(remove_friend_handler))
-        // User block endpoints
-        .route("/users/:id/block", post(block_user_handler))
-        .route("/users/:id/block", delete(unblock_user_handler))
-        .route("/api/blocked-users", get(get_blocked_users_handler))
-        // Federation discovery endpoints
-        .route("/federation/relays", get(federation::list_relays_handler))
-        .route(
-            "/federation/register",
-            post(federation::register_relay_handler),
-        )
-        .route("/federation/heartbeat", post(federation::heartbeat_handler))
-        // Direct Message endpoints
-        .route("/dm/:user_id", post(create_dm_channel_handler))
-        .route("/dm", get(get_dm_channels_handler))
-        // WebSocket endpoint
-        .route("/ws", get(ws_handler))
-        // Add shared state
-        .with_state(state.clone());
-
-    // Optionally serve frontend static files
-    let app = if let Some(ref frontend_path) = args.frontend {
-        let index_path = format!("{}/index.html", frontend_path);
-        info!("Serving frontend from: {}", frontend_path);
-        app.fallback_service(
-            ServeDir::new(frontend_path).not_found_service(ServeFile::new(index_path)),
-        )
-    } else {
-        app
-    }
-    // Add middleware
-    .layer(axum::middleware::from_fn_with_state(
+    // Build the public router (admin routes are NOT mounted here). The route
+    // table and middleware live in the library, shared with the tests.
+    let app = router::build_public_router_with(
         state.clone(),
-        rate_limit_middleware::rate_limit_layer,
-    ))
-    .layer(
-        ServiceBuilder::new()
-            .layer(TraceLayer::new_for_http())
-            // ── Security response headers ──
-            .layer(SetResponseHeaderLayer::overriding(
-                axum::http::header::X_CONTENT_TYPE_OPTIONS,
-                HeaderValue::from_static("nosniff"),
-            ))
-            .layer(SetResponseHeaderLayer::overriding(
-                axum::http::header::X_FRAME_OPTIONS,
-                HeaderValue::from_static("DENY"),
-            ))
-            .layer(SetResponseHeaderLayer::overriding(
-                axum::http::header::X_XSS_PROTECTION,
-                HeaderValue::from_static("0"),
-            ))
-            .layer(SetResponseHeaderLayer::overriding(
-                axum::http::header::REFERRER_POLICY,
-                HeaderValue::from_static("strict-origin-when-cross-origin"),
-            ))
-            .layer(SetResponseHeaderLayer::overriding(
-                axum::http::header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static(
-                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-                     img-src 'self' data: blob:; connect-src 'self' http: https: wss: ws:; frame-ancestors 'none'",
-                ),
-            ))
-            .layer(SetResponseHeaderLayer::overriding(
-                axum::http::HeaderName::from_static("permissions-policy"),
-                HeaderValue::from_static("camera=(self), microphone=(self), geolocation=()"),
-            ))
-            // ── CORS ──
-            .layer({
-                let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
-                let effective_cors = args.cors_origins.clone().unwrap_or_else(|| {
-                    if args.no_tls {
-                        // Dev mode: allow common local dev origins
-                        // (1420 = Vite/Tauri dev server for desktop/frontend)
-                        "http://localhost:1420,http://localhost:3000,http://localhost:5173,http://localhost:8080"
-                            .to_string()
-                    } else {
-                        // Production: same-origin only (no extra origins)
-                        String::new()
-                    }
-                });
-                if effective_cors.trim() == "*" {
-                    warn!("CORS: allowing any origin — use --cors-origins to restrict in production");
-                    cors.allow_origin(Any)
-                } else {
-                    // The desktop app's webview runs on a custom app scheme
-                    // (tauri://localhost on Linux/macOS, http(s)://tauri.localhost
-                    // on Windows). No web page can ever have these origins, so
-                    // always allowing them lets the desktop client reach any
-                    // relay without weakening browser-facing CORS.
-                    let tauri_origins = [
-                        "tauri://localhost",
-                        "https://tauri.localhost",
-                        "http://tauri.localhost",
-                    ];
-                    let mut origins: Vec<HeaderValue> = effective_cors
-                        .split(',')
-                        .filter_map(|o| o.trim().parse().ok())
-                        .collect();
-                    origins.extend(
-                        tauri_origins
-                            .iter()
-                            .filter_map(|o| o.parse::<HeaderValue>().ok()),
-                    );
-                    info!("CORS: allowed origins: {:?}", origins);
-                    cors.allow_origin(AllowOrigin::list(origins))
-                }
-            }),
-    )
-    // IP ban check — outermost so banned IPs are dropped before any other work.
-    .layer(axum::middleware::from_fn_with_state(
-        state.clone(),
-        ip_ban_middleware::ip_ban_layer,
-    ));
+        &RouterConfig {
+            cors_origins: args.cors_origins.clone(),
+            dev_cors: args.no_tls,
+            frontend: args.frontend.clone(),
+        },
+    );
 
     println!("🚀 Accord Relay Server starting...");
     println!("📡 Listening on {}:{}", args.host, args.port);
@@ -1105,6 +743,14 @@ async fn main() -> Result<()> {
     println!("  PATCH  /nodes/:id         - Update Node settings (?token=) [Admin]");
     println!("  POST   /nodes/:id/join    - Join a Node (?token=)");
     println!("  POST   /nodes/:id/leave   - Leave a Node (?token=)");
+    println!(
+        "  GET    /nodes/:id/join-requests - List join requests (?token=) [admission authority]"
+    );
+    println!(
+        "  POST   /nodes/:id/join-requests/:user_id/approve - Approve a join request (?token=)"
+    );
+    println!("  POST   /nodes/:id/join-requests/:user_id/deny - Deny a join request (?token=)");
+    println!("  DELETE /nodes/:id/join-request - Withdraw own join request (?token=)");
     println!("  DELETE /nodes/:id/members/:user_id - Kick user (?token=) [Admin/Mod]");
     println!("  DELETE /channels/:id      - Delete channel (?token=) [Admin]");
     println!("  GET    /channels/:id/messages - Get channel message history (?token=&limit=50&before=msg_id)");
@@ -1137,6 +783,23 @@ async fn main() -> Result<()> {
                 if removed > 0 {
                     info!("Cleaned up {} expired auth tokens", removed);
                 }
+                // Expired join requests are ignored by every read and
+                // approval, and purged here (SPEC-01 REQ-33).
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if cleanup_state
+                    .db
+                    .purge_expired_join_requests(now)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        target: accord_server::admission::LOG_TARGET,
+                        "expired join request purge failed"
+                    );
+                }
             }
         });
     }
@@ -1156,15 +819,13 @@ async fn main() -> Result<()> {
                     .unwrap_or(0);
                 // Start the fresh timer on any read-gated message whose audience
                 // has now seen it, then sweep everything whose expiry has passed.
-                match sweep_state.db.resolve_read_gates(now).await {
-                    Ok(n) if n > 0 => info!("Started expiry timer on {} read-gated messages", n),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("Read-gate sweep error: {}", e),
+                // The attachment GC runs right after (SPEC-02 REQ-40).
+                let (started, swept) = sweep_state.run_expiry_sweep(now).await;
+                if started > 0 {
+                    info!("Started expiry timer on {} read-gated messages", started);
                 }
-                match sweep_state.db.delete_expired_messages(now).await {
-                    Ok(n) if n > 0 => info!("Swept {} expired (disappearing) messages", n),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("Disappearing-messages sweep error: {}", e),
+                if swept > 0 {
+                    info!("Swept {} expired (disappearing) messages", swept);
                 }
             }
         });
@@ -1330,4 +991,179 @@ async fn main() -> Result<()> {
 
     info!("Server shut down cleanly.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use accord_server::attachments::LegacyAttachmentsMode;
+    use std::path::PathBuf;
+
+    /// SPEC-02 section 7.7: `purge-legacy-attachments` is a subcommand that
+    /// takes the relay's options given before it.
+    #[test]
+    fn purge_legacy_attachments_is_a_subcommand() {
+        let args = Args::try_parse_from([
+            "accord-server",
+            "--database",
+            "relay.db",
+            "--legacy-attachments",
+            "read-only",
+            "purge-legacy-attachments",
+        ])
+        .unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::PurgeLegacyAttachments)
+        ));
+        assert_eq!(args.database, "relay.db");
+        assert!(attachment_config(&args).is_ok());
+    }
+
+    /// SPEC-02 section 6.6.4 (OD-35): each attachment setting is a CLI flag
+    /// and a TOML key of the same name, with the decided defaults; the CLI
+    /// wins over the file, and a value out of range names its setting.
+    #[test]
+    fn attachment_settings_are_flags_and_toml_keys() {
+        let defaults =
+            attachment_config(&Args::try_parse_from(["accord-server"]).unwrap()).unwrap();
+        assert_eq!(defaults.dir, PathBuf::from("./data/attachments"));
+        assert_eq!(defaults.max_blob_bytes, 104_857_600);
+        assert_eq!(defaults.pending_ttl_secs, 3600);
+        assert_eq!(defaults.max_pending_per_user, 32);
+        assert_eq!(defaults.quota_user_bytes, 1_073_741_824);
+        assert_eq!(defaults.quota_node_bytes, 10_737_418_240);
+        assert_eq!(defaults.min_free_bytes, 1_073_741_824);
+        assert_eq!(defaults.gc_interval_secs, 60);
+        assert_eq!(defaults.reconcile_interval_secs, 3600);
+        assert_eq!(defaults.legacy_mode, LegacyAttachmentsMode::ReadOnly);
+        assert_eq!(defaults.legacy_retire_after_days, 90);
+
+        let flags = Args::try_parse_from([
+            "accord-server",
+            "--attachments-dir",
+            "/srv/blobs",
+            "--attachment-max-blob-bytes",
+            "1000",
+            "--attachment-pending-ttl-secs",
+            "600",
+            "--attachment-max-pending-per-user",
+            "5",
+            "--attachment-quota-user-bytes",
+            "0",
+            "--attachment-quota-node-bytes",
+            "0",
+            "--attachments-min-free-bytes",
+            "7",
+            "--attachment-gc-interval-secs",
+            "2",
+            "--attachment-reconcile-interval-secs",
+            "120",
+            "--legacy-attachments",
+            "retired",
+            "--legacy-attachments-retire-after-days",
+            "30",
+        ])
+        .unwrap();
+        let config = attachment_config(&flags).unwrap();
+        assert_eq!(config.dir, PathBuf::from("/srv/blobs"));
+        assert_eq!(
+            (
+                config.max_blob_bytes,
+                config.pending_ttl_secs,
+                config.max_pending_per_user
+            ),
+            (1000, 600, 5)
+        );
+        assert_eq!(
+            (
+                config.quota_user_bytes,
+                config.quota_node_bytes,
+                config.min_free_bytes
+            ),
+            (0, 0, 7)
+        );
+        assert_eq!(
+            (config.gc_interval_secs, config.reconcile_interval_secs),
+            (2, 120)
+        );
+        assert_eq!(config.legacy_mode, LegacyAttachmentsMode::Retired);
+        assert_eq!(config.legacy_retire_after_days, 30);
+
+        let file: FileConfig = toml::from_str(
+            r#"
+            attachments_dir = "/srv/toml"
+            attachment_max_blob_bytes = 2000
+            attachment_pending_ttl_secs = 900
+            attachment_max_pending_per_user = 8
+            attachment_quota_user_bytes = 11
+            attachment_quota_node_bytes = 12
+            attachments_min_free_bytes = 13
+            attachment_gc_interval_secs = 5
+            attachment_reconcile_interval_secs = 300
+            legacy_attachments = "retired"
+            legacy_attachments_retire_after_days = 10
+            "#,
+        )
+        .unwrap();
+        let mut args =
+            Args::try_parse_from(["accord-server", "--attachment-gc-interval-secs", "9"]).unwrap();
+        merge_args_with_config(&mut args, file);
+        let config = attachment_config(&args).unwrap();
+        assert_eq!(config.dir, PathBuf::from("/srv/toml"));
+        assert_eq!(config.max_blob_bytes, 2000);
+        assert_eq!(config.pending_ttl_secs, 900);
+        assert_eq!(config.max_pending_per_user, 8);
+        assert_eq!(
+            (
+                config.quota_user_bytes,
+                config.quota_node_bytes,
+                config.min_free_bytes
+            ),
+            (11, 12, 13)
+        );
+        // The flag given on the command line wins over the file.
+        assert_eq!(config.gc_interval_secs, 9);
+        assert_eq!(config.reconcile_interval_secs, 300);
+        assert_eq!(config.legacy_mode, LegacyAttachmentsMode::Retired);
+        assert_eq!(config.legacy_retire_after_days, 10);
+
+        for (flag, value, setting) in [
+            (
+                "--attachment-pending-ttl-secs",
+                "299",
+                "attachment_pending_ttl_secs",
+            ),
+            (
+                "--attachment-pending-ttl-secs",
+                "86401",
+                "attachment_pending_ttl_secs",
+            ),
+            (
+                "--attachment-gc-interval-secs",
+                "0",
+                "attachment_gc_interval_secs",
+            ),
+            (
+                "--attachment-gc-interval-secs",
+                "3601",
+                "attachment_gc_interval_secs",
+            ),
+            (
+                "--attachment-reconcile-interval-secs",
+                "59",
+                "attachment_reconcile_interval_secs",
+            ),
+            (
+                "--attachment-reconcile-interval-secs",
+                "86401",
+                "attachment_reconcile_interval_secs",
+            ),
+            ("--legacy-attachments", "readonly", "legacy_attachments"),
+        ] {
+            let args = Args::try_parse_from(["accord-server", flag, value]).unwrap();
+            let error = attachment_config(&args).unwrap_err().to_string();
+            assert!(error.contains(setting), "{flag} {value}: {error}");
+        }
+    }
 }

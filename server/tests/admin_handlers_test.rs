@@ -6,20 +6,10 @@
 //! token is now optional (unset = localhost-trusted).
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, post, put},
-    Router,
-};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 
 use accord_server::{
     admin::{
@@ -45,43 +35,13 @@ impl TestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Admin dashboard page (no auth)
-            .route("/admin", get(admin_page_handler))
-            // Admin JSON endpoints (X-Admin-Token required)
-            .route("/admin/stats", get(admin_stats_handler))
-            .route("/admin/nodes", get(admin_nodes_handler))
-            // Build allowlist
-            .route(
-                "/api/admin/build-allowlist",
-                get(admin_build_allowlist_get_handler)
-                    .put(admin_build_allowlist_set_handler)
-                    .post(admin_build_allowlist_add_handler),
-            )
-            .route(
-                "/api/admin/build-allowlist/:hash",
-                delete(admin_build_allowlist_remove_handler),
-            )
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production admin route table (SPEC-01 §10.1).
+        let base_url =
+            accord_server::test_support::serve(accord_server::router::build_admin_router(
+                state.clone(),
+                Arc::new(accord_server::admin::new_log_broadcast()),
+            ))
+            .await;
 
         Self {
             base_url,

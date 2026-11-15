@@ -8,20 +8,10 @@
 //! "open" — no secret is required and any header value is accepted.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{get, post},
-    Router,
-};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 
 use accord_server::{
     federation::{heartbeat_handler, list_relays_handler, register_relay_handler},
@@ -46,30 +36,8 @@ impl TestServer {
         app_state.federation_enabled = true;
         let state: SharedState = Arc::new(app_state);
 
-        let app = Router::new()
-            .route("/federation/relays", get(list_relays_handler))
-            .route("/federation/register", post(register_relay_handler))
-            .route("/federation/heartbeat", post(heartbeat_handler))
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,

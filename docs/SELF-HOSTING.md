@@ -110,6 +110,12 @@ server {
     add_header X-Frame-Options DENY always;
     add_header X-Content-Type-Options nosniff always;
 
+    # End-to-end-encrypted attachments are uploaded as one request body of
+    # up to attachment_max_blob_bytes (100 MiB by default). nginx refuses
+    # bodies over 1 MiB unless this is raised; keep it a little above the
+    # relay's limit.
+    client_max_body_size 101m;
+
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
@@ -136,7 +142,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ### Caddy with Automatic SSL
 
-Create a `Caddyfile`:
+Create a `Caddyfile` (Caddy sets no request body limit by default, so attachment uploads need no extra setting):
 
 ```
 your-domain.com {
@@ -150,6 +156,46 @@ your-domain.com {
     }
 }
 ```
+
+### Request body size for attachments
+
+End-to-end-encrypted attachments are uploaded with `POST /channels/{id}/attachments` as one `application/octet-stream` body of up to `attachment_max_blob_bytes` bytes (104857600, 100 MiB, by default; the encrypted file plus 16 bytes per 64 KiB and its padding). Any reverse proxy in front of the relay must accept bodies that large:
+
+- **nginx:** `client_max_body_size 101m;` in the `server` block (above). nginx's default is 1 MiB, which makes every larger upload fail with 413.
+- **Caddy:** nothing to do; Caddy has no default body limit.
+- **Other proxies and load balancers:** raise the request body limit to at least the relay's `attachment_max_blob_bytes`, and allow uploads to take up to 30 minutes, after which the relay aborts them.
+
+If you lower `attachment_max_blob_bytes`, clients learn the new limit from `GET /health` and refuse larger files before uploading them.
+
+## Attachment Storage
+
+The relay stores version-2 attachments as nameless encrypted blobs, one file per attachment, in `attachments_dir`. It cannot decrypt them: clients encrypt each file with its own random key, which travels only inside the end-to-end-encrypted message that carries the file. Each blob is deleted with its message (deletion, expiry, purge, channel deletion); uploads that no message claims expire after `attachment_pending_ttl_secs`.
+
+**What the relay still sees.** As an operator you (and anyone with the database, the blob directory or a backup) can see that a message has attachments and how many, each blob's padded size, who uploaded it and when, in which channel and with which message, and who downloads it, when and from which IP address. You cannot see file names, types, contents, keys or exact sizes.
+
+**Limits.** Attachments are exactly as private and as authentic as the message that carries them. Until identity verification and key-recipient checks ship, a relay that injects its own sender key into a channel, or intercepts a direct-message session when it is set up, can read attachments and forge them, attributed to the member it impersonates; a compromised relay is therefore still a risk to its users. Clients delete attachment keys when the relay signals that a message was deleted, purged or expired, and those signals are not authenticated: a compromised relay can make a device lose the only copy of a DM attachment's key. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations).
+
+Every setting is a CLI flag (`--attachments-dir`, `--attachment-max-blob-bytes`, ...) and a key of the same name in the TOML config file (see `deploy/config.example.toml`):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `attachments_dir` | `./data/attachments` | Blob directory, relative to the working directory (in the Docker image: `/data/data/attachments`) |
+| `attachment_max_blob_bytes` | 104857600 | Largest accepted blob |
+| `attachment_pending_ttl_secs` | 3600 | Lifetime of an upload no message has claimed (300 to 86400) |
+| `attachment_max_pending_per_user` | 32 | Unclaimed and in-progress uploads per user |
+| `attachment_quota_user_bytes` | 1073741824 | Bytes stored per uploader; 0 = unlimited |
+| `attachment_quota_node_bytes` | 10737418240 | Bytes stored per node, DM channels excluded; 0 = unlimited |
+| `attachments_min_free_bytes` | 1073741824 | Uploads are refused when less disk space than this would remain |
+| `attachment_gc_interval_secs` | 60 | How often deleted and expired attachments are removed (1 to 3600) |
+| `attachment_reconcile_interval_secs` | 3600 | How often orphaned files are removed from disk (60 to 86400) |
+| `legacy_attachments` | `read-only` | `read-only` or `retired` (see below) |
+| `legacy_attachments_retire_after_days` | 90 | Legacy uploads are deleted this many days after the first start of this version |
+
+The relay refuses to start if `attachments_dir` is the database's directory or one of its parents, overlaps the legacy file directory (`./data/files`), or is a non-empty directory that the relay did not create (it writes a `.accord-attachments` marker file). The directory is created with mode 0700 and blobs with mode 0600. Log lines at INFO and above never contain attachment ids.
+
+**Legacy uploads.** Files uploaded before this version are not end-to-end encrypted: they were encrypted under a key derived from the channel ID, which the relay can compute. They stay readable (never writable) through the old routes until retirement, which happens `legacy_attachments_retire_after_days` after the first start of this version, when you set `legacy_attachments = "retired"`, or when you run `accord-server --database <db> purge-legacy-attachments` (global options go before the subcommand). Retirement deletes every legacy file and its blob. Restoring a backup from before this version restarts the window.
+
+**Backups.** `accord-server backup` archives the database only. Back up `attachments_dir` as well (the Volume Backup below covers it), or restored messages will point at missing attachments.
 
 ## Firewall Configuration
 

@@ -12,10 +12,15 @@
 //! zero-knowledge properties for encrypted content.
 //!
 //! Sub-modules for per-Node database isolation (WIP migration):
+pub mod admission;
+pub mod attachments;
 pub mod encryption;
 pub mod migration;
 pub mod node_db;
 pub mod relay;
+pub mod repair;
+
+pub use repair::{DbOptions, RepairReport};
 
 #[allow(unused_imports)] // WIP: will be wired in during migration from single-DB
 pub use node_db::NodeDatabase;
@@ -60,12 +65,49 @@ pub struct IpBan {
 #[derive(Debug, Clone)]
 pub struct Database {
     pool: Pool,
+    /// Fault points shared with the relay state (inert in release builds).
+    faults: crate::faults::FaultPlan,
+    /// What the admission boot repair did when this database was opened.
+    repair: std::sync::Arc<RepairReport>,
+    /// Blob paths whose `files` rows the boot repair deleted, until the file
+    /// handler takes them (SPEC-01 §6.6, after the commit, step 4).
+    repair_blobs: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Serializes admission transactions in-process (SPEC-01 §11.3).
+    admission_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes attachment reservations in-process (SPEC-02 §11.3), so
+    /// concurrent uploads wait here instead of holding pooled connections.
+    attachment_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Database {
     /// Access the connection pool (for use by extension modules like webhooks)
     pub(crate) fn pool(&self) -> &Pool {
         &self.pool
+    }
+
+    /// The fault points of this relay instance (tests arm them).
+    pub fn faults(&self) -> &crate::faults::FaultPlan {
+        &self.faults
+    }
+
+    /// What the admission boot repair did when this database was opened.
+    pub fn repair_report(&self) -> &RepairReport {
+        &self.repair
+    }
+
+    /// Take the storage paths of blobs whose `files` rows the boot repair
+    /// deleted. Returns them once; later calls return an empty list.
+    pub fn take_repair_blob_paths(&self) -> Vec<String> {
+        match self.repair_blobs.lock() {
+            Ok(mut paths) => std::mem::take(&mut *paths),
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        }
+    }
+
+    /// The `applied_at` time of a ledger-gated migration, or `None` if it has
+    /// not run (SPEC-01 §6.5, `relay_migrations`).
+    pub async fn ledger_applied_at(&self, name: &str) -> Result<Option<i64>> {
+        repair::ledger_applied_at(&self.pool, name).await
     }
 }
 
@@ -84,6 +126,17 @@ impl Database {
     pub async fn new_with_encryption<P: AsRef<Path>>(
         db_path: P,
         enable_encryption: bool,
+    ) -> Result<Self> {
+        Self::new_with_options(db_path, enable_encryption, DbOptions::default()).await
+    }
+
+    /// Open the database, run every schema migration, then the admission boot
+    /// repair, triggers and ledger migrations (SPEC-01 §6.6). Fails, and the
+    /// relay must not start, if the repair fails.
+    pub async fn new_with_options<P: AsRef<Path>>(
+        db_path: P,
+        enable_encryption: bool,
+        options: DbOptions,
     ) -> Result<Self> {
         let is_memory = db_path.as_ref().to_str() == Some(":memory:");
 
@@ -143,13 +196,25 @@ impl Database {
             tracing::info!("Database encryption (SQLCipher) active");
         }
 
-        let db = Self { pool };
-        db.run_migrations().await?;
+        let mut db = Self {
+            pool,
+            faults: options.faults.clone(),
+            repair: Default::default(),
+            repair_blobs: Default::default(),
+            admission_lock: Default::default(),
+            attachment_lock: Default::default(),
+        };
+        let mut report = db.run_migrations(&options).await?;
+        db.repair_blobs = std::sync::Arc::new(std::sync::Mutex::new(std::mem::take(
+            &mut report.blob_paths,
+        )));
+        db.repair = std::sync::Arc::new(report);
         Ok(db)
     }
 
-    /// Run database migrations to create or update schema
-    async fn run_migrations(&self) -> Result<()> {
+    /// Run database migrations to create or update schema. The admission
+    /// boot repair is the last step (SPEC-01 REQ-13).
+    async fn run_migrations(&self, options: &DbOptions) -> Result<RepairReport> {
         // Create users table — relay-level identity is keypair only
         // No username column: display names are a Node-level concept
         sqlx::query(
@@ -1335,35 +1400,24 @@ impl Database {
         .await
         .ok();
 
-        // Insert sentinel system user and node for DM backing channels.
-        // These must exist so that DM channels can reference a valid node_id
-        // without violating FK constraints (PRAGMA foreign_keys = ON).
-        // The sentinel can never log in: its hash is the lock marker (SPEC-01 REQ-4(c)).
-        let now_ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        sqlx::query(
-            "INSERT OR IGNORE INTO users (id, public_key_hash, public_key, password_hash, created_at) VALUES (?, 'SYSTEM', 'SYSTEM', ?, ?)"
-        )
-        .bind(DM_SYSTEM_USER_ID.to_string())
-        .bind(crate::admission::LOCK_MARKER)
-        .bind(now_ts)
-        .execute(&self.pool)
-        .await
-        .context("Failed to insert sentinel system user")?;
+        // ── SPEC-02 version-2 attachments (section 6.6.1) ──
+        attachments::create_schema(&self.pool).await?;
 
-        sqlx::query(
-            "INSERT OR IGNORE INTO nodes (id, name, owner_id, description, created_at) VALUES (?, '__dm_system__', ?, 'System node for DM channels', ?)"
-        )
-        .bind(DM_SYSTEM_NODE_ID.to_string())
-        .bind(DM_SYSTEM_USER_ID.to_string())
-        .bind(now_ts)
-        .execute(&self.pool)
-        .await
-        .context("Failed to insert sentinel system node")?;
+        // ── SPEC-01 admission schema (join policy, join requests, ledger) ──
+        // Schema migrations that other specs add go above this line: the
+        // admission repair must run after every CREATE TABLE and ALTER TABLE.
+        repair::create_schema(&self.pool).await?;
 
-        Ok(())
+        // The admission boot repair, the reserved-node triggers and the
+        // one-time ledger migrations (SPEC-01 §6.6). The repair also seeds the
+        // DM system user and node (B1): DM backing channels reference the node,
+        // and the user can never log in, because its hash is the lock marker.
+        let report = repair::run(&self.pool, options).await?;
+
+        // SPEC-02: the first start of this relay version is T0 of the legacy
+        // attachment window (section 7.7); the ledger row is written once.
+        attachments::record_first_start(&self.pool).await?;
+        Ok(report)
     }
 
     // ── User operations ──
@@ -1673,20 +1727,19 @@ impl Database {
         expires_at: Option<u64>,
         device_fingerprint_hash: Option<&str>,
     ) -> Result<()> {
-        let banned_at = now();
-        sqlx::query(
-            "INSERT OR REPLACE INTO node_bans (node_id, public_key_hash, banned_by, banned_at, reason_encrypted, expires_at, device_fingerprint_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(node_id.to_string())
-        .bind(public_key_hash)
-        .bind(banned_by.to_string())
-        .bind(banned_at as i64)
-        .bind(reason_encrypted)
-        .bind(expires_at.map(|t| t as i64))
-        .bind(device_fingerprint_hash)
-        .execute(&self.pool)
-        .await
-        .context("Failed to ban user from node")?;
+        // One implementation with the ban transaction of the removal routine
+        // (SPEC-01 REQ-50), which writes the row on its own connection.
+        let ban = admission::NewBan {
+            public_key_hash,
+            banned_by,
+            reason_encrypted,
+            expires_at,
+            device_fingerprint_hash,
+        };
+        let mut conn = self.pool.acquire().await?;
+        admission::insert_ban_on(&mut conn, node_id, &ban, now())
+            .await
+            .context("Failed to ban user from node")?;
         Ok(())
     }
 
@@ -1703,16 +1756,8 @@ impl Database {
 
     /// Check if a public_key_hash is banned from a Node (considering expiry)
     pub async fn is_banned_from_node(&self, node_id: Uuid, public_key_hash: &str) -> Result<bool> {
-        let current_time = now() as i64;
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM node_bans WHERE node_id = ? AND public_key_hash = ? AND (expires_at IS NULL OR expires_at > ?)",
-        )
-        .bind(node_id.to_string())
-        .bind(public_key_hash)
-        .bind(current_time)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.get::<i64, _>("count") > 0)
+        let mut conn = self.pool.acquire().await?;
+        Ok(admission::is_banned_on(&mut conn, node_id, public_key_hash, now()).await?)
     }
 
     /// List all bans for a Node
@@ -1777,16 +1822,11 @@ impl Database {
         node_id: Uuid,
         device_fingerprint_hash: &str,
     ) -> Result<bool> {
-        let current_time = now() as i64;
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM node_bans WHERE node_id = ? AND device_fingerprint_hash = ? AND (expires_at IS NULL OR expires_at > ?)",
+        let mut conn = self.pool.acquire().await?;
+        Ok(
+            admission::is_device_banned_on(&mut conn, node_id, device_fingerprint_hash, now())
+                .await?,
         )
-        .bind(node_id.to_string())
-        .bind(device_fingerprint_hash)
-        .bind(current_time)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.get::<i64, _>("count") > 0)
     }
 
     /// Store device fingerprint hash for a node member
@@ -1814,23 +1854,19 @@ impl Database {
         node_id: Uuid,
         device_fingerprint_hash: &str,
     ) -> Result<i64> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM node_members WHERE node_id = ? AND device_fingerprint_hash = ?",
+        let mut conn = self.pool.acquire().await?;
+        Ok(admission::count_members_with_fingerprint_on(
+            &mut conn,
+            node_id,
+            device_fingerprint_hash,
         )
-        .bind(node_id.to_string())
-        .bind(device_fingerprint_hash)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.get::<i64, _>("count"))
+        .await?)
     }
 
     /// Get the max accounts per device limit for a Node (0 = unlimited)
     pub async fn get_node_max_accounts_per_device(&self, node_id: Uuid) -> Result<i64> {
-        let row = sqlx::query("SELECT max_accounts_per_device FROM nodes WHERE id = ?")
-            .bind(node_id.to_string())
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(row.get::<i64, _>("max_accounts_per_device"))
+        let mut conn = self.pool.acquire().await?;
+        Ok(admission::max_accounts_per_device_on(&mut conn, node_id).await?)
     }
 
     /// Set the max accounts per device limit for a Node
@@ -1962,27 +1998,8 @@ impl Database {
     /// Check if a build hash is allowed for a Node.
     /// Returns true if the allowlist is empty (open mode) or if the hash is in the list.
     pub async fn is_build_hash_allowed(&self, node_id: Uuid, build_hash: &str) -> Result<bool> {
-        let count_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM node_build_hash_allowlist WHERE node_id = ?",
-        )
-        .bind(node_id.to_string())
-        .fetch_one(&self.pool)
-        .await?;
-        let total: i64 = count_row.get("count");
-
-        // Empty allowlist = open mode, all builds allowed
-        if total == 0 {
-            return Ok(true);
-        }
-
-        let match_row = sqlx::query(
-            "SELECT COUNT(*) as count FROM node_build_hash_allowlist WHERE node_id = ? AND build_hash = ?",
-        )
-        .bind(node_id.to_string())
-        .bind(build_hash)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(match_row.get::<i64, _>("count") > 0)
+        let mut conn = self.pool.acquire().await?;
+        Ok(admission::is_build_hash_allowed_on(&mut conn, node_id, build_hash).await?)
     }
 
     // ── Relay-level build hash allowlist operations ──
@@ -2195,11 +2212,11 @@ impl Database {
         .await?;
         self.seed_management_roles(node_id).await?;
 
-        // Add owner as a member. Node authority comes from `owner_id` (owner has
-        // every permission); the legacy role marker + seeded Admin role are for
-        // display/continuity only.
-        self.add_node_member(node_id, owner_id, NodeRole::Admin)
-            .await?;
+        // Add owner as a member through the owner-row insert of the admission
+        // module (SPEC-01 REQ-18). Node authority comes from `owner_id` (owner
+        // has every permission); the legacy role marker + seeded Admin role
+        // are for display/continuity only.
+        self.insert_owner_row(node_id, owner_id).await?;
 
         // Create a default "general" channel
         self.create_channel("general", node_id, owner_id).await?;
@@ -2211,12 +2228,13 @@ impl Database {
             description: description.map(|s| s.to_string()),
             created_at,
             icon_hash: None,
+            join_policy: crate::node::JoinPolicy::Invite,
         })
     }
 
     pub async fn get_node(&self, node_id: Uuid) -> Result<Option<Node>> {
         let row = sqlx::query(
-            "SELECT id, name, owner_id, description, created_at, icon_hash FROM nodes WHERE id = ?",
+            "SELECT id, name, owner_id, description, created_at, icon_hash, join_policy FROM nodes WHERE id = ?",
         )
         .bind(node_id.to_string())
         .fetch_optional(&self.pool)
@@ -2274,45 +2292,10 @@ impl Database {
         Ok(())
     }
 
-    pub async fn add_node_member(
-        &self,
-        node_id: Uuid,
-        user_id: Uuid,
-        role: NodeRole,
-    ) -> Result<()> {
-        let joined_at = now();
-        sqlx::query("INSERT OR IGNORE INTO node_members (node_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)")
-            .bind(node_id.to_string())
-            .bind(user_id.to_string())
-            .bind(role.as_str())
-            .bind(joined_at as i64)
-            .execute(&self.pool)
-            .await
-            .context("Failed to add node member")?;
-        // Bridge legacy callers: a member added as Admin/Moderator gets the
-        // matching seeded custom role, so enforcement (which runs entirely on
-        // custom-role bitflags) grants them the expected power. Plain members
-        // rely on @everyone. No-op if the seeded role is absent.
-        match role {
-            NodeRole::Admin => self.assign_named_role(node_id, user_id, "Admin").await?,
-            NodeRole::Moderator => {
-                self.assign_named_role(node_id, user_id, "Moderator")
-                    .await?
-            }
-            NodeRole::Member => {}
-        }
-        Ok(())
-    }
-
-    pub async fn remove_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM node_members WHERE node_id = ? AND user_id = ?")
-            .bind(node_id.to_string())
-            .bind(user_id.to_string())
-            .execute(&self.pool)
-            .await
-            .context("Failed to remove node member")?;
-        Ok(())
-    }
+    // Memberships are written only by the admission module (`db::admission`,
+    // SPEC-01 REQ-18): the admission and approval transactions, and the owner
+    // row of node creation. They are removed only by its single removal
+    // routine, `Database::remove_member` (SPEC-01 REQ-50).
 
     pub async fn get_node_members(&self, node_id: Uuid) -> Result<Vec<NodeMember>> {
         let rows = sqlx::query(
@@ -2342,14 +2325,8 @@ impl Database {
     }
 
     pub async fn is_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<bool> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM node_members WHERE node_id = ? AND user_id = ?",
-        )
-        .bind(node_id.to_string())
-        .bind(user_id.to_string())
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(row.get::<i64, _>("count") > 0)
+        let mut conn = self.pool.acquire().await?;
+        Ok(admission::is_member_on(&mut conn, node_id, user_id).await?)
     }
 
     // ── Encrypted metadata (opaque NMK blobs — the relay stores, never decrypts) ──
@@ -2489,7 +2466,7 @@ impl Database {
 
     pub async fn get_user_nodes(&self, user_id: Uuid) -> Result<Vec<Node>> {
         let rows = sqlx::query(
-            "SELECT n.id, n.name, n.owner_id, n.description, n.created_at, n.icon_hash FROM nodes n JOIN node_members nm ON n.id = nm.node_id WHERE nm.user_id = ?"
+            "SELECT n.id, n.name, n.owner_id, n.description, n.created_at, n.icon_hash, n.join_policy FROM nodes n JOIN node_members nm ON n.id = nm.node_id WHERE nm.user_id = ?"
         )
         .bind(user_id.to_string())
         .fetch_all(&self.pool)
@@ -3552,7 +3529,10 @@ impl Database {
         Ok(result.rows_affected())
     }
 
-    /// Edit a message (author only)
+    /// Edit a message (author only). A message with claimed version-2
+    /// attachments is never edited, and its stored payload stays unchanged
+    /// (SPEC-02 REQ-37); `authored_message_has_attachments` tells that case
+    /// apart from "not found".
     pub async fn edit_message(
         &self,
         message_id: Uuid,
@@ -3562,7 +3542,9 @@ impl Database {
         let edited_at = now();
 
         let result = sqlx::query(
-            "UPDATE messages SET encrypted_payload = ?, edited_at = ? WHERE id = ? AND sender_id = ?"
+            "UPDATE messages SET encrypted_payload = ?, edited_at = ? WHERE id = ? AND sender_id = ? \
+             AND NOT EXISTS (SELECT 1 FROM attachments a \
+                             WHERE a.message_id = messages.id AND a.state = 1)",
         )
         .bind(new_encrypted_payload)
         .bind(edited_at as i64)
@@ -3665,31 +3647,8 @@ impl Database {
 
     // ── Node invite operations ──
 
-    pub async fn create_node_invite(
-        &self,
-        node_id: Uuid,
-        created_by: Uuid,
-        invite_code: &str,
-        max_uses: Option<u32>,
-        expires_at: Option<u64>,
-    ) -> Result<Uuid> {
-        let invite_id = Uuid::new_v4();
-        let created_at = now();
-
-        sqlx::query("INSERT INTO node_invites (id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)")
-            .bind(invite_id.to_string())
-            .bind(node_id.to_string())
-            .bind(created_by.to_string())
-            .bind(invite_code)
-            .bind(max_uses.map(|u| u as i64))
-            .bind(expires_at.map(|t| t as i64))
-            .bind(created_at as i64)
-            .execute(&self.pool)
-            .await
-            .context("Failed to create node invite")?;
-
-        Ok(invite_id)
-    }
+    // Invites are inserted by `Database::insert_invite` (`db::admission`),
+    // under the authority and collision rules of SPEC-01 REQ-36 to REQ-38.
 
     pub async fn get_node_invite_by_code(&self, invite_code: &str) -> Result<Option<NodeInvite>> {
         let row = sqlx::query("SELECT id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at FROM node_invites WHERE invite_code = ?")
@@ -3711,16 +3670,8 @@ impl Database {
         rows.iter().map(parse_node_invite).collect()
     }
 
-    pub async fn increment_invite_usage(&self, invite_code: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE node_invites SET current_uses = current_uses + 1 WHERE invite_code = ?",
-        )
-        .bind(invite_code)
-        .execute(&self.pool)
-        .await
-        .context("Failed to increment invite usage")?;
-        Ok(())
-    }
+    // `current_uses` is incremented only by the conditional consume of the
+    // admission transaction (`db::admission`, SPEC-01 REQ-23).
 
     pub async fn get_node_invite(&self, invite_id: Uuid) -> Result<Option<NodeInvite>> {
         let row = sqlx::query("SELECT id, node_id, created_by, invite_code, max_uses, current_uses, expires_at, created_at FROM node_invites WHERE id = ?")
@@ -4283,7 +4234,12 @@ impl Database {
 
     // ── Direct Message Channel operations ──
 
-    /// Create or get a DM channel between two users
+    /// Create or get the DM conversation between two users, atomically
+    /// (SPEC-01 REQ-16). One `BEGIN IMMEDIATE` transaction inserts the
+    /// ordered pair with `ON CONFLICT DO NOTHING`, re-selects it, and, only
+    /// when this call created it, inserts the backing `channels` row and both
+    /// `channel_members` rows. Two concurrent first calls both return the
+    /// same conversation; neither fails on the unique constraint.
     pub async fn create_or_get_dm_channel(
         &self,
         user1_id: Uuid,
@@ -4295,57 +4251,79 @@ impl Database {
         } else {
             (user2_id, user1_id)
         };
-
-        // Try to find existing DM channel
-        let existing = sqlx::query(
-            "SELECT id, user1_id, user2_id, created_at FROM dm_channels WHERE user1_id = ? AND user2_id = ?"
-        )
-        .bind(user1.to_string())
-        .bind(user2.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to query existing DM channel")?;
-
-        if let Some(row) = existing {
-            return Ok(crate::models::DmChannel {
-                id: Uuid::parse_str(&row.get::<String, _>("id"))?,
-                user1_id: Uuid::parse_str(&row.get::<String, _>("user1_id"))?,
-                user2_id: Uuid::parse_str(&row.get::<String, _>("user2_id"))?,
-                created_at: row.get::<i64, _>("created_at") as u64,
-                is_dm: true,
-            });
-        }
-
-        // Create new DM channel
-        let dm_id = Uuid::new_v4();
         let created_at = now();
+        let dm_id = Uuid::new_v4();
 
-        sqlx::query(
-            "INSERT INTO dm_channels (id, user1_id, user2_id, created_at) VALUES (?, ?, ?, ?)",
+        let mut tx = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .context("Failed to begin DM creation")?;
+        let inserted = sqlx::query(
+            "INSERT INTO dm_channels (id, user1_id, user2_id, created_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(user1_id, user2_id) DO NOTHING",
         )
         .bind(dm_id.to_string())
         .bind(user1.to_string())
         .bind(user2.to_string())
         .bind(created_at as i64)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .context("Failed to create DM channel")?;
-
-        // Create a channel entry for message infrastructure
-        self.create_channel_with_id(dm_id, &format!("DM-{}", dm_id), DM_SYSTEM_NODE_ID, user1_id)
-            .await?;
-
-        // Add both users to the channel
-        self.add_user_to_channel(dm_id, user1_id).await?;
-        self.add_user_to_channel(dm_id, user2_id).await?;
-
-        Ok(crate::models::DmChannel {
-            id: dm_id,
-            user1_id: user1,
-            user2_id: user2,
-            created_at,
+        .context("Failed to create DM channel")?
+        .rows_affected()
+            == 1;
+        let row = sqlx::query(
+            "SELECT id, user1_id, user2_id, created_at FROM dm_channels WHERE user1_id = ? AND user2_id = ?",
+        )
+        .bind(user1.to_string())
+        .bind(user2.to_string())
+        .fetch_one(&mut *tx)
+        .await
+        .context("Failed to read DM channel")?;
+        let dm = crate::models::DmChannel {
+            id: Uuid::parse_str(&row.try_get::<String, _>("id")?)?,
+            user1_id: Uuid::parse_str(&row.try_get::<String, _>("user1_id")?)?,
+            user2_id: Uuid::parse_str(&row.try_get::<String, _>("user2_id")?)?,
+            created_at: row.try_get::<i64, _>("created_at")? as u64,
             is_dm: true,
-        })
+        };
+        if inserted {
+            // The backing channel for the message infrastructure, under the
+            // reserved node, and both participants' subscriptions.
+            let position: i64 = sqlx::query(
+                "SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM channels WHERE node_id = ?",
+            )
+            .bind(DM_SYSTEM_NODE_ID.to_string())
+            .fetch_one(&mut *tx)
+            .await?
+            .try_get("next_position")?;
+            sqlx::query(
+                "INSERT INTO channels (id, name, node_id, created_by, created_at, position, channel_type) \
+                 VALUES (?, ?, ?, ?, ?, ?, 0)",
+            )
+            .bind(dm.id.to_string())
+            .bind(format!("DM-{}", dm.id))
+            .bind(DM_SYSTEM_NODE_ID.to_string())
+            .bind(user1_id.to_string())
+            .bind(created_at as i64)
+            .bind(position)
+            .execute(&mut *tx)
+            .await
+            .context("Failed to insert DM channel")?;
+            for participant in [dm.user1_id, dm.user2_id] {
+                sqlx::query(
+                    "INSERT OR IGNORE INTO channel_members (channel_id, user_id, joined_at) VALUES (?, ?, ?)",
+                )
+                .bind(dm.id.to_string())
+                .bind(participant.to_string())
+                .bind(created_at as i64)
+                .execute(&mut *tx)
+                .await
+                .context("Failed to subscribe DM participants")?;
+            }
+        }
+        tx.commit().await.context("Failed to commit DM creation")?;
+        Ok(dm)
     }
 
     /// Get user's DM channels with last message preview
@@ -4491,7 +4469,29 @@ impl Database {
         .transpose()
     }
 
-    /// Check if a channel is a DM channel
+    /// The single DM lookup of SPEC-01 REQ-17(c): `Ok(None)` when the channel
+    /// is not a DM, the two participants when it is, and an error when that
+    /// cannot be decided (including a DM row that cannot be read). Every DM
+    /// authorization decision treats the error as a denial.
+    pub async fn dm_participants(&self, channel_id: Uuid) -> Result<Option<(Uuid, Uuid)>> {
+        self.faults.check("dm:lookup")?;
+        let row = sqlx::query("SELECT user1_id, user2_id FROM dm_channels WHERE id = ?")
+            .bind(channel_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to look up DM channel")?;
+        match row {
+            None => Ok(None),
+            Some(row) => Ok(Some((
+                Uuid::parse_str(&row.try_get::<String, _>("user1_id")?)?,
+                Uuid::parse_str(&row.try_get::<String, _>("user2_id")?)?,
+            ))),
+        }
+    }
+
+    /// Check if a channel is a DM channel. Not for authorization: a DM
+    /// decision uses `dm_participants`, the single fail-closed lookup of
+    /// SPEC-01 REQ-17(c).
     pub async fn is_dm_channel(&self, channel_id: Uuid) -> Result<bool> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM dm_channels WHERE id = ?")
             .bind(channel_id.to_string())
@@ -4740,6 +4740,7 @@ impl Database {
                     .get::<Option<String>, _>("target_id")
                     .and_then(|s| Uuid::parse_str(&s).ok());
                 let details: Option<String> = row.get("details");
+                let details = details.map(strip_invite_code);
                 let created_at = row.get::<i64, _>("created_at") as u64;
 
                 Ok(crate::models::AuditLogWithActor {
@@ -5803,6 +5804,7 @@ impl Database {
         {
             return Ok(0);
         }
+        self.faults.check("permissions:channel")?;
 
         // Check if user is the Node owner — owners always get full permissions
         let node = self
@@ -5865,36 +5867,17 @@ impl Database {
     /// The reserved DM system node and the reserved user hold no permissions
     /// at all; that check precedes the owner shortcut (SPEC-01 REQ-8).
     pub async fn compute_node_permissions(&self, node_id: Uuid, user_id: Uuid) -> Result<u64> {
-        use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
-
         if crate::admission::is_reserved_node(node_id)
             || crate::admission::is_reserved_user(user_id)
         {
             return Ok(0);
         }
-
-        // Node owner gets everything
-        let node = self
-            .get_node(node_id)
+        // One implementation, shared with the admission transaction, which
+        // runs it on its own connection (SPEC-01 REQ-18).
+        let mut conn = self.pool.acquire().await?;
+        admission::node_permissions_on(&mut conn, node_id, user_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Node not found"))?;
-        if node.owner_id == user_id {
-            return Ok(ALL_PERMISSIONS);
-        }
-
-        let everyone_role = self.get_everyone_role(node_id).await?;
-        let mut perms = everyone_role.as_ref().map(|r| r.permissions).unwrap_or(0);
-
-        let member_roles = self.get_member_roles(node_id, user_id).await?;
-        for role in &member_roles {
-            perms |= role.permissions;
-        }
-
-        if perms & ADMINISTRATOR != 0 {
-            return Ok(ALL_PERMISSIONS);
-        }
-
-        Ok(perms)
+            .ok_or_else(|| anyhow::anyhow!("Node not found"))
     }
 
     /// Single enforcement entry point: does `user_id` hold `permission` in
@@ -5979,46 +5962,12 @@ impl Database {
         Ok(())
     }
 
-    /// One-time migration for nodes created before management roles were custom:
-    /// ensure every real Node has seeded Admin/Moderator roles, then assign them
-    /// to members carrying the legacy `node_members.role` marker. Idempotent.
-    /// The reserved DM system node is excluded by id, never by name (SPEC-01 REQ-6).
-    pub async fn migrate_legacy_roles(&self) -> Result<()> {
-        let node_ids: Vec<String> = sqlx::query_scalar("SELECT id FROM nodes")
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to list nodes for role migration")?;
-        for node_id_str in node_ids {
-            let node_id = match Uuid::parse_str(&node_id_str) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
-            if crate::admission::is_reserved_node(node_id) {
-                continue;
-            }
-            self.seed_management_roles(node_id).await?;
-            let legacy: Vec<(String, String)> = sqlx::query_as(
-                "SELECT user_id, role FROM node_members WHERE node_id = ? AND role IN ('admin', 'moderator')",
-            )
-            .bind(node_id_str)
-            .fetch_all(&self.pool)
-            .await
-            .context("Failed to read legacy member roles")?;
-            for (user_id_str, role) in legacy {
-                let user_id = match Uuid::parse_str(&user_id_str) {
-                    Ok(id) => id,
-                    Err(_) => continue,
-                };
-                let name = if role == "admin" {
-                    "Admin"
-                } else {
-                    "Moderator"
-                };
-                self.assign_named_role(node_id, user_id, name).await?;
-            }
-        }
-        Ok(())
-    }
+    // The legacy role conversion (seed Admin/Moderator, assign them by the
+    // legacy `node_members.role` marker, then reset non-owner markers) runs
+    // exactly once, as the ledger-gated step `spec01_legacy_roles` of the
+    // admission boot repair (SPEC-01 REQ-48, `db::repair`). There is no
+    // every-boot entry point any more, so an owner's later deletion or
+    // unassignment of those roles persists.
 
     // ── Icon / Avatar operations ──
 
@@ -6501,6 +6450,37 @@ impl Database {
         Ok((row.get("channel_id"), row.get("command_name")))
     }
 
+    /// Accept a bot's response to an invocation (SPEC-01 REQ-17(d)): one
+    /// conditional update from `pending` to `completed`, accepted only when
+    /// it changes exactly one row and the invocation's channel still exists
+    /// in the invocation's node and is not a DM channel. Returns the channel
+    /// to broadcast to, or `None` when the response must be refused.
+    pub async fn complete_bot_invocation(
+        &self,
+        invocation_id: &str,
+        bot_id: &str,
+        node_id: Uuid,
+    ) -> Result<Option<Uuid>> {
+        let row = sqlx::query(
+            "UPDATE bot_invocations SET status = 'completed' \
+             WHERE invocation_id = ? AND bot_id = ? AND node_id = ? AND status = 'pending' \
+             AND EXISTS (SELECT 1 FROM channels c WHERE c.id = bot_invocations.channel_id \
+                         AND c.node_id = bot_invocations.node_id) \
+             AND NOT EXISTS (SELECT 1 FROM dm_channels d WHERE d.id = bot_invocations.channel_id) \
+             RETURNING channel_id",
+        )
+        .bind(invocation_id)
+        .bind(bot_id)
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to complete bot invocation")?;
+        match row {
+            None => Ok(None),
+            Some(row) => Ok(Uuid::parse_str(&row.try_get::<String, _>("channel_id")?).ok()),
+        }
+    }
+
     pub async fn update_invocation_status(&self, invocation_id: &str, status: &str) -> Result<()> {
         sqlx::query("UPDATE bot_invocations SET status = ? WHERE invocation_id = ?")
             .bind(status)
@@ -6790,6 +6770,20 @@ fn parse_user(row: &sqlx::sqlite::SqliteRow) -> Result<User> {
     })
 }
 
+/// Drop a top-level `invite_code` key from audit `details`, whatever the
+/// action, so that no stored entry exposes an invite code, including rows an
+/// older binary writes after a downgrade (SPEC-01 REQ-47). Details that are
+/// not a JSON object are returned unchanged.
+pub(crate) fn strip_invite_code(details: String) -> String {
+    match serde_json::from_str::<serde_json::Value>(&details) {
+        Ok(serde_json::Value::Object(mut map)) if map.contains_key("invite_code") => {
+            map.remove("invite_code");
+            serde_json::Value::Object(map).to_string()
+        }
+        _ => details,
+    }
+}
+
 /// Compute the SHA-256 hash of a public key, returned as a hex string.
 pub fn compute_public_key_hash(public_key: &str) -> String {
     use sha2::{Digest, Sha256};
@@ -6805,6 +6799,10 @@ fn parse_node(row: &sqlx::sqlite::SqliteRow) -> Result<Node> {
         description: row.get("description"),
         created_at: row.get::<i64, _>("created_at") as u64,
         icon_hash: row.try_get("icon_hash").ok(),
+        join_policy: row
+            .try_get::<String, _>("join_policy")
+            .map(|p| crate::node::JoinPolicy::from_stored(&p))
+            .unwrap_or_default(),
     })
 }
 
@@ -6947,13 +6945,17 @@ mod tests {
 
         // Add another member
         let user2 = db.create_user("key2", "").await.unwrap();
-        db.add_node_member(node.id, user2.id, NodeRole::Member)
+        db.seed_node_member(node.id, user2.id, NodeRole::Member)
             .await
             .unwrap();
         assert!(db.is_node_member(node.id, user2.id).await.unwrap());
 
-        // Remove member
-        db.remove_node_member(node.id, user2.id).await.unwrap();
+        // Remove member through the removal routine (SPEC-01 REQ-50)
+        let removal = db
+            .remove_member(node.id, admission::Removal::Leave { user_id: user2.id })
+            .await
+            .unwrap();
+        assert_eq!(removal.removed_user, Some(user2.id));
         assert!(!db.is_node_member(node.id, user2.id).await.unwrap());
     }
 
@@ -7265,14 +7267,16 @@ mod tests {
         let v = db.create_user("v", "").await.unwrap();
         let dm = db.create_or_get_dm_channel(x.id, v.id).await.unwrap();
 
-        // Hijacked state: X owns D, is a member and holds an ADMINISTRATOR role there.
+        // Hijacked state: X owns D, is a member and holds an ADMINISTRATOR role
+        // there. The triggers forbid that state, so drop them first.
+        db.drop_admission_triggers().await.unwrap();
         sqlx::query("UPDATE nodes SET owner_id = ? WHERE id = ?")
             .bind(x.id.to_string())
             .bind(DM_SYSTEM_NODE_ID.to_string())
             .execute(&db.pool)
             .await
             .unwrap();
-        db.add_node_member(DM_SYSTEM_NODE_ID, x.id, NodeRole::Member)
+        db.seed_node_member(DM_SYSTEM_NODE_ID, x.id, NodeRole::Member)
             .await
             .unwrap();
         let role = Uuid::new_v4();
@@ -7337,6 +7341,8 @@ mod tests {
         let u = db.create_user("u", "").await.unwrap();
         let w = db.create_user("w", "").await.unwrap();
         let dm = db.create_or_get_dm_channel(u.id, w.id).await.unwrap();
+        // Hijacked state the triggers forbid: drop them first.
+        db.drop_admission_triggers().await.unwrap();
         sqlx::query("UPDATE nodes SET name = 'general', owner_id = ? WHERE id = ?")
             .bind(u.id.to_string())
             .bind(DM_SYSTEM_NODE_ID.to_string())
@@ -7366,30 +7372,7 @@ mod tests {
                 .await
         );
 
-        // Legacy role seeding skips the renamed reserved node by id, and still
-        // migrates an ordinary node that carries the old display name.
-        let a = db.create_user("a", "").await.unwrap();
-        db.add_node_member(DM_SYSTEM_NODE_ID, a.id, NodeRole::Admin)
-            .await
-            .unwrap();
-        // A pre-migration node (no seeded roles) named like the reserved one.
-        let decoy = Uuid::new_v4();
-        sqlx::query(
-            "INSERT INTO nodes (id, name, owner_id, description, created_at) VALUES (?, '__dm_system__', ?, NULL, 0)",
-        )
-        .bind(decoy.to_string())
-        .bind(u.id.to_string())
-        .execute(&db.pool)
-        .await
-        .unwrap();
-        db.migrate_legacy_roles().await.unwrap();
-        for name in ["Admin", "Moderator"] {
-            assert!(db
-                .get_role_by_name(DM_SYSTEM_NODE_ID, name)
-                .await
-                .unwrap()
-                .is_none());
-            assert!(db.get_role_by_name(decoy, name).await.unwrap().is_some());
-        }
+        // Legacy role seeding of the renamed reserved node is covered by the
+        // restart test T-14 in tests/spec01_repair_test.rs.
     }
 }

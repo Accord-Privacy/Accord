@@ -4,7 +4,7 @@ This guide covers installation, configuration, deployment, and ongoing administr
 
 > **Key concept:** The Accord relay is designed as a *zero-knowledge* routing layer. It never decrypts user content. As an admin, you manage infrastructure, not user data.
 >
-> **Current limitation:** files (attachments) are not end-to-end encrypted. Their key is derived from the channel ID, so anyone with the database, the file store or a backup can decrypt them, and relay-mode voice keys pass through the relay. Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
+> **Current limitation:** attachments uploaded before end-to-end-encrypted attachments shipped (legacy uploads, kept read-only until they are retired) are encrypted under a key derived from the channel ID, so anyone with the database, the legacy file store or a backup can decrypt them; relay-mode voice keys pass through the relay. New attachments are end-to-end encrypted, but the relay still sees their metadata, and `accord-server backup` does not include `attachments_dir` (see [SELF-HOSTING.md](SELF-HOSTING.md#attachment-storage)). Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
 >
 > **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and the connection log is not shown to node owners. Note that P2P voice and P2P screen sharing reveal users' IP addresses to other call participants (see [../SECURITY.md](../SECURITY.md#known-limitations)). See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
 
@@ -104,7 +104,10 @@ Accord accepts configuration from three sources. **Priority order** (highest win
 | `--auto-tls` | — | Auto-generate a self-signed cert on startup (default when no cert given) |
 | `--admin-port` | `6789` | Admin dashboard port, **bound to `127.0.0.1` only** |
 | `--no-admin` | `false` | Disable the localhost admin dashboard entirely |
-| `--disable-rate-limits` | `false` | **Dev/load-testing only** — requires `--no-tls`; never use in production |
+| `--disable-rate-limits` | `false` | **Dev/load-testing only** — requires `--no-tls`; never use in production. Also disables the membership, join-request and invite-preview limits |
+| `--preview-rate-limit` | `30` | Unauthenticated invite previews (`GET /invites/:code/preview`) allowed per 60 s per client network (IPv4 address or IPv6 /64 of the socket peer). `0` disables the limit. See [Invite previews behind a reverse proxy](#invite-previews-behind-a-reverse-proxy) |
+| `--legacy-invite-grace-hours` | `168` | Grace period for invites that were created before the admission upgrade without an expiry: at the first boot of the admission release they get `expires_at` = that boot + this many hours. `0` makes them expire at once. Applied once; see [Upgrading to relay admission](#upgrading-to-relay-admission) |
+| `--keep-legacy-permanent-invites` | `false` | Keep those pre-upgrade invites permanent instead. The choice is recorded at the first boot and is final |
 | `-c, --config` | — | Path to TOML config file |
 | `--cors-origins` | auto | Comma-separated allowed origins (`*` for any) |
 | `--metadata-mode` | `standard` | `standard` or `minimal` (strips optional metadata) |
@@ -114,6 +117,8 @@ Accord accepts configuration from three sources. **Priority order** (highest win
 | `--mesh-port` | `9443` | Mesh listen port |
 | `--mesh-peers` | — | Comma-separated bootstrap peers (`host:port`) |
 | `--mesh-data-dir` | `mesh_data` | Mesh identity/state directory |
+
+The admission flags (`--preview-rate-limit`, `--legacy-invite-grace-hours`, `--keep-legacy-permanent-invites`) are command-line flags only; the TOML file does not set them.
 
 ### TOML Config File
 
@@ -363,6 +368,16 @@ server {
 
 > **Important:** WebSocket support (`Upgrade` / `Connection` headers) is required. Without it, clients cannot connect.
 
+### Invite previews behind a reverse proxy
+
+The unauthenticated invite preview (`GET /invites/:code/preview`) is limited per client network, keyed on the **socket peer address** the relay sees: the IPv4 address, or the /64 prefix of an IPv6 address. The relay never keys on `X-Forwarded-For` or `X-Real-IP`, because clients can forge them.
+
+- **Proxy on the same host** (the Caddy and Nginx setups above): every request arrives from a loopback address. The relay does **not** apply the preview limit to loopback peers, because they would all share one bucket and one client could block previews for everyone. Limit `/invites/` at the proxy if you need a per-client limit there.
+- **Proxy on another host:** every client shares the proxy's address, and therefore one bucket. Run the relay with `--preview-rate-limit 0` and limit at the proxy instead.
+- **No proxy:** the limit applies per client network as described.
+
+Invite codes are 22 random characters (about 131 bits), so the preview limit is defence in depth, not the main protection against guessing codes. Authenticated invite redemption is charged to the user's membership-action budget (10 per minute) before the code is looked up.
+
 ---
 
 ## 6. Node Management
@@ -380,12 +395,28 @@ The server supports four creation policies:
 | `approval` | Node creation requires relay-owner approval | Planned — not yet enforced |
 | `invite` | Nodes can only be created via invite | Planned — not yet enforced |
 
+### Joining a Node (relay admission)
+
+The relay admits a user to a node only with:
+
+- a valid **invite**, validated and consumed atomically (use limits hold under concurrent redemptions, and an invite stops working when it expires, runs out, is revoked, or its creator loses the right to admit people);
+- a **join request** approved by someone with admission authority, on a node whose owner switched `join_policy` to `request`; or
+- the node's **owner** returning to their own node.
+
+A node id alone grants nothing. Every admission path checks key bans, device bans and the per-device account cap, and the node's build allowlist (an absent `X-Build-Hash` counts as the empty string). On a node with at least one device ban, every admission needs a device fingerprint. The relay enforces all of this, so it necessarily knows which accounts are members of which node, and it sees pending join requests (who asked to join which node, for up to 14 days).
+
+**Admission authority** means owning the node, or being a member whose roles grant CREATE_INVITE (ADMINISTRATOR implies it). It is needed to create, list and revoke invites and to approve or deny join requests. CREATE_INVITE therefore means "may admit people".
+
+The DM system node (`00000000-0000-0000-0000-000000000001`, named `__dm_system__`) holds the DM channels. It is reserved: no one can join it, own it, invite into it or delete it, and every node route answers it as a node that does not exist. Database triggers keep these rules even for code paths that would try otherwise.
+
+Admission protects members from other users of an honest relay. It does not protect them from the relay operator, who can change the code and the database.
+
 ### Node Roles
 
 Each Node has its own role hierarchy:
 
 - **Admin** — full control over the Node (manages channels, roles, members)
-- **Moderator** — can kick/ban, manage messages, create invites
+- **Moderator** — can kick/ban, manage messages, create invites (that is, admit people)
 - **Member** — baseline permissions from the `@everyone` role
 
 The Node creator automatically becomes Admin.
@@ -396,7 +427,7 @@ Permissions are stored as a 64-bit bitmask (compatible with Discord's layout). K
 
 | Bit | Permission | Description |
 |-----|-----------|-------------|
-| 0 | `CREATE_INVITE` | Create invite links |
+| 0 | `CREATE_INVITE` | Admit people: create, list and revoke invites, approve or deny join requests |
 | 1 | `KICK_MEMBERS` | Remove members |
 | 2 | `BAN_MEMBERS` | Ban members |
 | 3 | `ADMINISTRATOR` | Full access, bypasses all checks |
@@ -485,7 +516,7 @@ into per-node governance (kicks, bans, role changes).
 curl http://localhost:8080/health
 ```
 
-The Docker Compose health check polls this endpoint every 30 seconds.
+The Docker Compose health check polls this endpoint every 30 seconds. Besides the status fields, the response carries `features` (the capability tokens this relay implements, such as `admission/1`) and `admission_since` (when this relay began enforcing admission, the first boot of the admission release, in Unix seconds).
 
 ### Admin Dashboard (localhost only)
 
@@ -537,6 +568,8 @@ RUST_LOG=debug accord-server         # verbose
 RUST_LOG=accord_server=debug accord-server  # debug only for accord
 ```
 
+Admission events (joins, invites, leaves, kicks, join requests and the boot repair) use the tracing target `accord::admission`. They never contain invite codes, user ids or node ids at INFO or above. To see their DEBUG events: `RUST_LOG=info,accord::admission=debug`.
+
 ---
 
 ## 9. Backup & Recovery
@@ -556,7 +589,7 @@ accord-server backup -d /var/lib/accord/accord.db --output /backups/accord-$(dat
 
 The backup command produces a `.tar.gz` archive containing the database and (if encrypted) handles SQLCipher transparently.
 
-> **Backups contain decryptable files.** Files are not end-to-end encrypted today, so anyone who has a backup together with the file store can decrypt every attachment. Store backups as carefully as the live server.
+> **Backups contain decryptable legacy files.** Legacy uploads (from before end-to-end-encrypted attachments) are not end-to-end encrypted, so anyone who has a backup together with the legacy file store (`./data/files`) can decrypt them until they are retired. Blobs in `attachments_dir` cannot be decrypted without the keys in members' messages, but `accord-server backup` does not include them: back that directory up separately. Store backups as carefully as the live server.
 
 ### Restore
 
@@ -634,6 +667,28 @@ Accord runs database migrations automatically on startup. No manual migration st
 accord-server backup -d /var/lib/accord/accord.db --hot --output /backups/pre-upgrade-$(date +%F).tar.gz
 ```
 
+### Upgrading to relay admission
+
+The release that enforces relay admission changes data at its first boot. Read the operator release note in [CHANGELOG.md](../CHANGELOG.md#relay-admission-spec-01--operator-release-note) before upgrading. In short:
+
+1. **Boot repair, at every start.** Before serving, the relay checks the DM system node and its system user and reverts any state an attacker could have created through the old login and join flaws. It runs in one transaction, changes nothing on a healthy database, and logs one WARN line per step that changed rows, with counts only:
+
+   ```text
+   WARN accord::admission: admission repair: step B5 changed 3 rows
+   ```
+
+   Such lines mean a past compromise was reverted. A step that may be skipped logs `admission repair: step B17 failed (<error class>); skipped` and the relay starts anyway.
+2. **One-time migrations**, recorded in the `relay_migrations` table so they never run again:
+   - `spec01_legacy_roles` — the legacy Admin and Moderator role conversion runs one last time, then the legacy role markers of everyone but node owners are reset to `member`;
+   - `spec01_everyone_create_invite` — CREATE_INVITE is removed from every `@everyone` role;
+   - `spec01_legacy_invite_expiry` — invites without an expiry get one (`--legacy-invite-grace-hours`, default 7 days), unless you pass `--keep-legacy-permanent-invites`. Its time is reported as `admission_since` in `GET /health`;
+   - `spec01_audit_invite_codes` — invite codes are removed from existing audit entries.
+
+   Each logs a WARN line with a count. Passing a flag at a later boot has no effect: the choice made at the first boot is final.
+3. **Fail-closed start.** If a required repair step, the creation of the admission triggers or a one-time migration fails (for example because the database is read-only or locked), the relay exits with an error containing `admission repair failed` and does not serve. Fix the cause (permissions, disk space, another process holding the database) and start again. Clients see the relay as offline until then.
+
+Restoring a backup taken before the upgrade runs the repair and the one-time migrations again at the next boot, with the invite grace period counted from that boot.
+
 ---
 
 ## 11. Troubleshooting
@@ -646,6 +701,7 @@ accord-server backup -d /var/lib/accord/accord.db --hot --output /backups/pre-up
 | "Failed to load TLS cert/key" | Bad cert path or format | Verify PEM files exist and are readable |
 | "Both --tls-cert and --tls-key must be provided" | Only one TLS flag set | Provide both or neither |
 | Database errors on startup | Corrupt DB or missing key | Restore from backup; check `.key` file |
+| "admission repair failed" | The boot repair, the admission triggers or a one-time migration could not run (read-only or locked database, full disk) | Fix the cause and restart; see [Upgrading to relay admission](#upgrading-to-relay-admission) |
 
 ### WebSocket Connection Issues
 

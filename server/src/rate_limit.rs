@@ -24,6 +24,17 @@ pub enum ActionType {
     AuthAttempt,
     /// Registration attempts per IP
     Registration,
+    /// Membership actions per user: a join attempt on any entry point, a
+    /// leave, a kick (charged to the acting user), or a join-request
+    /// withdrawal (SPEC-01 REQ-27). 10 per 60 s.
+    MembershipChange,
+    /// Join-request creation or refresh per user, charged in addition to
+    /// `MembershipChange` (SPEC-01 REQ-27). 5 per 3600 s.
+    JoinRequestCreate,
+    /// Unauthenticated invite previews per client network (IPv4 address or
+    /// IPv6 /64 of the socket peer; SPEC-01 REQ-27). 30 per 60 s by default
+    /// (`--preview-rate-limit`).
+    InvitePreview,
 }
 
 impl ActionType {
@@ -39,6 +50,9 @@ impl ActionType {
             ActionType::NodeCreate => 5,    // 5 per hour
             ActionType::AuthAttempt => 20,  // 20 per minute per IP
             ActionType::Registration => 20, // 20 per hour per IP
+            ActionType::MembershipChange => 10,
+            ActionType::JoinRequestCreate => 5,
+            ActionType::InvitePreview => DEFAULT_PREVIEW_LIMIT,
         }
     }
 
@@ -48,7 +62,38 @@ impl ActionType {
             ActionType::Registration => Duration::from_secs(3600), // 1 hour
             ActionType::InviteCreate => Duration::from_secs(3600), // 1 hour
             ActionType::NodeCreate => Duration::from_secs(3600),   // 1 hour
-            _ => Duration::from_secs(60),                          // 1 minute for all other actions
+            ActionType::JoinRequestCreate => Duration::from_secs(3600),
+            _ => Duration::from_secs(60), // 1 minute for all other actions
+        }
+    }
+}
+
+/// Default number of invite previews per 60 s per client network
+/// (SPEC-01 REQ-27; `--preview-rate-limit`).
+pub const DEFAULT_PREVIEW_LIMIT: usize = 30;
+
+/// The bucket key of the invite-preview limit for a socket peer (SPEC-01
+/// REQ-27): the IPv4 address, or the /64 prefix of an IPv6 address. An
+/// IPv4-mapped IPv6 address counts as its IPv4 address. Returns `None` for a
+/// loopback peer (a reverse proxy on the same host), which is never limited:
+/// one shared bucket would let a single client block previews for everyone.
+pub fn preview_peer_key(peer: std::net::IpAddr) -> Option<String> {
+    use std::net::IpAddr;
+    let peer = match peer {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(v6),
+        },
+        v4 => v4,
+    };
+    if peer.is_loopback() {
+        return None;
+    }
+    match peer {
+        IpAddr::V4(v4) => Some(v4.to_string()),
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            Some(format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3]))
         }
     }
 }
@@ -84,6 +129,9 @@ pub struct RateLimiter {
     ip_windows: Arc<RwLock<IpWindowMap>>,
     /// When true, every check passes. Dev/load-testing only — never production.
     disabled: bool,
+    /// Invite previews per 60 s per client network; 0 disables that limit
+    /// (`--preview-rate-limit`, SPEC-01 REQ-27).
+    preview_limit: usize,
 }
 
 impl RateLimiter {
@@ -93,6 +141,21 @@ impl RateLimiter {
             windows: Arc::new(RwLock::new(HashMap::new())),
             ip_windows: Arc::new(RwLock::new(HashMap::new())),
             disabled: false,
+            preview_limit: DEFAULT_PREVIEW_LIMIT,
+        }
+    }
+
+    /// Set the invite-preview limit per 60 s per client network; 0 disables
+    /// it (`--preview-rate-limit`).
+    pub fn set_preview_limit(&mut self, limit: usize) {
+        self.preview_limit = limit;
+    }
+
+    /// The limit of `action` in this limiter's configuration.
+    fn limit_of(&self, action: ActionType) -> usize {
+        match action {
+            ActionType::InvitePreview => self.preview_limit,
+            other => other.default_limit(),
         }
     }
 
@@ -115,10 +178,13 @@ impl RateLimiter {
         if self.disabled {
             return Ok(());
         }
+        let limit = self.limit_of(action);
+        if action == ActionType::InvitePreview && limit == 0 {
+            return Ok(());
+        }
         let mut windows = self.ip_windows.write().await;
         let now = Instant::now();
         let window_duration = action.window_duration();
-        let limit = action.default_limit();
 
         let key = (ip.to_string(), action);
         let window = windows.entry(key).or_insert_with(VecDeque::new);
@@ -145,7 +211,7 @@ impl RateLimiter {
                     limit,
                     window_duration.as_secs()
                 ),
-                retry_after_secs: retry_after,
+                retry_after_secs: retry_after.max(1),
                 remaining: 0,
             });
         }
@@ -195,7 +261,7 @@ impl RateLimiter {
                     "{:?} rate limit exceeded. Limit: {} per minute",
                     action, limit
                 ),
-                retry_after_secs: retry_after,
+                retry_after_secs: retry_after.max(1),
                 remaining: 0,
             });
         }

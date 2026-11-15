@@ -51,6 +51,45 @@ pub enum NodeCreationPolicy {
     Invite,
 }
 
+/// Who may ask to join a Node without an invite (SPEC-01 REQ-29).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JoinPolicy {
+    /// Only an invite (or the owner's self-admission) admits anyone. The
+    /// default for new and existing nodes, and always the policy of the
+    /// reserved DM node.
+    #[default]
+    Invite,
+    /// Without an invite, a join by node id records a join request that
+    /// someone with admission authority approves or denies.
+    Request,
+}
+
+impl JoinPolicy {
+    /// The stored and wire form: `invite` or `request`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            JoinPolicy::Invite => "invite",
+            JoinPolicy::Request => "request",
+        }
+    }
+
+    /// Parse the stored or wire form; any other value is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "invite" => Some(JoinPolicy::Invite),
+            "request" => Some(JoinPolicy::Request),
+            _ => None,
+        }
+    }
+
+    /// Read a stored value. Anything but `request` is the stricter
+    /// `invite`, so a corrupt value never opens the request path.
+    pub fn from_stored(s: &str) -> Self {
+        Self::parse(s).unwrap_or_default()
+    }
+}
+
 /// A Node (community space)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
@@ -61,6 +100,9 @@ pub struct Node {
     pub created_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_hash: Option<String>,
+    /// SPEC-01 REQ-29: `invite` or `request`.
+    #[serde(default)]
+    pub join_policy: JoinPolicy,
 }
 
 /// Node membership info

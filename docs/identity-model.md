@@ -105,7 +105,7 @@ Moderation in Accord is **strictly per-Node** and is the node owner's responsibi
 ### Kick
 
 - **What:** Removes a user from a Node's member list
-- **Effect:** User is no longer a member, but **can rejoin** (via invite or open join)
+- **Effect:** User is no longer a member. They can rejoin only through the relay's admission rules: with a valid invite (including one they still hold), an approved join request, or not at all. Their old roles are not restored when they rejoin
 - **Endpoint:** `DELETE /nodes/:id/members/:user_id`
 - **Permission:** Requires `KickMembers` (admin/moderator role)
 
@@ -137,7 +137,7 @@ reason_encrypted         BLOB    -- encrypted with NMK (nullable)
 expires_at               INTEGER -- nullable (null = permanent)
 ```
 
-Bans are checked when a user attempts to join a Node. Both `public_key_hash` and `device_fingerprint_hash` are checked against the ban list, with expiry taken into account.
+Bans are checked on every way into a Node: invite redemption, joins by node id, and approval of a join request. Both `public_key_hash` and `device_fingerprint_hash` are checked against the ban list, with expiry taken into account. On a Node that has at least one device ban, every admission must carry a device fingerprint; a client that sends none is refused (`fingerprint_required`). For joins, the desktop sends a **node-scoped** fingerprint: an HMAC-SHA-256 of the node id under a random secret kept on that installation, so two Nodes see unrelated values and cannot link a user's accounts across Nodes by comparing them. Like every fingerprint it is supplied by the client, so a modified client can send a fresh value.
 
 ---
 
@@ -148,7 +148,7 @@ Bans are checked when a user attempts to join a Node. Both `public_key_hash` and
 | New keypair, same device | **Blocked** — device fingerprint hash matches the ban |
 | New keypair + VPN | **Blocked** — fingerprinting is device-based, not IP-based |
 | New keypair + new device (or factory reset) | **Gets through** — this is the deliberate tradeoff |
-| Any attempt on invite-only Node | **Blocked** — needs a valid invite regardless of identity |
+| Any attempt to rejoin without a grant | **Blocked** — the relay requires a valid invite, an approved join request, or ownership, regardless of identity |
 
 ### Why device fingerprinting works
 
@@ -156,14 +156,18 @@ The fingerprint is computed from hardware and environment signals (device ID, sc
 
 ### Why we accept the factory-reset gap
 
-Getting a new device or factory resetting is a **high barrier** — it costs time, money, or both. Combined with invite-only Nodes (already implemented), this makes persistent ban evasion impractical for most scenarios. Closing this gap completely would require invasive tracking that contradicts Accord's privacy principles.
+Getting a new device or factory resetting is a **high barrier** — it costs time, money, or both. Combined with relay admission (below), this makes persistent ban evasion impractical for most scenarios. Closing this gap completely would require invasive tracking that contradicts Accord's privacy principles.
 
-### Strongest defense: Invite-only Nodes
+### Strongest defense: Admission by invite or approval
 
-Invite-only Nodes are the most effective anti-abuse measure. Even if someone evades a device ban, they still need a valid invite code to join. Invite codes can be:
-- Limited to N uses
-- Set to expire after N hours
+Every Node is invite-only, and the relay enforces it. Earlier releases claimed this while any account could still join any Node by its id; the relay now admits a user only with a valid invite, with a join request approved by someone holding admission authority (on Nodes whose owner allows requests), or as the Node's owner. Even if someone evades a device ban, they still need one of these grants. Invite codes can be:
+- Limited to N uses (enforced atomically, even under concurrent joins)
+- Set to expire after a chosen time
 - Revoked at any time
+
+An invite also stops working when its creator loses the right to admit people (CREATE_INVITE). Invite codes are bearer secrets: anyone who holds a valid code can use it, including a kicked member who kept a link, until it expires, runs out or is revoked.
+
+This is enforced by the relay. It protects a Node from other users when the relay is honest, not from the relay operator.
 
 ---
 
@@ -181,7 +185,8 @@ Invite-only Nodes are the most effective anti-abuse measure. Even if someone eva
 | Channel / category names | ❌ Encrypted blob | ✅ Decrypted with NMK |
 | Per-node policy (retention, screenshot, word filters) | ❌ Encrypted settings blob | ✅ Decrypted with NMK |
 | Device fingerprint | ❌ Only SHA-256 hash | Node admins only |
-| Who is in which Node | ✅ Membership table (UUIDs) — never shown in the admin surface | ✅ |
+| Who is in which Node | ✅ Membership table (UUIDs) — never shown in the admin surface; the relay needs it to enforce admission | ✅ |
+| Who asked to join which Node | ✅ Pending join requests, for up to 14 days | Members with admission authority |
 | Ban list | ✅ Hashes only | Admins see encrypted reasons |
 | IP address | ✅ Transport layer; relay-owner connection log only, never node-correlated, not shown to node owners; P2P voice and P2P screen sharing reveal it to other participants | ❌ |
 | Message timestamps | ✅ | ✅ |

@@ -93,3 +93,42 @@ async fn boot_cache_load_prunes_expired_and_keeps_active() {
     assert_eq!(bans.len(), 1);
     assert_eq!(bans[0].ip, "192.0.2.2");
 }
+
+/// The production router drops banned socket peers before any route runs.
+#[tokio::test]
+async fn production_router_rejects_banned_peers() {
+    let relay = accord_server::test_support::TestRelay::start().await;
+    let health = relay.url("/health");
+    assert_eq!(
+        relay.client.get(&health).send().await.unwrap().status(),
+        200
+    );
+
+    relay.state.ban_ip("127.0.0.1", None, None).await.unwrap();
+    assert_eq!(
+        relay.client.get(&health).send().await.unwrap().status(),
+        403
+    );
+
+    relay.state.unban_ip("127.0.0.1").await.unwrap();
+    assert_eq!(
+        relay.client.get(&health).send().await.unwrap().status(),
+        200
+    );
+}
+
+/// A router served without connect information has no peer address to ban,
+/// and still answers.
+#[tokio::test]
+async fn production_router_serves_without_connect_info() {
+    let state = std::sync::Arc::new(AppState::new_in_memory().await.unwrap());
+    state.ban_ip("127.0.0.1", None, None).await.unwrap();
+    let app = accord_server::router::build_public_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let response = reqwest::get(format!("http://{addr}/health")).await.unwrap();
+    assert_eq!(response.status(), 200);
+}

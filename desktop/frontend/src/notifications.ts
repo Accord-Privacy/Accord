@@ -30,6 +30,22 @@ export interface NodeUnreads {
   };
 }
 
+/**
+ * The text of a desktop notification. It shows the message body (when
+ * previews are on) and, for messages with attachments, only their count:
+ * never a file name, MIME type or key (SPEC-02 REQ-11, OD-38). `content` is
+ * the decoded body; descriptors never reach it.
+ */
+export function notificationBody(message: Pick<Message, 'content' | '_attachmentCount' | '_placeholder'>, showPreview: boolean): string {
+  if (!showPreview) return 'New message received';
+  const count = message._attachmentCount ?? 0;
+  const attachments = count > 0 ? `${count} attachment${count === 1 ? '' : 's'}` : '';
+  const content = message._placeholder ? '' : message.content;
+  const text = content.length > 100 ? content.substring(0, 100) + '...' : content;
+  if (text && attachments) return `${text} (${attachments})`;
+  return text || attachments || 'New message received';
+}
+
 // ---- Mute Manager (localStorage-backed, singleton) ----
 
 export interface MuteEntry {
@@ -403,9 +419,7 @@ export class NotificationManager {
   private showDesktopNotification(message: Message, channelId: string, isMention: boolean, isDm: boolean = false): void {
     if ('Notification' in window && Notification.permission === 'granted') {
       const title = isMention ? `${message.author} mentioned you` : isDm ? `DM from ${message.author}` : `${message.author}`;
-      const body = this.preferences.showPreview
-        ? (message.content.length > 100 ? message.content.substring(0, 100) + '...' : message.content)
-        : 'New message received';
+      const body = notificationBody(message, this.preferences.showPreview);
 
       const notification = new Notification(title, {
         body,

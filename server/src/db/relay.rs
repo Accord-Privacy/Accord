@@ -798,6 +798,7 @@ impl RelayDatabase {
             description: description.map(|s| s.to_string()),
             created_at,
             icon_hash: None,
+            join_policy: crate::node::JoinPolicy::Invite,
         })
     }
 
@@ -876,14 +877,16 @@ impl RelayDatabase {
         Ok(())
     }
 
-    pub async fn remove_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<()> {
-        sqlx::query("DELETE FROM node_members WHERE node_id = ? AND user_id = ?")
+    /// Delete a membership row and return the number of rows deleted
+    /// (SPEC-01 REQ-50). This layer is not wired into the relay binary.
+    pub async fn remove_node_member(&self, node_id: Uuid, user_id: Uuid) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM node_members WHERE node_id = ? AND user_id = ?")
             .bind(node_id.to_string())
             .bind(user_id.to_string())
             .execute(&self.pool)
             .await
             .context("Failed to remove node member")?;
-        Ok(())
+        Ok(result.rows_affected())
     }
 
     pub async fn get_node_members(&self, node_id: Uuid) -> Result<Vec<NodeMember>> {

@@ -4,6 +4,7 @@ import { ServerHeader } from '../components/ServerHeader';
 import { AppContext } from '../components/AppContext';
 import type { AppContextType } from '../components/AppContext';
 import type { Node } from '../types';
+import { ApiError } from '../apiError';
 
 // Mock the api module
 vi.mock('../api', () => ({
@@ -473,5 +474,48 @@ describe('ServerHeader', () => {
     });
 
     consoleError.mockRestore();
+  });
+
+  // SPEC-01 section 8: refusals of a leave are shown, never only logged.
+  it.each([
+    [new ApiError('Owner cannot leave', 400, 'owner_cannot_leave'), 'Transfer or delete the node instead'],
+    [new ApiError('Rate limit exceeded', 429, 'rate_limited', 30), 'Too many attempts. Try again in 30 seconds.'],
+    [new ApiError('Service temporarily unavailable', 503, 'unavailable'), 'The server is busy. Try again.'],
+  ])('shows the section 8 message when leave fails with %s', async (err, message) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockLeaveNode.mockRejectedValue(err);
+    const setError = vi.fn();
+    const ctx = createMockContext({ setError } as Partial<AppContextType>);
+    render(
+      <AppContext.Provider value={ctx}>
+        <ServerHeader />
+      </AppContext.Provider>
+    );
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByText('Leave Node'));
+    fireEvent.click(screen.getByText('Leave'));
+
+    await waitFor(() => expect(setError).toHaveBeenCalledWith(message));
+    // The confirm closes so the error banner is visible; nodes are not reloaded.
+    expect(screen.queryByText('Are you sure?')).not.toBeInTheDocument();
+    expect(ctx.loadNodes).not.toHaveBeenCalled();
+  });
+
+  it('reloads the node list when leave answers not_member', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockLeaveNode.mockRejectedValue(new ApiError('Not a member of this node', 404, 'not_member'));
+    const setError = vi.fn();
+    const ctx = createMockContext({ setError } as Partial<AppContextType>);
+    render(
+      <AppContext.Provider value={ctx}>
+        <ServerHeader />
+      </AppContext.Provider>
+    );
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByText('Leave Node'));
+    fireEvent.click(screen.getByText('Leave'));
+
+    await waitFor(() => expect(ctx.loadNodes).toHaveBeenCalled());
+    expect(setError).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,7 @@ Accord exists because no platform combines Discord's community features with Sig
 
 > **Where the current release falls short.** These principles are goals, and the current release does not meet all of them:
 >
-> - Files are encrypted under a key derived from the channel ID, which the relay can compute, so files are not end-to-end encrypted.
+> - Attachments are end-to-end encrypted (a random key per file, carried inside the encrypted message), but they are only as authentic as their message, the relay sees their metadata (count, padded size, uploader, channel, downloads), and files uploaded before this release are encrypted under a key the relay can compute until they are retired.
 > - Relay-mode voice (the default) is readable by the relay operator, because each participant's voice key is sent through the relay in a form the relay can read.
 > - P2P voice and P2P screen sharing reveal IP addresses to other participants and can be intercepted by the relay.
 > - Until identity verification ships, a malicious relay can intercept end-to-end-encrypted (Double Ratchet) sessions when they are set up, by substituting keys.
@@ -240,7 +240,7 @@ Relay servers can optionally peer with each other. The mesh has **one purpose on
 docker run accord
 ```
 
-That's it. No domain name, no Cloudflare, no DNS proxy, no reverse proxy. An IP address works fine.
+That's it. No domain name, no Cloudflare, no DNS proxy, no reverse proxy. An IP address works fine. An operator who does put a reverse proxy in front of the relay must raise its request body limit above `attachment_max_blob_bytes` (100 MiB by default; for nginx, `client_max_body_size 101m`), or attachment uploads over the proxy's default fail with 413; see [Request body size for attachments](SELF-HOSTING.md#request-body-size-for-attachments).
 
 ### Requirements
 
@@ -310,7 +310,9 @@ it; if you want a trusted space, create one and invite only people you know. See
 | Channel / category names | ❌ Encrypted blob | ✅ Plaintext (Node members only) |
 | Per-node policy (retention, screenshot, word filters) | ❌ Encrypted `encrypted_settings` blob | ✅ Plaintext (Node members only) |
 | Ban reasons | ❌ Encrypted blob | ✅ Plaintext (Node admins only) |
-| File names and contents | ✅ Readable today: encrypted under a key derived from the channel ID, which the relay can compute (not end-to-end) | — |
+| Attachment contents, names, types, keys, exact sizes | ❌ Nameless blob; the key travels only inside the E2EE message | ✅ Plaintext (recipients of the message) |
+| Attachment metadata | ✅ That a message has attachments and how many, padded size, upload time, uploader, channel, the message it belongs to, who downloads it and when | — |
+| Legacy uploads (before this release) | ✅ Readable until retired: encrypted under a key derived from the channel ID (not end-to-end) | — |
 | Voice audio (relay mode, the default) | ✅ Readable today: the voice keys are sent through the relay in a form it can read (not end-to-end) | — |
 | Voice audio and screen sharing (P2P mode) | ❌ Not routed through the relay, but the relay can intercept the connection setup | ✅ Audio and video (participants, who also learn each other's IP addresses) |
 | Public key + hash | ✅ | — |
@@ -328,7 +330,7 @@ it; if you want a trusted space, create one and invite only people you know. See
 The relay **does** see:
 - **Membership graphs** — which UUIDs belong to which Nodes. This is inherent to relay routing. Mitigated by UUIDs being pseudonymous.
 - **IP addresses** — standard for any TCP connection. Users who care should use Tor or a VPN.
-- **Files** — not end-to-end encrypted today: the file key is derived from the channel ID, which the relay knows, so the relay can decrypt and replace files and file names, including past uploads.
+- **Attachments** — end-to-end encrypted with a random key per file, carried inside the Sender Keys or Double Ratchet message, so they are exactly as private and as authentic as that message: a relay that injects a sender key or intercepts a session at setup can read them and forge them, attributed to the member it impersonates. The relay sees their metadata (count, padded size, uploader, channel, message, downloads and their IP addresses) but not names, types, contents or exact sizes. Its deletion and expiry signals are unauthenticated and can make a device delete a DM attachment's only key. Files uploaded before this release stay readable by the relay until they are retired (90 days by default).
 - **Relay-mode voice** — not end-to-end encrypted today: relay-mode voice is readable by the relay operator, because each participant's key is sent through the relay in a form it can read.
 - **P2P voice and P2P screen sharing** — reveal IP addresses to other participants, and can be intercepted by the relay, because the connection setup passes through the relay unauthenticated. The voice mode is set per channel and other users can change it. These connections also contact public STUN servers run by Google, which learn your IP address; starting a screen share does this even in relay mode.
 - **Encrypted sessions at setup** — until identity verification ships, a malicious relay can substitute keys when an end-to-end-encrypted (Double Ratchet) session is set up, and read everything sent over it, including channel keys and Node Metadata Keys.
@@ -347,7 +349,7 @@ The relay **does** see:
 | Key derivation | HKDF-SHA256 | Deriving per-purpose keys from shared secrets |
 | Relay-mode audio | AES-256-GCM | Per-frame audio encryption. The key is sent through the relay in a form it can read, so this is not end-to-end encryption |
 | P2P voice and screen sharing | Browser WebRTC (DTLS-SRTP) | Direct connections between participants. Reveals IP addresses to other participants; the relay can intercept the setup |
-| File encryption | AES-256-GCM | Key derived from the channel ID, which the relay can compute, so this is not end-to-end encryption |
+| File encryption | AES-256-GCM in 64 KiB records (`A256GCM-STREAM64K`), Padmé padding | A random key and nonce prefix per file, sent only inside the end-to-end-encrypted message with the name, type and ciphertext SHA-256. Legacy uploads used a key derived from the channel ID, which the relay can compute |
 | Identity keys | Ed25519 | Long-term identity for users and servers |
 | Password hashing | Argon2id | Server-side password verification |
 

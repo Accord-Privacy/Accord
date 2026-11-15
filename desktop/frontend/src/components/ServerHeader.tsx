@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { admissionErrorMessage } from "../admission";
+import { errorReason } from "../apiError";
 import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
 import { api } from "../api";
@@ -60,8 +62,19 @@ export const ServerHeader: React.FC = () => {
       ctx.loadNodes?.();
     } catch (err) {
       console.error("Failed to leave node:", err);
+      setDropdownOpen(false);
+      setShowLeaveConfirm(false);
+      if (errorReason(err) === 'not_member') {
+        // Already gone on the relay: refresh so the node disappears.
+        ctx.loadNodes?.();
+      } else {
+        // `owner_cannot_leave` ("Transfer or delete the node instead"),
+        // `rate_limited` and the rest map to the SPEC-01 §8 messages.
+        ctx.setError?.(admissionErrorMessage(err, "Failed to leave node"));
+        setTimeout(() => ctx.setError?.(""), 5000);
+      }
     }
-  }, [ctx.selectedNodeId, ctx.appState.token]);
+  }, [ctx.selectedNodeId, ctx.appState.token, ctx.loadNodes, ctx.setError]);
 
   return (
     <div className="server-header" ref={headerRef}>

@@ -29,6 +29,12 @@ hex = "0.4"
 
 # Desktop integration
 dirs = "5.0"
+# Native save dialog for verified attachments (SPEC-02 REQ-22, OD-47), called
+# only from Rust. This is the library behind tauri-plugin-dialog's Rust API; the
+# plugin itself is not registered because it injects a script that replaces
+# window.alert and window.confirm with IPC calls the webview must not be
+# allowed to make (the webview gets no dialog permission).
+rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
 keyring = { version = "3", features = ["linux-native"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

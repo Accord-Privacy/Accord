@@ -97,8 +97,30 @@ channel to P2P mode. See [SECURITY.md](SECURITY.md#known-limitations).
 The node owner holds all authority *inside their node* and is fully responsible
 for it. They delegate via roles (see
 [`docs/permission-system.md`](docs/permission-system.md)). Node governance —
-bans, kicks, word filters, retention — is theirs to run, and none of it is
-visible to or enforceable by the relay.
+bans, kicks, word filters, retention — is theirs to run. Word filters and
+retention run inside the node, where the relay cannot see them. Who is a member
+is different: the relay enforces it, as the next section explains.
+
+### Admission is enforced by the relay
+
+The relay decides who becomes a member of a node, on the node owner's terms. It
+admits someone only with a valid invite, with a join request that someone holding
+admission authority approved, or when the node's owner returns to their own node.
+A node id alone grants nothing. Admission authority is the node owner's, and that
+of members whose roles grant CREATE_INVITE: it lets them create and revoke invites
+and approve or deny join requests. Bans, device bans and the node's build
+allowlist are checked on every way in.
+
+To enforce this, the relay necessarily knows which accounts are members of which
+node, holds the node's invites and bans, and **sees join requests**: who asked to
+join which node, kept for up to 14 days or until the request is approved, denied
+or withdrawn. The relay owner's admin surface does not show any of this, but the
+relay software and database hold it.
+
+Relay admission protects a node from other users when the relay is honest. It is
+not a protection against the relay operator, who controls the code and the
+database and could add members at will. Protection against a dishonest relay
+needs the members' clients to decide for themselves whom they give keys to.
 
 ### User
 

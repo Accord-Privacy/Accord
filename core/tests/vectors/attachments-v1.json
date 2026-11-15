@@ -1,0 +1,203 @@
+{
+  "name": "SPEC-02 attachment format vectors, version 1",
+  "source": "SPEC-02 sections 6.3 and 6.7 (A256GCM-STREAM64K)",
+  "notes": [
+    "Every shipped implementation of SPEC-02 section 6.3 (WebCrypto path, noble path, accord-core reference) MUST reproduce these values (REQ-2).",
+    "The fixed key and nonce prefix exist only for tests; production values come from the CSPRNG (REQ-1).",
+    "plaintext kinds: hex = the given bytes; repeat = length copies of byte; mod251 = length bytes where byte i = i mod 251.",
+    "blob_hex is given only for blobs of at most 64 bytes."
+  ],
+  "scheme": "A256GCM-STREAM64K",
+  "record_size": 65536,
+  "tag_size": 16,
+  "nonce_prefix_size": 7,
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "nonce_prefix_hex": "a0a1a2a3a4a5a6",
+  "nonce_prefix_b64": "oKGio6Slpg==",
+  "gcm_primitive_checks": [
+    {
+      "id": "GCM-TC13",
+      "key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "nonce_hex": "000000000000000000000000",
+      "plaintext_hex": "",
+      "ciphertext_hex": "",
+      "tag_hex": "530f8afbc74536b9a963b4f1c4cb738b"
+    },
+    {
+      "id": "GCM-TC14",
+      "key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "nonce_hex": "000000000000000000000000",
+      "plaintext_hex": "00000000000000000000000000000000",
+      "ciphertext_hex": "cea7403d4d606b6e074ec5d3baf39d18",
+      "tag_hex": "d0d1c8a799996bf0265b98b5d48ab919"
+    }
+  ],
+  "padme": [
+    {
+      "size": 0,
+      "padded_size": 0
+    },
+    {
+      "size": 1,
+      "padded_size": 1
+    },
+    {
+      "size": 2,
+      "padded_size": 2
+    },
+    {
+      "size": 5,
+      "padded_size": 5
+    },
+    {
+      "size": 9,
+      "padded_size": 10
+    },
+    {
+      "size": 15,
+      "padded_size": 16
+    },
+    {
+      "size": 17,
+      "padded_size": 18
+    },
+    {
+      "size": 100,
+      "padded_size": 104
+    },
+    {
+      "size": 255,
+      "padded_size": 256
+    },
+    {
+      "size": 256,
+      "padded_size": 256
+    },
+    {
+      "size": 1000,
+      "padded_size": 1024
+    },
+    {
+      "size": 4096,
+      "padded_size": 4096
+    },
+    {
+      "size": 65536,
+      "padded_size": 65536
+    },
+    {
+      "size": 65537,
+      "padded_size": 67584
+    },
+    {
+      "size": 140000,
+      "padded_size": 143360
+    },
+    {
+      "size": 1000000,
+      "padded_size": 1015808
+    },
+    {
+      "size": 104857600,
+      "padded_size": 104857600
+    },
+    {
+      "size": 104857601,
+      "padded_size": 106954752
+    }
+  ],
+  "blobs": [
+    {
+      "id": "TV1",
+      "description": "empty",
+      "plaintext": {
+        "kind": "hex",
+        "hex": ""
+      },
+      "size": 0,
+      "padded_size": 0,
+      "records": 1,
+      "blob_length": 16,
+      "record_tags_hex": [
+        "4d34eaed9250e09e52907c89588102a2"
+      ],
+      "sha256_hex": "1ec514b1f3402eb5e45d9aa2356d1fd0c9551ab3e37b6dc9a1c8cbfc6675577d",
+      "sha256_b64": "HsUUsfNALrXkXZqiNW0f0MlVGrPje23JocjL/GZ1V30=",
+      "blob_hex": "4d34eaed9250e09e52907c89588102a2"
+    },
+    {
+      "id": "TV2",
+      "description": "ASCII \"hello\"",
+      "plaintext": {
+        "kind": "hex",
+        "hex": "68656c6c6f"
+      },
+      "size": 5,
+      "padded_size": 5,
+      "records": 1,
+      "blob_length": 21,
+      "record_tags_hex": [
+        "405ee04455070c03b225cdd79ebb9da0"
+      ],
+      "sha256_hex": "1fd4278e2fb28271798c55e7801ed95d7f57b5c16f417e87ce74eed0dfd71aa6",
+      "sha256_b64": "H9Qnji+ygnF5jFXngB7ZXX9XtcFvQX6HznTu0N/XGqY=",
+      "blob_hex": "1f042572d7405ee04455070c03b225cdd79ebb9da0"
+    },
+    {
+      "id": "TV3",
+      "description": "1000 bytes of 0x61",
+      "plaintext": {
+        "kind": "repeat",
+        "byte": 97,
+        "length": 1000
+      },
+      "size": 1000,
+      "padded_size": 1024,
+      "records": 1,
+      "blob_length": 1040,
+      "record_tags_hex": [
+        "38aaf8a6a438b9ea955e28aef4e524f1"
+      ],
+      "sha256_hex": "405afa26a0ae8762ab91234e64e949e168b158f4d6e20453b2c4e066417d0ffc",
+      "sha256_b64": "QFr6JqCuh2KrkSNOZOlJ4WixWPTW4gRTssTgZkF9D/w="
+    },
+    {
+      "id": "TV4",
+      "description": "140000 bytes, byte i = i mod 251",
+      "plaintext": {
+        "kind": "mod251",
+        "length": 140000
+      },
+      "size": 140000,
+      "padded_size": 143360,
+      "records": 3,
+      "blob_length": 143408,
+      "record_tags_hex": [
+        "e089cb1a9803de2ec6545f6e1c843f8f",
+        "3f4c11cbd61846660c16f9ff2425cec3",
+        "3a22d610a2ad6ba291ca0a7ecf52aad3"
+      ],
+      "sha256_hex": "c0751df31918242ff73c3beee2e35d6a124019d214a29365e3df6fd3e172d5b3",
+      "sha256_b64": "wHUd8xkYJC/3PDvu4uNdahJAGdIUopNl499v0+Fy1bM="
+    },
+    {
+      "id": "TV5",
+      "description": "131072 bytes, byte i = i mod 251",
+      "plaintext": {
+        "kind": "mod251",
+        "length": 131072
+      },
+      "size": 131072,
+      "padded_size": 131072,
+      "records": 2,
+      "blob_length": 131104,
+      "record_tags_hex": [
+        "e089cb1a9803de2ec6545f6e1c843f8f",
+        "8cc9506655a116c059587aae6b27af51"
+      ],
+      "sha256_hex": "389902a81168fd1ee0224c5f0ba7ec1c8504c40cbbb8e190da94633c2849598c",
+      "sha256_b64": "OJkCqBFo/R7gIkxfC6fsHIUExAy7uOGQ2pRjPChJWYw="
+    }
+  ]
+}
