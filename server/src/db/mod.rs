@@ -158,7 +158,7 @@ impl Database {
                 id TEXT PRIMARY KEY NOT NULL,
                 public_key_hash TEXT NOT NULL UNIQUE,
                 public_key TEXT NOT NULL,
-                password_hash TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL DEFAULT '!locked',
                 created_at INTEGER NOT NULL
             )
             "#,
@@ -240,8 +240,9 @@ impl Database {
         .await
         .context("Failed to create channels table")?;
 
-        // Add password_hash column to existing users table if it doesn't exist
-        sqlx::query("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''")
+        // Add password_hash column to existing users table if it doesn't exist.
+        // Accounts that predate passwords get the lock marker, never '' (SPEC-01 REQ-4).
+        sqlx::query("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '!locked'")
             .execute(&self.pool)
             .await
             .ok(); // Ignore error if column already exists
@@ -1337,14 +1338,16 @@ impl Database {
         // Insert sentinel system user and node for DM backing channels.
         // These must exist so that DM channels can reference a valid node_id
         // without violating FK constraints (PRAGMA foreign_keys = ON).
+        // The sentinel can never log in: its hash is the lock marker (SPEC-01 REQ-4(c)).
         let now_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
         sqlx::query(
-            "INSERT OR IGNORE INTO users (id, public_key_hash, public_key, password_hash, created_at) VALUES (?, 'SYSTEM', 'SYSTEM', '', ?)"
+            "INSERT OR IGNORE INTO users (id, public_key_hash, public_key, password_hash, created_at) VALUES (?, 'SYSTEM', 'SYSTEM', ?, ?)"
         )
         .bind(DM_SYSTEM_USER_ID.to_string())
+        .bind(crate::admission::LOCK_MARKER)
         .bind(now_ts)
         .execute(&self.pool)
         .await
@@ -1366,7 +1369,8 @@ impl Database {
     // ── User operations ──
 
     /// Create a user identified by public_key. The relay computes the public_key_hash.
-    /// No username is stored at the relay level.
+    /// No username is stored at the relay level. An empty `password_hash` is
+    /// stored as the lock marker (SPEC-01 REQ-4(b)).
     pub async fn create_user(&self, public_key: &str, password_hash: &str) -> Result<User> {
         let user_id = Uuid::new_v4();
         let created_at = now();
@@ -1378,7 +1382,7 @@ impl Database {
         .bind(user_id.to_string())
         .bind(&public_key_hash)
         .bind(public_key)
-        .bind(password_hash)
+        .bind(crate::admission::storable_password_hash(password_hash))
         .bind(created_at as i64)
         .execute(&self.pool)
         .await
@@ -1477,7 +1481,8 @@ impl Database {
         Ok(row.get::<i64, _>("count") > 0)
     }
 
-    /// Create a user with username (v2 registration flow)
+    /// Create a user with username (v2 registration flow). An empty
+    /// `password_hash` is stored as the lock marker (SPEC-01 REQ-4(b)).
     pub async fn create_user_with_username(
         &self,
         username: &str,
@@ -1496,7 +1501,7 @@ impl Database {
         .bind(user_id.to_string())
         .bind(&public_key_hash)
         .bind(&placeholder_pk)
-        .bind(password_hash)
+        .bind(crate::admission::storable_password_hash(password_hash))
         .bind(username)
         .bind(created_at as i64)
         .execute(&self.pool)
@@ -2513,16 +2518,6 @@ impl Database {
     }
 
     /// Count total nodes
-    pub async fn transfer_node_ownership(&self, node_id: Uuid, new_owner_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE nodes SET owner_id = ? WHERE id = ?")
-            .bind(new_owner_id.to_string())
-            .bind(node_id.to_string())
-            .execute(&self.pool)
-            .await
-            .context("Failed to transfer node ownership")?;
-        Ok(())
-    }
-
     pub async fn count_nodes(&self) -> Result<u64> {
         let row = sqlx::query("SELECT COUNT(*) as count FROM nodes")
             .fetch_one(&self.pool)
@@ -5792,6 +5787,9 @@ impl Database {
     /// 4. Apply channel @everyone overwrite: deny removes, allow adds
     /// 5. Collect all role overwrites for member's roles: OR denies, OR allows
     /// 6. Remove all collected denies, add all collected allows
+    ///
+    /// The reserved DM system node and the reserved user hold no permissions
+    /// at all; that check precedes every other step (SPEC-01 REQ-8).
     pub async fn compute_channel_permissions(
         &self,
         node_id: Uuid,
@@ -5799,6 +5797,12 @@ impl Database {
         channel_id: Uuid,
     ) -> Result<u64> {
         use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
+
+        if crate::admission::is_reserved_node(node_id)
+            || crate::admission::is_reserved_user(user_id)
+        {
+            return Ok(0);
+        }
 
         // Check if user is the Node owner — owners always get full permissions
         let node = self
@@ -5857,8 +5861,17 @@ impl Database {
 
     /// Compute effective permissions for a user at the Node level (no channel overwrites).
     /// This is the base permission from roles only.
+    ///
+    /// The reserved DM system node and the reserved user hold no permissions
+    /// at all; that check precedes the owner shortcut (SPEC-01 REQ-8).
     pub async fn compute_node_permissions(&self, node_id: Uuid, user_id: Uuid) -> Result<u64> {
         use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
+
+        if crate::admission::is_reserved_node(node_id)
+            || crate::admission::is_reserved_user(user_id)
+        {
+            return Ok(0);
+        }
 
         // Node owner gets everything
         let node = self
@@ -5969,17 +5982,20 @@ impl Database {
     /// One-time migration for nodes created before management roles were custom:
     /// ensure every real Node has seeded Admin/Moderator roles, then assign them
     /// to members carrying the legacy `node_members.role` marker. Idempotent.
+    /// The reserved DM system node is excluded by id, never by name (SPEC-01 REQ-6).
     pub async fn migrate_legacy_roles(&self) -> Result<()> {
-        let node_ids: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM nodes WHERE name != '__dm_system__'")
-                .fetch_all(&self.pool)
-                .await
-                .context("Failed to list nodes for role migration")?;
+        let node_ids: Vec<String> = sqlx::query_scalar("SELECT id FROM nodes")
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to list nodes for role migration")?;
         for node_id_str in node_ids {
             let node_id = match Uuid::parse_str(&node_id_str) {
                 Ok(id) => id,
                 Err(_) => continue,
             };
+            if crate::admission::is_reserved_node(node_id) {
+                continue;
+            }
             self.seed_management_roles(node_id).await?;
             let legacy: Vec<(String, String)> = sqlx::query_as(
                 "SELECT user_id, role FROM node_members WHERE node_id = ? AND role IN ('admin', 'moderator')",
@@ -7197,5 +7213,183 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    // ── SPEC-01: credentials and the reserved node ──
+
+    async fn stored_password_hash(db: &Database, user_id: Uuid) -> String {
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(user_id.to_string())
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+    }
+
+    /// T-4 (REQ-4(b), (c)): no helper persists an empty hash; the sentinel is
+    /// locked; a fresh database defaults to the lock marker.
+    #[tokio::test]
+    async fn test_empty_password_hash_is_stored_locked() {
+        use crate::admission::LOCK_MARKER;
+        let db = Database::new(":memory:").await.unwrap();
+
+        let u2 = db.create_user("pk2", "").await.unwrap();
+        let u3 = db.create_user_with_username("u3", "").await.unwrap();
+        assert_eq!(stored_password_hash(&db, u2.id).await, LOCK_MARKER);
+        assert_eq!(stored_password_hash(&db, u3.id).await, LOCK_MARKER);
+        assert_eq!(
+            stored_password_hash(&db, DM_SYSTEM_USER_ID).await,
+            LOCK_MARKER
+        );
+
+        // A real hash is stored unchanged.
+        let u4 = db.create_user("pk4", "$argon2id$v=19$x").await.unwrap();
+        assert_eq!(stored_password_hash(&db, u4.id).await, "$argon2id$v=19$x");
+
+        let default: Option<String> = sqlx::query_scalar(
+            "SELECT dflt_value FROM pragma_table_info('users') WHERE name = 'password_hash'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(default.as_deref(), Some("'!locked'"));
+    }
+
+    /// T-8 (REQ-8): the reserved node and the reserved user hold no
+    /// permissions, ahead of the owner shortcut, @everyone and roles.
+    #[tokio::test]
+    async fn test_reserved_node_and_user_have_zero_permissions() {
+        use crate::models::permission_bits::{ADMINISTRATOR, ALL_PERMISSIONS};
+        use crate::permissions::Permission;
+        let db = Database::new(":memory:").await.unwrap();
+        let x = db.create_user("x", "").await.unwrap();
+        let v = db.create_user("v", "").await.unwrap();
+        let dm = db.create_or_get_dm_channel(x.id, v.id).await.unwrap();
+
+        // Hijacked state: X owns D, is a member and holds an ADMINISTRATOR role there.
+        sqlx::query("UPDATE nodes SET owner_id = ? WHERE id = ?")
+            .bind(x.id.to_string())
+            .bind(DM_SYSTEM_NODE_ID.to_string())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.add_node_member(DM_SYSTEM_NODE_ID, x.id, NodeRole::Member)
+            .await
+            .unwrap();
+        let role = Uuid::new_v4();
+        db.create_role_with_id(role, DM_SYSTEM_NODE_ID, "Hijack", ADMINISTRATOR, 1)
+            .await
+            .unwrap();
+        db.assign_member_role(DM_SYSTEM_NODE_ID, x.id, role)
+            .await
+            .unwrap();
+
+        // A regular node owned by the reserved user.
+        let n = db.create_node("N", DM_SYSTEM_USER_ID, None).await.unwrap();
+
+        assert_eq!(
+            db.compute_node_permissions(DM_SYSTEM_NODE_ID, x.id)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.compute_channel_permissions(DM_SYSTEM_NODE_ID, x.id, dm.id)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.compute_node_permissions(n.id, DM_SYSTEM_USER_ID)
+                .await
+                .unwrap(),
+            0
+        );
+        let general = db.get_node_channels(n.id).await.unwrap()[0].id;
+        assert_eq!(
+            db.compute_channel_permissions(n.id, DM_SYSTEM_USER_ID, general)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(
+            !db.node_member_can(DM_SYSTEM_NODE_ID, x.id, Permission::ManageInvites)
+                .await
+        );
+        assert!(
+            !db.node_member_can(n.id, DM_SYSTEM_USER_ID, Permission::ManageInvites)
+                .await
+        );
+
+        // The guard is specific: an ordinary owner still gets everything.
+        let n2 = db.create_node("N2", x.id, None).await.unwrap();
+        assert_eq!(
+            db.compute_node_permissions(n2.id, x.id).await.unwrap(),
+            ALL_PERMISSIONS
+        );
+    }
+
+    /// T-6 (REQ-6, REQ-8 guards): the reserved node is recognised by id, so
+    /// renaming it changes nothing.
+    #[tokio::test]
+    async fn test_renamed_reserved_node_keeps_zero_permissions() {
+        use crate::permissions::Permission;
+        let db = Database::new(":memory:").await.unwrap();
+        let u = db.create_user("u", "").await.unwrap();
+        let w = db.create_user("w", "").await.unwrap();
+        let dm = db.create_or_get_dm_channel(u.id, w.id).await.unwrap();
+        sqlx::query("UPDATE nodes SET name = 'general', owner_id = ? WHERE id = ?")
+            .bind(u.id.to_string())
+            .bind(DM_SYSTEM_NODE_ID.to_string())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_node(DM_SYSTEM_NODE_ID).await.unwrap().unwrap().name,
+            "general"
+        );
+
+        assert!(crate::admission::is_reserved_node(DM_SYSTEM_NODE_ID));
+        assert_eq!(
+            db.compute_node_permissions(DM_SYSTEM_NODE_ID, u.id)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.compute_channel_permissions(DM_SYSTEM_NODE_ID, u.id, dm.id)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(
+            !db.node_member_can(DM_SYSTEM_NODE_ID, u.id, Permission::ManageChannels)
+                .await
+        );
+
+        // Legacy role seeding skips the renamed reserved node by id, and still
+        // migrates an ordinary node that carries the old display name.
+        let a = db.create_user("a", "").await.unwrap();
+        db.add_node_member(DM_SYSTEM_NODE_ID, a.id, NodeRole::Admin)
+            .await
+            .unwrap();
+        // A pre-migration node (no seeded roles) named like the reserved one.
+        let decoy = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO nodes (id, name, owner_id, description, created_at) VALUES (?, '__dm_system__', ?, NULL, 0)",
+        )
+        .bind(decoy.to_string())
+        .bind(u.id.to_string())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        db.migrate_legacy_roles().await.unwrap();
+        for name in ["Admin", "Moderator"] {
+            assert!(db
+                .get_role_by_name(DM_SYSTEM_NODE_ID, name)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(db.get_role_by_name(decoy, name).await.unwrap().is_some());
+        }
     }
 }

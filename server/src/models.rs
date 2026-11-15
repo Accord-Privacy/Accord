@@ -856,6 +856,50 @@ pub struct ErrorResponse {
     pub code: u16,
 }
 
+/// Error body under the batch error conventions (SPEC-01 section 6.2):
+/// `{"error", "code", "reason"}`. `error` and `code` keep the meaning they
+/// have in [`ErrorResponse`], so older clients still show `error`; `reason`
+/// is the machine-readable cause. Refusals that predate the conventions on
+/// the same route leave `reason` out and serialize exactly like
+/// [`ErrorResponse`].
+#[derive(Debug, Serialize)]
+pub struct ApiErrorResponse {
+    pub error: String,
+    pub code: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl ApiErrorResponse {
+    /// A refusal without a `reason`; it serializes exactly like [`ErrorResponse`].
+    pub fn plain(code: u16, error: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            code,
+            reason: None,
+        }
+    }
+
+    /// A refusal carrying a machine-readable `reason`.
+    pub fn with_reason(code: u16, reason: &str, error: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            code,
+            reason: Some(reason.to_string()),
+        }
+    }
+}
+
+impl From<ErrorResponse> for ApiErrorResponse {
+    fn from(e: ErrorResponse) -> Self {
+        Self {
+            error: e.error,
+            code: e.code,
+            reason: None,
+        }
+    }
+}
+
 /// Permission denied error response
 #[derive(Debug, Serialize)]
 pub struct PermissionDeniedResponse {

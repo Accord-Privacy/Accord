@@ -5,11 +5,11 @@ Welcome to the Accord community! We're building privacy-first communication infr
 ## 🗣️ Communication Channels
 
 ### GitHub (Primary)
-- **Repository**: https://github.com/your-org/accord
+- **Repository**: https://github.com/Accord-Privacy/Accord
 - **Issues**: Bug reports and feature requests
 - **Discussions**: Community Q&A and project planning
 - **Pull Requests**: Code contributions
-- **Security Advisories**: Report security vulnerabilities (never post publicly)
+- **Security Advisories**: Report security vulnerabilities privately at https://github.com/Accord-Privacy/Accord/security/advisories/new (never post publicly)
 
 ## 🤝 How to Get Involved
 
@@ -26,7 +26,7 @@ Welcome to the Accord community! We're building privacy-first communication infr
 
 ### For Security Researchers
 1. **Review the code**: Security-focused code reviews are welcome
-2. **Report vulnerabilities**: Use GitHub Security Advisories (never post publicly)
+2. **Report vulnerabilities**: Report privately at https://github.com/Accord-Privacy/Accord/security/advisories/new (never post publicly)
 3. **Suggest improvements**: Security architecture feedback via GitHub Issues
 
 ## 📋 Communication Guidelines

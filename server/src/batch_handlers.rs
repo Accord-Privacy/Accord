@@ -373,11 +373,14 @@ mod tests {
     /// Register a user and return (user_id, valid_token).
     async fn register_and_auth(state: &SharedState, public_key: &str) -> (Uuid, String) {
         let user_id = state
-            .register_user(public_key.to_string(), "".to_string())
+            .register_user(public_key.to_string(), "pw".to_string())
             .await
             .unwrap();
         let pkh = crate::db::compute_public_key_hash(public_key);
-        let auth = state.authenticate_user(pkh, "".to_string()).await.unwrap();
+        let auth = state
+            .authenticate_user(pkh, "pw".to_string())
+            .await
+            .unwrap();
         (user_id, auth.token)
     }
 

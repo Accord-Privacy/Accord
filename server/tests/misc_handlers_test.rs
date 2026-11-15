@@ -140,7 +140,7 @@ impl TestServer {
         let resp = self
             .client
             .post(&self.url("/register"))
-            .json(&json!({ "public_key": pk }))
+            .json(&json!({ "public_key": pk, "password": "test-password" }))
             .send()
             .await
             .unwrap();
@@ -151,7 +151,7 @@ impl TestServer {
         let resp = self
             .client
             .post(&self.url("/auth"))
-            .json(&json!({ "public_key": pk, "password": "" }))
+            .json(&json!({ "public_key": pk, "password": "test-password" }))
             .send()
             .await
             .unwrap();

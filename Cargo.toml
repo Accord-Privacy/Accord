@@ -12,10 +12,10 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
-authors = ["Accord Privacy <hello@accord.chat>"]
+authors = ["Accord Privacy"]
 edition = "2021"
 license = "AGPL-3.0-or-later"
-homepage = "https://accord.chat"
+homepage = "https://github.com/Accord-Privacy/Accord"
 repository = "https://github.com/Accord-Privacy/Accord"
 description = "Privacy-first community communication platform"
 keywords = ["privacy", "encryption", "chat", "discord", "e2e"]
@@ -78,6 +78,14 @@ strip = true
 
 [profile.dev]
 debug = 1 # Reduce debug info for faster builds
+
+# Unoptimized Argon2 is very slow, and every test account hashes its password
+# with the production parameters (SPEC-01 REQ-2(b)). The test profile inherits these.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 # Security-focused profile for production builds
 [profile.secure]

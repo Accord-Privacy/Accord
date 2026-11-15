@@ -49,8 +49,10 @@ promising to police strangers on your behalf.
 ## 4. Blindness runs both ways
 
 - **The relay is blind to nodes** — it routes opaque ciphertext and stores only
-  what it strictly needs to deliver messages. It cannot read content, and it does
-  not expose node membership, per-node governance, or user rosters to anyone.
+  what it strictly needs to deliver messages. It is built so that it cannot read
+  content (the current release falls short for files and relay-mode voice; see
+  [SECURITY.md](SECURITY.md#known-limitations)), and it does not expose node
+  membership, per-node governance, or user rosters to anyone.
 - **Nodes are blind to the relay** — a node's members interact only with node
   content; the relay operator is not a participant in the node and has no role
   inside it.
@@ -78,10 +80,17 @@ The relay owner's powers are deliberately narrow — a landlord's powers:
 | See **connection logs** (IP + connect/disconnect) and **ban an IP** for DoS/DDoS defense | Correlate an IP to a node, or see which nodes anyone belongs to |
 | Set a relay-wide client **build-hash allowlist** | Enumerate users or view any per-node governance/audit |
 
-**IP addresses are relay-only.** A node owner, node admin, or any other end user
-must never be able to obtain another end user's IP. IPs are visible only to the
-relay owner, only in the node-correlation-free connection log, and only for abuse
-defense.
+The *Cannot* column describes the design. In the current release the relay can
+also read files and relay-mode voice; see
+[SECURITY.md](SECURITY.md#known-limitations).
+
+**IP addresses should be relay-only.** The rule is that a node owner, node admin,
+or any other end user must never be able to obtain another end user's IP, and
+that IPs are visible only to the relay owner, only in the node-correlation-free
+connection log, and only for abuse defense. **Current clients break this rule in
+calls:** P2P voice and P2P screen sharing connect participants directly, which
+reveals their IP addresses to each other, and other users can switch a voice
+channel to P2P mode. See [SECURITY.md](SECURITY.md#known-limitations).
 
 ### Node owner
 

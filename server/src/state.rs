@@ -8,10 +8,6 @@ use crate::permissions::Permission;
 use crate::rate_limit::RateLimiter;
 use accord_core::build_hash::{BuildInfo, BuildTrust, KnownBuild};
 use anyhow::Result;
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -213,7 +209,17 @@ pub struct AppState {
     /// IP ban cache for DoS/DDoS defense: ip -> expires_at (None = permanent).
     /// Relay-owner only; never correlated to a node. Backed by the ip_bans table.
     pub ip_bans: RwLock<HashMap<String, Option<i64>>>,
+    /// Fixed dummy PHC hash that credential refusals verify against, computed
+    /// once at startup (SPEC-01 REQ-2(b)).
+    dummy_password_hash: &'static str,
+    /// Test instrumentation: the PHC hash given to each password verification.
+    #[cfg(test)]
+    password_verifications: std::sync::Mutex<Vec<String>>,
 }
+
+/// The single response text of every credential refusal on `POST /auth`
+/// (wrong password, unusable stored hash, reserved user).
+pub const INVALID_PASSWORD: &str = "Invalid password";
 
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -237,6 +243,8 @@ impl AppState {
         let db = Database::new_with_encryption(db_path, database_encryption).await?;
         let file_handler = FileHandler::with_default_config();
         file_handler.init().await?;
+        let dummy_password_hash =
+            crate::admission::dummy_password_hash().map_err(|e| anyhow::anyhow!(e))?;
         Ok(Self {
             db,
             file_handler,
@@ -257,6 +265,9 @@ impl AppState {
             last_activity: RwLock::new(HashMap::new()),
             slow_mode_cooldowns: RwLock::new(HashMap::new()),
             ip_bans: RwLock::new(HashMap::new()),
+            dummy_password_hash,
+            #[cfg(test)]
+            password_verifications: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -320,11 +331,16 @@ impl AppState {
     // ── User operations ──
 
     /// Register a user by public key. No username at the relay level.
+    /// A password is required: an account without one could never log in
+    /// (SPEC-01 REQ-4(a)).
     pub async fn register_user(
         &self,
         public_key: String,
         password: String,
     ) -> Result<Uuid, String> {
+        if password.is_empty() {
+            return Err("Password is required".to_string());
+        }
         let public_key_hash = crate::db::compute_public_key_hash(&public_key);
         match self.db.public_key_hash_exists(&public_key_hash).await {
             Ok(true) => return Err("Public key already registered".to_string()),
@@ -338,19 +354,7 @@ impl AppState {
         }
 
         // Hash password with Argon2
-        let password_hash = if password.is_empty() {
-            String::new()
-        } else {
-            let salt = SaltString::generate(&mut OsRng);
-            let argon2 = Argon2::default();
-            argon2
-                .hash_password(password.as_bytes(), &salt)
-                .map_err(|e| {
-                    tracing::error!("Failed to hash password: {}", e);
-                    "Failed to hash password".to_string()
-                })?
-                .to_string()
-        };
+        let password_hash = crate::admission::hash_new_password(&password)?;
 
         match self.db.create_user(&public_key, &password_hash).await {
             Ok(user) => {
@@ -442,15 +446,7 @@ impl AppState {
         }
 
         // Hash password with Argon2
-        let salt = SaltString::generate(&mut OsRng);
-        let argon2 = Argon2::default();
-        let password_hash = argon2
-            .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| {
-                tracing::error!("Failed to hash password: {}", e);
-                "Failed to hash password".to_string()
-            })?
-            .to_string();
+        let password_hash = crate::admission::hash_new_password(&password)?;
 
         // Create user
         let user = self
@@ -514,6 +510,11 @@ impl AppState {
             }
         };
 
+        // The reserved user is refused before its stored hash is consulted.
+        if crate::admission::is_reserved_user(user.id) {
+            return Err(self.refuse_credentials(&password));
+        }
+
         // Verify password
         let stored_hash = self
             .db
@@ -524,18 +525,7 @@ impl AppState {
                 "Database error".to_string()
             })?
             .unwrap_or_default();
-
-        if stored_hash.is_empty() {
-            return Err("This account has no password set".to_string());
-        }
-
-        let parsed_hash = PasswordHash::new(&stored_hash).map_err(|e| {
-            tracing::error!("Invalid stored password hash: {}", e);
-            "Invalid stored password hash".to_string()
-        })?;
-        Argon2::default()
-            .verify_password(password.as_bytes(), &parsed_hash)
-            .map_err(|_| "Invalid password".to_string())?;
+        self.check_password(&password, &stored_hash)?;
 
         // Handle device key tracking
         let device_id = if let Some(ref fingerprint) = device_fingerprint_hash {
@@ -596,6 +586,11 @@ impl AppState {
             }
         };
 
+        // The reserved user is refused before its stored hash is consulted.
+        if crate::admission::is_reserved_user(user.id) {
+            return Err(self.refuse_credentials(&password));
+        }
+
         // Verify password
         let stored_hash = self
             .db
@@ -606,22 +601,7 @@ impl AppState {
                 "Database error".to_string()
             })?
             .unwrap_or_default();
-
-        if stored_hash.is_empty() {
-            if !password.is_empty() {
-                return Err("This account has no password set. Authenticate without a password or re-register.".to_string());
-            }
-            // Legacy keyless user — allow through
-        } else {
-            // Normal password verification with Argon2
-            let parsed_hash = PasswordHash::new(&stored_hash).map_err(|e| {
-                tracing::error!("Invalid stored password hash: {}", e);
-                "Invalid stored password hash".to_string()
-            })?;
-            Argon2::default()
-                .verify_password(password.as_bytes(), &parsed_hash)
-                .map_err(|_| "Invalid password".to_string())?;
-        }
+        self.check_password(&password, &stored_hash)?;
 
         let token = format!("tok_{}", Uuid::new_v4().simple());
         let expires_at = now() + 86400;
@@ -649,14 +629,55 @@ impl AppState {
         Ok(auth_token)
     }
 
-    pub async fn validate_token(&self, token: &str) -> Option<Uuid> {
-        let auth_tokens = self.auth_tokens.read().await;
-        let auth_token = auth_tokens.get(token)?;
-        if auth_token.expires_at > now() {
-            Some(auth_token.user_id)
-        } else {
-            None
+    /// Check `password` against a stored hash. An unusable stored hash is
+    /// refused exactly like a wrong password, at the same cost (SPEC-01 REQ-1,
+    /// REQ-2(b)). Every error is `INVALID_PASSWORD`.
+    fn check_password(&self, password: &str, stored_hash: &str) -> Result<(), String> {
+        if crate::admission::is_unusable_password_hash(stored_hash) {
+            return Err(self.refuse_credentials(password));
         }
+        if self.verify_password_against(password, stored_hash) {
+            Ok(())
+        } else {
+            Err(INVALID_PASSWORD.to_string())
+        }
+    }
+
+    /// Refuse a login without consulting the stored hash. Runs exactly one
+    /// Argon2 verification against the dummy hash and discards the result, so
+    /// the refusal costs about as much as a wrong password (SPEC-01 REQ-2(b)).
+    fn refuse_credentials(&self, password: &str) -> String {
+        let _ = self.verify_password_against(password, self.dummy_password_hash);
+        INVALID_PASSWORD.to_string()
+    }
+
+    /// The single place where a password is verified against a PHC hash.
+    fn verify_password_against(&self, password: &str, phc_hash: &str) -> bool {
+        #[cfg(test)]
+        self.password_verifications
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(phc_hash.to_string());
+        crate::admission::verify_password(password, phc_hash)
+    }
+
+    /// Resolve a session token to its user. A token of the reserved user is
+    /// never valid, whatever its expiry, and is dropped from the in-memory map
+    /// (SPEC-01 REQ-3).
+    pub async fn validate_token(&self, token: &str) -> Option<Uuid> {
+        let user_id = {
+            let auth_tokens = self.auth_tokens.read().await;
+            let auth_token = auth_tokens.get(token)?;
+            if auth_token.expires_at <= now() {
+                return None;
+            }
+            auth_token.user_id
+        };
+        if crate::admission::is_reserved_user(user_id) {
+            self.auth_tokens.write().await.remove(token);
+            return None;
+        }
+        Some(user_id)
     }
 
     // ── Node operations ──
@@ -976,32 +997,12 @@ impl AppState {
             .map_err(|e| e.to_string())?
             .ok_or("Node not found")?;
 
-        // Check if this is a bootstrap node (system-owned) — first joiner becomes admin
-        let system_user_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap();
-        let is_bootstrap = node.owner_id == system_user_id;
-
-        // Join user to node (as admin if bootstrap, otherwise member)
-        let role = if is_bootstrap {
-            NodeRole::Admin
-        } else {
-            NodeRole::Member
-        };
+        // Join the user as a plain member with no role. Admission never
+        // changes `nodes.owner_id` and never grants a role (SPEC-01 REQ-9).
         self.db
-            .add_node_member(invite.node_id, user_id, role)
+            .add_node_member(invite.node_id, user_id, NodeRole::Member)
             .await
             .map_err(|e| e.to_string())?;
-
-        // Transfer ownership from system to first real user
-        if is_bootstrap {
-            let _ = self
-                .db
-                .transfer_node_ownership(invite.node_id, user_id)
-                .await;
-            tracing::info!(
-                "Bootstrap: transferred Management Node ownership to user {}",
-                user_id
-            );
-        }
 
         // Auto-add user to all existing channels in the node
         if let Ok(channels) = self.db.get_node_channels(invite.node_id).await {
@@ -2320,8 +2321,14 @@ mod tests {
     #[tokio::test]
     async fn test_node_lifecycle() {
         let state = AppState::new_in_memory().await.unwrap();
-        let owner_id = state.register_user("key".into(), "".into()).await.unwrap();
-        let user_id = state.register_user("key2".into(), "".into()).await.unwrap();
+        let owner_id = state
+            .register_user("key".into(), "pw".into())
+            .await
+            .unwrap();
+        let user_id = state
+            .register_user("key2".into(), "pw".into())
+            .await
+            .unwrap();
 
         // Create node
         let node = state
@@ -2352,8 +2359,14 @@ mod tests {
     #[tokio::test]
     async fn test_channel_requires_node_membership() {
         let state = AppState::new_in_memory().await.unwrap();
-        let owner_id = state.register_user("key".into(), "".into()).await.unwrap();
-        let outsider_id = state.register_user("key2".into(), "".into()).await.unwrap();
+        let owner_id = state
+            .register_user("key".into(), "pw".into())
+            .await
+            .unwrap();
+        let outsider_id = state
+            .register_user("key2".into(), "pw".into())
+            .await
+            .unwrap();
 
         let node = state
             .create_node("Node".into(), owner_id, None)
@@ -2378,8 +2391,14 @@ mod tests {
     async fn test_join_channel_auto_create() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user1_id = state.register_user("key1".into(), "".into()).await.unwrap();
-        let user2_id = state.register_user("key2".into(), "".into()).await.unwrap();
+        let user1_id = state
+            .register_user("key1".into(), "pw".into())
+            .await
+            .unwrap();
+        let user2_id = state
+            .register_user("key2".into(), "pw".into())
+            .await
+            .unwrap();
 
         // Create a node first
         let node = state
@@ -2405,8 +2424,14 @@ mod tests {
     async fn test_voice_channel_operations() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user1_id = state.register_user("key1".into(), "".into()).await.unwrap();
-        let user2_id = state.register_user("key2".into(), "".into()).await.unwrap();
+        let user1_id = state
+            .register_user("key1".into(), "pw".into())
+            .await
+            .unwrap();
+        let user2_id = state
+            .register_user("key2".into(), "pw".into())
+            .await
+            .unwrap();
 
         // Create a node first
         let node = state
@@ -2461,8 +2486,14 @@ mod tests {
     async fn test_friend_request_flow() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
-        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+        let user_a = state
+            .register_user("keyA".into(), "pw".into())
+            .await
+            .unwrap();
+        let user_b = state
+            .register_user("keyB".into(), "pw".into())
+            .await
+            .unwrap();
 
         // Create a shared node
         let node = state
@@ -2513,8 +2544,14 @@ mod tests {
     async fn test_friend_request_rejection() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
-        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+        let user_a = state
+            .register_user("keyA".into(), "pw".into())
+            .await
+            .unwrap();
+        let user_b = state
+            .register_user("keyB".into(), "pw".into())
+            .await
+            .unwrap();
 
         let node = state
             .create_node("Node".into(), user_a, None)
@@ -2554,8 +2591,14 @@ mod tests {
     async fn test_no_shared_node_no_friend_request() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
-        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+        let user_a = state
+            .register_user("keyA".into(), "pw".into())
+            .await
+            .unwrap();
+        let user_b = state
+            .register_user("keyB".into(), "pw".into())
+            .await
+            .unwrap();
 
         // No shared node
         assert!(!state.db.share_a_node(user_a, user_b).await.unwrap());
@@ -2565,8 +2608,14 @@ mod tests {
     async fn test_dm_requires_friendship() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
-        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+        let user_a = state
+            .register_user("keyA".into(), "pw".into())
+            .await
+            .unwrap();
+        let user_b = state
+            .register_user("keyB".into(), "pw".into())
+            .await
+            .unwrap();
 
         // Not friends — check are_friends returns false
         let hash_a = state
@@ -2606,8 +2655,14 @@ mod tests {
     async fn test_remove_friend() {
         let state = AppState::new_in_memory().await.unwrap();
 
-        let user_a = state.register_user("keyA".into(), "".into()).await.unwrap();
-        let user_b = state.register_user("keyB".into(), "".into()).await.unwrap();
+        let user_a = state
+            .register_user("keyA".into(), "pw".into())
+            .await
+            .unwrap();
+        let user_b = state
+            .register_user("keyB".into(), "pw".into())
+            .await
+            .unwrap();
 
         let node = state
             .create_node("Node".into(), user_a, None)
@@ -2764,15 +2819,14 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// T-4 (REQ-4(a)): an empty password is refused and creates no account.
     #[tokio::test]
     async fn test_register_user_empty_password() {
         let state = AppState::new_in_memory().await.unwrap();
-        // Empty password should still work (keypair-only auth)
-        let user_id = state
-            .register_user("key_no_pass".into(), "".into())
-            .await
-            .unwrap();
-        assert!(!user_id.is_nil());
+        let result = state.register_user("pk1".into(), "".into()).await;
+        assert!(result.is_err());
+        let pkh = crate::db::compute_public_key_hash("pk1");
+        assert!(!state.db.public_key_hash_exists(&pkh).await.unwrap());
     }
 
     // ── Authentication tests ──
@@ -2830,17 +2884,208 @@ mod tests {
         assert_eq!(state.validate_token("garbage-token").await, None);
     }
 
+    // ── SPEC-01: credential refusals and the reserved user ──
+
+    /// Insert an account with a raw stored hash, reachable on v1 by
+    /// `public_key_hash` and on v2 by `username`.
+    async fn insert_raw_account(state: &AppState, pkh: &str, username: &str, hash: &str) {
+        sqlx::query(
+            "INSERT INTO users (id, public_key_hash, public_key, password_hash, username, created_at) VALUES (?, ?, ?, ?, ?, 0)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(pkh)
+        .bind(pkh)
+        .bind(hash)
+        .bind(username)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    }
+
+    /// The PHC hashes given to the password verifier since the last call.
+    fn take_verifications(state: &AppState) -> Vec<String> {
+        std::mem::take(
+            &mut *state
+                .password_verifications
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
+    }
+
+    /// T-2b (REQ-1, REQ-2): each refusal of the reserved user or of an
+    /// unusable stored hash runs exactly one verification, against the dummy
+    /// hash; a wrong password runs one against the stored hash.
+    #[tokio::test]
+    async fn test_credential_refusals_verify_once_against_dummy_hash() {
+        use argon2::password_hash::PasswordHash;
+        let state = AppState::new_in_memory().await.unwrap();
+        let dummy = state.dummy_password_hash.to_string();
+
+        // The sentinel holds a real hash of "pw" and a username, so only the
+        // reserved-user check can refuse it, on v1 and on v2.
+        let sentinel_hash = crate::admission::hash_new_password("pw").unwrap();
+        sqlx::query("UPDATE users SET password_hash = ?, username = 'sentinel' WHERE id = ?")
+            .bind(&sentinel_hash)
+            .bind(crate::db::DM_SYSTEM_USER_ID.to_string())
+            .execute(state.db.pool())
+            .await
+            .unwrap();
+        let unusable = [
+            ("pkh_locked", "!locked"),
+            ("pkh_system", "SYSTEM"),
+            ("pkh_empty", ""),
+        ];
+        for (pkh, hash) in unusable {
+            insert_raw_account(&state, pkh, &format!("user_{pkh}"), hash).await;
+        }
+
+        let refused = state.authenticate_user("SYSTEM".into(), "pw".into()).await;
+        assert_eq!(refused.unwrap_err(), INVALID_PASSWORD);
+        assert_eq!(take_verifications(&state), vec![dummy.clone()]);
+        let refused = state
+            .authenticate_user_by_username("sentinel".into(), "pw".into(), None)
+            .await;
+        assert_eq!(refused.unwrap_err(), INVALID_PASSWORD);
+        assert_eq!(take_verifications(&state), vec![dummy.clone()]);
+
+        for (pkh, _) in unusable {
+            for password in ["", "x"] {
+                let refused = state.authenticate_user(pkh.into(), password.into()).await;
+                assert_eq!(refused.unwrap_err(), INVALID_PASSWORD, "v1 {pkh}");
+                assert_eq!(take_verifications(&state), vec![dummy.clone()], "v1 {pkh}");
+            }
+            let refused = state
+                .authenticate_user_by_username(format!("user_{pkh}"), "x".into(), None)
+                .await;
+            assert_eq!(refused.unwrap_err(), INVALID_PASSWORD, "v2 {pkh}");
+            assert_eq!(take_verifications(&state), vec![dummy.clone()], "v2 {pkh}");
+        }
+        assert!(state.auth_tokens.read().await.is_empty());
+
+        // A wrong password on a real account verifies once, against its hash.
+        state
+            .register_user("real_pk".into(), "correct".into())
+            .await
+            .unwrap();
+        let real_pkh = crate::db::compute_public_key_hash("real_pk");
+        let stored = state
+            .db
+            .get_user_password_hash_by_pkh(&real_pkh)
+            .await
+            .unwrap()
+            .unwrap();
+        let refused = state
+            .authenticate_user(real_pkh.clone(), "wrong".into())
+            .await;
+        assert_eq!(refused.unwrap_err(), INVALID_PASSWORD);
+        assert_eq!(take_verifications(&state), vec![stored.clone()]);
+
+        state
+            .register_user_v2("real_user".into(), "correct".into(), None, None, None)
+            .await
+            .unwrap();
+        let refused = state
+            .authenticate_user_by_username("real_user".into(), "wrong".into(), None)
+            .await;
+        assert_eq!(refused.unwrap_err(), INVALID_PASSWORD);
+        assert_eq!(take_verifications(&state).len(), 1);
+
+        // The dummy hash has the parameters of a freshly made hash.
+        let dummy = PasswordHash::new(&dummy).unwrap();
+        let fresh = PasswordHash::new(&stored).unwrap();
+        assert_eq!(dummy.algorithm, fresh.algorithm);
+        assert_eq!(dummy.version, fresh.version);
+        assert_eq!(dummy.params, fresh.params);
+
+        // The right password still works.
+        assert!(state
+            .authenticate_user(real_pkh, "correct".into())
+            .await
+            .is_ok());
+        assert_eq!(take_verifications(&state), vec![stored]);
+    }
+
+    /// T-3 (REQ-3): a token of the reserved user never validates and is
+    /// dropped from the in-memory map.
+    #[tokio::test]
+    async fn test_reserved_user_token_is_never_valid() {
+        let state = AppState::new_in_memory().await.unwrap();
+        state.auth_tokens.write().await.insert(
+            "tok_sentinel".into(),
+            AuthToken {
+                token: "tok_sentinel".into(),
+                user_id: crate::db::DM_SYSTEM_USER_ID,
+                expires_at: now() + 3600,
+            },
+        );
+        assert_eq!(state.validate_token("tok_sentinel").await, None);
+        assert!(!state.auth_tokens.read().await.contains_key("tok_sentinel"));
+    }
+
+    /// T-9 (REQ-9), state level: redeeming an invite of a node owned by the
+    /// reserved user neither transfers ownership nor grants a role.
+    #[tokio::test]
+    async fn test_invite_into_sentinel_owned_node_grants_nothing() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let sentinel = crate::db::DM_SYSTEM_USER_ID;
+        let node_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO nodes (id, name, owner_id, description, created_at) VALUES (?, 'Management', ?, NULL, 0)",
+        )
+        .bind(node_id.to_string())
+        .bind(sentinel.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+        state.db.seed_management_roles(node_id).await.unwrap();
+        let moderator = state
+            .register_user("t9_m".into(), "pw".into())
+            .await
+            .unwrap();
+        state
+            .db
+            .add_node_member(node_id, moderator, NodeRole::Admin)
+            .await
+            .unwrap();
+        let (_, code) = state
+            .create_invite(node_id, moderator, None, None)
+            .await
+            .unwrap();
+
+        let joiner = state
+            .register_user("t9_u".into(), "pw".into())
+            .await
+            .unwrap();
+        state.use_invite(&code, joiner).await.unwrap();
+
+        let member = state
+            .db
+            .get_node_member(node_id, joiner)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(member.role, NodeRole::Member);
+        assert!(state
+            .db
+            .get_member_roles(node_id, joiner)
+            .await
+            .unwrap()
+            .is_empty());
+        let node = state.db.get_node(node_id).await.unwrap().unwrap();
+        assert_eq!(node.owner_id, sentinel);
+    }
+
     // ── Invite system ──
 
     #[tokio::test]
     async fn test_invite_create_and_use() {
         let state = AppState::new_in_memory().await.unwrap();
         let owner = state
-            .register_user("inv_owner".into(), "".into())
+            .register_user("inv_owner".into(), "pw".into())
             .await
             .unwrap();
         let joiner = state
-            .register_user("inv_joiner".into(), "".into())
+            .register_user("inv_joiner".into(), "pw".into())
             .await
             .unwrap();
 
@@ -2864,7 +3109,7 @@ mod tests {
     async fn test_invite_invalid_code() {
         let state = AppState::new_in_memory().await.unwrap();
         let user = state
-            .register_user("inv_user".into(), "".into())
+            .register_user("inv_user".into(), "pw".into())
             .await
             .unwrap();
         let result = state.use_invite("BADCODE", user).await;
@@ -2875,7 +3120,7 @@ mod tests {
     async fn test_invite_max_uses() {
         let state = AppState::new_in_memory().await.unwrap();
         let owner = state
-            .register_user("maxinv_owner".into(), "".into())
+            .register_user("maxinv_owner".into(), "pw".into())
             .await
             .unwrap();
         let node = state
@@ -2890,14 +3135,14 @@ mod tests {
             .unwrap();
 
         let user1 = state
-            .register_user("maxinv_u1".into(), "".into())
+            .register_user("maxinv_u1".into(), "pw".into())
             .await
             .unwrap();
         state.use_invite(&invite.1, user1).await.unwrap();
 
         // Second use should fail
         let user2 = state
-            .register_user("maxinv_u2".into(), "".into())
+            .register_user("maxinv_u2".into(), "pw".into())
             .await
             .unwrap();
         let result = state.use_invite(&invite.1, user2).await;
@@ -2908,7 +3153,7 @@ mod tests {
     async fn test_revoke_invite() {
         let state = AppState::new_in_memory().await.unwrap();
         let owner = state
-            .register_user("rev_owner".into(), "".into())
+            .register_user("rev_owner".into(), "pw".into())
             .await
             .unwrap();
         let node = state
@@ -2924,7 +3169,7 @@ mod tests {
 
         // Can't use revoked invite
         let user = state
-            .register_user("rev_user".into(), "".into())
+            .register_user("rev_user".into(), "pw".into())
             .await
             .unwrap();
         let result = state.use_invite(&invite.1, user).await;
@@ -2955,11 +3200,11 @@ mod tests {
     async fn test_leave_all_voice_channels() {
         let state = AppState::new_in_memory().await.unwrap();
         let user = state
-            .register_user("voice_leaver".into(), "".into())
+            .register_user("voice_leaver".into(), "pw".into())
             .await
             .unwrap();
         let owner = state
-            .register_user("voice_owner".into(), "".into())
+            .register_user("voice_owner".into(), "pw".into())
             .await
             .unwrap();
         let node = state
@@ -3008,7 +3253,7 @@ mod tests {
     async fn test_client_build_hash_tracking() {
         let state = AppState::new_in_memory().await.unwrap();
         let user = state
-            .register_user("hash_user".into(), "".into())
+            .register_user("hash_user".into(), "pw".into())
             .await
             .unwrap();
 
@@ -3032,11 +3277,11 @@ mod tests {
     async fn test_delete_channel_requires_permission() {
         let state = AppState::new_in_memory().await.unwrap();
         let owner = state
-            .register_user("delch_owner".into(), "".into())
+            .register_user("delch_owner".into(), "pw".into())
             .await
             .unwrap();
         let member = state
-            .register_user("delch_member".into(), "".into())
+            .register_user("delch_member".into(), "pw".into())
             .await
             .unwrap();
 
@@ -3114,7 +3359,7 @@ mod tests {
     async fn test_join_node_already_member() {
         let state = AppState::new_in_memory().await.unwrap();
         let user = state
-            .register_user("already_m".into(), "".into())
+            .register_user("already_m".into(), "pw".into())
             .await
             .unwrap();
         let node = state.create_node("ANode".into(), user, None).await.unwrap();

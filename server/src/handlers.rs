@@ -11,10 +11,10 @@ pub fn sanitize_display_name(name: &str) -> String {
 }
 
 use crate::models::{
-    AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest, CreateInviteResponse,
-    CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
-    MessageReactionsResponse, RegisterRequest, RegisterResponse, UseInviteResponse, WsMessage,
-    WsMessageType,
+    ApiErrorResponse, AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest,
+    CreateInviteResponse, CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata,
+    HealthResponse, MessageReactionsResponse, RegisterRequest, RegisterResponse, UseInviteResponse,
+    WsMessage, WsMessageType,
 };
 use crate::node::NodeInfo;
 use crate::permissions::Permission;
@@ -143,7 +143,7 @@ pub async fn register_handler(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Json(request): Json<RegisterRequest>,
-) -> Result<Json<RegisterResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<RegisterResponse>, (StatusCode, Json<ApiErrorResponse>)> {
     // IP-based rate limiting: max 3 registrations per hour per IP
     let client_ip = extract_client_ip(&headers);
     if let Err(err) = state
@@ -153,13 +153,13 @@ pub async fn register_handler(
     {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            Json(ErrorResponse {
-                error: format!(
+            Json(ApiErrorResponse::plain(
+                429,
+                format!(
                     "Rate limit exceeded: {}. Retry after {}s",
                     err.message, err.retry_after_secs
                 ),
-                code: 429,
-            }),
+            )),
         ));
     }
 
@@ -168,10 +168,7 @@ pub async fn register_handler(
         crate::validation::validate_display_name(name.trim()).map_err(|e| {
             (
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: e,
-                    code: 400,
-                }),
+                Json(ApiErrorResponse::plain(400, e)),
             )
         })?;
     }
@@ -234,10 +231,7 @@ pub async fn register_handler(
             }
             Err(err) => Err((
                 StatusCode::CONFLICT,
-                Json(ErrorResponse {
-                    error: err,
-                    code: 409,
-                }),
+                Json(ApiErrorResponse::plain(409, err)),
             )),
         }
     } else {
@@ -245,10 +239,18 @@ pub async fn register_handler(
         if request.public_key.is_empty() {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "Public key cannot be empty".into(),
-                    code: 400,
-                }),
+                Json(ApiErrorResponse::plain(400, "Public key cannot be empty")),
+            ));
+        }
+        // An account without a password could never log in (SPEC-01 REQ-4(a)).
+        if request.password.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiErrorResponse::with_reason(
+                    400,
+                    "invalid_request",
+                    "Password is required",
+                )),
             ));
         }
 
@@ -298,10 +300,7 @@ pub async fn register_handler(
             }
             Err(err) => Err((
                 StatusCode::CONFLICT,
-                Json(ErrorResponse {
-                    error: err,
-                    code: 409,
-                }),
+                Json(ApiErrorResponse::plain(409, err)),
             )),
         }
     }
@@ -10156,12 +10155,15 @@ mod tests {
     /// Register a user and issue a valid auth token. Returns (user_id, token).
     async fn register_and_auth(state: &Arc<AppState>, public_key: &str) -> (Uuid, String) {
         let user_id = state
-            .register_user(public_key.to_string(), "".to_string())
+            .register_user(public_key.to_string(), "pw".to_string())
             .await
             .unwrap();
         // Compute the hash the same way authenticate_user does.
         let pkh = crate::db::compute_public_key_hash(public_key);
-        let auth = state.authenticate_user(pkh, "".to_string()).await.unwrap();
+        let auth = state
+            .authenticate_user(pkh, "pw".to_string())
+            .await
+            .unwrap();
         (user_id, auth.token)
     }
 
@@ -10223,7 +10225,7 @@ mod tests {
         let request = crate::models::RegisterRequest {
             username: String::new(),
             public_key: "valid_public_key_abc123".into(),
-            password: "".into(),
+            password: "pw".into(),
             display_name: Some(long_name),
             device_fingerprint_hash: None,
             device_public_key: None,
@@ -10231,8 +10233,10 @@ mod tests {
         };
 
         let result = register_handler(State(state), no_auth_header(), Json(request)).await;
-        let (status, _) = result.unwrap_err();
+        let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.error, "Display name must not exceed 32 characters");
+        assert_eq!(err.reason, None);
     }
 
     // ════════════════════════════════════════════════════════════

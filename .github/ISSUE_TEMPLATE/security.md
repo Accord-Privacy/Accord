@@ -1,6 +1,6 @@
 ---
-name: Security Vulnerability
-about: Report a security vulnerability (READ CAREFULLY)
+name: Security discussion (non-sensitive)
+about: Security feature requests and design questions only. Report vulnerabilities privately at https://github.com/Accord-Privacy/Accord/security/advisories/new
 title: '[SECURITY] '
 labels: ['security']
 assignees: ''
@@ -22,7 +22,7 @@ This template is for **NON-SENSITIVE** security discussions only:
 **If you've found a security vulnerability:**
 
 ### ✅ DO THIS:
-1. **Email the maintainers directly** (do not post publicly)
+1. **Report it privately** at https://github.com/Accord-Privacy/Accord/security/advisories/new (**Report a vulnerability** on the repository's Security tab). This is the only reporting channel; the project does not use a security email address. Do not post publicly.
 2. Include: vulnerability description, severity assessment, reproduction steps
 3. Allow 48 hours for initial response
 4. Follow responsible disclosure practices
@@ -105,4 +105,4 @@ Any thoughts on how this could be implemented?
 
 ---
 
-**Remember: When in doubt, email privately. It's better to over-communicate security concerns than to under-report them.**
+**Remember: When in doubt, report privately at https://github.com/Accord-Privacy/Accord/security/advisories/new. It's better to over-communicate security concerns than to under-report them.**

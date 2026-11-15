@@ -11,6 +11,7 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 mod admin;
+mod admission;
 mod backup;
 mod batch_handlers;
 mod bot_api;

@@ -28,7 +28,7 @@ impl RelayDatabase {
                 id TEXT PRIMARY KEY NOT NULL,
                 public_key_hash TEXT NOT NULL UNIQUE,
                 public_key TEXT NOT NULL,
-                password_hash TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL DEFAULT '!locked',
                 created_at INTEGER NOT NULL
             )
             "#,
@@ -38,7 +38,7 @@ impl RelayDatabase {
         .context("Failed to create users table")?;
 
         // Backward compat columns
-        sqlx::query("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''")
+        sqlx::query("ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '!locked'")
             .execute(&self.pool)
             .await
             .ok();
@@ -491,7 +491,7 @@ impl RelayDatabase {
         .bind(user_id.to_string())
         .bind(&public_key_hash)
         .bind(public_key)
-        .bind(password_hash)
+        .bind(crate::admission::storable_password_hash(password_hash))
         .bind(created_at as i64)
         .execute(&self.pool)
         .await
@@ -626,7 +626,7 @@ impl RelayDatabase {
         .bind(user_id.to_string())
         .bind(&public_key_hash)
         .bind(&placeholder_pk)
-        .bind(password_hash)
+        .bind(crate::admission::storable_password_hash(password_hash))
         .bind(username)
         .bind(created_at as i64)
         .execute(&self.pool)

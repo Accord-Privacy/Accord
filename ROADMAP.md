@@ -17,14 +17,14 @@
 
 ### ✅ Phase 3: Voice & Real-Time — COMPLETE
 - P2P voice mesh for small groups (≤4 users)
-- ICE-lite connectivity, SRTP encryption
+- ICE-lite connectivity, SRTP encryption (Rust module, not used by current clients)
 - Opus codec, jitter buffer, packet loss handling
 - Relay fallback for restrictive NATs
 - Voice UI (mute, deafen, speaking indicators)
 
 ### ✅ Phase 4: Security Hardening — COMPLETE
 - **Double Ratchet** — full Signal protocol spec with X3DH key agreement
-- **SRTP voice encryption** — replaced placeholder with proper WebRTC-grade encryption
+- **SRTP voice encryption** — replaced placeholder with proper WebRTC-grade encryption (Rust module, not used by current clients)
 - **Dependency upgrades** — quinn 0.11, sqlx 0.8, all audit findings resolved
 - **Reproducible builds** verified
 - **Performance benchmarks** (10k+ concurrent users target)
@@ -72,7 +72,7 @@
 |-----------|-----------|---------|
 | Key agreement | X3DH + X25519 | Full Signal protocol handshake |
 | Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
-| Voice encryption | SRTP | Per-packet, key rotation |
+| Relay-mode audio | AES-256-GCM | Key sent through the relay, readable by it (not end-to-end); the Rust SRTP module is unused |
 | Identity keys | Ed25519 | Long-term identity verification |
 | Key derivation | HKDF-SHA256 | Separate info strings per key type |
 | Password hashing | Argon2id | Server-side registration/login |
@@ -89,14 +89,16 @@
 ### Differentiators
 | | Accord | Discord | Signal | Matrix |
 |---|---|---|---|---|
-| E2E encryption | ✅ | ❌ | ✅ | ✅ |
+| E2E encryption | ⚠️¹ | ❌ | ✅ | ✅ |
 | Community features | ✅ | ✅ | ❌ | ✅ |
 | Voice channels | ✅ | ✅ | ❌ | ⚠️ |
-| Zero-knowledge server | ✅ | ❌ | ✅ | ❌ |
+| Zero-knowledge server | ⚠️¹ | ❌ | ✅ | ❌ |
 | Privacy-preserving bots | ✅ | ❌ | ❌ | ❌ |
 | Self-hostable | ✅ | ❌ | ⚠️ | ✅ |
 | Mobile apps | ✅ | ✅ | ✅ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
+
+> ¹ Messages only. Files and voice are not end-to-end encrypted yet, and a malicious relay can intercept encrypted sessions when they are set up — see [SECURITY.md](SECURITY.md#known-limitations).
 
 ## Architecture
 
@@ -107,7 +109,7 @@
 - **Node creation policies:** `open | admin_only` (implemented); `approval | invite` (planned)
 
 ### Trust Model
-E2E encryption means even malicious relays can't read content. Remaining risks and mitigations:
+E2E encryption is meant to stop even malicious relays from reading content; see [SECURITY.md](SECURITY.md#known-limitations) for where the current release falls short. Remaining risks and mitigations:
 - **Metadata** → NMK encrypts channel/category names + per-node policy (done); Phase 7: onion routing for timing/graph metadata
 - **Server fingerprinting** → Ed25519 identity key, TOFU + out-of-band verification
 - **Quantum threats** → Phase 7: post-quantum key exchange
