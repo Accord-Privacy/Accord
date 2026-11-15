@@ -5,20 +5,10 @@
 //!        get_node_icon, search_messages.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, patch, post, put},
-    Router,
-};
 use reqwest::{multipart, Client};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use uuid::Uuid;
 
 use accord_server::{
@@ -40,74 +30,8 @@ impl TestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Auth
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id", patch(update_node_handler))
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/leave", post(leave_node_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/members", get(get_node_members_handler))
-            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-            // Search
-            .route("/nodes/:id/search", get(search_messages_handler))
-            // Files
-            .route(
-                "/channels/:id/files",
-                post(upload_file_handler).get(list_channel_files_handler),
-            )
-            .route(
-                "/files/:id",
-                get(download_file_handler).delete(delete_file_handler),
-            )
-            // Custom emoji
-            .route(
-                "/nodes/:id/emojis",
-                get(list_custom_emojis_handler).post(upload_custom_emoji_handler),
-            )
-            .route(
-                "/nodes/:id/emojis/:emoji_id",
-                delete(delete_custom_emoji_handler),
-            )
-            .route("/api/emojis/:content_hash", get(get_emoji_image_handler))
-            // Node icon
-            .route(
-                "/nodes/:id/icon",
-                put(upload_node_icon_handler).get(get_node_icon_handler),
-            )
-            // User avatar
-            .route("/users/me/avatar", put(upload_user_avatar_handler))
-            .route("/users/:id/avatar", get(get_user_avatar_handler))
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -180,18 +104,18 @@ impl TestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
-    /// Have `token` join `node_id` via HTTP.
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "join_node failed");
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 
     /// Upload a file to a channel (channel member required).
@@ -641,7 +565,9 @@ async fn test_delete_file_forbidden_non_uploader() {
         .join_channel(owner_id, channel_id)
         .await
         .unwrap();
-    server.state.join_node(member_id, node_id).await.unwrap();
+    accord_server::test_support::admit_with_owner_invite(&server.state, node_id, member_id)
+        .await
+        .unwrap();
     server
         .state
         .join_channel(member_id, channel_id)

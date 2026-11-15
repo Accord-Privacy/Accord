@@ -164,25 +164,47 @@ pub fn validate_emoji(emoji: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validates invite code format
+/// Validates invite code format (SPEC-01 REQ-36)
 ///
 /// Requirements:
-/// - 6-12 characters
-/// - Alphanumeric characters only
+/// - 6-32 characters, so legacy 8-character codes and the 22-character
+///   codes minted now are both accepted
+/// - ASCII letters and digits only
 pub fn validate_invite_code(code: &str) -> Result<(), String> {
+    if !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("Invite code can only contain alphanumeric characters".to_string());
+    }
+
     if code.len() < 6 {
         return Err("Invite code must be at least 6 characters long".to_string());
     }
 
-    if code.len() > 12 {
-        return Err("Invite code must not exceed 12 characters".to_string());
-    }
-
-    if !code.chars().all(|c| c.is_alphanumeric()) {
-        return Err("Invite code can only contain alphanumeric characters".to_string());
+    if code.len() > 32 {
+        return Err("Invite code must not exceed 32 characters".to_string());
     }
 
     Ok(())
+}
+
+/// Validates a node-scoped device fingerprint hash (SPEC-01 REQ-24): exactly
+/// 64 lowercase hexadecimal characters.
+pub fn validate_device_fingerprint_hash(hash: &str) -> Result<(), String> {
+    if hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        Ok(())
+    } else {
+        Err("device_fingerprint_hash must be 64 lowercase hex characters".to_string())
+    }
+}
+
+/// Validates an account's public-key hash as a request names it, for example
+/// in `POST /nodes/:id/bans`: exactly 64 lowercase hexadecimal characters,
+/// the form `compute_public_key_hash` stores.
+pub fn validate_public_key_hash(hash: &str) -> Result<(), String> {
+    if hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        Ok(())
+    } else {
+        Err("public_key_hash must be 64 lowercase hex characters".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -372,12 +394,31 @@ mod tests {
         assert!(validate_invite_code("").is_err());
 
         // Too long
-        assert!(validate_invite_code("1234567890123").is_err());
+        assert!(validate_invite_code(&"1".repeat(33)).is_err());
+        assert!(validate_invite_code(&"1".repeat(32)).is_ok());
+        assert!(validate_invite_code("1234567890123").is_ok());
 
         // Invalid characters
         assert!(validate_invite_code("abc-123").is_err()); // hyphen
         assert!(validate_invite_code("abc_123").is_err()); // underscore
         assert!(validate_invite_code("abc 123").is_err()); // space
         assert!(validate_invite_code("abc!123").is_err()); // special char
+    }
+
+    #[test]
+    fn test_validate_public_key_hash() {
+        assert!(validate_public_key_hash(&crate::db::compute_public_key_hash("k")).is_ok());
+        assert!(validate_public_key_hash(&"0".repeat(64)).is_ok());
+        assert!(validate_public_key_hash("").is_err());
+        assert!(validate_public_key_hash(&"a".repeat(63)).is_err());
+        assert!(validate_public_key_hash(&"a".repeat(65)).is_err());
+        assert!(validate_public_key_hash(&"A".repeat(64)).is_err());
+        assert!(validate_public_key_hash(&"g".repeat(64)).is_err());
+        assert!(validate_public_key_hash("SYSTEM").is_err());
+        // A two-byte character across byte 16, 64 bytes in all.
+        let split = format!("{}\u{e9}{}", "a".repeat(15), "b".repeat(47));
+        assert_eq!(split.len(), 64);
+        assert!(!split.is_char_boundary(16));
+        assert!(validate_public_key_hash(&split).is_err());
     }
 }

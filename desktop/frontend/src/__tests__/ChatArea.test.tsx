@@ -375,6 +375,97 @@ describe('ChatArea', () => {
       });
       expect(api.previewInvite).toHaveBeenCalled();
     });
+
+    // SPEC-01 T-43 (REQ-43): a preview that fails with 429 (or a network
+    // error) still offers Join, which redeems the pasted code directly.
+    it('keeps Join available when the preview is rate limited and redeems the code', async () => {
+      const { api } = await import('../api');
+      const { ApiError } = await import('../apiError');
+      (api.previewInvite as any).mockRejectedValueOnce(
+        new ApiError('Rate limit exceeded', 429, 'rate_limited', 30),
+      );
+      const loadNodes = vi.fn();
+      const setInviteLinkInput = vi.fn();
+      const ctx = createMockContext({
+        nodes: [],
+        inviteLinkInput: 'https://invite/ABC123',
+        loadNodes,
+        setInviteLinkInput,
+      });
+      render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByText('Preview →'));
+      });
+      expect(screen.getByText('Preview unavailable')).toBeInTheDocument();
+      await act(async () => {
+        fireEvent.click(screen.getByText('Join'));
+      });
+      expect(api.joinNodeByInvite).toHaveBeenCalledWith('ABC123', 'test-token', undefined);
+      expect(loadNodes).toHaveBeenCalled();
+      expect(setInviteLinkInput).toHaveBeenCalledWith('');
+    });
+
+    it('offers Join after a network error, and shows the section 8 message when the join fails', async () => {
+      const { api } = await import('../api');
+      const { ApiError } = await import('../apiError');
+      (api.previewInvite as any).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      (api.joinNodeByInvite as any).mockRejectedValueOnce(
+        new ApiError('Invite has expired', 410, 'invite_expired'),
+      );
+      const ctx = createMockContext({ nodes: [], inviteLinkInput: 'https://invite/ABC123' });
+      render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByText('Preview →'));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText('Join'));
+      });
+      expect(screen.getByText('This invite has expired')).toBeInTheDocument();
+    });
+
+    it('sends the node-scoped fingerprint of the previewed node, and maps preview refusals', async () => {
+      const { api } = await import('../api');
+      const { ApiError } = await import('../apiError');
+      const { nodeDeviceFingerprint } = await import('../nodeFingerprint');
+      const ctx = createMockContext({ nodes: [], inviteLinkInput: 'https://invite/ABC123' });
+      const { unmount } = render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByText('Preview →'));
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByText('Join'));
+      });
+      expect(api.joinNodeByInvite).toHaveBeenCalledWith('ABC123', 'test-token', {
+        deviceFingerprintHash: await nodeDeviceFingerprint('node-123'),
+      });
+      unmount();
+
+      (api.previewInvite as any).mockRejectedValueOnce(
+        new ApiError('Invalid invite code', 404, 'invite_invalid'),
+      );
+      render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByText('Preview →'));
+      });
+      expect(screen.getByText('This invite link is invalid or was revoked')).toBeInTheDocument();
+      expect(screen.queryByText('Join')).not.toBeInTheDocument();
+    });
   });
 
   describe('Chat header', () => {

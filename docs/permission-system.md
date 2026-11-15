@@ -21,7 +21,7 @@ This allows efficient storage, comparison, and inheritance calculations.
 
 | Bit | Name | Description |
 |-----|------|-------------|
-| 0 | CREATE_INVITE | Create invite links for the Node |
+| 0 | CREATE_INVITE | Admit people: create, list and revoke invites, and approve or deny join requests (admission authority) |
 | 1 | KICK_MEMBERS | Remove members from the Node |
 | 2 | BAN_MEMBERS | Ban members from the Node |
 | 3 | ADMINISTRATOR | Full access, bypasses all permission checks |

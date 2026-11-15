@@ -9,6 +9,14 @@ repository.workspace = true
 [features]
 default = []
 sqlcipher = ["libsqlite3-sys/bundled-sqlcipher"]
+# Test-only features (SPEC-01 section 10.1). Neither is in `default` and no
+# release build enables them; the test targets turn them on through the
+# self dev-dependency below.
+# Named fault points that make the next matching query fail with a chosen
+# database error class, plus invocation counters for hook lists.
+fault-injection = []
+# Raw seeding helpers and the shared in-process relay harness for tests.
+test-helpers = []
 
 [[bin]]
 name = "accord-server"
@@ -103,6 +111,8 @@ subtle = "2"
 tikv-jemallocator = "0.6"
 
 [dev-dependencies]
+# The test targets link the library with the test-only features enabled.
+accord-server = { path = ".", features = ["fault-injection", "test-helpers"] }
 tempfile = "3.8"
 bincode = "1.3"
 base64 = "0.21"

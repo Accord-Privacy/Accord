@@ -3,20 +3,10 @@
 //! build info, link preview, node presence, and file listing.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, patch, post, put},
-    Router,
-};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use uuid::Uuid;
 
 use accord_server::{
@@ -38,89 +28,8 @@ impl TestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Auth
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Build info
-            .route("/api/build-info", get(build_info_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id", axum::routing::patch(update_node_handler))
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/leave", post(leave_node_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/members", get(get_node_members_handler))
-            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-            // Invites
-            .route(
-                "/nodes/:id/invites",
-                post(create_invite_handler).get(list_invites_handler),
-            )
-            .route("/invites/:invite_id", delete(revoke_invite_handler))
-            .route("/invites/:code/preview", get(invite_preview_handler))
-            .route("/invites/:code/join", post(use_invite_handler))
-            // Presence
-            .route("/api/presence/:id", get(get_node_presence_handler))
-            // User profiles
-            .route("/users/:id/profile", get(get_user_profile_handler))
-            .route(
-                "/users/me/profile",
-                axum::routing::patch(update_user_profile_handler),
-            )
-            // Build allowlist
-            .route(
-                "/nodes/:id/build-allowlist",
-                get(get_build_allowlist_handler)
-                    .put(set_build_allowlist_handler)
-                    .post(add_build_allowlist_handler),
-            )
-            .route(
-                "/nodes/:id/build-allowlist/:hash",
-                delete(remove_build_allowlist_handler),
-            )
-            // Audit log
-            .route("/nodes/:id/audit-log", get(get_node_audit_log_handler))
-            // Push tokens
-            .route(
-                "/push/register",
-                post(register_push_token_handler).delete(deregister_push_token_handler),
-            )
-            .route(
-                "/push/preferences",
-                axum::routing::put(update_push_preferences_handler),
-            )
-            // Link preview
-            .route("/api/link-preview", get(link_preview_handler))
-            // Files
-            .route("/channels/:id/files", get(list_channel_files_handler))
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -193,18 +102,18 @@ impl TestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
-    /// Have `token` join `node_id`.
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "join_node failed");
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 }
 

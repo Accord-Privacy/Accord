@@ -20,9 +20,18 @@ export interface WsEvents {
   message: (message: WsIncomingMessage) => void;
   error: (error: Error) => void;
   auth_error: () => void;
+  hello: (data: any) => void;
   node_created: (data: any) => void;
+  // SPEC-01 REQ-21, REQ-30 to REQ-34: join and leave answers, carrying
+  // `request_id`, and the join-request notifications. `node_joined` is a hint
+  // for the UI only (REQ-43).
   node_joined: (data: any) => void;
+  join_pending: (data: any) => void;
+  join_failed: (data: any) => void;
   node_left: (data: any) => void;
+  leave_failed: (data: any) => void;
+  join_request_created: (data: any) => void;
+  join_request_denied: (data: any) => void;
   node_info: (data: any) => void;
   channel_created: (data: any) => void;
   direct_message: (data: any) => void;
@@ -74,6 +83,9 @@ export class AccordWebSocket {
   private messageQueue: string[] = [];
   private onlineHandler: (() => void) | null = null;
   private offlineHandler: (() => void) | null = null;
+  // The relay's capability tokens from this socket's `hello` (SPEC-01 §6.8),
+  // forgotten on disconnect. Clients test membership only.
+  private features: string[] = [];
 
   constructor(token: string, baseUrl?: string) {
     this.token = token;
@@ -135,6 +147,15 @@ export class AccordWebSocket {
       reconnectAttempt: this.reconnectAttempts,
       maxReconnectAttempts: this.maxReconnectAttempts,
     });
+  }
+
+  /**
+   * The `features` of the relay's `hello` on the current socket (SPEC-01
+   * §6.8); empty before the first `hello` and after a disconnect. Test
+   * membership only, for example `relayFeatures().includes('admission/1')`.
+   */
+  relayFeatures(): readonly string[] {
+    return this.features;
   }
 
   getConnectionInfo(): ConnectionInfo {
@@ -226,6 +247,14 @@ export class AccordWebSocket {
           return;
         }
 
+        // Remember the relay's capability tokens until the socket closes.
+        if (message.type === 'hello') {
+          const features = (message as any).features;
+          this.features = Array.isArray(features)
+            ? features.filter((f: unknown): f is string => typeof f === 'string')
+            : [];
+        }
+
         // Handle server auth confirmation — NOW we're truly connected
         if (message.type === 'authenticated') {
           this.isConnected = true;
@@ -254,6 +283,7 @@ export class AccordWebSocket {
 
     this.ws.onclose = (event) => {
       this.isConnected = false;
+      this.features = [];
       this.stopPingInterval();
       
       // Auth rejection from server (4401 or 4403)
@@ -388,8 +418,16 @@ export class AccordWebSocket {
     this.sendMessage({ CreateNode: { name, description } });
   }
 
-  joinNode(nodeId: string): void {
-    this.sendMessage({ JoinNode: { node_id: nodeId } });
+  // Join a node by id (SPEC-01 REQ-21); the relay answers with exactly one
+  // `node_joined`, `join_pending` or `join_failed` frame.
+  joinNode(nodeId: string, opts: { inviteCode?: string; deviceFingerprintHash?: string } = {}): void {
+    this.sendMessage({
+      JoinNode: {
+        node_id: nodeId,
+        ...(opts.inviteCode ? { invite_code: opts.inviteCode } : {}),
+        ...(opts.deviceFingerprintHash ? { device_fingerprint_hash: opts.deviceFingerprintHash } : {}),
+      },
+    });
   }
 
   leaveNode(nodeId: string): void {

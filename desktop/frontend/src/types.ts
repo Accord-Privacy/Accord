@@ -72,6 +72,8 @@ export interface Node {
   description?: string;
   created_at: number;
   icon_hash?: string;
+  /** `invite` (default) or `request` (SPEC-01 REQ-29). */
+  join_policy?: 'invite' | 'request';
 }
 
 export interface NodeMember {
@@ -136,7 +138,9 @@ export interface CreateChannelRequest {
 // WebSocket message types
 export type WsMessageType =
   | { CreateNode: { name: string; description?: string } }
-  | { JoinNode: { node_id: string } }
+  // SPEC-01 REQ-21: the optional invite and node-scoped device fingerprint
+  // (64 lowercase hex characters) follow the rules of POST /nodes/:id/join.
+  | { JoinNode: { node_id: string; invite_code?: string; device_fingerprint_hash?: string } }
   | { LeaveNode: { node_id: string } }
   | { GetNodeInfo: { node_id: string } }
   | { JoinChannel: { channel_id: string } }
@@ -234,6 +238,10 @@ export interface UpdateProfileRequest {
 export interface ErrorResponse {
   error: string;
   code: number;
+  /** Machine-readable reason (SPEC-01 §6.4), on routes that send one. */
+  reason?: string;
+  /** Seconds to wait, with `rate_limited`. */
+  retry_after?: number;
 }
 
 // Health check response
@@ -241,6 +249,21 @@ export interface HealthResponse {
   status: string;
   version: string;
   uptime_seconds: number;
+  /** Relay capability tokens (SPEC-01 §6.8); test membership only. */
+  features?: string[];
+  /** When the relay began enforcing admission, Unix seconds (SPEC-01 REQ-42). */
+  admission_since?: number | null;
+}
+
+/** An invite as `GET /nodes/:id/invites` lists it (SPEC-01 §6.2). */
+export interface InviteListItem {
+  id: string;
+  invite_code: string;
+  created_at: number;
+  max_uses: number | null;
+  current_uses: number;
+  expires_at: number | null;
+  created_by?: string;
 }
 
 // App state types

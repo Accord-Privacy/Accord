@@ -2,20 +2,10 @@
 //! Tests the airgapped command architecture for bot installation, invocation, and responses.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, post},
-    Router,
-};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use uuid::Uuid;
 
 use accord_server::{
@@ -38,55 +28,8 @@ impl TestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Auth
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id/join", post(join_node_handler))
-            // Bot API v2 routes
-            .route(
-                "/api/nodes/:node_id/bots",
-                get(list_bots_handler).post(install_bot_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/bots/:bot_id",
-                delete(uninstall_bot_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/bots/:bot_id/commands",
-                get(get_bot_commands_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/bots/:bot_id/invoke",
-                post(invoke_command_handler),
-            )
-            .route("/api/bots/respond", post(bot_respond_handler))
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -129,6 +72,11 @@ impl TestServer {
     }
 
     /// Create a node, return node_id.
+    /// The node's default "general" channel.
+    async fn default_channel(&self, node_id: Uuid) -> Uuid {
+        self.state.db.get_node_channels(node_id).await.unwrap()[0].id
+    }
+
     async fn create_node(&self, token: &str, name: &str) -> Uuid {
         let resp = self
             .client
@@ -142,18 +90,18 @@ impl TestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
-    /// Join a node.
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "join_node failed");
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 }
 
@@ -836,7 +784,9 @@ async fn test_invoke_command_success() {
         .await
         .unwrap();
 
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
 
     let resp = server
         .client
@@ -893,7 +843,9 @@ async fn test_invoke_command_with_params() {
         .await
         .unwrap();
 
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
 
     let resp = server
         .client
@@ -921,7 +873,9 @@ async fn test_invoke_command_bot_not_found() {
     let (_, admin_token) = server.register_and_auth("bot_invoke_nf").await;
     let node_id = server.create_node(&admin_token, "BotInvokeNf").await;
 
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
 
     let resp = server
         .client
@@ -947,7 +901,9 @@ async fn test_invoke_command_unauthorized() {
     let (_, admin_token) = server.register_and_auth("bot_invoke_unauth").await;
     let node_id = server.create_node(&admin_token, "BotInvokeUnauth").await;
 
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
 
     let resp = server
         .client
@@ -991,7 +947,9 @@ async fn test_invoke_command_forbidden_for_non_member() {
         .await
         .unwrap();
 
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
 
     let resp = server
         .client
@@ -1044,7 +1002,9 @@ async fn test_bot_respond_success() {
     let bot_token = install_body["bot_token"].as_str().unwrap();
 
     // Create an invocation
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
     let invoke_resp = server
         .client
         .post(&server.url(&format!(
@@ -1203,7 +1163,9 @@ async fn test_bot_respond_with_embed() {
     let install_body: Value = install_resp.json().await.unwrap();
     let bot_token = install_body["bot_token"].as_str().unwrap();
 
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
     let invoke_resp = server
         .client
         .post(&server.url(&format!(
@@ -1310,7 +1272,9 @@ async fn test_bot_full_lifecycle() {
     assert_eq!(cmd_resp.status(), 200);
 
     // 4. Invoke
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
     let invoke_resp = server
         .client
         .post(&server.url(&format!(
@@ -1514,25 +1478,28 @@ async fn test_bot_respond_with_invalid_channel_id() {
         .await
         .unwrap();
 
-    // Invocation should still be created (fire-and-forget webhook)
-    assert_eq!(invoke_resp.status(), 200);
-    let invoke_body: Value = invoke_resp.json().await.unwrap();
-    let invocation_id = invoke_body["invocation_id"].as_str().unwrap();
+    // SPEC-01 REQ-17(d): an invocation must name an existing non-DM channel
+    // of the node, otherwise it fails with 404 and stores nothing.
+    assert_eq!(invoke_resp.status(), 404);
+    let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bot_invocations")
+        .fetch_one(server.state.db.raw_pool())
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
 
-    // Bot tries to respond - should fail due to invalid channel_id
+    // A response to a made-up invocation is refused as well.
     let resp = server
         .client
         .post(&server.url("/api/bots/respond"))
         .header("Authorization", format!("Bearer {}", bot_token))
         .json(&json!({
-            "invocation_id": invocation_id,
+            "invocation_id": Uuid::new_v4().to_string(),
             "content": { "type": "text", "text": "test" }
         }))
         .send()
         .await
         .unwrap();
-
-    assert_eq!(resp.status(), 400);
+    assert_eq!(resp.status(), 404);
 }
 
 #[tokio::test]
@@ -1565,7 +1532,9 @@ async fn test_member_can_invoke_but_not_manage() {
         .unwrap();
 
     // Member can invoke
-    let channel_id = Uuid::new_v4().to_string();
+    // An invocation must name a non-DM channel of the bot's node
+    // (SPEC-01 REQ-17(d)): use the node's default channel.
+    let channel_id = server.default_channel(node_id).await.to_string();
     let invoke_resp = server
         .client
         .post(&server.url(&format!(

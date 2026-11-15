@@ -1,6 +1,8 @@
 // API client module for REST endpoints
 
-import type { ParsedInviteLink, CustomEmoji } from './types';
+import type { ParsedInviteLink, CustomEmoji, InviteListItem } from './types';
+import { apiErrorFromBody } from './apiError';
+import { inviteCreateBody, type JoinResult } from './admission';
 import {
   RegisterResponse,
   AuthResponse,
@@ -25,6 +27,14 @@ import {
   BatchMembersResponse,
   BatchChannelsResponse,
 } from './types';
+
+/** The answer of `GET /invites/:code/preview`. */
+export interface InvitePreview {
+  node_name: string;
+  node_id: string;
+  member_count: number;
+  server_build_hash: string;
+}
 
 // Configuration - check for environment variable or use localStorage or default
 function getDefaultBaseUrl(): string {
@@ -151,8 +161,9 @@ export class AccordApi {
     const data = await response.json();
 
     if (!response.ok) {
-      const error = data as ErrorResponse;
-      throw new Error(error.error || `HTTP ${response.status}`);
+      // Keeps `error` as the message, and adds the status, `reason` and
+      // `retry_after` of the relay's error body (SPEC-01 §6.2).
+      throw apiErrorFromBody(response.status, data as ErrorResponse);
     }
 
     return data as T;
@@ -246,11 +257,21 @@ export class AccordApi {
     return this.request<NodeInfo>(url);
   }
 
-  // Join a Node
-  async joinNode(nodeId: string, _token: string): Promise<{ status: string; node_id: string }> {
-    return this.request<{ status: string; node_id: string }>(
-      `/nodes/${nodeId}/join`, {
+  // Join a Node by id (SPEC-01 REQ-20): with an invite of this node, as its
+  // owner, or as a join request on a node whose policy is `request`, which the
+  // relay answers with 202 `pending_approval`.
+  async joinNode(
+    nodeId: string,
+    _token: string,
+    opts: { inviteCode?: string; deviceFingerprintHash?: string } = {},
+  ): Promise<JoinResult> {
+    const body: Record<string, string> = {};
+    if (opts.inviteCode) body.invite_code = opts.inviteCode;
+    if (opts.deviceFingerprintHash) body.device_fingerprint_hash = opts.deviceFingerprintHash;
+    return this.request<JoinResult>(
+      `/nodes/${encodeURIComponent(nodeId)}/join`, {
         method: 'POST',
+        body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
       }
     );
   }
@@ -436,52 +457,86 @@ export class AccordApi {
     });
   }
 
+  // Preview an invite (public, no auth required) at `baseUrl`, without
+  // probing. Errors carry the relay's `reason` (404 invite_invalid, 410
+  // invite_expired / invite_exhausted, 429 rate_limited with retry_after).
+  private async fetchInvitePreview(baseUrl: string, inviteCode: string): Promise<InvitePreview> {
+    const url = `${baseUrl}/invites/${encodeURIComponent(inviteCode)}/preview`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: 'Request failed' }));
+      throw apiErrorFromBody(res.status, body);
+    }
+    return res.json();
+  }
+
   // Preview an invite (public, no auth required) — hits a specific relay URL
-  async previewInvite(relayUrl: string, inviteCode: string): Promise<{
-    node_name: string;
-    node_id: string;
-    member_count: number;
-    server_build_hash: string;
-  }> {
+  async previewInvite(relayUrl: string, inviteCode: string): Promise<InvitePreview> {
     // Probe the relay URL to find the working scheme (http vs https)
     let workingUrl = relayUrl;
     try {
       workingUrl = await probeServerUrl(relayUrl);
     } catch { /* fall through to try original */ }
-    const url = `${workingUrl}/invites/${encodeURIComponent(inviteCode)}/preview`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(body.error || `HTTP ${res.status}`);
-    }
-    return res.json();
+    return this.fetchInvitePreview(workingUrl, inviteCode);
   }
 
-  // Join a Node via invite code
-  async joinNodeByInvite(inviteCode: string, _token: string): Promise<NodeInfo> {
-    return this.request<NodeInfo>(`/invites/${inviteCode}/join`, {
+  // Preview an invite on this client's relay. The desktop uses it to learn
+  // the invite's node id, from which it derives the node-scoped device
+  // fingerprint it sends with the redemption (SPEC-01 REQ-43, §6.9).
+  async previewInviteHere(inviteCode: string): Promise<InvitePreview> {
+    return this.fetchInvitePreview(this.baseUrl, inviteCode);
+  }
+
+  // Join a Node via invite code (SPEC-01 REQ-19). The relay answers
+  // {status: "joined", node_id, node_name}; refusals carry a `reason`.
+  async joinNodeByInvite(
+    inviteCode: string,
+    _token: string,
+    opts: { deviceFingerprintHash?: string } = {},
+  ): Promise<JoinResult> {
+    return this.request<JoinResult>(`/invites/${encodeURIComponent(inviteCode)}/join`, {
       method: 'POST',
+      body: opts.deviceFingerprintHash
+        ? JSON.stringify({ device_fingerprint_hash: opts.deviceFingerprintHash })
+        : undefined,
     });
   }
 
-  // Get invites for a node (admin/mod only)
-  async getNodeInvites(nodeId: string, _token: string): Promise<Array<{ code: string; created_at: number; max_uses?: number; expires_at?: number; uses: number }>> {
+  // Get invites for a node (admission authority only). Reads `invite_code`
+  // and `current_uses`; older relays without the `code`/`uses` aliases send
+  // those fields too.
+  async getNodeInvites(nodeId: string, _token: string): Promise<InviteListItem[]> {
     const result = await this.request<any>(
       `/nodes/${nodeId}/invites`
     );
     // Server returns {invites: [...]} — unwrap if needed
-    if (result && result.invites && Array.isArray(result.invites)) return result.invites;
-    if (Array.isArray(result)) return result;
-    return [];
+    const raw: any[] = result && Array.isArray(result.invites)
+      ? result.invites
+      : Array.isArray(result) ? result : [];
+    return raw.map((invite) => ({
+      id: String(invite.id ?? ''),
+      invite_code: String(invite.invite_code ?? invite.code ?? ''),
+      created_at: Number(invite.created_at ?? 0),
+      max_uses: typeof invite.max_uses === 'number' ? invite.max_uses : null,
+      current_uses: Number(invite.current_uses ?? invite.uses ?? 0),
+      expires_at: typeof invite.expires_at === 'number' ? invite.expires_at : null,
+      created_by: typeof invite.created_by === 'string' ? invite.created_by : undefined,
+    }));
   }
 
-  // Create an invite with options
-  async createInviteWithOptions(nodeId: string, _token: string, maxUses?: number, expiresHours?: number): Promise<{ invite_code: string; expires_at?: number }> {
-    const body: any = {};
-    if (maxUses !== undefined) body.max_uses = maxUses;
-    if (expiresHours !== undefined) body.expires_hours = expiresHours;
-
-    return this.request<{ invite_code: string; expires_at?: number }>(
+  // Create an invite with options. `expiresHours` may be fractional (0.5 =
+  // 30 minutes). Relays that list `admission/1` in `features` get
+  // `expires_in_seconds`; older relays get whole `expires_in_hours`, rounded
+  // up (SPEC-01 REQ-43).
+  async createInviteWithOptions(
+    nodeId: string,
+    _token: string,
+    maxUses?: number,
+    expiresHours?: number,
+    relayFeatures?: readonly string[],
+  ): Promise<{ id?: string; invite_code: string; expires_at?: number | null }> {
+    const body = inviteCreateBody(maxUses, expiresHours, relayFeatures);
+    return this.request<{ id?: string; invite_code: string; expires_at?: number | null }>(
       `/nodes/${nodeId}/invites`, {
         method: 'POST',
         body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
@@ -489,10 +544,10 @@ export class AccordApi {
     );
   }
 
-  // Revoke an invite
-  async revokeInvite(nodeId: string, inviteCode: string, _token: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>(
-      `/nodes/${nodeId}/invites/${inviteCode}`, {
+  // Revoke an invite by its id (DELETE /invites/:id, SPEC-01 REQ-38).
+  async revokeInvite(inviteId: string, _token: string): Promise<{ status: string; invite_id: string }> {
+    return this.request<{ status: string; invite_id: string }>(
+      `/invites/${encodeURIComponent(inviteId)}`, {
         method: 'DELETE',
       }
     );

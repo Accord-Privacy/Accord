@@ -796,6 +796,32 @@ pub async fn invoke_command_handler(
             )
         })?;
 
+    // The invocation must name an existing, non-DM channel of this node;
+    // otherwise nothing is stored (SPEC-01 REQ-17(d)). Lookup errors deny.
+    let channel_not_found = || {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Channel not found".into(),
+                code: 404,
+            }),
+        )
+    };
+    let channel_uuid = Uuid::parse_str(&request.channel_id).map_err(|_| channel_not_found())?;
+    match state.db.dm_participants(channel_uuid).await {
+        Ok(None) => {}
+        _ => return Err(channel_not_found()),
+    }
+    match state.db.get_channel(channel_uuid).await {
+        Ok(Some(channel)) if channel.node_id == node_id => {}
+        _ => return Err(channel_not_found()),
+    }
+    // Store and forward the canonical id, never the caller's spelling:
+    // `Uuid::parse_str` also accepts uppercase, simple, braced and urn forms,
+    // which the response's channel re-check (a text comparison against
+    // `channels.id`) would never match (SPEC-01 section 11.3).
+    let channel_id = channel_uuid.to_string();
+
     // Get invoker display name
     let display_name = state
         .get_user_display_name(user_id)
@@ -810,7 +836,7 @@ pub async fn invoke_command_handler(
             &invocation_id,
             &bot_id,
             node_id,
-            &request.channel_id,
+            &channel_id,
             user_id,
             &request.command,
         )
@@ -835,7 +861,7 @@ pub async fn invoke_command_handler(
         invoker_display_name: display_name,
         params: request.params,
         invocation_id: invocation_id.clone(),
-        channel_id: request.channel_id,
+        channel_id,
     };
 
     // Check if E2EE is available for this bot
@@ -1112,27 +1138,24 @@ pub async fn bot_respond_handler(
         }
     }
 
-    // Look up the invocation to get channel_id
-    let (channel_id, _command) = state
-        .get_invocation_info(&request.invocation_id, &bot_id, node_id)
+    // Accept exactly one response per pending invocation, and only while its
+    // channel is a non-DM channel of the invocation's node (SPEC-01
+    // REQ-17(d)). Anything else is refused and nothing is broadcast.
+    let invocation_not_found = || {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Invocation not found".into(),
+                code: 404,
+            }),
+        )
+    };
+    let channel_uuid = state
+        .db
+        .complete_bot_invocation(&request.invocation_id, &bot_id, node_id)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: {
-                        tracing::error!("Invocation not found: {}", e);
-                        "Invocation not found".to_string()
-                    },
-                    code: 404,
-                }),
-            )
-        })?;
-
-    // Update invocation status
-    let _ = state
-        .update_invocation_status(&request.invocation_id, "completed")
-        .await;
+        .map_err(|_| invocation_not_found())?
+        .ok_or_else(invocation_not_found)?;
 
     // Build WS broadcast message
     let ws_message = serde_json::json!({
@@ -1141,16 +1164,6 @@ pub async fn bot_respond_handler(
         "invocation_id": request.invocation_id,
         "content": request.content,
     });
-
-    let channel_uuid = Uuid::parse_str(&channel_id).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Invalid channel_id in invocation".into(),
-                code: 400,
-            }),
-        )
-    })?;
 
     // Broadcast to channel members via WebSocket
     let _ = state

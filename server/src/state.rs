@@ -3,7 +3,7 @@
 use crate::db::Database;
 use crate::files::FileHandler;
 use crate::models::{AuthToken, Channel};
-use crate::node::{Node, NodeCreationPolicy, NodeInfo, NodeRole};
+use crate::node::{Node, NodeCreationPolicy, NodeInfo};
 use crate::permissions::Permission;
 use crate::rate_limit::RateLimiter;
 use accord_core::build_hash::{BuildInfo, BuildTrust, KnownBuild};
@@ -217,6 +217,38 @@ pub struct AppState {
     password_verifications: std::sync::Mutex<Vec<String>>,
 }
 
+/// Boot options of the relay state.
+#[derive(Debug, Clone, Default)]
+pub struct AppStateOptions {
+    /// Enable SQLCipher encryption at rest (with the `sqlcipher` feature).
+    pub database_encryption: bool,
+    /// Options of the admission boot repair and ledger migrations.
+    pub db: crate::db::DbOptions,
+    /// Blob storage; `None` uses the default `./data/files`.
+    pub file_config: Option<crate::files::FileConfig>,
+}
+
+/// Delete the blobs whose `files` rows the boot repair removed. Only the
+/// number of failures is logged (SPEC-01 §6.6, after the commit, step 4).
+async fn remove_repaired_blobs(db: &Database, file_handler: &FileHandler) {
+    let mut failures = 0usize;
+    for path in db.take_repair_blob_paths() {
+        if !std::path::Path::new(&path).exists() {
+            continue;
+        }
+        if file_handler.delete_file(&path).await.is_err() {
+            failures += 1;
+        }
+    }
+    if failures > 0 {
+        tracing::warn!(
+            target: crate::db::repair::LOG_TARGET,
+            "admission repair: {} blobs of deleted files could not be removed",
+            failures
+        );
+    }
+}
+
 /// The single response text of every credential refusal on `POST /auth`
 /// (wrong password, unusable stored hash, reserved user).
 pub const INVALID_PASSWORD: &str = "Invalid password";
@@ -240,9 +272,28 @@ impl AppState {
 
     /// Create new application state with explicit encryption control
     pub async fn new_with_encryption(db_path: &str, database_encryption: bool) -> Result<Self> {
-        let db = Database::new_with_encryption(db_path, database_encryption).await?;
-        let file_handler = FileHandler::with_default_config();
+        Self::new_with_options(
+            db_path,
+            AppStateOptions {
+                database_encryption,
+                ..AppStateOptions::default()
+            },
+        )
+        .await
+    }
+
+    /// Create application state with every boot option. Opening the database
+    /// runs the admission boot repair; the blobs of `files` rows it deleted
+    /// are removed here, once the file handler exists (SPEC-01 §6.6).
+    pub async fn new_with_options(db_path: &str, options: AppStateOptions) -> Result<Self> {
+        let db =
+            Database::new_with_options(db_path, options.database_encryption, options.db).await?;
+        let file_handler = match options.file_config {
+            Some(config) => FileHandler::new(config),
+            None => FileHandler::with_default_config(),
+        };
         file_handler.init().await?;
+        remove_repaired_blobs(&db, &file_handler).await;
         let dummy_password_hash =
             crate::admission::dummy_password_hash().map_err(|e| anyhow::anyhow!(e))?;
         Ok(Self {
@@ -274,6 +325,12 @@ impl AppState {
     /// Create new application state with in-memory database (for testing)
     pub async fn new_in_memory() -> Result<Self> {
         Self::new(":memory:").await
+    }
+
+    /// The fault points of this relay instance. Tests arm request-path
+    /// points here at run time (inert without the `fault-injection` feature).
+    pub fn faults(&self) -> &crate::faults::FaultPlan {
+        self.db.faults()
     }
 
     // ── IP bans (relay-owner DoS/DDoS defense, node-correlation-free) ──
@@ -718,6 +775,11 @@ impl AppState {
     }
 
     pub async fn get_node_info(&self, node_id: Uuid) -> Result<NodeInfo, String> {
+        // The reserved DM system node is refused exactly like a missing node
+        // (SPEC-01 REQ-7): its roster and channel count are never shown.
+        if crate::admission::is_reserved_node(node_id) {
+            return Err("Node not found".to_string());
+        }
         let node = match self.db.get_node(node_id).await {
             Ok(Some(n)) => n,
             Ok(None) => return Err("Node not found".to_string()),
@@ -768,126 +830,39 @@ impl AppState {
         }
     }
 
-    pub async fn join_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
-        // Check node exists
-        match self.db.get_node(node_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => return Err("Node not found".to_string()),
-            Err(e) => {
-                return Err({
-                    tracing::error!("Database error: {}", e);
-                    "Database error".to_string()
-                })
-            }
-        }
-
-        // Check ban status
-        let public_key_hash = self
-            .db
-            .get_user_public_key_hash(user_id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Database error: {}", e);
-                "Database error".to_string()
-            })?
-            .ok_or_else(|| "User not found".to_string())?;
-
-        if self
-            .db
-            .is_banned_from_node(node_id, &public_key_hash)
-            .await
-            .unwrap_or(false)
-        {
-            return Err("You are banned from this node".to_string());
-        }
-
-        // Check not already member
-        if self
-            .db
-            .is_node_member(node_id, user_id)
-            .await
-            .unwrap_or(false)
-        {
-            return Err("Already a member of this node".to_string());
-        }
-        self.db
-            .add_node_member(node_id, user_id, NodeRole::Member)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Auto-add user to all existing channels in the node
-        if let Ok(channels) = self.db.get_node_channels(node_id).await {
-            for channel in channels {
-                let _ = self.db.add_user_to_channel(channel.id, user_id).await;
-            }
-        }
-
-        Ok(())
-    }
-
+    /// Leave `node_id` as `user_id` through the leave routine of SPEC-01
+    /// REQ-34 (charged, `not_member` when there was no membership, removal
+    /// hooks after the commit). A convenience wrapper for programmatic
+    /// callers and tests; the handlers call `admission::leave` directly.
     pub async fn leave_node(&self, user_id: Uuid, node_id: Uuid) -> Result<(), String> {
-        // Check node exists
-        let node = match self.db.get_node(node_id).await {
-            Ok(Some(n)) => n,
-            Ok(None) => return Err("Node not found".to_string()),
-            Err(e) => {
-                return Err({
-                    tracing::error!("Database error: {}", e);
-                    "Database error".to_string()
-                })
-            }
-        };
-        if node.owner_id == user_id {
-            return Err("Node owner cannot leave their own node".to_string());
-        }
-        self.db
-            .remove_node_member(node_id, user_id)
+        crate::admission::leave(self, user_id, node_id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.message())
     }
 
+    /// Kick `target_id` from `node_id` as `admin_id` through the kick
+    /// routine of SPEC-01 REQ-35. A convenience wrapper for programmatic
+    /// callers and tests; the handler calls `admission::kick` directly.
     pub async fn kick_from_node(
         &self,
         admin_id: Uuid,
         target_id: Uuid,
         node_id: Uuid,
     ) -> Result<(), String> {
-        // Check if user has permission to kick members
-        let member = self
-            .db
-            .get_node_member(node_id, admin_id)
+        crate::admission::kick(self, admin_id, node_id, target_id)
             .await
-            .map_err(|e| e.to_string())?;
-        match member {
-            Some(m) => {
-                if !self
-                    .db
-                    .node_member_can(m.node_id, m.user_id, Permission::KickMembers)
-                    .await
-                {
-                    return Err("Insufficient permissions to kick members".to_string());
-                }
-            }
-            None => return Err("Must be a member of the node".to_string()),
-        }
-        // Can't kick the owner
-        let node = self
-            .db
-            .get_node(node_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or("Node not found")?;
-        if node.owner_id == target_id {
-            return Err("Cannot kick the node owner".to_string());
-        }
-        self.db
-            .remove_node_member(node_id, target_id)
-            .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.message())
     }
 
     // ── Node invite operations ──
+    //
+    // Convenience wrappers over the admission service (`crate::admission`)
+    // for programmatic callers and tests. The HTTP and WebSocket handlers
+    // call the admission service directly.
 
+    /// Create an invite as `created_by`, with an optional use limit and an
+    /// optional lifetime in whole hours. Requires admission authority
+    /// (SPEC-01 REQ-38). Returns the invite id and code.
     pub async fn create_invite(
         &self,
         node_id: Uuid,
@@ -895,227 +870,61 @@ impl AppState {
         max_uses: Option<u32>,
         expires_in_hours: Option<u32>,
     ) -> Result<(Uuid, String), String> {
-        // Check if user has permission to manage invites
-        let member = self
-            .db
-            .get_node_member(node_id, created_by)
+        let params = crate::admission::CreateInviteParams {
+            max_uses,
+            lifetime_secs: expires_in_hours.map(|hours| u64::from(hours) * 3600),
+        };
+        crate::admission::create_invite(self, node_id, created_by, params)
             .await
-            .map_err(|e| e.to_string())?;
-        match member {
-            Some(m) => {
-                if !self
-                    .db
-                    .node_member_can(m.node_id, m.user_id, Permission::ManageInvites)
-                    .await
-                {
-                    return Err("Insufficient permissions to create invites".to_string());
-                }
-            }
-            None => return Err("Must be a member of the node".to_string()),
-        }
-
-        // Generate invite code (8 character alphanumeric)
-        let invite_code = generate_invite_code();
-
-        // Calculate expiration timestamp
-        let expires_at = expires_in_hours.map(|hours| now() + (hours as u64 * 3600));
-
-        let invite_id = self
-            .db
-            .create_node_invite(node_id, created_by, &invite_code, max_uses, expires_at)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        Ok((invite_id, invite_code))
+            .map(|invite| (invite.id, invite.invite_code))
+            .map_err(|e| e.message())
     }
 
+    /// Redeem `invite_code` as `user_id` through the admission entry point of
+    /// `POST /invites/:code/join`, with no fingerprint and no build hash.
+    /// Returns the node id and name.
     pub async fn use_invite(
         &self,
         invite_code: &str,
         user_id: Uuid,
     ) -> Result<(Uuid, String), String> {
-        // Get invite by code
-        let invite = match self
-            .db
-            .get_node_invite_by_code(invite_code)
-            .await
-            .map_err(|e| e.to_string())?
+        crate::admission::validate_join_fields(Some(invite_code), None).map_err(|e| e.message())?;
+        match crate::admission::join(
+            self,
+            crate::admission::AdmissionContext::bare(user_id),
+            crate::admission::AdmissionEntry::InviteCode {
+                code: invite_code.to_string(),
+            },
+        )
+        .await
         {
-            Some(invite) => invite,
-            None => return Err("Invalid invite code".to_string()),
-        };
-
-        // Check if invite is expired
-        if let Some(expires_at) = invite.expires_at {
-            if now() > expires_at {
-                return Err("Invite has expired".to_string());
+            Ok(crate::admission::AdmissionOutcome::Joined {
+                node_id, node_name, ..
+            }) => Ok((node_id, node_name)),
+            Ok(crate::admission::AdmissionOutcome::Pending { .. }) => {
+                Err("Join request pending".to_string())
             }
+            Err(e) => Err(e.message()),
         }
-
-        // Check if invite has reached max uses
-        if let Some(max_uses) = invite.max_uses {
-            if invite.current_uses >= max_uses {
-                return Err("Invite has reached maximum uses".to_string());
-            }
-        }
-
-        // Check ban status
-        let public_key_hash = self
-            .db
-            .get_user_public_key_hash(user_id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Database error: {}", e);
-                "Database error".to_string()
-            })?
-            .ok_or_else(|| "User not found".to_string())?;
-
-        if self
-            .db
-            .is_banned_from_node(invite.node_id, &public_key_hash)
-            .await
-            .unwrap_or(false)
-        {
-            return Err("You are banned from this node".to_string());
-        }
-
-        // Check if user is already a member
-        if self
-            .db
-            .is_node_member(invite.node_id, user_id)
-            .await
-            .unwrap_or(false)
-        {
-            return Err("Already a member of this node".to_string());
-        }
-
-        // Get node info for response
-        let node = self
-            .db
-            .get_node(invite.node_id)
-            .await
-            .map_err(|e| e.to_string())?
-            .ok_or("Node not found")?;
-
-        // Join the user as a plain member with no role. Admission never
-        // changes `nodes.owner_id` and never grants a role (SPEC-01 REQ-9).
-        self.db
-            .add_node_member(invite.node_id, user_id, NodeRole::Member)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Auto-add user to all existing channels in the node
-        if let Ok(channels) = self.db.get_node_channels(invite.node_id).await {
-            for channel in &channels {
-                let _ = self.db.add_user_to_channel(channel.id, user_id).await;
-            }
-        }
-
-        // Broadcast member_joined to all node channels so clients update their member lists
-        if let Ok(channels) = self.db.get_node_channels(invite.node_id).await {
-            // Get user display name for the broadcast
-            let display_name = self
-                .db
-                .get_user_profile(user_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|p| p.display_name)
-                .unwrap_or_default();
-            let pk_hash = self
-                .db
-                .get_user_public_key_hash(user_id)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            for channel in &channels {
-                let event = serde_json::json!({
-                    "type": "member_joined",
-                    "node_id": invite.node_id,
-                    "user_id": user_id,
-                    "display_name": display_name,
-                    "public_key_hash": pk_hash,
-                });
-                let _ = self.send_to_channel(channel.id, event.to_string()).await;
-            }
-        }
-
-        // Increment invite usage
-        self.db
-            .increment_invite_usage(invite_code)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        Ok((invite.node_id, node.name))
     }
 
+    /// List a node's invites. Requires admission authority (SPEC-01 REQ-38).
     pub async fn list_invites(
         &self,
         node_id: Uuid,
         user_id: Uuid,
     ) -> Result<Vec<crate::models::NodeInvite>, String> {
-        // Check if user has permission to manage invites
-        let member = self
-            .db
-            .get_node_member(node_id, user_id)
+        crate::admission::list_invites(self, node_id, user_id)
             .await
-            .map_err(|e| e.to_string())?;
-        match member {
-            Some(m) => {
-                if !self
-                    .db
-                    .node_member_can(m.node_id, m.user_id, Permission::ManageInvites)
-                    .await
-                {
-                    return Err("Insufficient permissions to list invites".to_string());
-                }
-            }
-            None => return Err("Must be a member of the node".to_string()),
-        }
-
-        self.db
-            .get_node_invites(node_id)
-            .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.message())
     }
 
+    /// Revoke an invite by id (SPEC-01 REQ-38).
     pub async fn revoke_invite(&self, invite_id: Uuid, user_id: Uuid) -> Result<(), String> {
-        // Get invite to verify permissions
-        let invite = match self
-            .db
-            .get_node_invite(invite_id)
+        crate::admission::revoke_invite_by_id(self, invite_id, user_id)
             .await
-            .map_err(|e| e.to_string())?
-        {
-            Some(invite) => invite,
-            None => return Err("Invite not found".to_string()),
-        };
-
-        // Check if user has permission to manage invites or is the creator
-        let member = self
-            .db
-            .get_node_member(invite.node_id, user_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        let may_revoke = match member {
-            Some(m) => {
-                self.db
-                    .node_member_can(m.node_id, m.user_id, Permission::ManageInvites)
-                    .await
-                    || invite.created_by == user_id
-            }
-            None => false,
-        };
-
-        if !may_revoke {
-            return Err("Insufficient permissions to revoke this invite".to_string());
-        }
-
-        self.db
-            .delete_node_invite(invite_id)
-            .await
-            .map_err(|e| e.to_string())
+            .map(|_| ())
+            .map_err(|e| e.message())
     }
 
     // ── Channel operations (now Node-scoped) ──
@@ -1123,15 +932,20 @@ impl AppState {
     pub async fn join_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
         // DM channels: membership is being one of the two participants (the
         // DM system node has no members, so the node check below would fail).
-        if let Ok(Some(dm)) = self.db.get_dm_channel(channel_id).await {
-            if dm.user1_id == user_id || dm.user2_id == user_id {
-                return self
-                    .db
-                    .add_user_to_channel(channel_id, user_id)
-                    .await
-                    .map_err(|e| e.to_string());
+        // A failed DM lookup denies (SPEC-01 REQ-17(c)).
+        match self.db.dm_participants(channel_id).await {
+            Ok(Some((user1, user2))) => {
+                if user1 == user_id || user2 == user_id {
+                    return self
+                        .db
+                        .add_user_to_channel(channel_id, user_id)
+                        .await
+                        .map_err(|e| e.to_string());
+                }
+                return Err("Not a participant of this DM channel".to_string());
             }
-            return Err("Not a participant of this DM channel".to_string());
+            Ok(None) => {}
+            Err(_) => return Err("Channel lookup failed".to_string()),
         }
 
         // Verify channel exists and user is member of the Node
@@ -1301,45 +1115,6 @@ impl AppState {
             .map_err(|e| e.to_string())
     }
 
-    pub async fn update_node(
-        &self,
-        node_id: Uuid,
-        user_id: Uuid,
-        name: Option<String>,
-        description: Option<String>,
-    ) -> Result<(), String> {
-        // Check if user has permission to manage node
-        let member = self
-            .db
-            .get_node_member(node_id, user_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        match member {
-            Some(m) => {
-                if !self
-                    .db
-                    .node_member_can(m.node_id, m.user_id, Permission::ManageNode)
-                    .await
-                {
-                    return Err("Insufficient permissions to manage node settings".to_string());
-                }
-            }
-            None => return Err("Must be a member of the node".to_string()),
-        }
-
-        let stripped_name = name
-            .as_deref()
-            .map(|n| metadata::strip_node_name(self.metadata_mode, n));
-        let stripped_desc = description
-            .as_deref()
-            .and_then(|d| metadata::strip_description(self.metadata_mode, Some(d)));
-
-        self.db
-            .update_node(node_id, stripped_name.as_deref(), stripped_desc.as_deref())
-            .await
-            .map_err(|e| e.to_string())
-    }
-
     pub async fn get_channel(&self, channel_id: Uuid) -> Result<Option<Channel>, String> {
         self.db
             .get_channel(channel_id)
@@ -1499,7 +1274,14 @@ impl AppState {
     }
 
     pub async fn send_to_channel(&self, channel_id: Uuid, message: String) -> Result<(), String> {
-        let members = self.get_channel_members(channel_id).await;
+        // A DM channel's frames go only to its two participants, taken from
+        // `dm_channels` (SPEC-01 REQ-17(e)). If that lookup fails, the
+        // `channel_members` cache is used: triggers and the boot repair keep
+        // it a subset of the participants.
+        let members = match self.db.dm_participants(channel_id).await {
+            Ok(Some((user1, user2))) => vec![user1, user2],
+            _ => self.get_channel_members(channel_id).await,
+        };
         let connections = self.connections.read().await;
         for user_id in members {
             if let Some(devices) = connections.get(&user_id) {
@@ -1916,9 +1698,13 @@ impl AppState {
         channel_id: Uuid,
     ) -> Result<bool, String> {
         // DM channels live under the DM system node, which has no members —
-        // access is simply "am I one of the two participants".
-        if let Ok(Some(dm)) = self.db.get_dm_channel(channel_id).await {
-            return Ok(dm.user1_id == user_id || dm.user2_id == user_id);
+        // access is simply "am I one of the two participants". A failed DM
+        // lookup denies instead of falling through to the node checks
+        // (SPEC-01 REQ-17(c)).
+        match self.db.dm_participants(channel_id).await {
+            Ok(Some((user1, user2))) => return Ok(user1 == user_id || user2 == user_id),
+            Ok(None) => {}
+            Err(_) => return Err("Channel lookup failed".to_string()),
         }
 
         // Get channel info to find the node
@@ -2300,23 +2086,13 @@ fn now() -> u64 {
         .as_secs()
 }
 
-/// Generate a random 8-character alphanumeric invite code
-fn generate_invite_code() -> String {
-    use rand::{distributions::Alphanumeric, Rng};
-
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(8)
-        .map(char::from)
-        .collect()
-}
-
 /// Shared application state type
 pub type SharedState = Arc<AppState>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::NodeRole;
 
     #[tokio::test]
     async fn test_node_lifecycle() {
@@ -2342,8 +2118,10 @@ mod tests {
         assert_eq!(info.members.len(), 1);
         assert_eq!(info.channel_count, 1); // default general channel
 
-        // Join
-        state.join_node(user_id, node.id).await.unwrap();
+        // Join (through an invite the owner created)
+        crate::test_support::admit_with_owner_invite(&state, node.id, user_id)
+            .await
+            .unwrap();
         let info = state.get_node_info(node.id).await.unwrap();
         assert_eq!(info.members.len(), 2);
 
@@ -2413,7 +2191,9 @@ mod tests {
             .unwrap();
 
         // User2 joins node, then channel
-        state.join_node(user2_id, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user2_id)
+            .await
+            .unwrap();
         state.join_channel(user2_id, channel.id).await.unwrap();
 
         let members = state.get_channel_members(channel.id).await;
@@ -2446,7 +2226,9 @@ mod tests {
             .unwrap();
 
         // Both users join the node
-        state.join_node(user2_id, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user2_id)
+            .await
+            .unwrap();
 
         // Join voice channel
         state
@@ -2500,7 +2282,9 @@ mod tests {
             .create_node("Shared".into(), user_a, None)
             .await
             .unwrap();
-        state.join_node(user_b, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user_b)
+            .await
+            .unwrap();
 
         // Verify they share a node
         assert!(state.db.share_a_node(user_a, user_b).await.unwrap());
@@ -2557,7 +2341,9 @@ mod tests {
             .create_node("Node".into(), user_a, None)
             .await
             .unwrap();
-        state.join_node(user_b, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user_b)
+            .await
+            .unwrap();
 
         let req_id = state
             .db
@@ -2637,7 +2423,9 @@ mod tests {
             .create_node("Node".into(), user_a, None)
             .await
             .unwrap();
-        state.join_node(user_b, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user_b)
+            .await
+            .unwrap();
         let req_id = state
             .db
             .create_friend_request(user_a, user_b, node.id, None)
@@ -2668,7 +2456,9 @@ mod tests {
             .create_node("Node".into(), user_a, None)
             .await
             .unwrap();
-        state.join_node(user_b, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user_b)
+            .await
+            .unwrap();
 
         let req_id = state
             .db
@@ -3044,7 +2834,7 @@ mod tests {
             .unwrap();
         state
             .db
-            .add_node_member(node_id, moderator, NodeRole::Admin)
+            .seed_node_member(node_id, moderator, NodeRole::Admin)
             .await
             .unwrap();
         let (_, code) = state
@@ -3211,7 +3001,9 @@ mod tests {
             .create_node("VNode".into(), owner, None)
             .await
             .unwrap();
-        state.join_node(user, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, user)
+            .await
+            .unwrap();
 
         let ch1 = state
             .create_channel("vc1".into(), node.id, owner)
@@ -3289,7 +3081,9 @@ mod tests {
             .create_node("DelNode".into(), owner, None)
             .await
             .unwrap();
-        state.join_node(member, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, member)
+            .await
+            .unwrap();
 
         let channel = state
             .create_channel("doomed".into(), node.id, owner)
@@ -3363,8 +3157,16 @@ mod tests {
             .await
             .unwrap();
         let node = state.create_node("ANode".into(), user, None).await.unwrap();
-        // Owner is already a member, joining again should error
-        let result = state.join_node(user, node.id).await;
-        assert!(result.is_err());
+        // Owner is already a member, joining again is refused (REQ-24(b)).
+        let result = crate::admission::join(
+            &state,
+            crate::admission::AdmissionContext::bare(user),
+            crate::admission::AdmissionEntry::Node {
+                node_id: node.id,
+                invite_code: None,
+            },
+        )
+        .await;
+        assert_eq!(result, Err(crate::admission::AdmissionError::AlreadyMember));
     }
 }

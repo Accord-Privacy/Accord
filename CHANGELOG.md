@@ -4,6 +4,105 @@ All notable changes to Accord are documented here. This project adheres to [Sema
 
 ## [Unreleased] — Phase 6: Public Release (In Progress)
 
+### Relay admission (SPEC-01) — operator release note
+
+The relay now enforces who may join a node. This closes the empty-password login
+of the DM system account, the takeover of the node that holds every DM, and
+joins by node id. Back up before upgrading, and read this before the first boot
+of the new binary: several changes happen once, at that boot, and are final.
+
+**What changes for users and node owners**
+
+- **Joining needs an invite, an approval or ownership.** `POST /nodes/:id/join`
+  and WebSocket `JoinNode` no longer admit anyone who knows a node id. Invites are
+  validated and consumed atomically, so use limits hold under concurrent joins.
+  An owner can switch a node's `join_policy` to `request`, so that people can ask
+  to join and members with CREATE_INVITE approve or deny them. The relay sees
+  these join requests (who asked to join which node) for up to 14 days.
+- **CREATE_INVITE now means "may admit people".** It gates creating, listing and
+  revoking invites and approving join requests. At the first boot it is removed
+  once from every node's `@everyone` role. Owners who want every member to be able
+  to admit people must grant it to `@everyone` again; that choice then stays.
+  Invites created by members who lose CREATE_INVITE, this way or by a later
+  demotion, stop working. Template imports no longer write CREATE_INVITE,
+  ADMINISTRATOR or any other privileged bit to `@everyone`.
+- **Old permanent invite links expire.** Every invite created before the upgrade
+  without an expiry (all invites made by the desktop app so far, which sent its
+  expiry under a field the relay ignored) stops working 7 days after the first
+  boot of this release. Owners must create a new invite for any link they want to
+  keep, and may choose "never" explicitly. Operators can change the grace period
+  with `--legacy-invite-grace-hours <n>` (`0` = expire at once) or keep those
+  invites permanent with `--keep-legacy-permanent-invites`; the choice made at
+  the first boot is final. Invites created after the upgrade are never touched.
+  Older 8-character codes that carry an explicit expiry keep working until they
+  expire; the relay logs how many are still live. New codes are 22 characters.
+- **Legacy role markers are reset.** The legacy Admin/Moderator conversion runs
+  one last time and never again, then every member who is not a node owner gets
+  the plain `member` marker. They keep their roles and the permissions those
+  carry, but lose the marker-only powers (encrypted metadata writes, bot
+  management, deleting other people's files). Deleting or unassigning a role now
+  survives restarts. A demotion made between the old binary's last start and the
+  upgrade is undone this one last time: **owners should review role assignments
+  after upgrading.**
+- **Review your member lists.** Members who joined a node by its id before this
+  release cannot be told apart from legitimate members and remain. Owners should
+  review member lists and remove anyone they do not recognise. `GET /health`
+  reports `admission_since`, the time admission enforcement began, so clients can
+  flag members whose `joined_at` is earlier.
+- **Device bans and build allowlists apply to every join.** On a node with at
+  least one device ban, every admission, invite redemption included, needs a
+  device fingerprint; a client that sends none gets `fingerprint_required`. Older
+  desktop builds send none, so they cannot join such nodes until users update.
+  A node's per-node build allowlist now also applies to invite redemption; a
+  client that sends no `X-Build-Hash` counts as the empty hash and is refused by
+  a non-empty allowlist.
+- **Leave, kick and ban.** Leaving or kicking a user who is not a member now
+  returns `404 not_member` instead of a silent success. REST leave and the ban of
+  a member now broadcast `sender_key_rotation_required` like WebSocket leave and
+  kick, and every removal deletes queued sender-key distributions in both
+  directions. Membership actions, kicks included, are limited to 10 per minute
+  per user. A re-admitted user starts without their old roles.
+- **Error reasons.** Admission errors carry a machine-readable `reason` (and
+  `retry_after` for rate limits) next to the existing `error` text. Relays list
+  `admission/1` in the new `features` array of `GET /health` and the WebSocket
+  `hello`.
+
+**Locked accounts**
+
+- Accounts without a password, and the built-in DM system account, are locked
+  permanently (their stored password hash becomes `!locked`) and their sessions
+  are deleted. Logins to them are refused exactly like a wrong password. There is
+  no recovery path: affected users must register again. Official desktop and
+  mobile clients always set a password, so this affects only API, test or legacy
+  keyless accounts. Registration now requires a password.
+
+**What operators will see**
+
+- **Boot repair log lines.** At every start the relay checks the DM system node
+  and account and reverts any hijacked state (owners, members, invites, roles,
+  bots, webhooks and non-DM channels in the DM node, and DMs with the system
+  account, whose files are deleted). It logs one WARN line per step that changed
+  rows, with counts only, such as `admission repair: step B5 changed 3 rows`.
+  Such lines mean a past compromise was reverted. On a clean database the repair
+  changes nothing.
+- **One-time migration log lines**, under the target `accord::admission`, with
+  counts only: the role conversion, the `@everyone` CREATE_INVITE strip, the
+  invite expiry (or the number kept with the opt-out), and the removal of invite
+  codes from existing audit entries. Audit entries no longer contain invite codes.
+- **Orphaned legacy nodes.** Nodes other than the DM node that are still owned
+  by the DM system account (a "Management" node from early versions) are left in
+  place without an owner; the relay logs their count at every start.
+- **Fail-closed start.** If the repair, the database triggers or a one-time
+  migration cannot run, the relay exits with `admission repair failed` and does
+  not serve. Fix the cause (read-only or locked database, full disk) and restart.
+- **New flags:** `--legacy-invite-grace-hours`, `--keep-legacy-permanent-invites`
+  and `--preview-rate-limit` (unauthenticated invite previews per minute per
+  client network, default 30; loopback peers such as a same-host reverse proxy are
+  not limited; `0` disables it). See [docs/admin-guide.md](docs/admin-guide.md).
+
+This protects members from other users of an honest relay. It is not a
+protection against the relay operator.
+
 ### Governance & privacy (2026-07-13)
 - **Governance model documented** ([GOVERNANCE.md](GOVERNANCE.md)) — no central or
   relay-side moderation; parent model; node owners are 100% responsible for their
