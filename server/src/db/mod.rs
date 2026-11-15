@@ -13,6 +13,7 @@
 //!
 //! Sub-modules for per-Node database isolation (WIP migration):
 pub mod admission;
+pub mod attachments;
 pub mod encryption;
 pub mod migration;
 pub mod node_db;
@@ -73,6 +74,9 @@ pub struct Database {
     repair_blobs: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Serializes admission transactions in-process (SPEC-01 §11.3).
     admission_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes attachment reservations in-process (SPEC-02 §11.3), so
+    /// concurrent uploads wait here instead of holding pooled connections.
+    attachment_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Database {
@@ -198,6 +202,7 @@ impl Database {
             repair: Default::default(),
             repair_blobs: Default::default(),
             admission_lock: Default::default(),
+            attachment_lock: Default::default(),
         };
         let mut report = db.run_migrations(&options).await?;
         db.repair_blobs = std::sync::Arc::new(std::sync::Mutex::new(std::mem::take(
@@ -1395,6 +1400,9 @@ impl Database {
         .await
         .ok();
 
+        // ── SPEC-02 version-2 attachments (section 6.6.1) ──
+        attachments::create_schema(&self.pool).await?;
+
         // ── SPEC-01 admission schema (join policy, join requests, ledger) ──
         // Schema migrations that other specs add go above this line: the
         // admission repair must run after every CREATE TABLE and ALTER TABLE.
@@ -1404,7 +1412,12 @@ impl Database {
         // one-time ledger migrations (SPEC-01 §6.6). The repair also seeds the
         // DM system user and node (B1): DM backing channels reference the node,
         // and the user can never log in, because its hash is the lock marker.
-        repair::run(&self.pool, options).await
+        let report = repair::run(&self.pool, options).await?;
+
+        // SPEC-02: the first start of this relay version is T0 of the legacy
+        // attachment window (section 7.7); the ledger row is written once.
+        attachments::record_first_start(&self.pool).await?;
+        Ok(report)
     }
 
     // ── User operations ──
@@ -3516,7 +3529,10 @@ impl Database {
         Ok(result.rows_affected())
     }
 
-    /// Edit a message (author only)
+    /// Edit a message (author only). A message with claimed version-2
+    /// attachments is never edited, and its stored payload stays unchanged
+    /// (SPEC-02 REQ-37); `authored_message_has_attachments` tells that case
+    /// apart from "not found".
     pub async fn edit_message(
         &self,
         message_id: Uuid,
@@ -3526,7 +3542,9 @@ impl Database {
         let edited_at = now();
 
         let result = sqlx::query(
-            "UPDATE messages SET encrypted_payload = ?, edited_at = ? WHERE id = ? AND sender_id = ?"
+            "UPDATE messages SET encrypted_payload = ?, edited_at = ? WHERE id = ? AND sender_id = ? \
+             AND NOT EXISTS (SELECT 1 FROM attachments a \
+                             WHERE a.message_id = messages.id AND a.state = 1)",
         )
         .bind(new_encrypted_payload)
         .bind(edited_at as i64)

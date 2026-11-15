@@ -49,7 +49,10 @@ vi.mock('../markdown', () => ({
 }));
 
 vi.mock('../FileManager', () => ({
-  FileUploadButton: () => <button>Upload File</button>,
+  ATTACHMENTS_UNAVAILABLE_TEXT: 'This relay must be updated to send end-to-end encrypted attachments',
+  FileUploadButton: ({ disabled, disabledReason }: { disabled?: boolean; disabledReason?: string }) => (
+    <button disabled={disabled} title={disabled ? disabledReason : 'Attach file'}>Upload File</button>
+  ),
   FileList: () => <div>File List</div>,
   FileDropZone: ({ children }: { children: React.ReactNode }) => <div data-testid="file-drop-zone">{children}</div>,
   FileAttachment: ({ file }: { file: any }) => <div>File: {file.encrypted_filename}</div>,
@@ -75,7 +78,7 @@ vi.mock('../customEmojiStore', () => ({
 }));
 
 vi.mock('../LinkPreview', () => ({
-  LinkPreview: () => <div>Link Preview</div>,
+  LinkPreview: ({ content }: { content: string }) => <div data-testid="link-preview">Link Preview: {content}</div>,
   extractAllUrls: vi.fn(() => []),
 }));
 
@@ -284,6 +287,9 @@ const createMockContext = (overrides: Partial<AppContextType> = {}): AppContextT
   handleInsertEmoji: vi.fn(),
   handleAddReaction: vi.fn(),
   COMMON_EMOJIS: ['👍', '❤️', '😂', '😮', '😢', '🎉'],
+  attachmentOrigin: 'https://relay.example',
+  attachmentsAvailable: true,
+  canEditMessage: vi.fn(() => true),
   readReceipts: new Map(),
   getMemberRoleColor: vi.fn(() => undefined),
   memberRolesMap: {},
@@ -592,6 +598,27 @@ describe('ChatArea', () => {
       );
       expect(screen.getByText('TestUser')).toBeInTheDocument();
       expect(screen.getByText('Hello world!')).toBeInTheDocument();
+    });
+
+    it('renders no attachment UI for relay-supplied files, attachments and attachment_ids (SPEC-02 T-51)', async () => {
+      const { attachmentStore } = await import('../attachments/store');
+      const relayFields = {
+        files: [{ id: 'f-1', encrypted_filename: 'evil.png', file_size_bytes: 3, created_at: 1 }],
+        attachments: [{ v: 1, blob_id: '6f1c2b7e-0d4a-4f53-9b8e-2a6d3c1e9f04', name: 'evil.png' }],
+        attachment_ids: ['6f1c2b7e-0d4a-4f53-9b8e-2a6d3c1e9f04'],
+      };
+      const msg = { ...mockMessage('msg-1', 'TestUser', 'Body text'), ...relayFields } as Message;
+      const ctx = createMockContext({ appState: { ...createMockContext().appState, messages: [msg] } as any });
+      const { container } = render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      expect(screen.getByText('Body text')).toBeInTheDocument();
+      expect(container.querySelector('.message-attachments')).toBeNull();
+      expect(screen.queryByText(/evil\.png/)).toBeNull();
+      expect(screen.queryByText('Image Grid')).toBeNull();
+      expect(attachmentStore.size).toBe(0);
     });
 
     it('renders multiple messages', () => {
@@ -1126,7 +1153,7 @@ describe('ChatArea', () => {
     });
 
     it('shows upload progress bar when uploading', () => {
-      const uploadProgress = { fileName: 'test.png', percentage: 50, current: 1, totalFiles: 1 };
+      const uploadProgress = { fileName: '', percentage: 50, current: 1, totalFiles: 2 };
       const ctx = createMockContext({ uploadProgress: uploadProgress as any });
       const { container } = render(
         <AppContext.Provider value={ctx}>
@@ -1134,7 +1161,8 @@ describe('ChatArea', () => {
         </AppContext.Provider>
       );
       expect(container.querySelector('.upload-progress-bar-container')).toBeInTheDocument();
-      expect(screen.getByText(/Uploading test.png/i)).toBeInTheDocument();
+      // No file name in the progress line (names stay inside the E2EE payload).
+      expect(screen.getByText(/uploading attachment 1 of 2/i)).toBeInTheDocument();
       expect(screen.getByText('50%')).toBeInTheDocument();
     });
   });
@@ -1195,6 +1223,188 @@ describe('ChatArea', () => {
       );
       const separators = container.querySelectorAll('.date-separator');
       expect(separators.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('SPEC-02 attachments and send states', () => {
+    const X = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+
+    const renderWith = (messages: Message[], overrides: Partial<AppContextType> = {}) => {
+      const ctx = createMockContext({ appState: { ...createMockContext().appState, messages } as any, ...overrides });
+      const utils = render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      return { ctx, ...utils };
+    };
+
+    it('T-17: the attach control is disabled and explains why on a relay without attachments/2', () => {
+      renderWith([], { attachmentsAvailable: false });
+      const button = screen.getByText('Upload File');
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', 'This relay must be updated to send end-to-end encrypted attachments');
+    });
+
+    it('T-18: no Edit item when the edit guard says no (attachments, DMs)', () => {
+      const canEditMessage = vi.fn(() => false);
+      renderWith([mockMessage('msg-1', 'TestUser', 'with a file')], { canEditMessage });
+      expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
+      expect(canEditMessage).toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Delete message' })).toBeInTheDocument();
+    });
+
+    describe('T-18, OD-36, OD-48: Up on an empty composer edits only what the guard allows', () => {
+      const guard = async () => {
+        const { canOfferEdit } = await import('../attachments/edit');
+        return vi.fn((m: Message) => canOfferEdit(m, { isDm: !!m.channel_id?.startsWith('dm-'), hasAttachmentState: false, pendingWithAttachments: false }));
+      };
+      const pressUp = () => fireEvent.keyDown(screen.getByPlaceholderText(/Message general/i), { key: 'ArrowUp' });
+
+      it('skips own DM messages, messages with attachments and pending sends', async () => {
+        const handleStartEdit = vi.fn();
+        const canEditMessage = await guard();
+        renderWith([
+          mockMessage('msg-1', 'TestUser', 'editable'),
+          { ...mockMessage('msg-2', 'TestUser', 'with a file'), _attachmentCount: 1 },
+          { ...mockMessage('msg-3', 'TestUser', 'in a DM'), channel_id: 'dm-user-2' },
+          { ...mockMessage('temp_1', 'TestUser', 'pending'), _pendingId: 'temp_1', _status: 'sending' },
+          { ...mockMessage('msg-4', 'Other', 'not mine'), sender_id: 'user-2' },
+        ], { handleStartEdit, canEditMessage });
+        pressUp();
+        expect(handleStartEdit).toHaveBeenCalledTimes(1);
+        expect(handleStartEdit).toHaveBeenCalledWith('msg-1', 'editable');
+      });
+
+      it('starts no edit when no own message may be edited', async () => {
+        const handleStartEdit = vi.fn();
+        const canEditMessage = await guard();
+        renderWith([
+          { ...mockMessage('msg-2', 'TestUser', 'with a file'), _attachmentCount: 2 },
+          { ...mockMessage('msg-3', 'TestUser', 'in a DM'), channel_id: 'dm-user-2' },
+          { ...mockMessage('temp_1', 'TestUser', 'pending'), _pendingId: 'temp_1', _status: 'unconfirmed' },
+        ], { handleStartEdit, canEditMessage });
+        pressUp();
+        expect(handleStartEdit).not.toHaveBeenCalled();
+      });
+    });
+
+    it('§8.1: a failed send shows its reason, Retry when allowed, and Delete', async () => {
+      const handleRetryMessage = vi.fn();
+      const handleDeleteMessage = vi.fn();
+      const failed: Message = { ...mockMessage('temp_1', 'TestUser', 'hello'), _pendingId: 'temp_1', _status: 'failed', _failure: { text: 'Attachment expired before sending; Retry', retryable: true } };
+      const { canOfferEdit } = await import('../attachments/edit');
+      const canEditMessage = (m: Message) => canOfferEdit(m, { isDm: false, hasAttachmentState: false, pendingWithAttachments: false });
+      renderWith([failed], { handleRetryMessage, handleDeleteMessage, canEditMessage });
+      expect(screen.getByText('Attachment expired before sending; Retry')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(handleRetryMessage).toHaveBeenCalledWith('temp_1');
+      fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+      expect(handleDeleteMessage).toHaveBeenCalledWith('temp_1');
+      expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
+    });
+
+    it('§8.1: a final failure offers Delete only', () => {
+      const failed: Message = { ...mockMessage('temp_1', 'TestUser', 'hello'), _pendingId: 'temp_1', _status: 'failed', _failure: { text: 'This user has blocked you', retryable: false } };
+      renderWith([failed]);
+      expect(screen.getByText('This user has blocked you')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    });
+
+    it('§8.1: unconfirmed and waiting states', () => {
+      const unconfirmed: Message = { ...mockMessage('temp_1', 'TestUser', 'one'), _pendingId: 'temp_1', _status: 'unconfirmed' };
+      const waiting: Message = { ...mockMessage('temp_2', 'TestUser', 'two'), _pendingId: 'temp_2', _status: 'sending', _statusText: 'Waiting for connection', _attachmentCount: 2 };
+      renderWith([unconfirmed, waiting]);
+      expect(screen.getByText('Not confirmed yet')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+      expect(screen.getByText('Waiting for connection')).toBeInTheDocument();
+      expect(screen.getByText(/2 attachments/)).toBeInTheDocument();
+    });
+
+    it('§8.2: a placeholder renders as plain text with no embeds or link previews', async () => {
+      const { extractAllUrls } = await import('../LinkPreview');
+      (extractAllUrls as any).mockReturnValue(['https://example.com']);
+      const msg: Message = { ...mockMessage('msg-1', 'Alice', 'Message not verified for this conversation'), _placeholder: 'wrong_conversation' };
+      renderWith([msg]);
+      expect(screen.getByTestId('message-placeholder')).toHaveTextContent('Message not verified for this conversation');
+      expect(screen.queryByTestId('link-preview')).toBeNull();
+      (extractAllUrls as any).mockReturnValue([]);
+    });
+
+    it('T-11: the link preview receives only the decoded body', async () => {
+      const { extractAllUrls } = await import('../LinkPreview');
+      (extractAllUrls as any).mockReturnValue(['https://example.com']);
+      renderWith([{ ...mockMessage('msg-1', 'Alice', 'hi https://example.com'), _attachmentCount: 1 }]);
+      expect(screen.getByTestId('link-preview')).toHaveTextContent('Link Preview: hi https://example.com');
+      (extractAllUrls as any).mockReturnValue([]);
+    });
+
+    it('an untrusted envelope that carried descriptors shows the warning and no attachments', () => {
+      renderWith([{ ...mockMessage('msg-1', 'Alice', 'look'), _attachmentsIgnored: true }]);
+      expect(screen.getByRole('img', { name: 'Attachments ignored: message not end-to-end verified' })).toBeInTheDocument();
+    });
+
+    it('renders a message\'s attachments from the attachment store only', async () => {
+      const { attachmentStore } = await import('../attachments/store');
+      const { decodeMessage } = await import('../attachments/decode');
+      const { serializeEnvelope } = await import('../attachments/envelope');
+      const messageId = '44444444-4444-4444-8444-444444444444';
+      const envelope = serializeEnvelope({ channelId: X, body: 'see attached', attachments: [{
+        blobId: '6f1c2b7e-0d4a-4f53-9b8e-2a6d3c1e9f04', key: new Uint8Array(32), noncePrefix: new Uint8Array(7), sha256: new Uint8Array(32),
+        size: 5, paddedSize: 5, name: 'notes.pdf', mime: 'application/pdf',
+      }] });
+      const { decodedFields } = await import('../attachments/messageFields');
+      const decoded = await decodeMessage(
+        { origin: 'https://relay.example', renderedChannelId: X, ownUserId: null },
+        { channelId: X, messageId, senderId: 'user-2', payload: 'AAAA' },
+        { decryptors: { senderKeys: () => envelope }, cache: { get: () => undefined, put: () => {} }, store: attachmentStore },
+      );
+      renderWith([{ ...mockMessage(messageId, 'Alice', 'see attached'), channel_id: X, sender_id: 'user-2', ...decodedFields(decoded, false) }], { selectedChannelId: X });
+      expect(screen.getByTestId('attachment-card')).toBeInTheDocument();
+      expect(screen.getByText('notes')).toBeInTheDocument();
+      expect(screen.getByText('.pdf')).toBeInTheDocument();
+      attachmentStore.clear();
+    });
+
+    it('RG-C008 (f): a history re-render that serves the same id under another sender or unencrypted shows no attachments', async () => {
+      const { attachmentStore } = await import('../attachments/store');
+      const { decodeMessage } = await import('../attachments/decode');
+      const { serializeEnvelope } = await import('../attachments/envelope');
+      const { decodedFields } = await import('../attachments/messageFields');
+      const messageId = '55555555-5555-4555-8555-555555555555';
+      const envelope = serializeEnvelope({ channelId: X, body: 'see attached', attachments: [{
+        blobId: '6f1c2b7e-0d4a-4f53-9b8e-2a6d3c1e9f04', key: new Uint8Array(32), noncePrefix: new Uint8Array(7), sha256: new Uint8Array(32),
+        size: 5, paddedSize: 5, name: 'notes.pdf', mime: 'application/pdf',
+      }] });
+      const ctx = { origin: 'https://relay.example', renderedChannelId: X, ownUserId: null };
+      const deps = { decryptors: { senderKeys: (_c: string, s: string) => (s === 'user-2' ? envelope : null) }, cache: { get: () => undefined, put: () => {} }, store: attachmentStore };
+      // Shown live from user-2: the store holds the verified entry.
+      const live = await decodeMessage(ctx, { channelId: X, messageId, senderId: 'user-2', payload: 'AAAA' }, deps);
+      expect(live.attachmentCount).toBe(1);
+      // The relay re-serves the id in history: another sender, then the same sender, unencrypted.
+      const forgedPayload = btoa(envelope);
+      for (const sender of ['user-3', 'user-2']) {
+        const replay = await decodeMessage(ctx, { channelId: X, messageId, senderId: sender, payload: forgedPayload }, { ...deps, decryptors: {} });
+        expect(replay.attachmentCount).toBe(0);
+        const { container, unmount } = renderWith([{ ...mockMessage(messageId, 'Mallory', ''), channel_id: X, sender_id: sender, ...decodedFields(replay, false) }], { selectedChannelId: X });
+        expect(container.querySelector('.message-attachments')).toBeNull();
+        expect(screen.queryByTestId('attachment-card')).toBeNull();
+        expect(screen.queryByText('notes')).toBeNull();
+        unmount();
+      }
+      // The entry is still there: the view's binding is what keeps it hidden.
+      expect(attachmentStore.has({ origin: 'https://relay.example', channelId: X, messageId })).toBe(true);
+      // A stale count without this decode's ref, or the live ref under another sender, shows nothing either.
+      for (const msg of [
+        { ...mockMessage(messageId, 'Alice', 'x'), channel_id: X, sender_id: 'user-2', _attachmentCount: 1 },
+        { ...mockMessage(messageId, 'Mallory', 'x'), channel_id: X, sender_id: 'user-3', ...decodedFields(live, false) },
+      ]) {
+        const { unmount } = renderWith([msg], { selectedChannelId: X });
+        expect(screen.queryByTestId('attachment-card')).toBeNull();
+        unmount();
+      }
+      attachmentStore.clear();
     });
   });
 });

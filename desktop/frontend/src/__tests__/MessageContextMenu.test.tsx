@@ -5,6 +5,7 @@ import { MessageContextMenu } from '../components/MessageContextMenu';
 import { AppContext } from '../components/AppContext';
 import type { AppContextType } from '../components/AppContext';
 import type { Message } from '../types';
+import { canOfferEdit } from '../attachments/edit';
 
 const handleReply = vi.fn();
 const handleStartEdit = vi.fn();
@@ -13,8 +14,12 @@ const setShowPinConfirm = vi.fn();
 const handleUnpinMessage = vi.fn();
 const fingerprint = vi.fn((hash: string) => `fp-${hash.slice(0, 8)}`);
 const canDeleteMessage = vi.fn(() => false);
+const DM = 'dm-1';
+// The real edit guard, with the facts App derives: DM channel by id.
+const canEditMessage = vi.fn((m: Message) => canOfferEdit(m, { isDm: m.channel_id === DM, hasAttachmentState: false, pendingWithAttachments: false }));
 
 const mockUser = {
+  id: 'user-1',
   user_id: 'user-1',
   display_name: 'Alice',
   public_key_hash: 'abc123',
@@ -31,6 +36,7 @@ const mockCtx: Partial<AppContextType> = {
   handleUnpinMessage,
   fingerprint,
   canDeleteMessage,
+  canEditMessage,
 };
 
 const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -92,8 +98,7 @@ describe('MessageContextMenu', () => {
   });
 
   it('shows Edit Message for own messages', () => {
-    // author matches current user display_name
-    const message = makeMessage({ author: 'Alice' });
+    const message = makeMessage({ author: 'Alice', sender_id: 'user-1' });
     render(
       <MessageContextMenu message={message}>
         <div>own msg</div>
@@ -105,7 +110,7 @@ describe('MessageContextMenu', () => {
   });
 
   it('does not show Edit Message for other users\' messages', () => {
-    const message = makeMessage({ author: 'Bob' });
+    const message = makeMessage({ author: 'Bob', sender_id: 'user-2' });
     render(
       <MessageContextMenu message={message}>
         <div>other msg</div>
@@ -166,7 +171,7 @@ describe('MessageContextMenu', () => {
   });
 
   it('calls handleStartEdit when Edit Message is clicked', () => {
-    const message = makeMessage({ author: 'Alice', id: 'msg-42', content: 'Original text' });
+    const message = makeMessage({ author: 'Alice', sender_id: 'user-1', id: 'msg-42', content: 'Original text' });
     render(
       <MessageContextMenu message={message}>
         <div>msg</div>
@@ -176,6 +181,41 @@ describe('MessageContextMenu', () => {
     openContextMenu(screen.getByText('msg'));
     fireEvent.click(screen.getByText('Edit Message'));
     expect(handleStartEdit).toHaveBeenCalledWith('msg-42', 'Original text');
+  });
+
+  // T-18, OD-36, OD-48: the right-click menu offers Edit only where the
+  // edit guard does.
+  for (const [label, over] of [
+    ['a DM message', { channel_id: DM }],
+    ['a message with attachments', { _attachmentCount: 1 }],
+    ['a pending send', { id: 'temp_1', _pendingId: 'temp_1' }],
+    ['a placeholder', { _placeholder: 'other_session' }],
+  ] as const) {
+    it(`does not show Edit Message for ${label}`, () => {
+      const message = makeMessage({ author: 'Alice', sender_id: 'user-1', ...(over as Partial<Message>) });
+      render(
+        <MessageContextMenu message={message}>
+          <div>own msg</div>
+        </MessageContextMenu>,
+        { wrapper: Wrapper }
+      );
+      openContextMenu(screen.getByText('own msg'));
+      expect(screen.getByText('Reply')).toBeInTheDocument();
+      expect(screen.queryByText('Edit Message')).not.toBeInTheDocument();
+      expect(canEditMessage).toHaveBeenCalledWith(message);
+    });
+  }
+
+  it('does not show Edit Message for another user with the same display name', () => {
+    const message = makeMessage({ author: 'Alice', sender_id: 'user-2' });
+    render(
+      <MessageContextMenu message={message}>
+        <div>same name</div>
+      </MessageContextMenu>,
+      { wrapper: Wrapper }
+    );
+    openContextMenu(screen.getByText('same name'));
+    expect(screen.queryByText('Edit Message')).not.toBeInTheDocument();
   });
 
   it('calls onMarkUnread when Mark as Unread is clicked', () => {

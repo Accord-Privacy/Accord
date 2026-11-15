@@ -531,39 +531,10 @@ final class APIService {
 
     // MARK: - Files
 
-    func uploadFile(channelId: String, fileData: Data, filename: String, mimeType: String) async throws -> [String: Any] {
-        guard var components = URLComponents(string: "\(baseURL)/channels/\(channelId)/files") else {
-            throw APIError.badURL
-        }
-        if let token = authToken {
-            components.queryItems = [URLQueryItem(name: "token", value: token)]
-        }
-        guard let url = components.url else { throw APIError.badURL }
-
-        let boundary = UUID().uuidString
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-
-        var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
-        body.append(fileData)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        req.httpBody = body
-
-        let (data, response) = try await session.data(for: req)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.unknown(statusCode: 0, message: "Not HTTP")
-        }
-        try checkStatusCode(httpResponse, data: data)
-        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-    }
-
-    func fetchChannelFiles(channelId: String) async throws -> [[String: Any]] {
-        return try await request("GET", path: "/channels/\(channelId)/files")
-    }
+    // The legacy multipart file routes are gone (SPEC-02 REQ-45): relays
+    // answer uploads with 410, and their files are not end-to-end encrypted.
+    // Attachments come back only as an implementation of SPEC-02 on the
+    // accord-core reference (core/src/attachment.rs).
 
     // MARK: - DMs
 

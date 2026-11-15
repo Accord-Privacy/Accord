@@ -12,6 +12,7 @@
 //! simulates a database whose one-time migrations have not run yet, which is
 //! what restoring a pre-upgrade backup looks like (section 7.4).
 
+use accord_server::attachments::AttachmentConfig;
 use accord_server::{
     admission::LOCK_MARKER,
     db::{
@@ -74,6 +75,9 @@ impl Store {
                 storage_dir: self.files_dir.clone(),
                 max_file_size: 1024 * 1024,
             }),
+            attachments: Some(AttachmentConfig::with_dir(
+                self.files_dir.with_file_name("attachments"),
+            )),
         }
     }
 

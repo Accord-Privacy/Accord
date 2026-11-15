@@ -27,6 +27,11 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
     return message.author === displayName;
   }, [currentUser, message.author, ctx]);
 
+  // Edit is offered only for own messages (by sender id, as the hover button
+  // does) that the edit guard allows: never in DMs, on messages with
+  // attachments, placeholders or pending sends (REQ-18, OD-36, OD-48).
+  const canEdit = !!currentUser && !!message.sender_id && message.sender_id === currentUser.id && ctx.canEditMessage(message);
+
   const handleCopyText = useCallback(() => {
     navigator.clipboard.writeText(message.content).catch(() => {});
   }, [message.content]);
@@ -70,7 +75,7 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
       { label: 'Reply', icon: '↩', onClick: handleReply },
     ];
 
-    if (isOwnMessage) {
+    if (canEdit) {
       result.push({ label: 'Edit Message', icon: '✏', onClick: handleEdit });
     }
 
@@ -105,7 +110,7 @@ export const MessageContextMenu: React.FC<MessageContextMenuProps> = ({
 
     return result;
   }, [
-    isOwnMessage, currentUser, message, ctx, isBookmarked,
+    isOwnMessage, canEdit, currentUser, message, ctx, isBookmarked,
     handleReply, handleEdit, handleDelete, handlePin,
     handleCopyText, handleCopyLink, handleMarkUnread, handleToggleBookmark,
     onToggleBookmark,

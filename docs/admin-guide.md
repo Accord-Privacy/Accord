@@ -4,7 +4,7 @@ This guide covers installation, configuration, deployment, and ongoing administr
 
 > **Key concept:** The Accord relay is designed as a *zero-knowledge* routing layer. It never decrypts user content. As an admin, you manage infrastructure, not user data.
 >
-> **Current limitation:** files (attachments) are not end-to-end encrypted. Their key is derived from the channel ID, so anyone with the database, the file store or a backup can decrypt them, and relay-mode voice keys pass through the relay. Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
+> **Current limitation:** attachments uploaded before end-to-end-encrypted attachments shipped (legacy uploads, kept read-only until they are retired) are encrypted under a key derived from the channel ID, so anyone with the database, the legacy file store or a backup can decrypt them; relay-mode voice keys pass through the relay. New attachments are end-to-end encrypted, but the relay still sees their metadata, and `accord-server backup` does not include `attachments_dir` (see [SELF-HOSTING.md](SELF-HOSTING.md#attachment-storage)). Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
 >
 > **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and the connection log is not shown to node owners. Note that P2P voice and P2P screen sharing reveal users' IP addresses to other call participants (see [../SECURITY.md](../SECURITY.md#known-limitations)). See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
 
@@ -587,7 +587,7 @@ accord-server backup -d /var/lib/accord/accord.db --output /backups/accord-$(dat
 
 The backup command produces a `.tar.gz` archive containing the database and (if encrypted) handles SQLCipher transparently.
 
-> **Backups contain decryptable files.** Files are not end-to-end encrypted today, so anyone who has a backup together with the file store can decrypt every attachment. Store backups as carefully as the live server.
+> **Backups contain decryptable legacy files.** Legacy uploads (from before end-to-end-encrypted attachments) are not end-to-end encrypted, so anyone who has a backup together with the legacy file store (`./data/files`) can decrypt them until they are retired. Blobs in `attachments_dir` cannot be decrypted without the keys in members' messages, but `accord-server backup` does not include them: back that directory up separately. Store backups as carefully as the live server.
 
 ### Restore
 

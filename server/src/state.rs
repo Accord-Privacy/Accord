@@ -7,7 +7,7 @@ use crate::node::{Node, NodeCreationPolicy, NodeInfo};
 use crate::permissions::Permission;
 use crate::rate_limit::RateLimiter;
 use accord_core::build_hash::{BuildInfo, BuildTrust, KnownBuild};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -173,6 +173,8 @@ pub struct AppState {
     pub db: Database,
     /// File handler for encrypted file storage
     pub file_handler: FileHandler,
+    /// Version-2 attachment storage (SPEC-02 section 6.6)
+    pub attachments: crate::attachments::AttachmentStore,
     /// Active authentication tokens (in-memory for performance)
     pub auth_tokens: RwLock<HashMap<String, AuthToken>>,
     /// Active WebSocket connections: user_id -> { device_id -> sender }
@@ -215,6 +217,10 @@ pub struct AppState {
     /// Test instrumentation: the PHC hash given to each password verification.
     #[cfg(test)]
     password_verifications: std::sync::Mutex<Vec<String>>,
+    /// The temporary directory holding the blob directories that the boot
+    /// options left out (library users and tests), removed with the state.
+    /// Declared last, so it is removed after everything that uses it.
+    _scratch_dir: Option<tempfile::TempDir>,
 }
 
 /// Boot options of the relay state.
@@ -224,8 +230,15 @@ pub struct AppStateOptions {
     pub database_encryption: bool,
     /// Options of the admission boot repair and ledger migrations.
     pub db: crate::db::DbOptions,
-    /// Blob storage; `None` uses the default `./data/files`.
+    /// Legacy blob storage. `None` uses the default limit with the legacy
+    /// directory in a temporary directory that is removed with the state,
+    /// never `./data/files` in the working directory; the binary passes
+    /// [`crate::files::FileConfig::default`] explicitly.
     pub file_config: Option<crate::files::FileConfig>,
+    /// Version-2 attachment settings (SPEC-02 section 6.6.4). `None` uses
+    /// the default limits with the blobs in a temporary directory that is
+    /// removed with the state, instead of `./data/attachments`.
+    pub attachments: Option<crate::attachments::AttachmentConfig>,
 }
 
 /// Delete the blobs whose `files` rows the boot repair removed. Only the
@@ -286,19 +299,66 @@ impl AppState {
     /// runs the admission boot repair; the blobs of `files` rows it deleted
     /// are removed here, once the file handler exists (SPEC-01 §6.6).
     pub async fn new_with_options(db_path: &str, options: AppStateOptions) -> Result<Self> {
+        // A blob directory the options leave out (library users and tests;
+        // the binary passes both) lives in a temporary directory the state
+        // owns, never in the working directory (SPEC-02 section 11.1). The
+        // storage reconciliation then never scans a directory that a relay
+        // started from the same working directory uses.
+        let (file_config, attachment_config, scratch_dir) =
+            match (options.file_config, options.attachments) {
+                (Some(files), Some(attachments)) => (files, attachments, None),
+                (files, attachments) => {
+                    let scratch = tempfile::Builder::new()
+                        .prefix("accord-relay-")
+                        .tempdir()
+                        .context("cannot create the relay's temporary blob directory")?;
+                    let files = files.unwrap_or_else(|| crate::files::FileConfig {
+                        storage_dir: scratch.path().join("files"),
+                        ..crate::files::FileConfig::default()
+                    });
+                    let attachments = attachments.unwrap_or_else(|| {
+                        crate::attachments::AttachmentConfig::with_dir(
+                            scratch.path().join("attachments"),
+                        )
+                    });
+                    (files, attachments, Some(scratch))
+                }
+            };
+        // The attachment directory checks of SPEC-02 REQ-42 run before the
+        // database is opened, so a misconfigured relay stops without touching
+        // the database file.
+        let in_memory = db_path == ":memory:";
+        let attachments = crate::attachments::AttachmentStore::open(
+            attachment_config,
+            (!in_memory).then(|| std::path::Path::new(db_path)),
+            &file_config.storage_dir,
+        )?;
         let db =
             Database::new_with_options(db_path, options.database_encryption, options.db).await?;
-        let file_handler = match options.file_config {
-            Some(config) => FileHandler::new(config),
-            None => FileHandler::with_default_config(),
-        };
+        let file_handler = FileHandler::new(file_config);
         file_handler.init().await?;
         remove_repaired_blobs(&db, &file_handler).await;
+        // SPEC-02 section 7.7: read the legacy window (T0 is the first start
+        // of this relay version) and retire legacy files if retirement is
+        // reached. A failed retirement is logged: the legacy routes answer
+        // 410 all the same, and the next reconciliation retries it.
+        attachments.load_legacy_window(&db).await?;
+        if attachments
+            .enforce_legacy_retirement(&db, &file_handler)
+            .await
+            .is_err()
+        {
+            tracing::error!(
+                target: crate::attachments::LOG_TARGET,
+                "legacy retirement failed at startup; it is retried with the reconciliation"
+            );
+        }
         let dummy_password_hash =
             crate::admission::dummy_password_hash().map_err(|e| anyhow::anyhow!(e))?;
         Ok(Self {
             db,
             file_handler,
+            attachments,
             auth_tokens: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             voice_channels: RwLock::new(HashMap::new()),
@@ -319,6 +379,7 @@ impl AppState {
             dummy_password_hash,
             #[cfg(test)]
             password_verifications: std::sync::Mutex::new(Vec::new()),
+            _scratch_dir: scratch_dir,
         })
     }
 
@@ -1046,7 +1107,10 @@ impl AppState {
         self.db
             .delete_channel(channel_id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // The channel's attachments are removed by the GC (SPEC-02 REQ-40).
+        self.attachments.request_gc();
+        Ok(())
     }
 
     // ── Channel Category operations ──
@@ -1773,6 +1837,32 @@ impl AppState {
                 0
             }
         }
+    }
+
+    /// One pass of the disappearing-messages sweep at `now` (Unix seconds):
+    /// start the timer of every read-gated message whose audience has read
+    /// it, then delete every message whose expiry has passed. Timestamp-only;
+    /// the relay never reads content. The attachment GC is asked to run right
+    /// after every sweep, so the expired messages' attachments go with them
+    /// (SPEC-02 REQ-40). Returns (timers started, messages deleted); a failed
+    /// step is logged and counts 0.
+    pub async fn run_expiry_sweep(&self, now: u64) -> (u64, u64) {
+        let started = match self.db.resolve_read_gates(now).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!("Read-gate sweep error: {}", e);
+                0
+            }
+        };
+        let swept = match self.db.delete_expired_messages(now).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!("Disappearing-messages sweep error: {}", e);
+                0
+            }
+        };
+        self.attachments.request_gc();
+        (started, swept)
     }
 
     /// Clean up stale in-memory state to prevent unbounded growth.

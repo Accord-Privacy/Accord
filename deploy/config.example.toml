@@ -30,6 +30,33 @@ cors_origins = "https://app.example.com"
 # Build hash enforcement: "off", "warn", or "strict"
 build_hash_enforcement = "off"
 
+# ── Attachments (end-to-end encrypted, SPEC-02) ─────────────────
+# Blob directory. Must not be the database's directory or a parent of it,
+# must not overlap the legacy directory (./data/files), and must be empty
+# or created by the relay.
+attachments_dir = "/var/lib/accord/attachments"
+# Largest accepted blob in bytes; a reverse proxy must accept bodies this
+# large (nginx: client_max_body_size 101m;).
+attachment_max_blob_bytes = 104857600
+# Lifetime of an upload that no message claims, in seconds (300-86400).
+attachment_pending_ttl_secs = 3600
+# Unclaimed and in-progress uploads per user.
+attachment_max_pending_per_user = 32
+# Bytes stored per uploader (0 = unlimited).
+attachment_quota_user_bytes = 1073741824
+# Bytes stored per node, DM channels excluded (0 = unlimited).
+attachment_quota_node_bytes = 10737418240
+# Refuse uploads when less free disk space than this would remain.
+attachments_min_free_bytes = 1073741824
+# Garbage-collection interval in seconds (1-3600).
+attachment_gc_interval_secs = 60
+# Orphan reconciliation interval in seconds (60-86400).
+attachment_reconcile_interval_secs = 3600
+# Legacy (pre-version-2, not end-to-end encrypted) uploads: "read-only" or "retired".
+legacy_attachments = "read-only"
+# Legacy uploads are deleted this many days after the first start of this version.
+legacy_attachments_retire_after_days = 90
+
 # ── Relay Mesh ──────────────────────────────────────────────────
 mesh_enabled = false
 mesh_port = 9443

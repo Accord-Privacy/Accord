@@ -507,45 +507,10 @@ export async function decryptMessage(key: CryptoKey | Uint8Array, ciphertext: st
   return new TextDecoder().decode(decrypted);
 }
 
-// ---------------------------------------------------------------------------
-// AES-GCM Encrypt / Decrypt (files)
-// ---------------------------------------------------------------------------
-export async function encryptFile(key: CryptoKey | Uint8Array, fileBuffer: ArrayBuffer): Promise<ArrayBuffer> {
-  if (!(key instanceof Uint8Array)) {
-    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
-  }
-  const iv = randomBytes(12);
-
-  // Always use noble for file encryption (cross-client compatibility)
-  const cipher = gcm(key, iv);
-  const encrypted = cipher.encrypt(new Uint8Array(fileBuffer));
-  const combined = new Uint8Array(iv.length + encrypted.length);
-  combined.set(iv);
-  combined.set(encrypted, iv.length);
-  return combined.buffer.slice(combined.byteOffset, combined.byteOffset + combined.byteLength) as ArrayBuffer;
-}
-
-export async function decryptFile(key: CryptoKey | Uint8Array, encryptedBuffer: ArrayBuffer): Promise<ArrayBuffer> {
-  if (!(key instanceof Uint8Array)) {
-    throw new Error('Channel key must be Uint8Array (noble). Got CryptoKey — clear cache and retry.');
-  }
-  const all = new Uint8Array(encryptedBuffer);
-  const iv = all.slice(0, 12);
-  const encrypted = all.slice(12);
-
-  // Always use noble for file decryption (cross-client compatibility)
-  const cipher = gcm(key, iv);
-  const decrypted = cipher.decrypt(encrypted);
-  return decrypted.buffer.slice(decrypted.byteOffset, decrypted.byteOffset + decrypted.byteLength) as ArrayBuffer;
-}
-
-export async function encryptFilename(key: CryptoKey | Uint8Array, filename: string): Promise<string> {
-  return encryptMessage(key, filename);
-}
-
-export async function decryptFilename(key: CryptoKey | Uint8Array, encryptedFilename: string): Promise<string> {
-  return decryptMessage(key, encryptedFilename);
-}
+// File encryption under the channel key was removed (SPEC-02 REQ-17): the
+// relay can compute that key. Attachments use per-file keys
+// (`attachments/format.ts`); old uploads are read only by the decrypt-only
+// legacy reader (`attachments/legacy.ts`).
 
 // ---------------------------------------------------------------------------
 // BIP39 Mnemonic support for identity backup & recovery

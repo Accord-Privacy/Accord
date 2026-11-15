@@ -1,7 +1,8 @@
 // API client module for REST endpoints
 
 import type { ParsedInviteLink, CustomEmoji, InviteListItem } from './types';
-import { apiErrorFromBody } from './apiError';
+import { ApiError, apiErrorFromBody } from './apiError';
+import { isSealedPayload, type SealedPayload } from './e2ee/sealed';
 import { inviteCreateBody, type JoinResult } from './admission';
 import {
   RegisterResponse,
@@ -15,7 +16,9 @@ import {
   User,
   ErrorResponse,
   HealthResponse,
-  FileMetadata,
+  LegacyFileRow,
+  UploadAttachmentResponse,
+  AttachmentLimits,
   UserProfile,
   UpdateProfileRequest,
   MessageReaction,
@@ -72,6 +75,113 @@ export async function detectSameOriginRelay(): Promise<string | null> {
     // Not an Accord server
   }
   return null;
+}
+
+/** No answer from the relay (connection refused, reset or aborted). */
+export class AttachmentNetworkError extends Error {
+  constructor() {
+    super('Network error');
+    this.name = 'AttachmentNetworkError';
+  }
+}
+
+/** A download whose length differs from the descriptor's (REQ-20). */
+export class AttachmentLengthError extends Error {
+  constructor() {
+    super('Attachment has the wrong length');
+    this.name = 'AttachmentLengthError';
+  }
+}
+
+/** A legacy route answered 410: legacy files are retired (SPEC-02 REQ-29). */
+export class LegacyRetiredError extends Error {
+  constructor() {
+    super('Legacy uploads are no longer available');
+    this.name = 'LegacyRetiredError';
+  }
+}
+
+/** Upper bound on a legacy download: the old 100 MB limit plus IV and tag. */
+const LEGACY_MAX_BLOB_BYTES = 104_857_600 + 28;
+
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function errorWithRetryAfter(status: number, body: unknown, retryAfterHeader: string | null): ApiError {
+  const e = apiErrorFromBody(status, body);
+  if (e.retryAfter !== undefined || retryAfterHeader === null) return e;
+  const seconds = Number(retryAfterHeader);
+  return Number.isFinite(seconds) && seconds >= 0 ? new ApiError(e.message, e.status, e.reason, seconds) : e;
+}
+
+async function discardBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // nothing to discard
+  }
+}
+
+/**
+ * Read a body of exactly `expected` bytes (REQ-20): refuse a declared length
+ * that differs, stop as soon as more arrives, and fail when less arrives.
+ */
+async function readExactly(response: Response, expected: number): Promise<Uint8Array> {
+  const declared = response.headers.get('Content-Length');
+  if (declared !== null && Number(declared) !== expected) {
+    await discardBody(response);
+    throw new AttachmentLengthError();
+  }
+  const out = await readUpTo(response, expected);
+  if (out.length !== expected) throw new AttachmentLengthError();
+  return out;
+}
+
+/** Read at most `limit` bytes, failing as soon as more arrive. */
+async function readAtMost(response: Response, limit: number): Promise<Uint8Array> {
+  const declared = response.headers.get('Content-Length');
+  if (declared !== null && Number(declared) > limit) {
+    await discardBody(response);
+    throw new AttachmentLengthError();
+  }
+  return readUpTo(response, limit);
+}
+
+async function readUpTo(response: Response, limit: number): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buf = new Uint8Array(await response.arrayBuffer());
+    if (buf.length > limit) throw new AttachmentLengthError();
+    return buf;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > limit) {
+      try {
+        await reader.cancel();
+      } catch {
+        // already closed
+      }
+      throw new AttachmentLengthError();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
 }
 
 export class AccordApi {
@@ -313,85 +423,222 @@ export class AccordApi {
     return this.request<MessagePaginationResponse>(url);
   }
 
-  // Upload file to channel
-  async uploadFile(
-    channelId: string, 
-    file: File, 
-    token: string, 
-    encryptedFilename?: string,
-    onProgress?: (loaded: number, total: number) => void
-  ): Promise<{ file_id: string; message: string }> {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (encryptedFilename) {
-      formData.append('encrypted_filename', encryptedFilename);
-    }
+  // ── Attachments (SPEC-02 §6.4) ──
+  //
+  // None of these use `request()`, which parses JSON before it checks the
+  // status and so fails on an empty 204 (C205). Each checks the status first.
+  // Every call authenticates with the Authorization header only, and no URL,
+  // header or body carries a file name, MIME type or plaintext size (REQ-14).
 
-    const xhr = new XMLHttpRequest();
-    
-    return new Promise((resolve, reject) => {
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable && onProgress) {
-          onProgress(e.loaded, e.total);
-        }
+  private authHeader(): Record<string, string> {
+    return this._token ? { Authorization: `Bearer ${this._token}` } : {};
+  }
+
+  /**
+   * Upload one sealed blob: `POST /channels/{id}/attachments` with an
+   * `application/octet-stream` body equal to the blob (REQ-14). XHR with a
+   * Blob body, for upload progress and because WebKitGTK lacks streaming
+   * request bodies. Rejects with an `ApiError` for an error status (with the
+   * `Retry-After` header as `retryAfter`) and with `AttachmentNetworkError`
+   * when no answer arrives. A 401 refreshes the token and retries once.
+   */
+  async uploadAttachment(
+    channelId: string,
+    body: Blob,
+    onProgress?: (loaded: number, total: number) => void,
+    _isRetry = false,
+  ): Promise<UploadAttachmentResponse> {
+    const result = await new Promise<{ status: number; text: string; retryAfter: string | null }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.upload?.addEventListener('progress', (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
       });
-
       xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            resolve(response);
-          } catch (e) {
-            reject(new Error('Invalid JSON response'));
-          }
-        } else {
-          try {
-            const error = JSON.parse(xhr.responseText);
-            reject(new Error(error.error || `HTTP ${xhr.status}`));
-          } catch (e) {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
-          }
-        }
+        resolve({ status: xhr.status, text: xhr.responseText, retryAfter: xhr.getResponseHeader('Retry-After') });
       });
+      xhr.addEventListener('error', () => reject(new AttachmentNetworkError()));
+      xhr.addEventListener('abort', () => reject(new AttachmentNetworkError()));
+      xhr.addEventListener('timeout', () => reject(new AttachmentNetworkError()));
+      xhr.open('POST', `${this.baseUrl}/channels/${encodeURIComponent(channelId)}/attachments`);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      for (const [k, v] of Object.entries(this.authHeader())) xhr.setRequestHeader(k, v);
+      xhr.send(body);
+    });
 
-      xhr.addEventListener('error', () => {
-        reject(new Error('Upload failed'));
-      });
-
-      xhr.open('POST', `${this.baseUrl}/channels/${channelId}/files`);
-      const authToken = token || this._token;
-      if (authToken) {
-        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+    if (result.status === 401 && !_isRetry && this._tokenRefresher) {
+      const newToken = await this.refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.uploadAttachment(channelId, body, onProgress, true);
       }
-      xhr.send(formData);
-    });
-  }
-
-  // Download file by ID
-  async downloadFile(fileId: string, token: string): Promise<ArrayBuffer> {
-    const authToken = token || this._token;
-    const headers: Record<string, string> = {};
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-    const response = await fetch(`${this.baseUrl}/files/${fileId}`, { headers });
-    
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
     }
-    
-    return response.arrayBuffer();
+    if (result.status === 201 || result.status === 200) {
+      const parsed = parseJsonOrNull(result.text) as Partial<UploadAttachmentResponse> | null;
+      if (!parsed
+        || typeof parsed.attachment_id !== 'string'
+        || typeof parsed.blob_size !== 'number'
+        || typeof parsed.blob_sha256 !== 'string'
+        || typeof parsed.pending_expires_at !== 'number') {
+        throw new ApiError('Invalid upload response', result.status, 'bad_response');
+      }
+      return {
+        attachment_id: parsed.attachment_id,
+        blob_size: parsed.blob_size,
+        blob_sha256: parsed.blob_sha256,
+        pending_expires_at: parsed.pending_expires_at,
+      };
+    }
+    throw errorWithRetryAfter(result.status, parseJsonOrNull(result.text), result.retryAfter);
   }
 
-  // List files in channel
-  async getChannelFiles(channelId: string, _token: string): Promise<FileMetadata[]> {
-    return this.request<FileMetadata[]>(`/channels/${channelId}/files`);
+  /**
+   * Download one blob, `GET /attachments/{id}` (REQ-20). Aborts before reading
+   * the body when the declared `Content-Length` differs from `expectedLength`,
+   * and while reading as soon as more than `expectedLength` bytes arrive.
+   * A body shorter than `expectedLength` fails too. Returns the received bytes
+   * unverified: only `openAttachment` may release them (REQ-5).
+   */
+  async downloadAttachment(attachmentId: string, expectedLength: number, signal?: AbortSignal, _isRetry = false): Promise<Uint8Array> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/attachments/${encodeURIComponent(attachmentId)}`, {
+        headers: this.authHeader(),
+        cache: 'no-store',
+        signal,
+      });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      throw new AttachmentNetworkError();
+    }
+    if (response.status === 401 && !_isRetry && this._tokenRefresher) {
+      await discardBody(response);
+      const newToken = await this.refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.downloadAttachment(attachmentId, expectedLength, signal, true);
+      }
+    }
+    if (response.status !== 200) {
+      await discardBody(response);
+      throw new ApiError(`HTTP ${response.status}`, response.status);
+    }
+    return readExactly(response, expectedLength);
   }
 
-  // Delete file by ID  
-  async deleteFile(fileId: string, _token: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/files/${fileId}`, {
-      method: 'DELETE',
-    });
+  /**
+   * Delete one of this user's pending uploads, `DELETE /attachments/{id}`.
+   * Returns the status: 204 (deleted), 404 (gone, or not this user's) or 409
+   * (claimed by a stored message). Rejects with `AttachmentNetworkError`
+   * when no answer arrives and with `ApiError` for any other status.
+   */
+  async deleteAttachment(attachmentId: string, _isRetry = false): Promise<204 | 404 | 409> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/attachments/${encodeURIComponent(attachmentId)}`, {
+        method: 'DELETE',
+        headers: this.authHeader(),
+      });
+    } catch {
+      throw new AttachmentNetworkError();
+    }
+    await discardBody(response);
+    if (response.status === 401 && !_isRetry && this._tokenRefresher) {
+      const newToken = await this.refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.deleteAttachment(attachmentId, true);
+      }
+    }
+    if (response.status === 204 || response.status === 200) return 204;
+    if (response.status === 404 || response.status === 409) return response.status;
+    throw new ApiError(`HTTP ${response.status}`, response.status);
+  }
+
+  /**
+   * The relay's capability tokens and attachment limits from `GET /health`
+   * (SPEC-01 §6.8, SPEC-02 §6.4.6). Clients test `features` for membership.
+   */
+  async relayCapabilities(): Promise<{ features: string[]; attachmentLimits: AttachmentLimits | null }> {
+    const response = await fetch(`${this.baseUrl}/health`, { cache: 'no-store' });
+    if (!response.ok) {
+      await discardBody(response);
+      throw new ApiError(`HTTP ${response.status}`, response.status);
+    }
+    const data = (await response.json()) as Partial<HealthResponse> | null;
+    const features = Array.isArray(data?.features) ? data!.features.filter((f): f is string => typeof f === 'string') : [];
+    const l = data?.attachment_limits;
+    const attachmentLimits = l && typeof l.max_blob_bytes === 'number' && typeof l.max_per_message === 'number'
+      ? { max_blob_bytes: l.max_blob_bytes, max_per_message: l.max_per_message }
+      : null;
+    return { features, attachmentLimits };
+  }
+
+  // ── Legacy files (SPEC-02 §6.4.4, §6.4.5; read-only until retirement) ──
+
+  /**
+   * One page of a channel's legacy files, newest first. Rejects with
+   * `LegacyRetiredError` on 410. Names come back as strings ("" when the
+   * relay has none); rows of any other shape are dropped.
+   */
+  async listLegacyFiles(channelId: string, opts: { limit?: number; before?: string } = {}): Promise<LegacyFileRow[]> {
+    const q = new URLSearchParams();
+    if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+    if (opts.before !== undefined) q.set('before', opts.before);
+    const qs = q.toString();
+    const response = await this.legacyFetch(`/channels/${encodeURIComponent(channelId)}/files${qs ? `?${qs}` : ''}`, 'GET');
+    const data = await response.json().catch(() => null);
+    if (!Array.isArray(data)) return [];
+    const rows: LegacyFileRow[] = [];
+    for (const r of data as Array<Record<string, unknown>>) {
+      if (!r || typeof r !== 'object' || typeof r.id !== 'string') continue;
+      rows.push({
+        id: r.id,
+        channel_id: typeof r.channel_id === 'string' ? r.channel_id : channelId,
+        uploader_id: typeof r.uploader_id === 'string' ? r.uploader_id : '',
+        encrypted_filename: typeof r.encrypted_filename === 'string' ? r.encrypted_filename : '',
+        file_size_bytes: typeof r.file_size_bytes === 'number' ? r.file_size_bytes : 0,
+        created_at: typeof r.created_at === 'number' ? r.created_at : 0,
+      });
+    }
+    return rows;
+  }
+
+  /** Download a legacy blob (IV ‖ ciphertext ‖ tag). Rejects with `LegacyRetiredError` on 410. */
+  async downloadLegacyFile(fileId: string): Promise<Uint8Array> {
+    const response = await this.legacyFetch(`/files/${encodeURIComponent(fileId)}`, 'GET');
+    return readAtMost(response, LEGACY_MAX_BLOB_BYTES);
+  }
+
+  /** Delete a legacy file. Rejects with `LegacyRetiredError` on 410. */
+  async deleteLegacyFile(fileId: string): Promise<void> {
+    const response = await this.legacyFetch(`/files/${encodeURIComponent(fileId)}`, 'DELETE');
+    await discardBody(response);
+  }
+
+  private async legacyFetch(endpoint: string, method: 'GET' | 'DELETE', _isRetry = false): Promise<Response> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${endpoint}`, { method, headers: this.authHeader(), cache: 'no-store' });
+    } catch {
+      throw new AttachmentNetworkError();
+    }
+    if (response.status === 401 && !_isRetry && this._tokenRefresher) {
+      await discardBody(response);
+      const newToken = await this.refreshToken();
+      if (newToken) {
+        this._token = newToken;
+        return this.legacyFetch(endpoint, method, true);
+      }
+    }
+    if (response.status === 410) {
+      await discardBody(response);
+      throw new LegacyRetiredError();
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw apiErrorFromBody(response.status, body);
+    }
+    return response;
   }
 
   // Create a new channel in a node
@@ -594,17 +841,21 @@ export class AccordApi {
     }>(url);
   }
 
-  // Edit a message
+  /**
+   * Edit a message over REST. The payload must be a `SealedPayload` (SPEC-02
+   * REQ-48), so no plaintext edit can reach the relay.
+   */
   async editMessage(
     messageId: string,
     userId: string,
-    encryptedData: string
+    sealed: SealedPayload,
   ): Promise<{ success: boolean }> {
+    if (!isSealedPayload(sealed)) throw new TypeError('editMessage accepts only a sealed payload');
     return this.request<{ success: boolean }>(`/messages/${messageId}`, {
       method: 'PATCH',
       body: JSON.stringify({
         user_id: userId,
-        encrypted_data: encryptedData,
+        encrypted_data: sealed.wire,
       }),
     });
   }

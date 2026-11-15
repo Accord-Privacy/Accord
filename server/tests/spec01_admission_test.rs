@@ -10,6 +10,7 @@
 //! `spec01_membership_test.rs`.
 
 use accord_server::admission::{AdmissionError, INVITE_CODE_RETRIES};
+use accord_server::attachments::AttachmentConfig;
 use accord_server::db::{DbOptions, DM_SYSTEM_NODE_ID, DM_SYSTEM_USER_ID};
 use accord_server::faults::FaultKind;
 use accord_server::files::FileConfig;
@@ -105,6 +106,7 @@ async fn file_relay(dir: &tempfile::TempDir) -> TestRelay {
                 storage_dir: files,
                 max_file_size: 1024 * 1024,
             }),
+            attachments: Some(AttachmentConfig::with_dir(dir.path().join("attachments"))),
         },
     )
     .await

@@ -48,6 +48,10 @@ sha1 = "0.10"
 # Base64 encoding
 base64 = "0.21"
 
+# Unicode properties and NFC for attachment file-name sanitization (SPEC-02 REQ-23)
+icu_properties = { version = "2.2", default-features = false, features = ["compiled_data"] }
+icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
+
 # Hex encoding
 hex = "0.4"
 
@@ -71,12 +75,21 @@ jni = { version = "0.21", optional = true }
 [features]
 default = []
 android = ["jni"]
+# Exposes `attachment::seal_with_fixed_key_for_vectors`, which seals under the
+# fixed key and nonce prefix of SPEC-02's known-answer vectors. Only this
+# crate's own tests enable it (dev-dependency below); a build that ships must
+# never enable it, because one key and prefix for two files reuses AES-GCM
+# nonces (SPEC-02 REQ-1).
+test-vectors = []
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [dev-dependencies]
 criterion = "0.5"
+# The attachment vector tests (tests/attachment_vectors.rs) need the fixed-key
+# sealer; with resolver 2 this feature is active only when tests are built.
+accord-core = { path = ".", features = ["test-vectors"] }
 
 [[bench]]
 name = "crypto_benchmarks"

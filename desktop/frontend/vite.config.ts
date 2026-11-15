@@ -3,6 +3,10 @@ import react from "@vitejs/plugin-react";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
 import path from "path";
+import { assertReleaseConfig } from "./src/releaseChecks";
+
+// SPEC-02 REQ-29: a release build fails while LEGACY_READ_UNTIL is unset.
+assertReleaseConfig(process.env);
 
 const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 

@@ -7,7 +7,9 @@ import { redeemInvite, joinErrorMessage, isPreviewUnavailable } from "../admissi
 import { verifyBuildHash, getTrustIndicator } from "../buildHash";
 import { notificationManager } from "../notifications";
 import { renderMessageMarkdown } from "../markdown";
-import { FileUploadButton, FileList, FileDropZone, FileAttachment, StagedFilesPreview } from "../FileManager";
+import { FileUploadButton, FileList, FileDropZone, StagedFilesPreview, ATTACHMENTS_UNAVAILABLE_TEXT } from "../FileManager";
+import { MessageAttachments } from "./MessageAttachments";
+import { ATTACHMENTS_IGNORED_TEXT } from "../attachments/decode";
 import { EmojiPickerButton } from "../EmojiPicker";
 import { GifPickerButton } from "../GifPicker";
 import { getNodeCustomEmojis, getCustomEmojiUrl, subscribeCustomEmojis } from "../customEmojiStore";
@@ -21,7 +23,6 @@ import { useMentionAutocomplete } from "../hooks/useMentionAutocomplete";
 import type { AutocompleteItem } from "../hooks/useMentionAutocomplete";
 import { useSlashCommands } from "../hooks/useSlashCommands";
 import { ImageLightbox } from "./ImageLightbox";
-import { ImageGrid, getNonImageFiles, hasImageGrid } from "./ImageGrid";
 import { MediaEmbeds } from "./MediaEmbeds";
 import { MessageContextMenu } from "./MessageContextMenu";
 import { SavedMessagesPanel } from "./SavedMessagesPanel";
@@ -198,6 +199,8 @@ export const ChatArea: React.FC = () => {
   };
 
   const currentCh = ctx.selectedDmChannel?.id || ctx.selectedChannelId;
+  // For the legacy section's "Uploaded by X, according to the relay" label.
+  const memberNames = useMemo(() => new Map(ctx.members.map(m => [m.user_id, ctx.displayName(m.user)])), [ctx.members, ctx.displayName]);
   const filteredMessages = useMemo(() => ctx.appState.messages.filter(msg => {
     if (currentCh && msg.channel_id && msg.channel_id !== currentCh) return false;
     if (msg.sender_id && ctx.blockedUsers.has(msg.sender_id)) return false;
@@ -395,11 +398,8 @@ export const ChatArea: React.FC = () => {
     <>
       <div className="chat-area">
         <FileDropZone
-          channelId={ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
-          token={ctx.appState.token || ''}
-          keyPair={ctx.keyPair}
-          encryptionEnabled={ctx.encryptionEnabled}
           onFilesStaged={ctx.handleFilesStaged}
+          disabled={!ctx.attachmentsAvailable}
         >
           {/* Chat Header */}
           <div className="chat-header">
@@ -706,19 +706,17 @@ export const ChatArea: React.FC = () => {
                           <span className="message-time" title={new Date(msg.timestamp).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}>{formatRelativeTime(msg.timestamp)}</span>
                           {msg._status && msg.sender_id === ctx.appState.user?.id && (
                             msg._status === 'failed' ? (
-                              <span
-                                className="delivery-status delivery-failed"
-                                title="Failed to send. Click to retry."
-                                onClick={() => ctx.handleRetryMessage(msg.id)}
-                                role="button"
-                                tabIndex={0}
-                                onKeyDown={(e) => { if (e.key === 'Enter') ctx.handleRetryMessage(msg.id); }}
-                              >⚠</span>
+                              <span className="delivery-status delivery-failed" title={msg._failure?.text || 'Not sent'}>⚠</span>
+                            ) : msg._status === 'unconfirmed' ? (
+                              <span className="delivery-status delivery-unconfirmed" title="Not confirmed yet"><Icon name="clock" size={12} /></span>
                             ) : msg._status === 'sending' ? (
-                              <span className="delivery-status delivery-sending" title="Sending">○</span>
+                              <span className="delivery-status delivery-sending" title={msg._statusText || 'Sending'}>○</span>
                             ) : msg._status === 'sent' ? (
                               <span className="delivery-status delivery-sent" title="Sent">●</span>
                             ) : null
+                          )}
+                          {msg._attachmentsIgnored && (
+                            <span className="message-attachments-ignored" title={ATTACHMENTS_IGNORED_TEXT} aria-label={ATTACHMENTS_IGNORED_TEXT} role="img">⚠</span>
                           )}
                           {msg.edited_at && (
                             <span className="message-edited" title={`Edited at ${new Date(msg.edited_at).toLocaleString()}`}>(edited)</span>
@@ -770,7 +768,7 @@ export const ChatArea: React.FC = () => {
                               ><Icon name="plus" size={16} /></button>
                               <span className="message-actions-divider" />
                               <button onClick={() => ctx.handleReply(msg)} className="message-action-btn" title="Reply" aria-label="Reply"><Icon name="reply" size={18} /></button>
-                              {msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) && (
+                              {msg.sender_id === ctx.appState.user.id && ctx.canEditMessage(msg) && (
                                 <button onClick={() => ctx.handleStartEdit(msg.id, msg.content)} className="message-action-btn" title="Edit" aria-label="Edit message"><Icon name="edit" size={18} /></button>
                               )}
                               {(msg.author === (ctx.appState.user.display_name || ctx.fingerprint(ctx.appState.user.public_key_hash)) || ctx.canDeleteMessage(msg)) && (
@@ -819,6 +817,9 @@ export const ChatArea: React.FC = () => {
                           />
                           <span className="message-edit-hint">escape to <a href="#" onClick={(e) => { e.preventDefault(); ctx.handleCancelEdit(); }}>cancel</a> • enter to <a href="#" onClick={(e) => { e.preventDefault(); ctx.handleSaveEdit(); }}>save</a></span>
                         </div>
+                      ) : msg._placeholder ? (
+                        // SPEC-02 §8.2: nothing of the plaintext is rendered.
+                        <div className="message-content message-placeholder" data-testid="message-placeholder">{msg.content}</div>
                       ) : (
                         <div 
                           className="message-content"
@@ -828,8 +829,41 @@ export const ChatArea: React.FC = () => {
                         />
                       )}
 
+                      {/* Attachments: only the store entry this message's own decode
+                          produced (SPEC-02 REQ-8, REQ-51; attachments/render.ts) */}
+                      {(msg._attachmentCount ?? 0) > 0 && msg._attachmentRef !== undefined && (
+                        <MessageAttachments
+                          message={msg}
+                          origin={ctx.attachmentOrigin}
+                          onImageClick={(src) => {
+                            setAllChannelImages(collectImages());
+                            setLightboxSrc(src);
+                          }}
+                        />
+                      )}
+                      {msg._pendingId && (msg._attachmentCount ?? 0) > 0 && (
+                        <div className="message-attachments-pending">
+                          <Icon name="clipboard" size={14} /> {msg._attachmentCount} attachment{msg._attachmentCount === 1 ? '' : 's'}
+                        </div>
+                      )}
+
+                      {/* Own message status and actions (SPEC-02 §8.1) */}
+                      {msg._pendingId && msg._status !== 'sent' && (
+                        <div className="message-send-status" role="status">
+                          {msg._status === 'failed' && <span className="message-send-status-text">{msg._failure?.text || 'Not sent'}</span>}
+                          {msg._status === 'unconfirmed' && <span className="message-send-status-text">Not confirmed yet</span>}
+                          {msg._status === 'sending' && msg._statusText && <span className="message-send-status-text">{msg._statusText}</span>}
+                          {((msg._status === 'failed' && msg._failure?.retryable) || msg._status === 'unconfirmed') && (
+                            <button type="button" className="message-send-retry" onClick={() => ctx.handleRetryMessage(msg.id)}>Retry</button>
+                          )}
+                          {msg._status === 'failed' && (
+                            <button type="button" className="message-send-delete" onClick={() => void ctx.handleDeleteMessage(msg.id)}>Delete</button>
+                          )}
+                        </div>
+                      )}
+
                       {/* Media Embeds (GIF, video, YouTube) */}
-                      {msg.content && (
+                      {msg.content && !msg._placeholder && (
                         <MediaEmbeds content={msg.content} onImageClick={setLightboxSrc} />
                       )}
 
@@ -846,7 +880,7 @@ export const ChatArea: React.FC = () => {
                       )}
 
                       {/* Link Preview */}
-                      {msg.content && extractAllUrls(msg.content).length > 0 && (
+                      {msg.content && !msg._placeholder && extractAllUrls(msg.content).length > 0 && (
                         <LinkPreview content={msg.content} token={ctx.appState.token || ''} />
                       )}
 
@@ -856,38 +890,6 @@ export const ChatArea: React.FC = () => {
                           <span className="thread-icon"><Icon name="thread" size={14} /></span>
                           <span className="thread-count">{msg.reply_count} {msg.reply_count === 1 ? 'reply' : 'replies'}</span>
                         </div>
-                      )}
-
-                      {/* File Attachments */}
-                      {msg.files && msg.files.length > 0 && (
-                        <>
-                          {/* Image grid for 2+ images */}
-                          {hasImageGrid(msg.files) && (
-                            <ImageGrid
-                              files={msg.files}
-                              token={ctx.appState.token || ''}
-                              channelId={msg.channel_id || ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
-                              keyPair={ctx.keyPair}
-                              encryptionEnabled={ctx.encryptionEnabled}
-                              onImageClick={(src) => {
-                                setAllChannelImages(collectImages());
-                                setLightboxSrc(src);
-                              }}
-                            />
-                          )}
-                          <div className="message-attachments">
-                            {(hasImageGrid(msg.files) ? getNonImageFiles(msg.files) : msg.files).map((file) => (
-                              <FileAttachment
-                                key={file.id}
-                                file={file}
-                                token={ctx.appState.token || ''}
-                                channelId={msg.channel_id || ctx.selectedDmChannel?.id || ctx.selectedChannelId || ''}
-                                keyPair={ctx.keyPair}
-                                encryptionEnabled={ctx.encryptionEnabled}
-                              />
-                            ))}
-                          </div>
-                        </>
                       )}
 
                       {/* Reactions */}
@@ -1048,8 +1050,7 @@ export const ChatArea: React.FC = () => {
             <div className="upload-progress-bar-container">
               <div className="upload-progress-info">
                 <span className="upload-progress-filename">
-                  Uploading {ctx.uploadProgress.fileName}
-                  {ctx.uploadProgress.totalFiles > 1 && ` (${ctx.uploadProgress.current}/${ctx.uploadProgress.totalFiles})`}
+                  Encrypting and uploading attachment {ctx.uploadProgress.current} of {ctx.uploadProgress.totalFiles}
                 </span>
                 <span className="upload-progress-pct">{ctx.uploadProgress.percentage}%</span>
               </div>
@@ -1130,13 +1131,11 @@ export const ChatArea: React.FC = () => {
                 </div>
               </div>
             )}
-            {ctx.serverAvailable && ctx.appState.activeChannel && (
+            {ctx.serverAvailable && currentCh && (
               <FileUploadButton
-                channelId={ctx.appState.activeChannel}
-                token={ctx.appState.token || ''}
-                keyPair={ctx.keyPair}
-                encryptionEnabled={ctx.encryptionEnabled}
                 onFilesStaged={ctx.handleFilesStaged}
+                disabled={!ctx.attachmentsAvailable}
+                disabledReason={ATTACHMENTS_UNAVAILABLE_TEXT}
               />
             )}
             {ctx.messageError && (
@@ -1204,9 +1203,14 @@ export const ChatArea: React.FC = () => {
                   return;
                 }
                 if (e.key === 'ArrowUp' && !ctx.message.trim()) {
-                  // Edit last own message when pressing Up on empty input
-                  const myName = ctx.appState.user?.display_name || (ctx.appState.user ? ctx.fingerprint(ctx.appState.user.public_key_hash) : '');
-                  const lastOwn = [...ctx.appState.messages].reverse().find(m => m.author === myName);
+                  // Edit the last own message the edit guard allows when
+                  // pressing Up on an empty input: never one in a DM, with
+                  // attachments, a placeholder or a pending send (REQ-18,
+                  // OD-36, OD-48).
+                  const myId = ctx.appState.user?.id;
+                  const lastOwn = myId
+                    ? [...ctx.appState.messages].reverse().find(m => m.sender_id === myId && ctx.canEditMessage(m))
+                    : undefined;
                   if (lastOwn) {
                     e.preventDefault();
                     ctx.handleStartEdit(lastOwn.id, lastOwn.content);
@@ -1246,12 +1250,14 @@ export const ChatArea: React.FC = () => {
               onSelect={(gifUrl: string) => { void ctx.handleSendMessage(gifUrl); }}
               onClose={() => ctx.setShowGifPicker(false)}
             />
-            {ctx.serverAvailable && ctx.appState.activeChannel && (
+            {ctx.serverAvailable && currentCh && (
               <FileList
-                channelId={ctx.appState.activeChannel}
-                token={ctx.appState.token || ''}
+                origin={ctx.attachmentOrigin}
+                channelId={currentCh}
+                messages={filteredMessages}
+                attachmentsAvailable={ctx.attachmentsAvailable}
                 keyPair={ctx.keyPair}
-                encryptionEnabled={ctx.encryptionEnabled}
+                memberNames={memberNames}
               />
             )}
             <RetentionPopover

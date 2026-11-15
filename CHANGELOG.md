@@ -4,6 +4,14 @@ All notable changes to Accord are documented here. This project adheres to [Sema
 
 ## [Unreleased] — Phase 6: Public Release (In Progress)
 
+### End-to-end-encrypted attachments (SPEC-02) — release note
+
+Relay R1 and desktop/web client C1 ship together in this release.
+
+- **Users.** Every file is now encrypted on the device with its own random key, which travels only inside the end-to-end-encrypted message; the relay stores a nameless, padded blob and deletes it with the message. Attachments are exactly as private and as authentic as their message, and the relay still sees attachment metadata (count, padded size, uploader, channel, downloads). Messages with attachments, and direct messages, cannot be edited. Files uploaded before this release are not end-to-end encrypted: they appear only in an opt-in "Legacy uploads" section of the Files panel, with a warning, until they are retired. See SECURITY.md, "Attachments are only as private and as authentic as their message".
+- **Operators.** Put `client_max_body_size 101m;` in the nginx `server` block (Caddy needs nothing). New settings `attachments_dir` and `attachment_*` (see docs/SELF-HOSTING.md, "Attachment Storage", and `deploy/config.example.toml`); the relay refuses to start if `attachments_dir` is the database's directory, overlaps `./data/files` or is a populated directory it did not create. `accord-server backup` does not include `attachments_dir`; back it up separately. Legacy uploads are read-only and are deleted 90 days after the first start of this version (`legacy_attachments_retire_after_days`), or at once with `legacy_attachments = "retired"` or `accord-server --database <db> purge-legacy-attachments`.
+- **Older clients** can no longer upload files (410) and show messages with attachments as text that asks the user to update. Update every desktop and web client; the mobile apps and the CLI do not support attachments.
+
 ### Relay admission (SPEC-01) — operator release note
 
 The relay now enforces who may join a node. This closes the empty-password login

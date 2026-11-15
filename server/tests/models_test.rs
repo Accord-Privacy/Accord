@@ -681,6 +681,7 @@ fn ws_message_type_roundtrip_channel_message() {
         gate_users: None,
         gate_roles: None,
         gate_ttl_secs: None,
+        attachment_ids: None,
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();
@@ -707,6 +708,7 @@ fn ws_message_type_roundtrip_channel_message_no_reply() {
         gate_users: None,
         gate_roles: None,
         gate_ttl_secs: None,
+        attachment_ids: None,
     };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();
@@ -714,6 +716,39 @@ fn ws_message_type_roundtrip_channel_message_no_reply() {
         matches!(&back, WsMessageType::ChannelMessage { reply_to: None, .. }),
         "reply_to should round-trip as None"
     );
+}
+
+/// SPEC-02 §6.5.1: `attachment_ids` is optional, defaults to absent, and is
+/// read as plain strings, so a malformed id never fails the frame's parse.
+#[test]
+fn ws_channel_message_attachment_ids_are_optional_strings() {
+    let channel = Uuid::new_v4();
+    let without: WsMessageType = serde_json::from_value(serde_json::json!({
+        "ChannelMessage": { "channel_id": channel, "encrypted_data": "e30=" }
+    }))
+    .unwrap();
+    assert!(matches!(
+        without,
+        WsMessageType::ChannelMessage {
+            attachment_ids: None,
+            ..
+        }
+    ));
+    let with: WsMessageType = serde_json::from_value(serde_json::json!({
+        "ChannelMessage": {
+            "channel_id": channel,
+            "encrypted_data": "e30=",
+            "attachment_ids": ["not-a-uuid", "6F1C2B7E-0D4A-4F53-9B8E-2A6D3C1E9F04"]
+        }
+    }))
+    .unwrap();
+    match with {
+        WsMessageType::ChannelMessage {
+            attachment_ids: Some(ids),
+            ..
+        } => assert_eq!(ids, ["not-a-uuid", "6F1C2B7E-0D4A-4F53-9B8E-2A6D3C1E9F04"]),
+        other => panic!("unexpected {other:?}"),
+    }
 }
 
 #[test]
