@@ -335,8 +335,10 @@ async fn test_remove_node_member() {
     db.add_node_member(node.id, user.id, NodeRole::Member)
         .await
         .unwrap();
-    db.remove_node_member(node.id, user.id).await.unwrap();
+    assert_eq!(db.remove_node_member(node.id, user.id).await.unwrap(), 1);
     assert!(!db.is_node_member(node.id, user.id).await.unwrap());
+    // A second removal deletes no row (SPEC-01 REQ-50).
+    assert_eq!(db.remove_node_member(node.id, user.id).await.unwrap(), 0);
 }
 
 #[tokio::test]

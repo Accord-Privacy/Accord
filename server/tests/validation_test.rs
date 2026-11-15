@@ -739,8 +739,25 @@ fn invite_code_invalid_one_char() {
 }
 
 #[test]
-fn invite_code_invalid_thirteen_chars() {
-    assert!(validate_invite_code("1234567890123").is_err());
+fn invite_code_valid_thirteen_chars() {
+    // SPEC-01 REQ-36: codes of 6 to 32 characters are accepted.
+    assert!(validate_invite_code("1234567890123").is_ok());
+}
+
+#[test]
+fn invite_code_valid_new_length() {
+    assert!(validate_invite_code(&"A".repeat(22)).is_ok());
+    assert!(validate_invite_code(&"A".repeat(32)).is_ok());
+}
+
+#[test]
+fn invite_code_invalid_thirty_three_chars() {
+    assert!(validate_invite_code(&"A".repeat(33)).is_err());
+}
+
+#[test]
+fn invite_code_invalid_non_ascii_alphanumeric() {
+    assert!(validate_invite_code("abcdéf").is_err());
 }
 
 #[test]
@@ -776,8 +793,8 @@ fn invite_code_error_message_too_short() {
 
 #[test]
 fn invite_code_error_message_too_long() {
-    let err = validate_invite_code("1234567890123").unwrap_err();
-    assert!(err.contains("12 characters"));
+    let err = validate_invite_code(&"1".repeat(33)).unwrap_err();
+    assert!(err.contains("32 characters"));
 }
 
 #[test]
@@ -903,9 +920,10 @@ fn invite_code_boundary_exactly_6_chars() {
 }
 
 #[test]
-fn invite_code_boundary_exactly_12_chars() {
-    assert!(validate_invite_code("abcdef123456").is_ok());
-    assert!(validate_invite_code("abcdef1234567").is_err());
+fn invite_code_boundary_exactly_32_chars() {
+    // SPEC-01 REQ-36: 6 to 32 ASCII alphanumerics.
+    assert!(validate_invite_code(&"abcdef12".repeat(4)).is_ok());
+    assert!(validate_invite_code(&format!("{}x", "abcdef12".repeat(4))).is_err());
 }
 
 #[test]

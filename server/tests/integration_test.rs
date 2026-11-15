@@ -3,22 +3,12 @@
 //! These tests spawn the server in-process and test all major endpoints and flows.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{get, post},
-    Router,
-};
 use base64::Engine as _;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::TcpListener;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use uuid::Uuid;
 
 // Import the server modules
@@ -49,92 +39,8 @@ impl TestServer {
         // Initialize shared state with in-memory database
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        // Build the router with all endpoints
-        let app = Router::new()
-            // REST endpoints
-            .route("/health", get(health_handler))
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Key bundle endpoints
-            .route("/keys/bundle", post(publish_key_bundle_handler))
-            .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
-            .route("/keys/prekey-message", post(store_prekey_message_handler))
-            .route("/keys/prekey-messages", get(get_prekey_messages_handler))
-            // Sender Key distribution endpoints
-            .route("/channels/:id/sender-keys", post(store_sender_key_handler))
-            .route("/sender-keys/pending", get(get_pending_sender_keys_handler))
-            .route("/sender-keys/ack", post(ack_sender_keys_handler))
-            // Node endpoints
-            .route("/nodes", post(create_node_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/bans", post(ban_user_handler))
-            // Bot API v2 endpoints
-            .route(
-                "/api/nodes/:node_id/bots",
-                get(accord_server::bot_api::list_bots_handler)
-                    .post(accord_server::bot_api::install_bot_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/bots/:bot_id",
-                axum::routing::delete(accord_server::bot_api::uninstall_bot_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/bots/:bot_id/commands",
-                get(accord_server::bot_api::get_bot_commands_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/bots/:bot_id/invoke",
-                post(accord_server::bot_api::invoke_command_handler),
-            )
-            .route(
-                "/api/bots/respond",
-                post(accord_server::bot_api::bot_respond_handler),
-            )
-            // Batch API endpoints
-            .route(
-                "/api/nodes/:node_id/members/batch",
-                get(accord_server::batch_handlers::batch_members_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/channels/batch",
-                get(accord_server::batch_handlers::batch_channels_handler),
-            )
-            .route(
-                "/api/nodes/:node_id/overview",
-                get(accord_server::batch_handlers::node_overview_handler),
-            )
-            // WebSocket endpoint
-            .route("/ws", get(ws_handler))
-            // Add shared state
-            .with_state(state.clone())
-            // Add middleware
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        // Bind to a random port
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        // Start the server in the background
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        // Give the server a moment to start
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -178,6 +84,20 @@ impl TestServer {
         let public_key = format!("fake_public_key_{}", username);
         self.register_user(username, &public_key).await;
         self.auth_user_by_pk(&public_key, TEST_PASSWORD).await
+    }
+
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
+    async fn join_node(&self, token: &str, node_id: Uuid) {
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 
     /// Authenticate a user by public_key and return the token
@@ -523,22 +443,15 @@ async fn test_message_routing_between_two_clients() {
     let ch_resp: Value = serde_json::from_str(&ch_text).unwrap();
     let channel_id = Uuid::parse_str(ch_resp["id"].as_str().unwrap()).unwrap();
 
-    // User2 joins the node
-    let join_status = server
-        .client
-        .post(&format!(
-            "{}/nodes/{}/join?token={}",
-            server.base_url, node_id, token2
-        ))
-        .send()
-        .await
-        .unwrap()
-        .status();
-    assert!(
-        join_status.is_success(),
-        "join_node failed: {}",
-        join_status
-    );
+    // User2 joins the node with an invite the owner created (SPEC-01 REQ-18)
+    accord_server::test_support::join_with_owner_invite(
+        &server.client,
+        &server.base_url,
+        &server.state,
+        &token2,
+        node_id,
+    )
+    .await;
 
     // Connect both users via WebSocket
     let ws_url1 = format!("{}?token={}", server.ws_url("/ws"), token1);
@@ -682,21 +595,16 @@ async fn test_channel_join_leave_and_messaging() {
         panic!("Expected node_created response");
     };
 
-    // User2 joins the node
-    let join_node_msg = json!({
-        "message_type": {
-            "JoinNode": { "node_id": node_id }
-        },
-        "message_id": Uuid::new_v4(),
-        "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
-    });
-    sink2
-        .send(WsMessage::Text(join_node_msg.to_string()))
-        .await
-        .unwrap();
+    // User2 joins the node with an invite the owner created (SPEC-01 REQ-18)
+    accord_server::test_support::join_with_owner_invite(
+        &server.client,
+        &server.base_url,
+        &server.state,
+        &token2,
+        node_id,
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    // Consume the node_joined response
-    let _ = tokio::time::timeout(Duration::from_secs(2), stream2.next()).await;
 
     // Create a channel in the node (user1)
     let create_channel_msg = json!({
@@ -1242,17 +1150,16 @@ async fn test_ban_enforcement() {
     let create_body: Value = create_resp.json().await.unwrap();
     let node_id = create_body["id"].as_str().unwrap();
 
-    // Banned user joins the node
-    let join_resp = server
-        .client
-        .post(&format!(
-            "{}/nodes/{}/join?token={}",
-            server.base_url, node_id, banned_token
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(join_resp.status(), 200);
+    // Banned user joins the node with an invite the owner created
+    let node_uuid = Uuid::parse_str(node_id).unwrap();
+    accord_server::test_support::join_with_owner_invite(
+        &server.client,
+        &server.base_url,
+        &server.state,
+        &banned_token,
+        node_uuid,
+    )
+    .await;
 
     // Owner bans the user by public_key_hash
     let banned_pk_hash = accord_server::db::compute_public_key_hash(banned_pk);
@@ -1270,22 +1177,19 @@ async fn test_ban_enforcement() {
         .unwrap();
     assert_eq!(ban_resp.status(), 200);
 
-    // Banned user tries to rejoin — should fail
-    let rejoin_resp = server
-        .client
-        .post(&format!(
-            "{}/nodes/{}/join?token={}",
-            server.base_url, node_id, banned_token
-        ))
-        .send()
-        .await
-        .unwrap();
+    // Banned user tries to rejoin with a fresh owner-created invite — should fail
+    let code = accord_server::test_support::owner_invite_code(&server.state, node_uuid).await;
+    let (rejoin_status, rejoin_body) = accord_server::test_support::redeem_invite(
+        &server.client,
+        &server.base_url,
+        &banned_token,
+        &code,
+    )
+    .await;
     assert_ne!(
-        rejoin_resp.status(),
-        200,
+        rejoin_status, 200,
         "Banned user should not be able to rejoin"
     );
-    let rejoin_body: Value = rejoin_resp.json().await.unwrap();
     assert!(
         rejoin_body["error"]
             .as_str()
@@ -1311,111 +1215,10 @@ struct FullTestServer {
 
 impl FullTestServer {
     async fn new() -> Self {
-        use accord_server::handlers::*;
-        use axum::routing::{delete, get, post};
-
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            .route("/health", get(health_handler))
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Key bundle
-            .route("/keys/bundle", post(publish_key_bundle_handler))
-            .route("/keys/bundle/:user_id", get(fetch_key_bundle_handler))
-            .route("/keys/prekey-message", post(store_prekey_message_handler))
-            .route("/keys/prekey-messages", get(get_prekey_messages_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/leave", post(leave_node_handler))
-            .route("/nodes/:id/bans", post(ban_user_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/members", get(get_node_members_handler))
-            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-            // Invites
-            .route("/nodes/:id/invites", post(create_invite_handler))
-            .route("/nodes/:id/invites", get(list_invites_handler))
-            .route("/invites/:invite_id", delete(revoke_invite_handler))
-            .route("/invites/:code/join", post(use_invite_handler))
-            // Roles
-            .route(
-                "/nodes/:id/roles",
-                get(list_roles_handler).post(create_role_handler),
-            )
-            .route(
-                "/nodes/:id/roles/:role_id",
-                axum::routing::patch(update_role_handler).delete(delete_role_handler),
-            )
-            .route(
-                "/nodes/:id/members/:user_id/roles",
-                get(get_member_roles_handler),
-            )
-            .route(
-                "/nodes/:id/members/:user_id/roles/:role_id",
-                axum::routing::put(assign_member_role_handler).delete(remove_member_role_handler),
-            )
-            // Channels
-            .route(
-                "/channels/:id",
-                axum::routing::patch(update_channel_handler).delete(delete_channel_handler),
-            )
-            .route("/channels/:id/messages", get(get_channel_messages_handler))
-            .route(
-                "/channels/:id/permissions/:role_id",
-                axum::routing::put(set_channel_overwrite_handler),
-            )
-            .route(
-                "/channels/:id/effective-permissions",
-                get(get_effective_permissions_handler),
-            )
-            // Messages
-            .route(
-                "/messages/:id",
-                axum::routing::patch(edit_message_handler).delete(delete_message_handler),
-            )
-            // Files
-            .route("/channels/:id/files", post(upload_file_handler))
-            .route("/files/:id", get(download_file_handler))
-            // Search
-            .route("/nodes/:id/search", get(search_messages_handler))
-            // Presence
-            .route("/api/presence/:id", get(get_node_presence_handler))
-            // Profiles
-            .route("/users/:id/profile", get(get_user_profile_handler))
-            .route(
-                "/users/me/profile",
-                axum::routing::patch(update_user_profile_handler),
-            )
-            // WebSocket
-            .route("/ws", get(ws_handler))
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -1495,18 +1298,18 @@ impl FullTestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
-    /// Join a node
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 
     /// Connect WS and consume initial messages, return (sink, stream)
@@ -1749,7 +1552,10 @@ async fn test_invite_create_use_join() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400, "Invite should be exhausted");
+    // SPEC-01 section 6.4: an exhausted invite gives 410 invite_exhausted.
+    assert_eq!(resp.status(), 410, "Invite should be exhausted");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["reason"], "invite_exhausted");
 }
 
 // ── Test 3: File Upload and Download ──
@@ -2787,15 +2593,10 @@ async fn test_sender_key_store_and_fetch() {
     let node: Value = node_resp.json().await.unwrap();
     let node_id = node["id"].as_str().unwrap();
 
-    // Bob joins the node
-    let join_resp = server
-        .client
-        .post(&server.url(&format!("/nodes/{}/join", node_id)))
-        .query(&[("token", &token_bob)])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(join_resp.status(), 200);
+    // Bob joins the node with an invite Alice (the owner) created
+    server
+        .join_node(&token_bob, Uuid::parse_str(node_id).unwrap())
+        .await;
 
     // Create a channel
     let ch_resp = server
@@ -2939,13 +2740,10 @@ async fn test_sender_key_cleanup_on_leave() {
     let node: Value = node_resp.json().await.unwrap();
     let node_id = node["id"].as_str().unwrap();
 
+    // Bob joins the node with an invite Alice (the owner) created
     server
-        .client
-        .post(&server.url(&format!("/nodes/{}/join", node_id)))
-        .query(&[("token", &token_bob)])
-        .send()
-        .await
-        .unwrap();
+        .join_node(&token_bob, Uuid::parse_str(node_id).unwrap())
+        .await;
 
     let ch_resp = server
         .client

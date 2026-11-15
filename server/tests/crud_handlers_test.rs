@@ -2,20 +2,10 @@
 //! channel, channel-category, invite, node management, and channel permissions/overwrites.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, patch, post, put},
-    Router,
-};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use uuid::Uuid;
 
 use accord_server::{
@@ -37,82 +27,8 @@ impl TestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Auth
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id", axum::routing::patch(update_node_handler))
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/leave", post(leave_node_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/members", get(get_node_members_handler))
-            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-            // Invites
-            .route(
-                "/nodes/:id/invites",
-                post(create_invite_handler).get(list_invites_handler),
-            )
-            .route("/invites/:invite_id", delete(revoke_invite_handler))
-            .route("/invites/:code/preview", get(invite_preview_handler))
-            .route("/invites/:code/join", post(use_invite_handler))
-            // Channel categories
-            .route(
-                "/nodes/:id/categories",
-                post(create_channel_category_handler),
-            )
-            .route(
-                "/categories/:id",
-                patch(update_channel_category_handler).delete(delete_channel_category_handler),
-            )
-            // Channels
-            .route(
-                "/channels/:id",
-                patch(update_channel_handler).delete(delete_channel_handler),
-            )
-            .route("/channels/:id/messages", get(get_channel_messages_handler))
-            // Channel permission overwrites
-            .route(
-                "/channels/:id/permissions/:role_id",
-                put(set_channel_overwrite_handler).delete(delete_channel_overwrite_handler),
-            )
-            .route(
-                "/channels/:id/effective-permissions",
-                get(get_effective_permissions_handler),
-            )
-            // Roles (needed to create roles for overwrite tests)
-            .route(
-                "/nodes/:id/roles",
-                get(list_roles_handler).post(create_role_handler),
-            )
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -185,18 +101,18 @@ impl TestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
-    /// Have `token` join `node_id`.
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "join_node failed");
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 
     /// Create a channel category, return category_id.
@@ -1005,7 +921,10 @@ async fn test_use_invite_exhausted() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400);
+    // SPEC-01 section 6.4: 410 invite_exhausted.
+    assert_eq!(resp.status(), 410);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["reason"], "invite_exhausted");
 }
 
 #[tokio::test]
@@ -1038,7 +957,10 @@ async fn test_use_invite_already_member() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400);
+    // SPEC-01 section 6.4: 409 already_member, and nothing is consumed.
+    assert_eq!(resp.status(), 409);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["reason"], "already_member");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1207,12 +1129,10 @@ async fn test_leave_node_not_a_member() {
         .await
         .unwrap();
 
-    // leave_node is idempotent — returns 200 or 400 depending on implementation
-    assert!(
-        resp.status() == 200 || resp.status() == 400,
-        "Expected 200 or 400, got {}",
-        resp.status()
-    );
+    // SPEC-01 REQ-34: a leave that removes no membership is 404 not_member.
+    assert_eq!(resp.status(), 404);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["reason"], "not_member");
 }
 
 #[tokio::test]
@@ -1248,7 +1168,9 @@ async fn test_kick_user_forbidden_for_member() {
     let node_id = server.create_node(&owner_token, "KickForbNode").await;
 
     // Join both members
-    server.state.join_node(member1_id, node_id).await.unwrap();
+    accord_server::test_support::admit_with_owner_invite(&server.state, node_id, member1_id)
+        .await
+        .unwrap();
     let (_member2_id, member2_token) = server.register_and_auth("kick_mem2b").await;
     server.join_node(&member2_token, node_id).await;
 

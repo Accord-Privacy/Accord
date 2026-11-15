@@ -656,11 +656,15 @@ fn ws_message_type_pong_deserializes_from_string() {
 #[test]
 fn ws_message_type_roundtrip_join_node() {
     let id = Uuid::new_v4();
-    let original = WsMessageType::JoinNode { node_id: id };
+    let original = WsMessageType::JoinNode {
+        node_id: id,
+        invite_code: None,
+        device_fingerprint_hash: None,
+    };
     let json = serde_json::to_string(&original).unwrap();
     let back: WsMessageType = serde_json::from_str(&json).unwrap();
     assert!(
-        matches!(back, WsMessageType::JoinNode { node_id } if node_id == id),
+        matches!(back, WsMessageType::JoinNode { node_id, .. } if node_id == id),
         "JoinNode round-trip failed"
     );
 }

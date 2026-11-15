@@ -1,6 +1,7 @@
 //! SPEC-01 hotfix: the DM sentinel and password-less accounts cannot log in,
 //! registration requires a password, and invite redemption never hands out
-//! ownership (T-1, T-2, T-3, T-4 and T-9 of SPEC-01 section 10.2).
+//! ownership (T-1, T-2, T-3, T-4 and T-9 of SPEC-01 section 10.2, and the
+//! regressions RG-C001-1 and RG-C001-8 of section 10.3).
 //!
 //! The relay runs in-process on `127.0.0.1:0` over a file-backed database in a
 //! temporary directory, so the tests can plant raw rows through a second
@@ -9,17 +10,9 @@
 use accord_server::{
     admission::{hash_new_password, LOCK_MARKER},
     db::{DM_SYSTEM_NODE_ID, DM_SYSTEM_USER_ID},
-    handlers::{
-        auth_handler, create_invite_handler, list_user_nodes_handler, register_handler,
-        use_invite_handler, ws_handler,
-    },
     models::AuthToken,
     node::NodeRole,
     state::{AppState, SharedState},
-};
-use axum::{
-    routing::{get, post},
-    Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
@@ -27,7 +20,6 @@ use serde_json::{json, Value};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::TcpListener;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use uuid::Uuid;
 
@@ -61,20 +53,8 @@ impl Spec01Server {
             .await
             .unwrap();
 
-        let app = Router::new()
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            .route("/nodes", get(list_user_nodes_handler))
-            .route("/nodes/:id/invites", post(create_invite_handler))
-            .route("/invites/:code/join", post(use_invite_handler))
-            .route("/ws", get(ws_handler))
-            .with_state(state.clone());
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base_url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -397,7 +377,7 @@ async fn t9_invite_redemption_never_transfers_ownership() {
     server
         .state
         .db
-        .add_node_member(node_id, m, NodeRole::Admin)
+        .seed_node_member(node_id, m, NodeRole::Admin)
         .await
         .unwrap();
 
@@ -444,4 +424,112 @@ async fn t9_invite_redemption_never_transfers_ownership() {
         .await
         .unwrap();
     assert_eq!(owner, DM_SYSTEM_USER_ID.to_string());
+}
+
+/// The reply to `Authenticate` with `token` on a fresh socket.
+async fn ws_auth_reply(server: &Spec01Server, token: &str) -> Value {
+    let ws_url = format!("{}/ws", server.base_url.replace("http://", "ws://"));
+    let (ws, _) = connect_async(&ws_url).await.unwrap();
+    let (mut sink, mut stream) = ws.split();
+    sink.send(WsMessage::Text(
+        json!({ "Authenticate": { "token": token } }).to_string(),
+    ))
+    .await
+    .unwrap();
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), stream.next()).await {
+            Ok(Some(Ok(WsMessage::Text(text)))) => {
+                return serde_json::from_str::<Value>(&text).unwrap()
+            }
+            Ok(Some(Ok(_))) => continue,
+            other => panic!("no auth reply: {other:?}"),
+        }
+    }
+}
+
+/// RG-C001-1 (C001): `POST /auth {"public_key_hash":"SYSTEM","password":""}`
+/// returned a 24 h sentinel token. Now: 401 "Invalid password", no token.
+#[tokio::test]
+async fn rg_c001_1_sentinel_login_with_empty_password_gets_no_token() {
+    let server = Spec01Server::new().await;
+    server.register_and_auth("rg1_real").await;
+    let tokens_before = server.persisted_token_count().await;
+    let in_memory_before = server.state.auth_tokens.read().await.len();
+
+    let (status, body) = server
+        .post(
+            "/auth",
+            json!({ "public_key_hash": "SYSTEM", "password": "" }),
+        )
+        .await;
+    assert_eq!((status, body), (401, invalid_password()));
+
+    assert_eq!(server.persisted_token_count().await, tokens_before);
+    assert_eq!(
+        server.state.auth_tokens.read().await.len(),
+        in_memory_before
+    );
+    assert!(!server
+        .state
+        .auth_tokens
+        .read()
+        .await
+        .values()
+        .any(|t| t.user_id == DM_SYSTEM_USER_ID));
+}
+
+/// RG-C001-8 (C001, N001): with a sentinel token, an attacker created a node
+/// and sent `TypingStart`, and the relay panicked on the `[..8]` slice of the
+/// 6-byte `SYSTEM` hash. Now no sentinel token can be obtained (RG-C001-1),
+/// and an injected one is refused by `validate_token` (T-3), by REST node
+/// creation and by WS auth, so no code path acts as the sentinel.
+#[tokio::test]
+async fn rg_c001_8_no_code_path_acts_as_the_sentinel() {
+    let server = Spec01Server::new().await;
+    let (status, _) = server
+        .post(
+            "/auth",
+            json!({ "public_key_hash": "SYSTEM", "password": "" }),
+        )
+        .await;
+    assert_eq!(status, 401);
+
+    let token = "tok_sentinel_rg_c001_8";
+    plant_sentinel_token(&server.state, token).await;
+    assert_eq!(server.state.validate_token(token).await, None);
+
+    plant_sentinel_token(&server.state, token).await;
+    let resp = server
+        .client
+        .post(server.url("/nodes"))
+        .bearer_auth(token)
+        .json(&json!({ "name": "rg8" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
+    let owned: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM nodes WHERE owner_id = ? AND id != ?")
+            .bind(DM_SYSTEM_USER_ID.to_string())
+            .bind(DM_SYSTEM_NODE_ID.to_string())
+            .fetch_one(&server.raw)
+            .await
+            .unwrap();
+    assert_eq!(owned, 0);
+
+    plant_sentinel_token(&server.state, token).await;
+    let reply = ws_auth_reply(&server, token).await;
+    assert_eq!(reply["type"], "error", "{reply}");
+    assert_eq!(reply["code"], "auth_failed", "{reply}");
+
+    // The relay is still serving.
+    let (_, user_token) = server.register_and_auth("rg8_real").await;
+    let resp = server
+        .client
+        .get(server.url("/nodes"))
+        .bearer_auth(&user_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
 }

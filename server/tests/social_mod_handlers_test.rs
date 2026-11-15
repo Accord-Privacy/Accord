@@ -4,19 +4,11 @@
 //! auto-mod words, and node user profiles.
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, post},
-    Router,
-};
 use base64::Engine as _;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 use accord_server::{
@@ -39,90 +31,8 @@ impl SocialTestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Core auth
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            .route("/health", get(health_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/leave", post(leave_node_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/members", get(get_node_members_handler))
-            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-            // Bans
-            .route(
-                "/nodes/:id/bans",
-                post(ban_user_handler)
-                    .delete(unban_user_handler)
-                    .get(list_bans_handler),
-            )
-            .route("/nodes/:id/ban-check", get(ban_check_handler))
-            // Node user profiles
-            .route(
-                "/nodes/:id/profile",
-                axum::routing::put(set_node_user_profile_handler),
-            )
-            .route("/nodes/:id/profiles", get(get_node_user_profiles_handler))
-            // Auto-mod is client-side now (relay blind to node policy) — no routes.
-            // Channels / messages
-            .route("/channels/:id/messages", get(get_channel_messages_handler))
-            // Reactions
-            .route(
-                "/messages/:id/reactions",
-                get(get_message_reactions_handler),
-            )
-            .route(
-                "/messages/:id/reactions/:emoji",
-                axum::routing::put(add_reaction_handler).delete(remove_reaction_handler),
-            )
-            // Friends
-            .route("/friends/request", post(send_friend_request_handler))
-            .route("/friends/accept", post(accept_friend_request_handler))
-            .route("/friends/reject", post(reject_friend_request_handler))
-            .route("/friends", get(list_friends_handler))
-            .route("/friends/requests", get(list_friend_requests_handler))
-            .route("/friends/:user_id", delete(remove_friend_handler))
-            // Blocking
-            .route(
-                "/users/:id/block",
-                post(block_user_handler).delete(unblock_user_handler),
-            )
-            .route("/api/blocked-users", get(get_blocked_users_handler))
-            // DM channels
-            .route("/dm/:user_id", post(create_dm_channel_handler))
-            .route("/dm", get(get_dm_channels_handler))
-            // WebSocket (required by some state machinery)
-            .route("/ws", get(ws_handler))
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -176,18 +86,18 @@ impl SocialTestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
-    /// Join a node.
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "join_node failed");
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 
     /// Create a channel, return channel_id.
@@ -239,7 +149,7 @@ async fn test_dm_channel_db_level_friendship_established() {
     let node_id = node.id;
     state
         .db
-        .add_node_member(node_id, user2.id, NodeRole::Member)
+        .seed_node_member(node_id, user2.id, NodeRole::Member)
         .await
         .unwrap();
 

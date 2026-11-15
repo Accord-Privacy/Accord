@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # message_throughput.sh — Measure message send throughput
 # Usage: ./message_throughput.sh [USERS] [MESSAGES_PER_USER]
-# Env: ACCORD_URL, TEST_CHANNEL_ID, TEST_NODE_ID
+# Env: ACCORD_URL, TEST_CHANNEL_ID, TEST_NODE_ID, TEST_OWNER_TOKEN
+#
+# The relay admits users only with an invite (SPEC-01), so the test users join
+# through one invite that the node's owner creates: TEST_OWNER_TOKEN must be an
+# auth token of the owner of TEST_NODE_ID.
 set -euo pipefail
 
 USERS="${1:-10}"
@@ -10,6 +14,7 @@ ACCORD_URL="${ACCORD_URL:-http://localhost:8443}"
 WS_URL="${ACCORD_URL/http/ws}/ws"
 CHANNEL_ID="${TEST_CHANNEL_ID:-1}"
 NODE_ID="${TEST_NODE_ID:-1}"
+OWNER_TOKEN="${TEST_OWNER_TOKEN:-}"
 
 echo "=== Message Throughput Test ==="
 echo "Target: $ACCORD_URL | Users: $USERS | Messages/user: $MSGS"
@@ -68,12 +73,25 @@ for i in $(seq 1 "$USERS"); do
 done
 echo "Registration complete."
 
-# Join node (best effort)
-for i in $(seq 1 "$USERS"); do
-    [ -n "${TOKENS[$i]}" ] && curl -s -o /dev/null -X POST "$ACCORD_URL/nodes/$NODE_ID/join" \
-        -H "Authorization: Bearer ${TOKENS[$i]}" 2>/dev/null &
-done
-wait
+# Join the node through one invite created by its owner (best effort).
+if [ -z "$OWNER_TOKEN" ]; then
+    echo "  WARNING: TEST_OWNER_TOKEN is not set; the test users cannot join the node"
+else
+    INVITE_CODE=$(curl -s -X POST "$ACCORD_URL/nodes/$NODE_ID/invites" \
+        -H "Authorization: Bearer $OWNER_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"max_uses\":$USERS,\"expires_in_seconds\":3600}" 2>/dev/null \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('invite_code',''))" 2>/dev/null || echo "")
+    if [ -z "$INVITE_CODE" ]; then
+        echo "  WARNING: the owner could not create an invite"
+    else
+        for i in $(seq 1 "$USERS"); do
+            [ -n "${TOKENS[$i]}" ] && curl -s -o /dev/null -X POST "$ACCORD_URL/invites/$INVITE_CODE/join" \
+                -H "Authorization: Bearer ${TOKENS[$i]}" 2>/dev/null &
+        done
+        wait
+    fi
+fi
 
 echo "Sending $MSGS messages per user ($((USERS * MSGS)) total)..."
 START=$(date +%s%N)

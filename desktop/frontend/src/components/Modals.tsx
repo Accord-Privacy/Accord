@@ -410,6 +410,7 @@ export const AppModals: React.FC = () => {
             <NodeSettings
               isOpen={ctx.showNodeSettings}
               onClose={() => ctx.setShowNodeSettings(false)}
+              relayFeatures={ctx.ws?.relayFeatures?.()}
               node={currentNode}
               token={ctx.appState.token || ''}
               userRole={ctx.userRoles[ctx.selectedNodeId!] || 'member'}

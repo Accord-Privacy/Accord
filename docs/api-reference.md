@@ -21,7 +21,9 @@
 - [Threads](#threads)
 - [Search](#search)
 - [Files](#files)
+- [Relay Admission](#relay-admission)
 - [Invites](#invites)
+- [Join Requests](#join-requests)
 - [Moderation](#moderation)
 - [Roles & Permissions](#roles--permissions)
 - [Channel Permission Overwrites](#channel-permission-overwrites)
@@ -53,7 +55,7 @@
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `public_key` | string | Yes | User's public key (Ed25519, base64 or hex) |
-| `password` | string | No | Password for authentication |
+| `password` | string | Yes | Password for authentication. An empty password is refused with `400` and `reason: invalid_request`; no account is created |
 | `display_name` | string | No | Initial display name |
 
 **Response (200):**
@@ -96,6 +98,8 @@ curl -X POST http://localhost:8080/register \
   "expires_at": 1700000000
 }
 ```
+
+**Refusals:** a wrong password, an account without a usable password hash (an empty, locked or unparsable stored hash) and the reserved DM system user all get the same `401 {"error":"Invalid password","code":401}`, with no `reason` field, at the cost of one password verification. No token is created. Unknown accounts still get "User not found".
 
 **Rate limit:** 5 attempts per minute per IP.
 
@@ -235,10 +239,13 @@ curl -X POST "http://localhost:8080/nodes?token=AUTH_TOKEN" \
     "owner_id": "uuid",
     "description": "...",
     "created_at": 1700000000,
-    "icon_hash": "sha256hex"
+    "icon_hash": "sha256hex",
+    "join_policy": "invite"
   }
 ]
 ```
+
+`join_policy` is `invite` (the default) or `request`; see [Join Requests](#join-requests).
 
 ```bash
 curl "http://localhost:8080/nodes?token=AUTH_TOKEN"
@@ -251,6 +258,8 @@ curl "http://localhost:8080/nodes?token=AUTH_TOKEN"
 **Auth required:** No
 
 **Response (200):** `NodeInfo` object with id, name, owner_id, description, member count, channels, created_at.
+
+**Errors:** `404 node_not_found` for a node that does not exist and for the reserved DM system node (`00000000-0000-0000-0000-000000000001`), with identical bodies.
 
 ```bash
 curl "http://localhost:8080/nodes/{node_id}"
@@ -267,11 +276,14 @@ curl "http://localhost:8080/nodes/{node_id}"
 |-------|------|----------|-------------|
 | `name` | string | No | New name |
 | `description` | string | No | New description |
+| `join_policy` | string | No | `"invite"` or `"request"`. Only the owner or a member holding MANAGE_NODE may change it (otherwise `403 forbidden`); any other value gives `400 invalid_request`. Switching to `invite` deletes the node's pending join requests |
 
 **Response (200):**
 ```json
 { "status": "updated", "node_id": "uuid" }
 ```
+
+**Errors:** `400 invalid_request`, `403 forbidden`, `404 node_not_found` (missing or reserved node).
 
 ```bash
 curl -X PATCH "http://localhost:8080/nodes/{node_id}?token=AUTH_TOKEN" \
@@ -285,20 +297,34 @@ curl -X PATCH "http://localhost:8080/nodes/{node_id}?token=AUTH_TOKEN" \
 
 **Auth required:** Yes (token)
 
-**Headers (optional):** `X-Build-Hash` — checked against Node's build allowlist.
+A node id alone never grants membership. This route admits the caller only with an invite of this node, as the node's owner returning to their own node, or, on a node whose `join_policy` is `request`, by recording a join request that someone with admission authority must approve. See [Relay Admission](#relay-admission).
 
-**Request body (optional):**
+**Headers (optional):** `X-Build-Hash` — checked against the node's build allowlist. An absent header counts as the empty string, which a non-empty allowlist refuses.
+
+**Request body (optional, strict; unknown fields are rejected):**
 | Field | Type | Description |
 |-------|------|-------------|
-| `device_fingerprint_hash` | string | Device fingerprint for ban enforcement |
+| `invite_code` | string | An invite code of this node (6 to 32 ASCII letters and digits) |
+| `device_fingerprint_hash` | string | Node-scoped device fingerprint, exactly 64 lowercase hex characters. Required on nodes that have device bans |
+
+**Order of checks:** the owner is admitted (`OwnerSelf`) whatever else the request carries, and a supplied invite is then ignored and not consumed. Otherwise an `invite_code` is redeemed; an invite of another node is `invite_invalid`. Without an invite, a `request` node records a join request (202) and an `invite` node refuses with `invite_required`.
 
 **Response (200):**
 ```json
-{ "status": "joined", "node_id": "uuid" }
+{ "status": "joined", "node_id": "uuid", "node_name": "My Server" }
 ```
 
+**Response (202), on a node whose policy is `request`:**
+```json
+{ "status": "pending_approval", "node_id": "uuid", "expires_at": 1701209600 }
+```
+
+**Errors:** `invalid_request` (400), `rate_limited` (429), `node_not_found` (404), `forbidden` (403), `already_member` (409), `invite_invalid` (404), `invite_expired` (410), `invite_exhausted` (410), `invite_required` (403), `join_requests_full` (403), `banned`, `fingerprint_required`, `device_banned`, `device_limit`, `build_not_allowed` (403), `unavailable` (503).
+
 ```bash
-curl -X POST "http://localhost:8080/nodes/{node_id}/join?token=AUTH_TOKEN"
+curl -X POST "http://localhost:8080/nodes/{node_id}/join?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"invite_code": "Ab3dEf6hIj9kLm2nOp5qRs"}'
 ```
 
 ---
@@ -307,10 +333,14 @@ curl -X POST "http://localhost:8080/nodes/{node_id}/join?token=AUTH_TOKEN"
 
 **Auth required:** Yes (token)
 
+REST and WebSocket `LeaveNode` share one routine. Only when the caller's membership row was really removed does the relay delete the queued sender-key distributions to and from the caller in the node's channels, remove the caller's channel subscriptions and roles in the node, and broadcast `sender_key_rotation_required` once per channel.
+
 **Response (200):**
 ```json
 { "status": "left", "node_id": "uuid" }
 ```
+
+**Errors:** `rate_limited` (429), `node_not_found` (404), `owner_cannot_leave` (400), `not_member` (404, nothing else happens), `unavailable` (503).
 
 ```bash
 curl -X POST "http://localhost:8080/nodes/{node_id}/leave?token=AUTH_TOKEN"
@@ -345,12 +375,16 @@ curl "http://localhost:8080/nodes/{node_id}/members?token=AUTH_TOKEN"
 
 ### `DELETE /nodes/:id/members/:user_id` — Kick a user
 
-**Auth required:** Yes (token, Admin/Mod permission)
+**Auth required:** Yes (token, member holding KICK_MEMBERS)
+
+Each kick charges the acting user one `MembershipChange` token. Only when the target's membership row was really removed does the relay write the `member_kick` audit entry, delete the queued sender-key distributions to and from the target in the node's channels, and broadcast `sender_key_rotation_required` once per channel.
 
 **Response (200):**
 ```json
 { "status": "kicked", "node_id": "uuid", "user_id": "uuid" }
 ```
+
+**Errors:** `rate_limited` (429), `forbidden` (403: not a member, or no KICK_MEMBERS), `400` with `reason: invalid_request` when the target is the node owner, `not_member` (404: the target is not a member; no rotation, no audit entry), `node_not_found` (404), `unavailable` (503).
 
 ```bash
 curl -X DELETE "http://localhost:8080/nodes/{node_id}/members/{user_id}?token=AUTH_TOKEN"
@@ -490,6 +524,8 @@ curl "http://localhost:8080/nodes/{node_id}/profiles?token=AUTH_TOKEN"
 }
 ```
 
+`details` never contains an `invite_code` key: new `invite_create` and `invite_revoke` entries store only `invite_id`, existing entries had their codes removed once at upgrade, and the relay strips the key from any entry before returning it.
+
 ```bash
 curl "http://localhost:8080/nodes/{node_id}/audit-log?token=AUTH_TOKEN&limit=25"
 ```
@@ -516,9 +552,12 @@ curl "http://localhost:8080/nodes/{node_id}/audit-log?token=AUTH_TOKEN&limit=25"
   "text_channels_created": 8,
   "voice_channels_created": 2,
   "overwrites_created": 12,
-  "unsupported_permissions_stripped": ["Use Application Commands (bit 7)"]
+  "unsupported_permissions_stripped": ["Use Application Commands (bit 7)"],
+  "everyone_permissions_stripped": ["CREATE_INVITE", "ADMINISTRATOR"]
 }
 ```
+
+The import writes to `@everyone` only `(mapped & SAFE_EVERYONE) | DEFAULT_EVERYONE`, where SAFE_EVERYONE is VIEW_CHANNEL, SEND_MESSAGES, READ_MESSAGE_HISTORY, ADD_REACTIONS, EMBED_LINKS, ATTACH_FILES, CONNECT and SPEAK. It never gives every member CREATE_INVITE, ADMINISTRATOR or any other privileged bit; `everyone_permissions_stripped` lists what it left out.
 
 ```bash
 curl -X POST "http://localhost:8080/nodes/{node_id}/import-discord-template?token=AUTH_TOKEN" \
@@ -1074,45 +1113,141 @@ curl -X DELETE "http://localhost:8080/files/{file_id}?token=AUTH_TOKEN"
 
 ---
 
+## Relay Admission
+
+Every way into a node goes through one admission function on the relay. A
+`node_members` row is created only by:
+
+1. **an invite**, validated and consumed atomically (`POST /invites/:code/join`, or `invite_code` on `POST /nodes/:id/join` and WebSocket `JoinNode`);
+2. **an approved join request**, on a node whose `join_policy` is `request` (see [Join Requests](#join-requests));
+3. **the node's owner returning to their own node** (owner self-admission). The owner is re-admitted on every entry point whatever the request carries: no invite is consumed, bans, device checks and the build allowlist are skipped, and the owner's `admin` marker and Admin role are restored.
+
+Node creation writes the owner's first row. Knowing a node id grants nothing.
+
+This protects members from other users of an honest relay. It is **not** a protection against the relay operator, who runs the code and owns the database.
+
+**Admission authority.** A user has admission authority in a node if they own it, or if they are a member whose computed permissions include CREATE_INVITE (ADMINISTRATOR implies it). Admission authority is needed to create, list and revoke invites and to list, approve and deny join requests. A non-member's `@everyone` bits never count. An invite stops working as soon as its creator loses admission authority.
+
+**Checks on every admission**, inside one database transaction, identical on all entry points and for approvals (owner self-admission skips the last three):
+
+- the reserved DM system user can never be admitted (`forbidden`);
+- the user is not already a member (`already_member`; nothing is consumed);
+- no unexpired public-key-hash ban (`banned`);
+- device checks: if the node has at least one unexpired device ban, the request must carry a `device_fingerprint_hash` (`fingerprint_required`); a supplied fingerprint must not be banned (`device_banned`) and must stay within the node's per-device account cap (`device_limit`);
+- the node's build allowlist accepts the request's build hash, which is the empty string when no `X-Build-Hash` was sent; an empty allowlist accepts everything (`build_not_allowed`);
+- any database error refuses the admission with `unavailable` and changes nothing.
+
+**Check order on the entry points:** authentication; request syntax (`invalid_request`); the `MembershipChange` rate-limit charge (`rate_limited`); the node (`node_not_found`, or `invite_invalid` for an invite whose node is missing or reserved); the reserved user (`forbidden`); `already_member`; owner self-admission; the grant (the invite consume and its validity, the request path, or `invite_required`); then the ban, device and build checks. The first failure is reported.
+
+**Invite validity.** An invite is valid while its row exists (it was not revoked), its node exists and is not the reserved node (and is the node the entry point names), it has not expired (`now < expires_at`), it has uses left (`current_uses < max_uses`), and its creator still holds admission authority. Expiry gives `invite_expired`, exhaustion `invite_exhausted`, and every other failure `invite_invalid`. For `max_uses = N`, concurrent redemptions never admit more than N users.
+
+**Side effects.** Only after a successful admission commits does the relay broadcast `member_joined` and `sender_key_new_member`, once. Re-admission starts from a clean slate: stale roles, channel subscriptions and pending sender-key distributions of that user in the node are deleted first. A failed admission produces no broadcast, audit entry or distribution deletion.
+
+**The reserved DM system node** (`00000000-0000-0000-0000-000000000001`) holds the DM channels. It cannot be joined, listed, invited into, owned or deleted, and every node route answers it exactly like a node that does not exist (`404 node_not_found`). Its invites, if any exist in old data, give `invite_invalid`.
+
+### Error body
+
+Every route of this section, and every route listed under [Invites](#invites) and [Join Requests](#join-requests), answers errors as:
+
+```json
+{ "error": "Invalid invite code", "code": 404, "reason": "invite_invalid" }
+```
+
+`retry_after` (seconds) is added to `rate_limited` refusals. `error` and `code` keep their old meaning, so older clients still show `error`; new clients branch on `reason`. Authentication failures of the shared token check (401) and malformed path parameters keep their existing bodies.
+
+### Reason codes
+
+| `reason` | HTTP | `error` text | Raised when |
+|---|---|---|---|
+| `node_not_found` | 404 | Node not found | The node named in the request is missing or is the reserved DM node |
+| `invite_required` | 403 | This node requires an invite | No grant, and the node's `join_policy` is `invite` |
+| `invite_invalid` | 404 | Invalid invite code | Unknown or revoked code, an invite of another node or of the reserved node, or its creator is the reserved user or lost admission authority |
+| `invite_expired` | 410 | Invite has expired | The invite expired |
+| `invite_exhausted` | 410 | Invite has reached maximum uses | The invite has no uses left |
+| `already_member` | 409 | Already a member of this node | The user is already a member |
+| `banned` | 403 | You are banned from this node | Unexpired public-key-hash ban |
+| `fingerprint_required` | 403 | This node requires a device check to join | The node has device bans and no fingerprint was sent |
+| `device_banned` | 403 | Your device is banned from this node | The fingerprint is banned |
+| `device_limit` | 403 | Device account limit reached | The per-device account cap is reached |
+| `build_not_allowed` | 403 | Build not allowed by Node admin | The node's build allowlist refuses the build hash |
+| `join_requests_full` | 403 | This node is not accepting more join requests right now | The node has 200 pending requests |
+| `request_not_found` | 404 | Join request not found | Missing or expired join request |
+| `not_member` | 404 | You are not a member of this node (kick: That user is not a member of this node) | Leave or kick of a non-member |
+| `owner_cannot_leave` | 400 | Node owner cannot leave their own node | The owner tried to leave |
+| `forbidden` | 403 | Insufficient permissions | No admission authority, no MANAGE_NODE for a policy change, no KICK_MEMBERS for a kick, or the reserved user |
+| `invalid_request` | 400 | (field-specific) | Parsing or range errors |
+| `rate_limited` | 429 | Rate limit exceeded | A rate limit of [Rate Limiting](#rate-limiting); the body includes `retry_after` |
+| `unavailable` | 503 | Service temporarily unavailable | Database error (the relay fails closed), or invite-code collisions exhausted |
+
+---
+
 ## Invites
+
+Invite codes are bearer secrets: anyone holding a valid code can join until it expires, runs out or is revoked. New codes are 22 characters from `A-Z a-z 0-9` (about 131 bits). Codes of 6 to 32 ASCII letters and digits are accepted, so older 8-character codes keep working until they expire. Codes are case-sensitive and never written to logs or audit entries.
+
+Invites created before the relay enforced admission without an expiry were given one once, at the first boot of the admission release: they stop working 7 days later (operators can change this with `--legacy-invite-grace-hours` or keep them with `--keep-legacy-permanent-invites`).
 
 ### `POST /nodes/:id/invites` — Create invite
 
-**Auth required:** Yes (token, Admin/Mod)
+**Auth required:** Yes (token, admission authority)
 
-**Request body (optional):**
+**Request body (optional, strict):** an absent or empty body means no use limit and no expiry, whatever the `Content-Type`. A non-empty body must parse exactly: unknown fields, wrong types and out-of-range values give `400 invalid_request` and no invite. A field whose value is `null` counts as absent, and every present field is checked even when it is not used.
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `max_uses` | u32 | Max uses (null = unlimited) |
-| `expires_in_hours` | u32 | Hours until expiry (null = never) |
+| `max_uses` | integer or null | 1 to 100 000 uses; absent means unlimited |
+| `expires_in_seconds` | integer or null | Lifetime in seconds |
+| `expires_in_hours` | number or null | Lifetime in hours; may be fractional |
+| `expires_hours` | number or null | Deprecated alias of `expires_in_hours`, sent by older desktops |
 
-**Response (200):**
+The first expiry field present in the order `expires_in_seconds`, `expires_in_hours`, `expires_hours` is used. Hours are converted to seconds as the smallest integer not below hours × 3600, after rounding that product to 3 decimal places (so `0.1` gives 360 s). The lifetime must be between 60 s and 31 536 000 s (365 days). Clients should send `expires_in_seconds` only to relays that list `admission/1` in `features`, and integer `expires_in_hours` otherwise.
+
+**Response (200):** `expires_at` is the stored value.
 ```json
 {
   "id": "uuid",
-  "invite_code": "abc123",
+  "invite_code": "Ab3dEf6hIj9kLm2nOp5qRs",
   "max_uses": 10,
-  "expires_at": 1700003600,
+  "expires_at": 1700086400,
   "created_at": 1700000000
 }
 ```
 
+**Errors:** `invalid_request` (400), `forbidden` (403), `node_not_found` (404), `rate_limited` (429, from the per-token middleware on `?token=` requests, with the JSON error body and `retry_after`), `unavailable` (503: database error, or three code collisions in a row).
+
 ```bash
 curl -X POST "http://localhost:8080/nodes/{node_id}/invites?token=AUTH_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"max_uses": 10, "expires_in_hours": 24}'
+  -d '{"max_uses": 10, "expires_in_seconds": 86400}'
 ```
 
 ---
 
 ### `GET /nodes/:id/invites` — List invites
 
-**Auth required:** Yes (token, Admin/Mod)
+**Auth required:** Yes (token, admission authority)
 
-**Response (200):**
+**Response (200):** `code` and `uses` are aliases of `invite_code` and `current_uses`.
 ```json
-{ "invites": [...] }
+{
+  "invites": [
+    {
+      "id": "uuid",
+      "node_id": "uuid",
+      "created_by": "uuid",
+      "invite_code": "Ab3dEf6hIj9kLm2nOp5qRs",
+      "code": "Ab3dEf6hIj9kLm2nOp5qRs",
+      "max_uses": 10,
+      "current_uses": 2,
+      "uses": 2,
+      "expires_at": 1700086400,
+      "created_at": 1700000000
+    }
+  ]
+}
 ```
+
+**Errors:** `forbidden` (403), `node_not_found` (404), `unavailable` (503).
 
 ```bash
 curl "http://localhost:8080/nodes/{node_id}/invites?token=AUTH_TOKEN"
@@ -1122,15 +1257,36 @@ curl "http://localhost:8080/nodes/{node_id}/invites?token=AUTH_TOKEN"
 
 ### `DELETE /invites/:invite_id` — Revoke invite
 
-**Auth required:** Yes (token, Admin/Mod)
+**Auth required:** Yes (token). Admission authority, or the invite's creator while they are still a member.
 
 **Response (200):**
 ```json
 { "status": "revoked", "invite_id": "uuid" }
 ```
 
+**Errors:** `forbidden` (403), `invite_invalid` (404, unknown invite), `unavailable` (503).
+
 ```bash
 curl -X DELETE "http://localhost:8080/invites/{invite_id}?token=AUTH_TOKEN"
+```
+
+---
+
+### `DELETE /nodes/:id/invites/:code` — Revoke invite by code
+
+**Auth required:** Yes (token). Same authorization as `DELETE /invites/:invite_id`.
+
+Revokes the invite with that code in that node.
+
+**Response (200):**
+```json
+{ "status": "revoked", "invite_id": "uuid" }
+```
+
+**Errors:** `forbidden` (403; a caller without admission authority also gets 403 for a code that does not exist, so the route reveals no codes), `invite_invalid` (404: no such code in that node), `node_not_found` (404), `unavailable` (503).
+
+```bash
+curl -X DELETE "http://localhost:8080/nodes/{node_id}/invites/{code}?token=AUTH_TOKEN"
 ```
 
 ---
@@ -1139,13 +1295,26 @@ curl -X DELETE "http://localhost:8080/invites/{invite_id}?token=AUTH_TOKEN"
 
 **Auth required:** Yes (token)
 
+**Headers (optional):** `X-Build-Hash` — checked against the node's build allowlist (absent means the empty string).
+
+**Request body (optional, strict):**
+| Field | Type | Description |
+|-------|------|-------------|
+| `device_fingerprint_hash` | string | Node-scoped device fingerprint, exactly 64 lowercase hex characters. Required on nodes that have device bans |
+
+Every attempt, failures included, charges one `MembershipChange` token before the code is looked up, so the route is not a free oracle for guessing codes. When the caller owns the invite's node, the same 200 is returned without consuming the invite.
+
 **Response (200):**
 ```json
 { "status": "joined", "node_id": "uuid", "node_name": "My Server" }
 ```
 
+**Errors:** `invalid_request` (400: bad code or fingerprint format), `rate_limited` (429), `invite_invalid` (404), `forbidden` (403), `already_member` (409), `invite_expired` (410), `invite_exhausted` (410), `banned`, `fingerprint_required`, `device_banned`, `device_limit`, `build_not_allowed` (403), `unavailable` (503).
+
 ```bash
-curl -X POST "http://localhost:8080/invites/abc123/join?token=AUTH_TOKEN"
+curl -X POST "http://localhost:8080/invites/Ab3dEf6hIj9kLm2nOp5qRs/join?token=AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"device_fingerprint_hash": "<64 lowercase hex>"}'
 ```
 
 ---
@@ -1154,7 +1323,7 @@ curl -X POST "http://localhost:8080/invites/abc123/join?token=AUTH_TOKEN"
 
 **Auth required:** No
 
-Returns basic Node info for an invite code without joining. Used by clients to show a preview before the user decides to join.
+Returns basic Node info for an invite code without joining or consuming it. Used by clients to show a preview before the user decides to join, and by the desktop to learn the node id from which it derives its node-scoped device fingerprint.
 
 **Response (200):**
 ```json
@@ -1166,13 +1335,95 @@ Returns basic Node info for an invite code without joining. Used by clients to s
 }
 ```
 
-**Error responses:**
-- `404` — Invalid invite code
-- `410` — Invite expired or max uses reached
+`node_id` is still returned; removing it is an open item tied to the authorization work on membership-less node reads.
+
+**Errors:**
+- `404 invite_invalid` — unknown or revoked code, an invite of the reserved node, or a creator who lost admission authority
+- `410 invite_expired` / `410 invite_exhausted`
+- `429 rate_limited` with `retry_after` — 30 previews per 60 s per client network (the socket peer's IPv4 address, or its IPv6 /64). Loopback peers, such as a reverse proxy on the same host, are not limited. Operators set the limit with `--preview-rate-limit` (`0` disables it).
 
 ```bash
 curl "http://localhost:8080/invites/abc123/preview"
 ```
+
+---
+
+## Join Requests
+
+A node's owner, or a member holding MANAGE_NODE, can set `join_policy` to `request` with `PATCH /nodes/:id`. On such a node, `POST /nodes/:id/join` or WebSocket `JoinNode` without an invite records a join request instead of refusing with `invite_required`. Someone with admission authority then approves or denies it. The relay sees who asked to join which node, for as long as the request exists.
+
+- A request must pass the same ban, device and build checks as an admission, at the time it is made.
+- There is one request per (node, user). Repeating it refreshes the row. A request expires 14 days after it was made, and expired requests are ignored and purged by the relay's 5-minute maintenance task.
+- A node holds at most 200 pending requests; a new one beyond that gets `join_requests_full`. Refreshing an existing request is always allowed.
+- Each request also charges `JoinRequestCreate` (5 per hour per user), in addition to `MembershipChange`.
+- Online members with admission authority receive `join_request_created`.
+- Switching the node back to `invite` deletes its pending requests.
+
+### `GET /nodes/:id/join-requests` — List pending join requests
+
+**Auth required:** Yes (token, admission authority)
+
+**Response (200):** unexpired requests, oldest first, at most 200.
+```json
+{
+  "join_requests": [
+    {
+      "user_id": "uuid",
+      "public_key_hash": "hex",
+      "display_name": null,
+      "created_at": 1700000000,
+      "expires_at": 1701209600
+    }
+  ]
+}
+```
+
+**Errors:** `forbidden` (403), `node_not_found` (404), `unavailable` (503).
+
+---
+
+### `POST /nodes/:id/join-requests/:user_id/approve` — Approve a join request
+
+**Auth required:** Yes (token, admission authority)
+
+Runs as one admission: the pending request is consumed first, then the admission checks run with the fingerprint and build hash stored with the request. If they fail, the request stays deleted and the reason is returned. Of two concurrent approvals of one request, exactly one admits. On success, `member_joined` is broadcast once and the requester's connections then receive `node_joined`.
+
+**Response (200):**
+```json
+{ "status": "approved", "node_id": "uuid", "user_id": "uuid" }
+```
+
+**Errors:** `node_not_found` (404), `forbidden` (403), `request_not_found` (404); then, with the request deleted: `already_member` (409), `banned`, `fingerprint_required`, `device_banned`, `device_limit`, `build_not_allowed` (403); `unavailable` (503).
+
+---
+
+### `POST /nodes/:id/join-requests/:user_id/deny` — Deny a join request
+
+**Auth required:** Yes (token, admission authority)
+
+Deletes the request. The requester's connections receive `join_request_denied`.
+
+**Response (200):**
+```json
+{ "status": "denied", "node_id": "uuid", "user_id": "uuid" }
+```
+
+**Errors:** `forbidden` (403), `node_not_found` (404), `request_not_found` (404), `unavailable` (503).
+
+---
+
+### `DELETE /nodes/:id/join-request` — Withdraw own join request
+
+**Auth required:** Yes (token)
+
+Charges one `MembershipChange` token.
+
+**Response (200):**
+```json
+{ "status": "withdrawn", "node_id": "uuid" }
+```
+
+**Errors:** `rate_limited` (429), `node_not_found` (404), `request_not_found` (404), `unavailable` (503).
 
 ---
 
@@ -1194,6 +1445,8 @@ curl "http://localhost:8080/invites/abc123/preview"
 ```json
 { "status": "banned", "node_id": "uuid", "public_key_hash": "hex..." }
 ```
+
+If the banned user is a member, the ban removes the membership through the same routine as leave and kick, in the same transaction as the ban row: the queued sender-key distributions to and from that user in the node's channels are deleted and `sender_key_rotation_required` is broadcast once per channel. Banning a non-member writes the ban row only. A banned key is refused on every admission path, approvals included; a device ban makes a `device_fingerprint_hash` mandatory for every later admission to the node.
 
 ```bash
 curl -X POST "http://localhost:8080/nodes/{node_id}/bans?token=AUTH_TOKEN" \
@@ -2511,7 +2764,7 @@ Sends a command invocation to the bot's webhook. The server generates an `invoca
 |-------|------|----------|-------------|
 | `command` | string | Yes | Command name to invoke |
 | `params` | object | No | Command parameters (key-value pairs) |
-| `channel_id` | string | Yes | Channel context for the response |
+| `channel_id` | string | Yes | Channel context for the response. Must be an existing channel of `:node_id` that is not a DM channel; otherwise the relay answers `404` and stores nothing |
 
 **Response (200):**
 ```json
@@ -2586,6 +2839,8 @@ Called by the bot to deliver a response. The server broadcasts the response to c
 ```json
 { "status": "delivered" }
 ```
+
+Each invocation accepts exactly one response: the relay marks it completed when it accepts the response, and only if its channel still belongs to the invocation's node and is not a DM channel. Any other response (a second one, or one aimed at a DM or at another node's channel) gets `404` and is not broadcast.
 
 ```bash
 curl -X POST "http://localhost:8080/api/bots/respond" \
@@ -2790,9 +3045,26 @@ All require token auth + ManageNode permission.
   "build_hash": "abc123...",
   "database_ok": true,
   "websocket_connections": 12,
-  "memory_usage_bytes": 52428800
+  "memory_usage_bytes": 52428800,
+  "features": ["admission/1"],
+  "admission_since": 1700000000
 }
 ```
+
+- `features` — the relay capability registry: the tokens of the features this relay implements. Clients test whether a token is a member of the array, never equality or order, and treat a missing token as "not implemented". The same array is sent in the WebSocket `hello` frame. Registered tokens:
+
+  | Token | Meaning |
+  |---|---|
+  | `admission/1` | Relay admission: invite-only joins, join requests, `expires_in_seconds` on invite creation, the [reason codes](#reason-codes); `GET /health` also carries `admission_since` |
+  | `attachments/2` | Version-2 attachment routes (not implemented yet) |
+  | `keys-status/1` | `GET /keys/status` (not implemented yet) |
+  | `ctl-queue/1` | Non-destructive prekey queue (not implemented yet) |
+  | `identity/1` | Identity registration and reset (not implemented yet) |
+  | `governance/1` | Governance log and node-key queue (not implemented yet) |
+  | `screen/1` | End-to-end-encrypted screen sharing through the relay (not implemented yet) |
+
+  A relay lists a token only when it implements everything the token stands for. On a relay without `admission/1`, clients use only `POST /invites/:code/join` and integer `expires_in_hours`.
+- `admission_since` — when this relay began enforcing admission, in Unix seconds (the first boot of the admission release). It is an unauthenticated hint: members whose `joined_at` (`GET /nodes/:id/members`) is earlier may have joined by node id alone, before invites were enforced.
 
 ```bash
 curl "http://localhost:8080/health"
@@ -2881,9 +3153,14 @@ Then a welcome message:
   "type": "hello",
   "server_version": "0.1.0",
   "server_build_hash": "abc...",
-  "protocol_version": 1
+  "protocol_version": 1,
+  "features": ["admission/1"]
 }
 ```
+
+`features` is the relay capability registry, as in [`GET /health`](#get-health--health-check). A client forgets it when the socket disconnects and reads it again from the next `hello`.
+
+A frame that answers a client message may carry `request_id`, equal to that message's envelope `message_id`. The join and leave answers below always do.
 
 ### Message Envelope
 
@@ -2902,8 +3179,8 @@ All client → server messages use this envelope:
 | Type | Fields | Description |
 |------|--------|-------------|
 | `CreateNode` | `name`, `description?` | Create a new Node |
-| `JoinNode` | `node_id` | Join a Node |
-| `LeaveNode` | `node_id` | Leave a Node |
+| `JoinNode` | `node_id`, `invite_code?`, `device_fingerprint_hash?` | Join a Node under the rules of `POST /nodes/:id/join`. Answered with exactly one `node_joined`, `join_pending` or `join_failed` frame |
+| `LeaveNode` | `node_id` | Leave a Node. Answered with exactly one `node_left` or `leave_failed` frame |
 | `GetNodeInfo` | `node_id` | Request Node info |
 | `JoinChannel` | `channel_id` | Subscribe to channel messages |
 | `LeaveChannel` | `channel_id` | Unsubscribe from channel |
@@ -2973,8 +3250,16 @@ All client → server messages use this envelope:
 | `sender_key_distribution` | Sender Key received notification |
 | `bot_response` | Bot command response (`bot_id`, `invocation_id`, `content`) |
 | `node_created` | Node created confirmation |
-| `node_joined` | Joined Node confirmation |
-| `node_left` | Left Node confirmation |
+| `node_joined` | Joined a Node (`node_id`, `node_name`, `request_id`). Also pushed, without `request_id`, to a requester whose join request was approved, after `member_joined`. Clients treat it as a hint to reload their node list, never as a reason to send keys |
+| `join_pending` | `JoinNode` recorded a join request (`node_id`, `expires_at`, `request_id`) |
+| `join_failed` | `JoinNode` refused (`node_id`, `reason`, `error`, `request_id`, and `retry_after` for `rate_limited`). No generic `error` frame follows |
+| `node_left` | Left a Node (`node_id`, `request_id`) |
+| `leave_failed` | `LeaveNode` refused (`node_id`, `reason`, `error`, `request_id`), for example `not_member`. No rotation happens |
+| `join_request_created` | A join request was made or refreshed (`node_id`, `user_id`, `created_at`); sent to online members with admission authority |
+| `join_request_denied` | Your join request was denied (`node_id`) |
+| `member_joined` | A user was admitted to a Node; sent once per admission, after it commits |
+| `sender_key_new_member` | A new member may need your sender key for a channel (a hint; clients decide for themselves whom they send keys to) |
+| `sender_key_rotation_required` | A member was removed (leave, kick or ban); sent once per channel (`channel_id`, `removed_user_id`) |
 | `node_info` | Node info response |
 | `channel_created` | Channel created confirmation |
 | `key_bundle_published` | Key bundle stored |
@@ -2999,6 +3284,8 @@ All errors follow this format:
 }
 ```
 
+Routes added or changed for relay admission add a machine-readable `reason` (and `retry_after` for `rate_limited`); see [Reason codes](#reason-codes).
+
 Common HTTP status codes:
 - `400` — Bad request
 - `401` — Unauthorized (missing/invalid token)
@@ -3014,6 +3301,10 @@ Common HTTP status codes:
 
 | Action | Limit |
 |--------|-------|
+| Membership actions (`MembershipChange`): every join attempt on any entry point, every leave, every kick (charged to the acting user), every join-request withdrawal | 10 per 60 s per user, failures included |
+| Join requests (`JoinRequestCreate`), in addition to `MembershipChange` | 5 per hour per user |
+| Invite previews (`GET /invites/:code/preview`) | 30 per 60 s per client network (IPv4 address or IPv6 /64 of the socket peer); not applied to loopback peers; `--preview-rate-limit` |
+| Invite creation (`POST /nodes/:id/invites`, requests that carry `?token=`) | 10 per hour per user |
 | Registration | 3 per hour per IP |
 | Authentication | 5 per minute per IP |
 | File upload | Per-user rate limit |
@@ -3021,4 +3312,4 @@ Common HTTP status codes:
 | Profile updates | Per-user rate limit |
 | Direct messages | Per-user rate limit |
 
-Rate limit responses include `Retry-After` information in the error message.
+Rate limit responses include `Retry-After` information in the error message. The admission routes answer `429` with `reason: rate_limited` and a numeric `retry_after` (seconds) in the JSON body, and WebSocket `join_failed` and `leave_failed` frames carry the same fields. Approving and denying join requests is not charged to the approver. `--disable-rate-limits` disables all of these.

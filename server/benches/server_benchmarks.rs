@@ -150,7 +150,11 @@ fn bench_node_operations(c: &mut Criterion) {
                 // Accounts are created without a password hash (stored locked):
                 // registration's Argon2 cost would swamp the join being measured.
                 let uid = state_ref.db.create_user(&pk, "").await.unwrap().id;
-                state_ref.join_node(uid, node_id).await.unwrap();
+                // Every membership comes from an owner-created invite
+                // (SPEC-01 REQ-18).
+                accord_server::test_support::admit_with_owner_invite(state_ref, node_id, uid)
+                    .await
+                    .unwrap();
                 black_box(());
             }
         });
@@ -228,7 +232,10 @@ fn bench_broadcast(c: &mut Criterion) {
                         .block_on(state.db.create_user(&format!("bc_pk_{i}"), ""))
                         .unwrap()
                         .id;
-                    rt.block_on(state.join_node(uid, node.id)).unwrap();
+                    rt.block_on(accord_server::test_support::admit_with_owner_invite(
+                        &state, node.id, uid,
+                    ))
+                    .unwrap();
                     rt.block_on(state.join_channel(uid, channel.id)).unwrap();
                     let (tx, _rx) = tokio::sync::broadcast::channel(16);
                     rt.block_on(state.add_connection(uid, None, tx));

@@ -120,6 +120,7 @@ name = "accord-server"
 version = "0.1.0"
 dependencies = [
  "accord-core",
+ "accord-server",
  "aes-gcm",
  "anyhow",
  "argon2",

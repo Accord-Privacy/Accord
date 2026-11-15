@@ -10,16 +10,19 @@ pub fn sanitize_display_name(name: &str) -> String {
     stripped.trim().to_string()
 }
 
+use crate::admission::{
+    self as admission, auth_error, AdmissionContext, AdmissionEntry, AdmissionError,
+    AdmissionOutcome, ApiError,
+};
 use crate::models::{
-    ApiErrorResponse, AuditLogResponse, AuthRequest, AuthResponse, CreateInviteRequest,
-    CreateInviteResponse, CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata,
-    HealthResponse, MessageReactionsResponse, RegisterRequest, RegisterResponse, UseInviteResponse,
-    WsMessage, WsMessageType,
+    ApiErrorResponse, AuditLogResponse, AuthRequest, AuthResponse, CreateInviteResponse,
+    CreateNodeRequest, EditMessageRequest, ErrorResponse, FileMetadata, HealthResponse,
+    MessageReactionsResponse, RegisterRequest, RegisterResponse, WsMessage, WsMessageType,
 };
 use crate::node::NodeInfo;
 use crate::permissions::Permission;
 use crate::state::SharedState;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -119,6 +122,12 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
         database_ok,
         websocket_connections,
         memory_usage_bytes,
+        features: crate::capabilities::relay_features(),
+        admission_since: state
+            .db
+            .repair_report()
+            .admission_since
+            .and_then(|t| u64::try_from(t).ok()),
     })
 }
 
@@ -510,6 +519,7 @@ pub async fn list_user_nodes_handler(
                         "description": n.description,
                         "created_at": n.created_at,
                         "icon_hash": n.icon_hash,
+                        "join_policy": n.join_policy,
                     })
                 })
                 .collect(),
@@ -534,8 +544,10 @@ pub async fn create_channel_handler(
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
 
     let name = request
         .get("name")
@@ -551,12 +563,14 @@ pub async fn create_channel_handler(
     crate::validation::validate_channel_name(name).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: e,
-                code: 400,
-            }),
+            Json(ApiErrorResponse::plain(400, e)),
         )
     })?;
+
+    // The reserved node and a missing node are refused identically (REQ-7).
+    admission::require_live_node(&state, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
 
     match state
         .db
@@ -574,16 +588,13 @@ pub async fn create_channel_handler(
                 _ => "text",
             },
         }))),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: {
-                    tracing::error!("Failed to create channel: {}", e);
-                    "Internal server error".to_string()
-                },
-                code: 500,
-            }),
-        )),
+        Err(e) => {
+            tracing::error!("Failed to create channel: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse::plain(500, "Internal server error")),
+            ))
+        }
     }
 }
 
@@ -593,8 +604,15 @@ pub async fn list_node_channels_handler(
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let _user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+
+    // The reserved node and a missing node are refused identically (REQ-7).
+    admission::require_live_node(&state, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
 
     match state.db.get_node_channels(node_id).await {
         Ok(channels) => {
@@ -620,16 +638,13 @@ pub async fn list_node_channels_handler(
             }
             Ok(Json(result))
         }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: {
-                    tracing::error!("Failed to list channels: {}", e);
-                    "Internal server error".to_string()
-                },
-                code: 500,
-            }),
-        )),
+        Err(e) => {
+            tracing::error!("Failed to list channels: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiErrorResponse::plain(500, "Internal server error")),
+            ))
+        }
     }
 }
 
@@ -637,17 +652,16 @@ pub async fn list_node_channels_handler(
 pub async fn get_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
-) -> Result<Json<NodeInfo>, (StatusCode, Json<ErrorResponse>)> {
-    match state.get_node_info(node_id).await {
-        Ok(info) => Ok(Json(info)),
-        Err(err) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: err,
-                code: 404,
-            }),
-        )),
-    }
+) -> Result<Json<NodeInfo>, ApiError> {
+    // The reserved node and a missing node are refused identically (REQ-7).
+    admission::require_live_node(&state, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    state
+        .get_node_info(node_id)
+        .await
+        .map(Json)
+        .map_err(|_| AdmissionError::Unavailable.into_rest())
 }
 
 /// Request body for marking a channel as read
@@ -656,147 +670,142 @@ pub struct MarkChannelReadRequest {
     pub message_id: Uuid,
 }
 
-/// Optional body for join_node (device fingerprint hash)
+/// Optional body of `POST /nodes/:id/join` (SPEC-01 section 6.2). Unknown
+/// fields are refused; `null` counts as absent.
 #[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct JoinNodeRequest {
-    /// Optional device fingerprint hash for ban enforcement
+    /// An invite code of this node, consumed as the grant.
+    #[serde(default)]
+    pub invite_code: Option<String>,
+    /// Node-scoped device fingerprint, 64 lowercase hex characters.
     #[serde(default)]
     pub device_fingerprint_hash: Option<String>,
 }
 
-/// Join a Node
+/// Optional body of `POST /invites/:code/join` (SPEC-01 section 6.2).
+#[derive(Debug, serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct UseInviteRequest {
+    /// Node-scoped device fingerprint, 64 lowercase hex characters.
+    #[serde(default)]
+    pub device_fingerprint_hash: Option<String>,
+}
+
+/// Parse an optional JSON body: an absent or zero-length body gives the
+/// defaults, whatever its `Content-Type`; anything else must parse strictly.
+fn parse_optional_body<T: serde::de::DeserializeOwned + Default>(
+    body: &[u8],
+) -> Result<T, AdmissionError> {
+    if body.is_empty() {
+        return Ok(T::default());
+    }
+    serde_json::from_slice(body)
+        .map_err(|_| AdmissionError::InvalidRequest("Invalid request body".into()))
+}
+
+/// The REST answer of an admission entry point (SPEC-01 section 6.2).
+fn join_response(outcome: AdmissionOutcome) -> (StatusCode, Json<serde_json::Value>) {
+    match outcome {
+        AdmissionOutcome::Joined {
+            node_id, node_name, ..
+        } => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "joined",
+                "node_id": node_id,
+                "node_name": node_name,
+            })),
+        ),
+        AdmissionOutcome::Pending {
+            node_id,
+            expires_at,
+        } => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "status": "pending_approval",
+                "node_id": node_id,
+                "expires_at": expires_at,
+            })),
+        ),
+    }
+}
+
+/// Join a Node by id (POST /nodes/:id/join, SPEC-01 REQ-20). Without an
+/// invite this admits only the node's owner, or records a join request on a
+/// node whose policy is `request`; everyone else gets `invite_required`.
 pub async fn join_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-    body: Option<Json<JoinNodeRequest>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-    let fingerprint_hash = body.and_then(|b| b.0.device_fingerprint_hash);
-
-    // Check build hash allowlist
-    let client_build_hash = headers
-        .get("X-Build-Hash")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !state
-        .db
-        .is_build_hash_allowed(node_id, client_build_hash)
+    body: Bytes,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
         .await
-        .unwrap_or(true)
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Build not allowed by Node admin".into(),
-                code: 403,
-            }),
-        ));
-    }
-
-    // Check device fingerprint ban before joining
-    if let Some(ref fph) = fingerprint_hash {
-        let device_banned = state
-            .db
-            .is_device_banned_from_node(node_id, fph)
-            .await
-            .unwrap_or(false);
-        if device_banned {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Your device is banned from this node".into(),
-                    code: 403,
-                }),
-            ));
-        }
-    }
-
-    // Check device fingerprint account cap before joining
-    if let Some(ref fph) = fingerprint_hash {
-        let max_accounts = state
-            .db
-            .get_node_max_accounts_per_device(node_id)
-            .await
-            .unwrap_or(3);
-        if max_accounts > 0 {
-            let existing_count = state
-                .db
-                .count_members_with_fingerprint(node_id, fph)
-                .await
-                .unwrap_or(0);
-            if existing_count >= max_accounts {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    Json(ErrorResponse {
-                        error: format!(
-                            "Device account limit reached ({} accounts per device for this node)",
-                            max_accounts
-                        ),
-                        code: 403,
-                    }),
-                ));
-            }
-        }
-    }
-
-    match state.join_node(user_id, node_id).await {
-        Ok(()) => {
-            // Store device fingerprint hash if provided
-            if let Some(ref fph) = fingerprint_hash {
-                let _ = state
-                    .db
-                    .set_member_device_fingerprint(node_id, user_id, fph)
-                    .await;
-            }
-            broadcast_member_joined(&state, node_id, user_id).await;
-            Ok(Json(
-                serde_json::json!({ "status": "joined", "node_id": node_id }),
-            ))
-        }
-        Err(err) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: err,
-                code: 400,
-            }),
-        )),
-    }
+        .map_err(auth_error)?;
+    // REQ-45 step 2: request syntax.
+    let request: JoinNodeRequest = parse_optional_body(&body).map_err(AdmissionError::into_rest)?;
+    admission::validate_join_fields(
+        request.invite_code.as_deref(),
+        request.device_fingerprint_hash.as_deref(),
+    )
+    .map_err(AdmissionError::into_rest)?;
+    let build_hash = admission::rest_build_hash(&headers).map_err(AdmissionError::into_rest)?;
+    let ctx = AdmissionContext {
+        user_id,
+        device_fingerprint_hash: request.device_fingerprint_hash,
+        build_hash,
+    };
+    let entry = AdmissionEntry::Node {
+        node_id,
+        invite_code: request.invite_code,
+    };
+    admission::join(&state, ctx, entry)
+        .await
+        .map(join_response)
+        .map_err(AdmissionError::into_rest)
 }
 
-/// Leave a Node
+/// Leave a Node (POST /nodes/:id/leave, SPEC-01 REQ-34). Shares the leave
+/// routine with WS `LeaveNode`: a caller who is not a member gets 404
+/// `not_member` and nothing is broadcast; a real leave rotates every channel.
 pub async fn leave_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    match state.leave_node(user_id, node_id).await {
-        Ok(()) => Ok(Json(
-            serde_json::json!({ "status": "left", "node_id": node_id }),
-        )),
-        Err(err) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: err,
-                code: 400,
-            }),
-        )),
-    }
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    admission::leave(&state, user_id, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(
+        serde_json::json!({ "status": "left", "node_id": node_id }),
+    ))
 }
 
-/// Update Node settings (PATCH /nodes/:id)
+/// Update Node settings (PATCH /nodes/:id). Besides name, description and
+/// the per-device account cap, accepts `join_policy` (`"invite"` or
+/// `"request"`, SPEC-01 REQ-29), which the owner or a member holding
+/// MANAGE_NODE may change; any other value gives 400 `invalid_request`. The
+/// other fields keep their rule, a member holding MANAGE_NODE. Every field
+/// is authorized before anything is written and all of them change in one
+/// transaction or none does. Refusals carry a reason (REQ-28): 400
+/// `invalid_request`, 403 `forbidden`, 404 `node_not_found` or 503
+/// `unavailable`.
 pub async fn update_node_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
 
     let name = request
         .get("name")
@@ -809,546 +818,381 @@ pub async fn update_node_handler(
     let max_accounts_per_device = request
         .get("max_accounts_per_device")
         .and_then(|v| v.as_i64());
+    // REQ-29: `null` counts as absent; any value but the two policies is
+    // refused before anything changes.
+    let join_policy = match request.get("join_policy") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .and_then(crate::node::JoinPolicy::parse)
+                .ok_or_else(|| {
+                    AdmissionError::InvalidRequest(
+                        "join_policy must be \"invite\" or \"request\"".into(),
+                    )
+                    .into_rest()
+                })?,
+        ),
+    };
 
     // Validate node name if provided
     if let Some(ref n) = name {
-        crate::validation::validate_node_name(n).map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: e,
-                    code: 400,
-                }),
-            )
-        })?;
+        crate::validation::validate_node_name(n)
+            .map_err(|e| AdmissionError::InvalidRequest(e).into_rest())?;
     }
 
-    match state
-        .update_node(node_id, user_id, name.clone(), description.clone())
-        .await
-    {
-        Ok(()) => {
-            // Apply device account limit if provided
-            if let Some(limit) = max_accounts_per_device {
-                let clamped = limit.max(0); // 0 = unlimited
-                let _ = state
-                    .db
-                    .set_node_max_accounts_per_device(node_id, clamped)
-                    .await;
-            }
+    // An empty request keeps today's rule (a member holding MANAGE_NODE) and
+    // is audited, as before; only a request naming the join policy alone
+    // falls under REQ-29's rule.
+    let other_fields = name.is_some()
+        || description.is_some()
+        || max_accounts_per_device.is_some()
+        || join_policy.is_none();
+    let stored_name = name
+        .as_deref()
+        .map(|n| crate::metadata::strip_node_name(state.metadata_mode, n));
+    let stored_description = description
+        .as_deref()
+        .and_then(|d| crate::metadata::strip_description(state.metadata_mode, Some(d)));
 
-            // Log audit event
-            let mut details = serde_json::Map::new();
-            if let Some(ref name) = name {
-                details.insert("name".to_string(), serde_json::Value::String(name.clone()));
-            }
-            if let Some(ref description) = description {
-                details.insert(
-                    "description".to_string(),
-                    serde_json::Value::String(description.clone()),
-                );
-            }
-            if let Some(limit) = max_accounts_per_device {
-                details.insert(
-                    "max_accounts_per_device".to_string(),
-                    serde_json::Value::Number(limit.into()),
-                );
-            }
-            let details_str = if !details.is_empty() {
-                Some(serde_json::Value::Object(details).to_string())
-            } else {
-                None
-            };
+    // The reserved node and a missing node are refused identically (REQ-7);
+    // then one transaction authorizes every field before writing any.
+    admission::update_node_settings(
+        &state,
+        user_id,
+        node_id,
+        crate::db::admission::NodeSettingsUpdate {
+            name: stored_name.as_deref(),
+            description: stored_description.as_deref(),
+            max_accounts_per_device: max_accounts_per_device.map(|limit| limit.max(0)), // 0 = unlimited
+            join_policy,
+            other_fields,
+        },
+    )
+    .await
+    .map_err(AdmissionError::into_rest)?;
 
-            log_audit_event(
-                &state,
-                node_id,
-                user_id,
-                "node_settings_update",
-                "node",
-                Some(node_id),
-                details_str.as_deref(),
-            )
-            .await;
-
-            Ok(Json(
-                serde_json::json!({ "status": "updated", "node_id": node_id }),
-            ))
-        }
-        Err(err) => {
-            if err.contains("Insufficient permissions") {
-                Err((
-                    StatusCode::FORBIDDEN,
-                    Json(ErrorResponse {
-                        error: err,
-                        code: 403,
-                    }),
-                ))
-            } else {
-                Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        error: err,
-                        code: 400,
-                    }),
-                ))
-            }
-        }
+    // Log audit event
+    let mut details = serde_json::Map::new();
+    if let Some(ref name) = name {
+        details.insert("name".to_string(), serde_json::Value::String(name.clone()));
     }
+    if let Some(ref description) = description {
+        details.insert(
+            "description".to_string(),
+            serde_json::Value::String(description.clone()),
+        );
+    }
+    if let Some(limit) = max_accounts_per_device {
+        details.insert(
+            "max_accounts_per_device".to_string(),
+            serde_json::Value::Number(limit.into()),
+        );
+    }
+    if let Some(policy) = join_policy {
+        details.insert(
+            "join_policy".to_string(),
+            serde_json::Value::String(policy.as_str().to_string()),
+        );
+    }
+    let details_str = if !details.is_empty() {
+        Some(serde_json::Value::Object(details).to_string())
+    } else {
+        None
+    };
+
+    log_audit_event(
+        &state,
+        node_id,
+        user_id,
+        "node_settings_update",
+        "node",
+        Some(node_id),
+        details_str.as_deref(),
+    )
+    .await;
+
+    Ok(Json(
+        serde_json::json!({ "status": "updated", "node_id": node_id }),
+    ))
 }
 
-/// Kick a user from a Node (DELETE /nodes/:id/members/:user_id)
+/// Kick a user from a Node (DELETE /nodes/:id/members/:user_id, SPEC-01
+/// REQ-35). A kick of someone who is not a member gives 404 `not_member` and
+/// has no effect: no rotation, no distribution deletion, no audit row.
 pub async fn kick_user_handler(
     State(state): State<SharedState>,
     Path((node_id, target_user_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let admin_user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    match state
-        .kick_from_node(admin_user_id, target_user_id, node_id)
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let admin_user_id = extract_user_from_token(&state, &headers, &params)
         .await
-    {
-        Ok(()) => {
-            info!(
-                "User {} kicked from node {} by {}",
-                target_user_id, node_id, admin_user_id
-            );
-
-            // Notify remaining members to rotate sender keys for all channels
-            if let Ok(channels) = state.db.get_node_channels(node_id).await {
-                for channel in &channels {
-                    // Clean up the kicked user's sender key distributions
-                    let _ = state
-                        .db
-                        .delete_sender_key_distributions_from_user(channel.id, target_user_id)
-                        .await;
-
-                    let rotation_event = serde_json::json!({
-                        "type": "sender_key_rotation_required",
-                        "channel_id": channel.id,
-                        "removed_user_id": target_user_id,
-                    });
-                    let _ = state
-                        .send_to_channel(channel.id, rotation_event.to_string())
-                        .await;
-                }
-            }
-
-            // Log audit event
-            let details = serde_json::json!({
-                "kicked_user_id": target_user_id
-            });
-            log_audit_event(
-                &state,
-                node_id,
-                admin_user_id,
-                "member_kick",
-                "user",
-                Some(target_user_id),
-                Some(&details.to_string()),
-            )
-            .await;
-
-            Ok(Json(
-                serde_json::json!({ "status": "kicked", "node_id": node_id, "user_id": target_user_id }),
-            ))
-        }
-        Err(err) => {
-            if err.contains("Insufficient permissions") {
-                Err((
-                    StatusCode::FORBIDDEN,
-                    Json(ErrorResponse {
-                        error: err,
-                        code: 403,
-                    }),
-                ))
-            } else {
-                Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse {
-                        error: err,
-                        code: 400,
-                    }),
-                ))
-            }
-        }
-    }
+        .map_err(auth_error)?;
+    admission::kick(&state, admin_user_id, node_id, target_user_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(
+        serde_json::json!({ "status": "kicked", "node_id": node_id, "user_id": target_user_id }),
+    ))
 }
 
 // ── Node invite endpoints ──
 
-/// Create a new invite for a Node (POST /nodes/:id/invites)
+/// Create a new invite for a Node (POST /nodes/:id/invites, SPEC-01 REQ-37).
+/// The body is optional and parsed strictly; an empty body means "no use
+/// limit, no expiry". Requires admission authority (REQ-38).
 pub async fn create_invite_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-    body: Option<Json<CreateInviteRequest>>,
-) -> Result<Json<CreateInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-    let request = body.map(|b| b.0).unwrap_or(CreateInviteRequest {
-        max_uses: None,
-        expires_in_hours: None,
-    });
-
-    match state
-        .create_invite(node_id, user_id, request.max_uses, request.expires_in_hours)
+    body: Bytes,
+) -> Result<Json<CreateInviteResponse>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
         .await
-    {
-        Ok((invite_id, invite_code)) => {
-            info!(
-                "Invite created: {} for node {} by {}",
-                invite_code, node_id, user_id
-            );
-
-            // Log audit event
-            let details = serde_json::json!({
-                "invite_code": invite_code,
-                "invite_id": invite_id,
-                "max_uses": request.max_uses,
-                "expires_in_hours": request.expires_in_hours
-            });
-            log_audit_event(
-                &state,
-                node_id,
-                user_id,
-                "invite_create",
-                "invite",
-                Some(invite_id),
-                Some(&details.to_string()),
-            )
-            .await;
-
-            // Calculate expires_at for response
-            let expires_at = request.expires_in_hours.map(|hours| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    + (hours as u64 * 3600)
-            });
-
-            Ok(Json(CreateInviteResponse {
-                id: invite_id,
-                invite_code,
-                max_uses: request.max_uses,
-                expires_at,
-                created_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            }))
-        }
-        Err(err) => Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: err,
-                code: 403,
-            }),
-        )),
-    }
+        .map_err(auth_error)?;
+    let request = admission::parse_create_invite_body(&body).map_err(AdmissionError::into_rest)?;
+    let invite = admission::create_invite(&state, node_id, user_id, request)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(CreateInviteResponse {
+        id: invite.id,
+        invite_code: invite.invite_code,
+        max_uses: invite.max_uses,
+        expires_at: invite.expires_at,
+        created_at: invite.created_at,
+    }))
 }
 
-/// List invites for a Node (GET /nodes/:id/invites)
+/// List invites for a Node (GET /nodes/:id/invites, SPEC-01 REQ-38).
 pub async fn list_invites_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    match state.list_invites(node_id, user_id).await {
-        Ok(invites) => Ok(Json(serde_json::json!({ "invites": invites }))),
-        Err(err) => Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: err,
-                code: 403,
-            }),
-        )),
-    }
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    let invites = admission::list_invites(&state, node_id, user_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    let items: Vec<serde_json::Value> = invites.iter().map(admission::invite_list_item).collect();
+    Ok(Json(serde_json::json!({ "invites": items })))
 }
 
-/// Revoke an invite (DELETE /invites/:invite_id)
+/// Revoke an invite (DELETE /invites/:invite_id, SPEC-01 REQ-38)
 pub async fn revoke_invite_handler(
     State(state): State<SharedState>,
     Path(invite_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
-
-    match state.revoke_invite(invite_id, user_id).await {
-        Ok(()) => {
-            info!("Invite revoked: {} by {}", invite_id, user_id);
-
-            // Get the node_id from the invite for audit logging
-            if let Ok(Some(invite)) = state.db.get_node_invite(invite_id).await {
-                let details = serde_json::json!({
-                    "invite_code": invite.invite_code,
-                    "invite_id": invite_id
-                });
-                log_audit_event(
-                    &state,
-                    invite.node_id,
-                    user_id,
-                    "invite_revoke",
-                    "invite",
-                    Some(invite_id),
-                    Some(&details.to_string()),
-                )
-                .await;
-            }
-
-            Ok(Json(
-                serde_json::json!({ "status": "revoked", "invite_id": invite_id }),
-            ))
-        }
-        Err(err) => Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: err,
-                code: 403,
-            }),
-        )),
-    }
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    let invite = admission::revoke_invite_by_id(&state, invite_id, user_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(
+        serde_json::json!({ "status": "revoked", "invite_id": invite.id }),
+    ))
 }
 
-/// Preview an invite code (GET /invites/:code/preview) — public, no auth
+/// Revoke an invite by its code (DELETE /nodes/:id/invites/:code, SPEC-01
+/// REQ-38), the route today's desktop calls.
+pub async fn revoke_invite_by_code_handler(
+    State(state): State<SharedState>,
+    Path((node_id, invite_code)): Path<(Uuid, String)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    admission::validate_join_fields(Some(&invite_code), None).map_err(AdmissionError::into_rest)?;
+    let invite = admission::revoke_invite_by_code(&state, node_id, &invite_code, user_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(
+        serde_json::json!({ "status": "revoked", "invite_id": invite.id }),
+    ))
+}
+
+/// Preview an invite code (GET /invites/:code/preview) — public, no auth.
+/// Applies REQ-22 without consuming and is rate-limited per client network
+/// of the socket peer (SPEC-01 REQ-39, REQ-27).
 pub async fn invite_preview_handler(
     State(state): State<SharedState>,
     Path(invite_code): Path<String>,
-) -> Result<Json<crate::models::InvitePreviewResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Validate invite code format before DB lookup
-    crate::validation::validate_invite_code(&invite_code).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: e,
-                code: 400,
-            }),
-        )
-    })?;
-
-    // Look up invite
-    let invite = state
-        .db
-        .get_node_invite_by_code(&invite_code)
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+) -> Result<Json<crate::models::InvitePreviewResponse>, ApiError> {
+    admission::validate_join_fields(Some(&invite_code), None).map_err(AdmissionError::into_rest)?;
+    admission::charge_preview(&state, connect_info.map(|ci| ci.0))
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                    code: 500,
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Invalid invite code".to_string(),
-                    code: 404,
-                }),
-            )
-        })?;
-
-    // Check expiry
-    if let Some(expires_at) = invite.expires_at {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if now > expires_at {
-            return Err((
-                StatusCode::GONE,
-                Json(ErrorResponse {
-                    error: "Invite has expired".to_string(),
-                    code: 410,
-                }),
-            ));
-        }
-    }
-
-    // Check max uses
-    if let Some(max_uses) = invite.max_uses {
-        if invite.current_uses >= max_uses {
-            return Err((
-                StatusCode::GONE,
-                Json(ErrorResponse {
-                    error: "Invite has reached maximum uses".to_string(),
-                    code: 410,
-                }),
-            ));
-        }
-    }
-
-    // Get node info
-    let node = state
-        .db
-        .get_node(invite.node_id)
+        .map_err(AdmissionError::into_rest)?;
+    let (node, member_count) = admission::preview_invite(&state, &invite_code)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                    code: 500,
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Node not found".to_string(),
-                    code: 404,
-                }),
-            )
-        })?;
-
-    // Count members
-    let members = state
-        .db
-        .get_node_members(invite.node_id)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                    code: 500,
-                }),
-            )
-        })?;
-
+        .map_err(AdmissionError::into_rest)?;
     let build_hash = state
         .build_verification
         .server_build_info
         .build_hash
         .clone();
-
     Ok(Json(crate::models::InvitePreviewResponse {
         node_name: node.name,
         node_id: node.id,
-        member_count: members.len() as i64,
+        member_count,
         server_build_hash: build_hash,
     }))
 }
 
-/// Use an invite code to join a Node (POST /invites/:code/join)
-/// Notify existing channel members that a user joined a node, so they send their
-/// sender keys to the new member, and broadcast `member_joined` for member lists.
-/// Must be called from every join path (WS JoinNode and REST invite/join), or
-/// channel group E2EE never bootstraps for the newcomer.
-pub async fn broadcast_member_joined(state: &SharedState, node_id: Uuid, user_id: Uuid) {
-    let display_name = state
-        .db
-        .get_user_profile(user_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|p| p.display_name)
-        .unwrap_or_default();
-    let pk_hash = state
-        .db
-        .get_user_public_key_hash(user_id)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    if let Ok(channels) = state.db.get_node_channels(node_id).await {
-        for channel in &channels {
-            let join_event = serde_json::json!({
-                "type": "sender_key_new_member",
-                "channel_id": channel.id,
-                "node_id": node_id,
-                "new_user_id": user_id,
-            });
-            let _ = state
-                .send_to_channel(channel.id, join_event.to_string())
-                .await;
-
-            let member_event = serde_json::json!({
-                "type": "member_joined",
-                "node_id": node_id,
-                "user_id": user_id,
-                "display_name": display_name,
-                "public_key_hash": pk_hash,
-            });
-            let _ = state
-                .send_to_channel(channel.id, member_event.to_string())
-                .await;
-        }
-    }
-}
-
+/// Use an invite code to join a Node (POST /invites/:code/join, SPEC-01
+/// REQ-19). When the caller owns the invite's node, the owner is re-admitted
+/// without consuming the invite (REQ-26).
 pub async fn use_invite_handler(
     State(state): State<SharedState>,
     Path(invite_code): Path<String>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<UseInviteResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+    body: Bytes,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    // REQ-45 step 2: request syntax.
+    let request: UseInviteRequest =
+        parse_optional_body(&body).map_err(AdmissionError::into_rest)?;
+    admission::validate_join_fields(
+        Some(&invite_code),
+        request.device_fingerprint_hash.as_deref(),
+    )
+    .map_err(AdmissionError::into_rest)?;
+    let build_hash = admission::rest_build_hash(&headers).map_err(AdmissionError::into_rest)?;
+    let ctx = AdmissionContext {
+        user_id,
+        device_fingerprint_hash: request.device_fingerprint_hash,
+        build_hash,
+    };
+    admission::join(
+        &state,
+        ctx,
+        AdmissionEntry::InviteCode { code: invite_code },
+    )
+    .await
+    .map(join_response)
+    .map_err(AdmissionError::into_rest)
+}
 
-    // Validate invite code format before DB lookup
-    crate::validation::validate_invite_code(&invite_code).map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: e,
-                code: 400,
-            }),
-        )
-    })?;
+// ── Join requests (SPEC-01 REQ-29 to REQ-33) ──
 
-    match state.use_invite(&invite_code, user_id).await {
-        Ok((node_id, node_name)) => {
-            info!(
-                "Invite used: {} by {} to join node {}",
-                invite_code, user_id, node_id
-            );
-            broadcast_member_joined(&state, node_id, user_id).await;
-            Ok(Json(UseInviteResponse {
-                status: "joined".to_string(),
-                node_id,
-                node_name,
-            }))
-        }
-        Err(err) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: err,
-                code: 400,
-            }),
-        )),
-    }
+/// List a node's pending join requests (GET /nodes/:id/join-requests,
+/// REQ-31): oldest first, at most 200, expired ones left out. Only users
+/// with admission authority may list.
+pub async fn list_join_requests_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    let requests = admission::list_join_requests(&state, user_id, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(serde_json::json!({ "join_requests": requests })))
+}
+
+/// Approve a join request (POST /nodes/:id/join-requests/:user_id/approve,
+/// REQ-31, REQ-32). The approval transaction consumes the request; on
+/// success the join is broadcast once and `node_joined` is pushed to the
+/// requester.
+pub async fn approve_join_request_handler(
+    State(state): State<SharedState>,
+    Path((node_id, requester)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let approver = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    admission::approve_join_request(&state, approver, node_id, requester)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(serde_json::json!({
+        "status": "approved",
+        "node_id": node_id,
+        "user_id": requester,
+    })))
+}
+
+/// Deny a join request (POST /nodes/:id/join-requests/:user_id/deny,
+/// REQ-31): the request is deleted and the requester is told with
+/// `join_request_denied`.
+pub async fn deny_join_request_handler(
+    State(state): State<SharedState>,
+    Path((node_id, requester)): Path<(Uuid, Uuid)>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let approver = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    admission::deny_join_request(&state, approver, node_id, requester)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(serde_json::json!({
+        "status": "denied",
+        "node_id": node_id,
+        "user_id": requester,
+    })))
+}
+
+/// Withdraw one's own join request (DELETE /nodes/:id/join-request,
+/// REQ-31). A membership action, charged one `MembershipChange` token.
+pub async fn withdraw_join_request_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    admission::withdraw_join_request(&state, user_id, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
+    Ok(Json(
+        serde_json::json!({ "status": "withdrawn", "node_id": node_id }),
+    ))
 }
 
 // ── Node ban endpoints ──
 
-/// Ban a user from a Node (POST /nodes/:id/bans)
+/// Ban a user from a Node (POST /nodes/:id/bans). The ban row and the
+/// removal of the banned member go through the single removal routine
+/// (SPEC-01 REQ-50): one transaction, then the removal hooks (rotation
+/// included) only when a member was removed. After the authorization, a
+/// `public_key_hash` that is not 64 lowercase hex characters gives 400
+/// `invalid_request` and changes nothing.
 pub async fn ban_user_handler(
     State(state): State<SharedState>,
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     Json(request): Json<crate::models::BanUserRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
 
     // Check permissions (admin/mod only)
     let member = state.get_node_member(node_id, user_id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e,
-                code: 500,
-            }),
+            Json(ApiErrorResponse::plain(500, e)),
         )
     })?;
     match member {
@@ -1360,68 +1204,50 @@ pub async fn ban_user_handler(
             {
                 return Err((
                     StatusCode::FORBIDDEN,
-                    Json(ErrorResponse {
-                        error: "Insufficient permissions to ban users".into(),
-                        code: 403,
-                    }),
+                    Json(ApiErrorResponse::plain(
+                        403,
+                        "Insufficient permissions to ban users",
+                    )),
                 ));
             }
         }
         None => {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Must be a member of the node".into(),
-                    code: 403,
-                }),
+                Json(ApiErrorResponse::plain(403, "Must be a member of the node")),
             ));
         }
     }
+
+    // The hash names an account: 64 lowercase hex characters, the stored
+    // form. Anything else is refused before the ban row is written or any
+    // member removed.
+    crate::validation::validate_public_key_hash(&request.public_key_hash)
+        .map_err(|e| AdmissionError::InvalidRequest(e).into_rest())?;
 
     let reason_bytes = request
         .reason_encrypted
         .as_ref()
         .and_then(|r| base64::engine::general_purpose::STANDARD.decode(r).ok());
 
-    state
-        .db
-        .ban_from_node_with_fingerprint(
-            node_id,
-            &request.public_key_hash,
-            user_id,
-            reason_bytes.as_deref(),
-            request.expires_at,
-            request.device_fingerprint_hash.as_deref(),
-        )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: {
-                        tracing::error!("Failed to ban user: {}", e);
-                        "Internal server error".to_string()
-                    },
-                    code: 500,
-                }),
-            )
-        })?;
-
-    // Also remove the banned user from the node if they're a member
-    if let Ok(Some(banned_user)) = state
-        .db
-        .get_user_by_public_key_hash(&request.public_key_hash)
-        .await
-    {
-        let _ = state.db.remove_node_member(node_id, banned_user.id).await;
-    }
-
-    info!(
-        "User with public_key_hash {} banned from node {} by {}",
-        &request.public_key_hash[..16.min(request.public_key_hash.len())],
+    // The ban row and, if the banned account is a member, its removal, in
+    // one transaction; the removal hooks run after the commit (REQ-50). A
+    // database error leaves no ban row and runs no hook.
+    admission::ban(
+        &state,
         node_id,
-        user_id
-    );
+        crate::db::admission::NewBan {
+            public_key_hash: &request.public_key_hash,
+            banned_by: user_id,
+            reason_encrypted: reason_bytes.as_deref(),
+            expires_at: request.expires_at,
+            device_fingerprint_hash: request.device_fingerprint_hash.as_deref(),
+        },
+    )
+    .await
+    .map_err(AdmissionError::into_rest)?;
+
+    tracing::debug!(target: admission::LOG_TARGET, "ban written");
 
     // Log audit event for ban
     let details = serde_json::json!({
@@ -4234,6 +4060,8 @@ async fn websocket_handler_inner(
             "server_version": bi.version,
             "server_build_hash": bi.build_hash,
             "protocol_version": accord_core::PROTOCOL_VERSION,
+            // The relay capability registry (SPEC-01 §6.8, REQ-42).
+            "features": crate::capabilities::RELAY_FEATURES,
         });
         let _ = sender.send(Message::Text(welcome.to_string())).await;
     }
@@ -4340,51 +4168,85 @@ async fn handle_ws_message(
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
-        WsMessageType::JoinNode { node_id } => {
-            // Check build hash allowlist before joining
+        WsMessageType::JoinNode {
+            node_id,
+            invite_code,
+            device_fingerprint_hash,
+        } => {
+            // SPEC-01 REQ-21: the rules of `POST /nodes/:id/join`, answered
+            // with exactly one typed frame. The arm returns without error, so
+            // no generic error frame follows a failure.
+            let request_id = ws_message.message_id;
+            let result = match admission::validate_join_fields(
+                invite_code.as_deref(),
+                device_fingerprint_hash.as_deref(),
+            ) {
+                Err(e) => Err(e),
+                Ok(()) => {
+                    // The WS build hash: the latest one seen on this user's
+                    // upgrades, or the empty string.
+                    let build_hash = state
+                        .get_client_build_hash(sender_user_id)
+                        .await
+                        .unwrap_or_default();
+                    let ctx = AdmissionContext {
+                        user_id: sender_user_id,
+                        device_fingerprint_hash,
+                        build_hash,
+                    };
+                    admission::join(
+                        state,
+                        ctx,
+                        AdmissionEntry::Node {
+                            node_id,
+                            invite_code,
+                        },
+                    )
+                    .await
+                }
+            };
+            let frame = match result {
+                Ok(AdmissionOutcome::Joined {
+                    node_id, node_name, ..
+                }) => serde_json::json!({
+                    "type": "node_joined",
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "request_id": request_id,
+                }),
+                Ok(AdmissionOutcome::Pending {
+                    node_id,
+                    expires_at,
+                }) => serde_json::json!({
+                    "type": "join_pending",
+                    "node_id": node_id,
+                    "expires_at": expires_at,
+                    "request_id": request_id,
+                }),
+                Err(e) => e.ws_frame("join_failed", node_id, request_id),
+            };
             state
-                .check_build_hash_for_node(sender_user_id, node_id)
+                .send_to_user(sender_user_id, frame.to_string())
                 .await?;
-            state.join_node(sender_user_id, node_id).await?;
-
-            // Notify existing channel members so they send sender keys to the
-            // newcomer, and broadcast member_joined for member lists.
-            broadcast_member_joined(state, node_id, sender_user_id).await;
-
-            let resp = serde_json::json!({ "type": "node_joined", "node_id": node_id });
-            state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
 
         WsMessageType::LeaveNode { node_id } => {
-            // Get node channels before leaving (for sender key rotation)
-            let channels = state
-                .db
-                .get_node_channels(node_id)
-                .await
-                .unwrap_or_default();
-
-            state.leave_node(sender_user_id, node_id).await?;
-
-            // Notify remaining members to rotate sender keys
-            for channel in &channels {
-                // Clean up the leaving user's sender key distributions
-                let _ = state
-                    .db
-                    .delete_sender_key_distributions_from_user(channel.id, sender_user_id)
-                    .await;
-
-                let rotation_event = serde_json::json!({
-                    "type": "sender_key_rotation_required",
-                    "channel_id": channel.id,
-                    "removed_user_id": sender_user_id,
-                });
-                let _ = state
-                    .send_to_channel(channel.id, rotation_event.to_string())
-                    .await;
-            }
-
-            let resp = serde_json::json!({ "type": "node_left", "node_id": node_id });
-            state.send_to_user(sender_user_id, resp.to_string()).await?;
+            // SPEC-01 REQ-34: the leave routine shared with REST, answered
+            // with exactly one typed frame (`node_left` or `leave_failed`).
+            // The arm returns without error, so no generic error frame
+            // follows; a caller who is not a member causes no rotation.
+            let request_id = ws_message.message_id;
+            let frame = match admission::leave(state, sender_user_id, node_id).await {
+                Ok(()) => serde_json::json!({
+                    "type": "node_left",
+                    "node_id": node_id,
+                    "request_id": request_id,
+                }),
+                Err(e) => e.ws_frame("leave_failed", node_id, request_id),
+            };
+            state
+                .send_to_user(sender_user_id, frame.to_string())
+                .await?;
         }
 
         WsMessageType::GetNodeInfo { node_id } => {
@@ -4394,6 +4256,10 @@ async fn handle_ws_message(
         }
 
         WsMessageType::CreateChannel { node_id, name } => {
+            // The reserved node and a missing node: "Node not found" (REQ-7).
+            admission::require_live_node(state, node_id)
+                .await
+                .map_err(|e| e.message())?;
             let channel = state
                 .create_channel(name.clone(), node_id, sender_user_id)
                 .await?;
@@ -4460,85 +4326,95 @@ async fn handle_ws_message(
             gate_roles,
             gate_ttl_secs,
         } => {
-            // Check if this is a DM channel; enforce participation and blocks
-            let is_dm = state.db.is_dm_channel(channel_id).await.unwrap_or(false);
-            if is_dm {
-                if let Ok(Some(dm)) = state.db.get_dm_channel(channel_id).await {
-                    if dm.user1_id != sender_user_id && dm.user2_id != sender_user_id {
+            // DM channels authorize by participation only, and every check
+            // here fails closed (SPEC-01 REQ-17): one lookup decides "not a
+            // DM" or the DM's participants, and any lookup error refuses the
+            // message, so nothing is stored or delivered.
+            let dm = state
+                .db
+                .dm_participants(channel_id)
+                .await
+                .map_err(|_| "Message refused: channel lookup failed".to_string())?;
+            let is_dm = dm.is_some();
+            match dm {
+                Some((user1, user2)) => {
+                    if user1 != sender_user_id && user2 != sender_user_id {
                         return Err("Not a participant of this DM channel".to_string());
                     }
-                    let other_user = if dm.user1_id == sender_user_id {
-                        dm.user2_id
+                    let other_user = if user1 == sender_user_id {
+                        user2
                     } else {
-                        dm.user1_id
+                        user1
                     };
                     if state
                         .db
                         .is_user_blocked(other_user, sender_user_id)
                         .await
-                        .unwrap_or(false)
+                        .map_err(|_| "Message refused: block check failed".to_string())?
                     {
                         return Err(
                             "Cannot send message: you have been blocked by this user".to_string()
                         );
                     }
                 }
-            }
+                None => {
+                    // Ordinary channel: SEND_MESSAGES, the build allowlist and
+                    // slow mode. A lookup or permission error denies.
+                    let channel = state
+                        .db
+                        .get_channel(channel_id)
+                        .await
+                        .map_err(|_| "Message refused: channel lookup failed".to_string())?
+                        .ok_or_else(|| "Channel not found".to_string())?;
+                    if crate::admission::is_reserved_node(channel.node_id) {
+                        return Err("Channel not found".to_string());
+                    }
 
-            // Check SEND_MESSAGES permission and build hash allowlist.
-            // DM channels sit under the memberless DM system node, so node
-            // permissions don't apply — participation was verified above.
-            if let Ok(Some(channel)) = state
-                .db
-                .get_channel(channel_id)
-                .await
-                .map(|c| c.filter(|_| !is_dm))
-            {
-                // Check build hash allowlist
-                state
-                    .check_build_hash_for_node(sender_user_id, channel.node_id)
-                    .await?;
+                    // Check build hash allowlist
+                    state
+                        .check_build_hash_for_node(sender_user_id, channel.node_id)
+                        .await?;
 
-                if let Ok(perms) = state
-                    .db
-                    .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)
-                    .await
-                {
+                    let perms = state
+                        .db
+                        .compute_channel_permissions(channel.node_id, sender_user_id, channel_id)
+                        .await
+                        .map_err(|_| "Message refused: permission check failed".to_string())?;
                     if perms & crate::models::permission_bits::SEND_MESSAGES == 0 {
                         return Err(
                             "Permission denied: you do not have SEND_MESSAGES in this channel"
                                 .to_string(),
                         );
                     }
-                }
 
-                // ── Slow mode enforcement ──
-                let slow_mode = state
-                    .db
-                    .get_channel_slow_mode(channel_id)
-                    .await
-                    .unwrap_or(0);
-                if slow_mode > 0 {
-                    let current_time = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    let cooldowns = state.slow_mode_cooldowns.read().await;
-                    if let Some(&last_sent) = cooldowns.get(&(channel_id, sender_user_id)) {
-                        let elapsed = current_time.saturating_sub(last_sent);
-                        if elapsed < slow_mode as u64 {
-                            let remaining = slow_mode as u64 - elapsed;
-                            return Err(format!(
-                                "Slow mode active. Wait {} more seconds before sending another message.",
-                                remaining
-                            ));
+                    // ── Slow mode enforcement ──
+                    let slow_mode = state
+                        .db
+                        .get_channel_slow_mode(channel_id)
+                        .await
+                        .unwrap_or(0);
+                    if slow_mode > 0 {
+                        let current_time = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        let cooldowns = state.slow_mode_cooldowns.read().await;
+                        if let Some(&last_sent) = cooldowns.get(&(channel_id, sender_user_id)) {
+                            let elapsed = current_time.saturating_sub(last_sent);
+                            if elapsed < slow_mode as u64 {
+                                let remaining = slow_mode as u64 - elapsed;
+                                return Err(format!(
+                                    "Slow mode active. Wait {} more seconds before sending another message.",
+                                    remaining
+                                ));
+                            }
                         }
+                        drop(cooldowns);
                     }
-                    drop(cooldowns);
-                }
 
-                // Auto-mod word filtering is client-side (relay is blind to node
-                // content and policy) — see desktop retention.ts checkAutoMod.
+                    // Auto-mod word filtering is client-side (relay is blind to node
+                    // content and policy) — see desktop retention.ts checkAutoMod.
+                }
             }
 
             // Decode and store the message
@@ -5132,39 +5008,11 @@ async fn handle_ws_message(
                 None => return Err("Message not found".into()),
             };
 
-            // Get the channel to find the node
-            let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-                tracing::error!("Failed to get channel: {}", e);
-                "Internal server error".to_string()
-            })?;
-
-            let channel = match channel {
-                Some(ch) => ch,
-                None => return Err("Channel not found".into()),
-            };
-
-            // Check if user has admin/mod permissions
-            let member = state
-                .db
-                .get_node_member(channel.node_id, sender_user_id)
+            // DM participants, or an admin or moderator of the channel's
+            // node (SPEC-01 REQ-17(a)); lookup errors deny.
+            let audit_node = authorize_pin(state, sender_user_id, channel_id)
                 .await
-                .map_err(|e| {
-                    tracing::error!("Failed to get node member: {}", e);
-                    "Internal server error".to_string()
-                })?;
-
-            let member = match member {
-                Some(m) => m,
-                None => return Err("Not a member of this node".into()),
-            };
-
-            // Check if user has sufficient permissions (admin or moderator)
-            if !matches!(
-                member.role,
-                crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
-            ) {
-                return Err("Insufficient permissions. Admin or moderator required.".into());
-            }
+                .map_err(|denied| denied.message().to_string())?;
 
             // Pin the message
             let success = state
@@ -5185,16 +5033,18 @@ async fn handle_ws_message(
                 "message_id": message_id,
                 "channel_id": channel_id
             });
-            log_audit_event(
-                state,
-                channel.node_id,
-                sender_user_id,
-                "message_pin",
-                "message",
-                Some(message_id),
-                Some(&details.to_string()),
-            )
-            .await;
+            if let Some(node_id) = audit_node {
+                log_audit_event(
+                    state,
+                    node_id,
+                    sender_user_id,
+                    "message_pin",
+                    "message",
+                    Some(message_id),
+                    Some(&details.to_string()),
+                )
+                .await;
+            }
 
             // Broadcast pin event to channel
             let pin_event = serde_json::json!({
@@ -5231,39 +5081,11 @@ async fn handle_ws_message(
                 None => return Err("Message not found".into()),
             };
 
-            // Get the channel to find the node
-            let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-                tracing::error!("Failed to get channel: {}", e);
-                "Internal server error".to_string()
-            })?;
-
-            let channel = match channel {
-                Some(ch) => ch,
-                None => return Err("Channel not found".into()),
-            };
-
-            // Check if user has admin/mod permissions
-            let member = state
-                .db
-                .get_node_member(channel.node_id, sender_user_id)
+            // DM participants, or an admin or moderator of the channel's
+            // node (SPEC-01 REQ-17(a)); lookup errors deny.
+            let audit_node = authorize_pin(state, sender_user_id, channel_id)
                 .await
-                .map_err(|e| {
-                    tracing::error!("Failed to get node member: {}", e);
-                    "Internal server error".to_string()
-                })?;
-
-            let member = match member {
-                Some(m) => m,
-                None => return Err("Not a member of this node".into()),
-            };
-
-            // Check if user has sufficient permissions (admin or moderator)
-            if !matches!(
-                member.role,
-                crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
-            ) {
-                return Err("Insufficient permissions. Admin or moderator required.".into());
-            }
+                .map_err(|denied| denied.message().to_string())?;
 
             // Unpin the message
             let success = state.db.unpin_message(message_id).await.map_err(|e| {
@@ -5280,16 +5102,18 @@ async fn handle_ws_message(
                 "message_id": message_id,
                 "channel_id": channel_id
             });
-            log_audit_event(
-                state,
-                channel.node_id,
-                sender_user_id,
-                "message_unpin",
-                "message",
-                Some(message_id),
-                Some(&details.to_string()),
-            )
-            .await;
+            if let Some(node_id) = audit_node {
+                log_audit_event(
+                    state,
+                    node_id,
+                    sender_user_id,
+                    "message_unpin",
+                    "message",
+                    Some(message_id),
+                    Some(&details.to_string()),
+                )
+                .await;
+            }
 
             // Broadcast unpin event to channel
             let unpin_event = serde_json::json!({
@@ -5806,10 +5630,14 @@ pub async fn download_file_handler(
         }
     };
 
-    // Check if user is member of the channel
-    match state.db.get_channel_members(file_metadata.channel_id).await {
-        Ok(members) if members.contains(&user_id) => {}
-        Ok(_) => {
+    // Authorize through the channel access check: participation for a DM
+    // channel, failing closed on lookup errors (SPEC-01 REQ-17(a)).
+    match state
+        .user_can_access_channel(user_id, file_metadata.channel_id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
             return Err((
                 StatusCode::FORBIDDEN,
                 Json(ErrorResponse {
@@ -5887,10 +5715,11 @@ pub async fn list_channel_files_handler(
         }
     };
 
-    // Check if user is member of the channel
-    match state.db.get_channel_members(channel_id).await {
-        Ok(members) if members.contains(&user_id) => {}
-        Ok(_) => {
+    // Authorize through the channel access check: participation for a DM
+    // channel, failing closed on lookup errors (SPEC-01 REQ-17(a)).
+    match state.user_can_access_channel(user_id, channel_id).await {
+        Ok(true) => {}
+        Ok(false) => {
             return Err((
                 StatusCode::FORBIDDEN,
                 Json(ErrorResponse {
@@ -5969,6 +5798,23 @@ pub async fn delete_file_handler(
             ));
         }
     };
+
+    // The caller must be able to access the file's channel: participation
+    // for a DM channel, failing closed on lookup errors (SPEC-01 REQ-17(a)).
+    if !matches!(
+        state
+            .user_can_access_channel(user_id, file_metadata.channel_id)
+            .await,
+        Ok(true)
+    ) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "Not a member of this channel".into(),
+                code: 403,
+            }),
+        ));
+    }
 
     // Check permissions - only uploader or admin can delete
     let is_uploader = file_metadata.uploader_id == user_id;
@@ -6207,35 +6053,46 @@ pub async fn purge_channel_before_handler(
 
     let user_id = extract_user_from_header_or_token(&state, &headers, &params).await?;
 
-    // Authorize: a DM participant, or ManageChannels on the owning node.
-    let is_dm = state.db.is_dm_channel(channel_id).await.unwrap_or(false);
-    if is_dm {
-        match state.db.get_dm_channel(channel_id).await {
-            Ok(Some(dm)) if dm.user1_id == user_id || dm.user2_id == user_id => {}
-            _ => {
+    // Authorize: a DM participant, or ManageChannels on the owning node. One
+    // lookup decides "not a DM" or the DM's participants, and a lookup error
+    // denies (SPEC-01 REQ-17(c)).
+    match state.db.dm_participants(channel_id).await {
+        Ok(Some((user1, user2))) => {
+            if user1 != user_id && user2 != user_id {
                 return Err((
                     StatusCode::FORBIDDEN,
                     Json(ErrorResponse {
                         error: "Not a participant of this DM channel".into(),
                         code: 403,
                     }),
-                ))
+                ));
             }
         }
-    } else {
-        let node_id = match state.db.get_channel(channel_id).await {
-            Ok(Some(ch)) => ch.node_id,
-            _ => {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    Json(ErrorResponse {
-                        error: "Channel not found".into(),
-                        code: 404,
-                    }),
-                ))
-            }
-        };
-        check_node_permission(&state, user_id, node_id, Permission::ManageChannels).await?;
+        Err(e) => {
+            error!("DM lookup failed: {}", e);
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Failed to check channel access".into(),
+                    code: 500,
+                }),
+            ));
+        }
+        Ok(None) => {
+            let node_id = match state.db.get_channel(channel_id).await {
+                Ok(Some(ch)) => ch.node_id,
+                _ => {
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "Channel not found".into(),
+                            code: 404,
+                        }),
+                    ))
+                }
+            };
+            check_node_permission(&state, user_id, node_id, Permission::ManageChannels).await?;
+        }
     }
 
     let removed = state
@@ -6802,6 +6659,101 @@ pub async fn get_channel_threads_handler(
 
 // ── Message Pinning endpoints ──
 
+/// Why a pin or unpin was refused (REST and WS share the decision).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinDenied {
+    /// A lookup failed; the operation is denied (SPEC-01 REQ-17(c)).
+    LookupFailed,
+    ChannelNotFound,
+    NotParticipant,
+    NotMember,
+    NotModerator,
+}
+
+impl PinDenied {
+    fn message(self) -> &'static str {
+        match self {
+            PinDenied::LookupFailed => "Failed to check permissions",
+            PinDenied::ChannelNotFound => "Channel not found",
+            PinDenied::NotParticipant => "Not a participant of this DM channel",
+            PinDenied::NotMember => "Not a member of this node",
+            PinDenied::NotModerator => "Insufficient permissions. Admin or moderator required.",
+        }
+    }
+
+    fn status(self) -> StatusCode {
+        match self {
+            PinDenied::LookupFailed => StatusCode::INTERNAL_SERVER_ERROR,
+            PinDenied::ChannelNotFound => StatusCode::NOT_FOUND,
+            PinDenied::NotParticipant | PinDenied::NotMember | PinDenied::NotModerator => {
+                StatusCode::FORBIDDEN
+            }
+        }
+    }
+
+    fn into_rest(self) -> (StatusCode, Json<ErrorResponse>) {
+        let status = self.status();
+        (
+            status,
+            Json(ErrorResponse {
+                error: self.message().into(),
+                code: status.as_u16(),
+            }),
+        )
+    }
+}
+
+/// Who may pin or unpin messages in `channel_id`. In a DM channel, exactly
+/// its two participants, decided by the single DM lookup, and a lookup error
+/// denies (SPEC-01 REQ-17(a), (c)); node membership and markers grant
+/// nothing there (REQ-17(b)). In any other channel, an admin or moderator of
+/// the channel's node. Returns the node whose audit log records the pin, or
+/// `None` for a DM: the reserved node keeps no audit log.
+async fn authorize_pin(
+    state: &SharedState,
+    user_id: Uuid,
+    channel_id: Uuid,
+) -> Result<Option<Uuid>, PinDenied> {
+    match state.db.dm_participants(channel_id).await {
+        Ok(Some((user1, user2))) => {
+            return if user1 == user_id || user2 == user_id {
+                Ok(None)
+            } else {
+                Err(PinDenied::NotParticipant)
+            };
+        }
+        Ok(None) => {}
+        Err(e) => {
+            error!("DM lookup failed: {}", e);
+            return Err(PinDenied::LookupFailed);
+        }
+    }
+
+    let channel = match state.db.get_channel(channel_id).await {
+        Ok(Some(channel)) => channel,
+        Ok(None) => return Err(PinDenied::ChannelNotFound),
+        Err(e) => {
+            error!("Failed to get channel: {}", e);
+            return Err(PinDenied::LookupFailed);
+        }
+    };
+    let member = match state.db.get_node_member(channel.node_id, user_id).await {
+        Ok(Some(member)) => member,
+        Ok(None) => return Err(PinDenied::NotMember),
+        Err(e) => {
+            error!("Failed to get node member: {}", e);
+            return Err(PinDenied::LookupFailed);
+        }
+    };
+    if !matches!(
+        member.role,
+        crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
+    ) {
+        return Err(PinDenied::NotModerator);
+    }
+    Ok(Some(channel.node_id))
+}
+
 /// Pin a message (PUT /messages/:id/pin)
 pub async fn pin_message_handler(
     Path(message_id): Path<String>,
@@ -6850,73 +6802,11 @@ pub async fn pin_message_handler(
         }
     };
 
-    // Get the channel to find the node
-    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-        error!("Failed to get channel: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to get channel".into(),
-                code: 500,
-            }),
-        )
-    })?;
-
-    let channel = match channel {
-        Some(ch) => ch,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Channel not found".into(),
-                    code: 404,
-                }),
-            ));
-        }
-    };
-
-    // Check if user has admin/mod permissions
-    let member = state
-        .db
-        .get_node_member(channel.node_id, user_id)
+    // DM participants, or an admin or moderator of the channel's node
+    // (SPEC-01 REQ-17(a)); lookup errors deny.
+    let audit_node = authorize_pin(&state, user_id, channel_id)
         .await
-        .map_err(|e| {
-            error!("Failed to get node member: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to check permissions".into(),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    let member = match member {
-        Some(m) => m,
-        None => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Not a member of this node".into(),
-                    code: 403,
-                }),
-            ));
-        }
-    };
-
-    // Check if user has sufficient permissions (admin or moderator)
-    if !matches!(
-        member.role,
-        crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
-    ) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Insufficient permissions. Admin or moderator required.".into(),
-                code: 403,
-            }),
-        ));
-    }
+        .map_err(PinDenied::into_rest)?;
 
     // Pin the message
     let success = state
@@ -6949,16 +6839,18 @@ pub async fn pin_message_handler(
         "message_id": message_id,
         "channel_id": channel_id
     });
-    log_audit_event(
-        &state,
-        channel.node_id,
-        user_id,
-        "message_pin",
-        "message",
-        Some(message_id),
-        Some(&details.to_string()),
-    )
-    .await;
+    if let Some(node_id) = audit_node {
+        log_audit_event(
+            &state,
+            node_id,
+            user_id,
+            "message_pin",
+            "message",
+            Some(message_id),
+            Some(&details.to_string()),
+        )
+        .await;
+    }
 
     // Broadcast pin event to channel
     let pin_event = serde_json::json!({
@@ -7029,73 +6921,11 @@ pub async fn unpin_message_handler(
         }
     };
 
-    // Get the channel to find the node
-    let channel = state.db.get_channel(channel_id).await.map_err(|e| {
-        error!("Failed to get channel: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Failed to get channel".into(),
-                code: 500,
-            }),
-        )
-    })?;
-
-    let channel = match channel {
-        Some(ch) => ch,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: "Channel not found".into(),
-                    code: 404,
-                }),
-            ));
-        }
-    };
-
-    // Check if user has admin/mod permissions
-    let member = state
-        .db
-        .get_node_member(channel.node_id, user_id)
+    // DM participants, or an admin or moderator of the channel's node
+    // (SPEC-01 REQ-17(a)); lookup errors deny.
+    let audit_node = authorize_pin(&state, user_id, channel_id)
         .await
-        .map_err(|e| {
-            error!("Failed to get node member: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to check permissions".into(),
-                    code: 500,
-                }),
-            )
-        })?;
-
-    let member = match member {
-        Some(m) => m,
-        None => {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ErrorResponse {
-                    error: "Not a member of this node".into(),
-                    code: 403,
-                }),
-            ));
-        }
-    };
-
-    // Check if user has sufficient permissions (admin or moderator)
-    if !matches!(
-        member.role,
-        crate::node::NodeRole::Admin | crate::node::NodeRole::Moderator
-    ) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "Insufficient permissions. Admin or moderator required.".into(),
-                code: 403,
-            }),
-        ));
-    }
+        .map_err(PinDenied::into_rest)?;
 
     // Unpin the message
     let success = state.db.unpin_message(message_id).await.map_err(|e| {
@@ -7124,16 +6954,18 @@ pub async fn unpin_message_handler(
         "message_id": message_id,
         "channel_id": channel_id
     });
-    log_audit_event(
-        &state,
-        channel.node_id,
-        user_id,
-        "message_unpin",
-        "message",
-        Some(message_id),
-        Some(&details.to_string()),
-    )
-    .await;
+    if let Some(node_id) = audit_node {
+        log_audit_event(
+            &state,
+            node_id,
+            user_id,
+            "message_unpin",
+            "message",
+            Some(message_id),
+            Some(&details.to_string()),
+        )
+        .await;
+    }
 
     // Broadcast unpin event to channel
     let unpin_event = serde_json::json!({
@@ -7242,6 +7074,17 @@ pub async fn send_friend_request_handler(
             Json(ErrorResponse {
                 error: "Cannot send friend request to yourself".into(),
                 code: 400,
+            }),
+        ));
+    }
+
+    // The reserved user is treated as nonexistent (SPEC-01 REQ-16).
+    if crate::admission::is_reserved_user(request.to_user_id) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Target user not found".into(),
+                code: 404,
             }),
         ));
     }
@@ -7761,6 +7604,17 @@ pub async fn create_dm_channel_handler(
         )
     })?;
 
+    // The reserved user can never be a DM participant (SPEC-01 REQ-16).
+    if crate::admission::is_reserved_user(target_user_id) {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Target user not found".into(),
+                code: 404,
+            }),
+        ));
+    }
+
     // Check if target user exists
     let target_user = state.db.get_user_by_id(target_user_id).await.map_err(|e| {
         error!("Failed to get target user: {}", e);
@@ -7886,10 +7740,7 @@ pub async fn create_dm_channel_handler(
             )
         })?;
 
-    info!(
-        "Created/got DM channel {} between {} and {}",
-        dm_channel.id, user_id, target_user_id
-    );
+    tracing::debug!("Created or found a DM channel");
     Ok(Json(dm_channel))
 }
 
@@ -8244,19 +8095,20 @@ pub async fn list_roles_handler(
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    // The reserved node and a missing node are refused (REQ-7, SHOULD).
+    admission::require_live_node(&state, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
 
     let roles = state.db.get_node_roles(node_id).await.map_err(|e| {
+        tracing::error!("Failed to get roles: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: {
-                    tracing::error!("Failed to get roles: {}", e);
-                    "Internal server error".to_string()
-                },
-                code: 500,
-            }),
+            Json(ApiErrorResponse::plain(500, "Internal server error")),
         )
     })?;
 
@@ -8501,20 +8353,24 @@ pub async fn get_member_roles_handler(
     Path((node_id, target_user_id)): Path<(Uuid, Uuid)>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    // The reserved node and a missing node are refused (REQ-7, SHOULD).
+    admission::require_live_node(&state, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
 
     let roles = state
         .db
         .get_member_roles(node_id, target_user_id)
         .await
         .map_err(|e| {
+            tracing::error!("Failed to get member roles: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                    code: 500,
-                }),
+                Json(ApiErrorResponse::plain(500, "Internal server error")),
             )
         })?;
 
@@ -8887,6 +8743,10 @@ pub struct ImportTemplateSummary {
     pub voice_channels_created: u32,
     pub overwrites_created: u32,
     pub unsupported_permissions_stripped: Vec<String>,
+    /// Permission bits of the template's @everyone role that the import did
+    /// not write, because only SAFE_EVERYONE bits may reach @everyone
+    /// (SPEC-01 REQ-49).
+    pub everyone_permissions_stripped: Vec<String>,
 }
 
 /// Discord permission bit names for bits we do NOT support (for the import summary).
@@ -9029,6 +8889,7 @@ pub async fn import_discord_template_handler(
         voice_channels_created: 0,
         overwrites_created: 0,
         unsupported_permissions_stripped: Vec::new(),
+        everyone_permissions_stripped: Vec::new(),
     };
 
     // Track stripped bits across the whole import (deduplicated)
@@ -9114,8 +8975,20 @@ pub async fn import_discord_template_handler(
         let unicode_emoji = role_val.get("unicode_emoji").and_then(|v| v.as_str());
 
         if discord_id == 0 {
-            // Update the existing @everyone role — ensure minimum permissions
-            let everyone_perms = masked_perms | crate::models::permission_bits::DEFAULT_EVERYONE;
+            // Update the existing @everyone role with only the safe bits plus
+            // the defaults: an import never grants admission authority
+            // (CREATE_INVITE), ADMINISTRATOR or any other privileged bit to
+            // every member (SPEC-01 REQ-49). The owner can grant them later.
+            use crate::models::permission_bits::{name, DEFAULT_EVERYONE, SAFE_EVERYONE};
+            let everyone_perms = (masked_perms & SAFE_EVERYONE) | DEFAULT_EVERYONE;
+            let stripped = masked_perms & !SAFE_EVERYONE;
+            for bit in 0..64 {
+                if stripped & (1u64 << bit) != 0 {
+                    summary
+                        .everyone_permissions_stripped
+                        .push(name(1u64 << bit).to_string());
+                }
+            }
             if let Some(ref ev) = everyone_role {
                 role_id_map.insert(0, ev.id);
                 state
@@ -9938,19 +9811,20 @@ pub async fn list_custom_emojis_handler(
     Path(node_id): Path<Uuid>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let _user_id = extract_user_from_token(&state, &headers, &params).await?;
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let _user_id = extract_user_from_token(&state, &headers, &params)
+        .await
+        .map_err(auth_error)?;
+    // The reserved node and a missing node are refused (REQ-7, SHOULD).
+    admission::require_live_node(&state, node_id)
+        .await
+        .map_err(AdmissionError::into_rest)?;
 
     let emojis = state.db.list_custom_emojis(node_id).await.map_err(|e| {
+        tracing::error!("Failed to list emojis: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: {
-                    tracing::error!("Failed to list emojis: {}", e);
-                    "Internal server error".to_string()
-                },
-                code: 500,
-            }),
+            Json(ApiErrorResponse::plain(500, "Internal server error")),
         )
     })?;
 
@@ -10357,7 +10231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn join_nonexistent_node_returns_400() {
+    async fn join_nonexistent_node_returns_404() {
         let state = make_state().await;
         let (_, token) = register_and_auth(&state, "join_ghost_key").await;
 
@@ -10367,12 +10241,13 @@ mod tests {
             Path(ghost_node),
             auth_header(&token),
             Query(no_params()),
-            None,
+            Bytes::new(),
         )
         .await;
 
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, Json(body)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body.reason.as_deref(), Some("node_not_found"));
     }
 
     #[tokio::test]
@@ -10518,7 +10393,9 @@ mod tests {
         // We need to get the member's user_id from the token, so re-register & join
         let (member_id2, member_token2) =
             register_and_auth(&state, "update_node_member_key2").await;
-        state.join_node(member_id2, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, member_id2)
+            .await
+            .unwrap();
 
         let request = serde_json::json!({ "name": "HackedName" });
         let result = update_node_handler(
@@ -10574,6 +10451,7 @@ mod tests {
             Path("!!!invalid!!!".to_string()),
             auth_header(&token),
             Query(no_params()),
+            Bytes::new(),
         )
         .await;
 
@@ -10590,6 +10468,7 @@ mod tests {
             Path("ABCDEFGH".to_string()),
             no_auth_header(),
             Query(no_params()),
+            Bytes::new(),
         )
         .await;
 
@@ -10602,7 +10481,8 @@ mod tests {
         let state = make_state().await;
 
         // Invalid characters in invite code
-        let result = invite_preview_handler(State(state), Path("../etc/passwd".to_string())).await;
+        let result =
+            invite_preview_handler(State(state), Path("../etc/passwd".to_string()), None).await;
 
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -10613,7 +10493,7 @@ mod tests {
         let state = make_state().await;
 
         // Valid format but doesn't exist in DB
-        let result = invite_preview_handler(State(state), Path("ABCDEFGH".to_string())).await;
+        let result = invite_preview_handler(State(state), Path("ABCDEFGH".to_string()), None).await;
 
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -10715,8 +10595,12 @@ mod tests {
             .await
             .unwrap();
 
-        state.join_node(member_id, node.id).await.unwrap();
-        state.join_node(target_id, node.id).await.unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, member_id)
+            .await
+            .unwrap();
+        crate::test_support::admit_with_owner_invite(&state, node.id, target_id)
+            .await
+            .unwrap();
 
         let request = crate::models::BanUserRequest {
             public_key_hash: "some_hash".into(),

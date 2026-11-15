@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api, generateInviteLink } from './api';
 import { Icon } from './components/Icon';
-import { Node, AuditLogEntry, Role, CustomEmoji, BatchMemberEntry } from './types';
+import { Node, AuditLogEntry, Role, CustomEmoji, BatchMemberEntry, InviteListItem } from './types';
+import { admissionErrorMessage, inviteCreateErrorMessage } from './admission';
+import { errorReason } from './apiError';
 import {
   RETENTION_PRESETS,
   getNodeRetention,
@@ -17,17 +19,19 @@ import {
   type AutoModEntry,
 } from './retention';
 
-interface Invite {
-  code: string;
-  created_at: number;
-  max_uses?: number;
-  expires_at?: number;
-  uses: number;
-}
+type Invite = InviteListItem;
+
+/**
+ * The lifetime a new invite gets unless the creator changes it. "Never" is an
+ * explicit choice; the relay has no default lifetime (SPEC-01 Q7, OD-17).
+ */
+const DEFAULT_INVITE_HOURS = '24';
 
 interface NodeSettingsProps {
   isOpen: boolean;
   onClose: () => void;
+  /** The relay's capability tokens from the socket's `hello` (SPEC-01 §6.8). */
+  relayFeatures?: readonly string[];
   node: Node;
   token: string;
   userRole: 'admin' | 'moderator' | 'member';
@@ -42,6 +46,7 @@ interface NodeSettingsProps {
 export function NodeSettings({ 
   isOpen, 
   onClose, 
+  relayFeatures,
   node, 
   token, 
   userRole, 
@@ -72,7 +77,8 @@ export function NodeSettings({
   // Create invite state
   const [showCreateInvite, setShowCreateInvite] = useState(false);
   const [maxUses, setMaxUses] = useState<string>('');
-  const [expiresHours, setExpiresHours] = useState<string>('');
+  const [expiresHours, setExpiresHours] = useState<string>(DEFAULT_INVITE_HOURS);
+  const [neverExpires, setNeverExpires] = useState(false);
   const [creatingInvite, setCreatingInvite] = useState(false);
 
   // Roles state
@@ -254,7 +260,13 @@ export function NodeSettings({
       setKickConfirmUserId(null);
       await loadMembers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to kick member');
+      if (errorReason(err) === 'not_member') {
+        // Already gone on the relay (SPEC-01 §8): refresh the member list.
+        setKickConfirmUserId(null);
+        await loadMembers();
+      } else {
+        setError(admissionErrorMessage(err, 'Failed to kick member'));
+      }
     }
   }, [node.id, token, loadMembers]);
 
@@ -313,35 +325,47 @@ export function NodeSettings({
     { bit: 1 << 3,  label: 'Administrator', desc: 'Full access — bypasses all permission checks' },
   ];
 
+  const resetInviteForm = useCallback(() => {
+    setMaxUses('');
+    setExpiresHours(DEFAULT_INVITE_HOURS);
+    setNeverExpires(false);
+  }, []);
+
   const handleCreateInvite = useCallback(async () => {
+    // An empty lifetime is not "never": that is the explicit checkbox.
+    const expiresHoursNum = neverExpires ? undefined : parseFloat(expiresHours);
+    if (expiresHoursNum !== undefined && !(Number.isFinite(expiresHoursNum) && expiresHoursNum > 0)) {
+      setError('Enter how many hours the invite lasts, or choose Never');
+      return;
+    }
     setCreatingInvite(true);
     setError('');
     try {
       const maxUsesNum = maxUses ? parseInt(maxUses, 10) : undefined;
-      const expiresHoursNum = expiresHours ? parseInt(expiresHours, 10) : undefined;
-      await api.createInviteWithOptions(node.id, token, maxUsesNum, expiresHoursNum);
+      // Sent as `expires_in_seconds` to relays with admission/1 (SPEC-01 REQ-43).
+      await api.createInviteWithOptions(node.id, token, maxUsesNum, expiresHoursNum, relayFeatures);
       setSuccess('Invite created successfully!');
-      setMaxUses('');
-      setExpiresHours('');
+      resetInviteForm();
       setShowCreateInvite(false);
       await loadInvites();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to create invite');
+      setError(inviteCreateErrorMessage(error));
     } finally {
       setCreatingInvite(false);
     }
-  }, [node.id, token, maxUses, expiresHours, loadInvites]);
+  }, [node.id, token, maxUses, expiresHours, neverExpires, loadInvites, relayFeatures, resetInviteForm]);
 
-  const handleRevokeInvite = useCallback(async (inviteCode: string) => {
+  // Revoke by invite id (DELETE /invites/:id, SPEC-01 REQ-38).
+  const handleRevokeInvite = useCallback(async (inviteId: string) => {
     if (!confirm('Are you sure you want to revoke this invite?')) return;
     try {
-      await api.revokeInvite(node.id, inviteCode, token);
+      await api.revokeInvite(inviteId, token);
       setSuccess('Invite revoked successfully!');
       await loadInvites();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to revoke invite');
     }
-  }, [node.id, token, loadInvites]);
+  }, [token, loadInvites]);
 
   const loadAuditLog = useCallback(async (reset: boolean = false) => {
     if (!canViewAuditLog) return;
@@ -537,7 +561,14 @@ export function NodeSettings({
       setSuccess('Left Node successfully!');
       setTimeout(() => { onLeaveNode?.(); onClose(); }, 1000);
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to leave node');
+      if (errorReason(error) === 'not_member') {
+        // No longer a member: refresh the node list so the node disappears.
+        onLeaveNode?.();
+        onClose();
+      } else {
+        // `owner_cannot_leave`, `rate_limited` and the rest map to SPEC-01 §8.
+        setError(admissionErrorMessage(error, 'Failed to leave node'));
+      }
     }
   }, [isAdmin, node.id, token, onLeaveNode, onClose]);
 
@@ -575,7 +606,7 @@ export function NodeSettings({
   };
 
   const isInviteMaxedOut = (invite: Invite): boolean => {
-    return !!(invite.max_uses && invite.uses >= invite.max_uses);
+    return !!(invite.max_uses && invite.current_uses >= invite.max_uses);
   };
 
   useEffect(() => {
@@ -937,15 +968,18 @@ export function NodeSettings({
                         <input type="number" className="ns-input" placeholder="∞" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} min="1" max="100" />
                       </div>
                       <div style={{ flex: 1 }}>
-                        <label className="ns-label">Expires in (hours)</label>
-                        <input type="number" className="ns-input" placeholder="Never" value={expiresHours} onChange={(e) => setExpiresHours(e.target.value)} min="1" max="8760" />
+                        <label className="ns-label" htmlFor="ns-invite-expires-hours">Expires in (hours)</label>
+                        <input id="ns-invite-expires-hours" type="number" className="ns-input" placeholder={DEFAULT_INVITE_HOURS} value={neverExpires ? '' : expiresHours} onChange={(e) => setExpiresHours(e.target.value)} min="0.1" max="8760" step="any" disabled={neverExpires} />
+                        <label className="ns-perm-item" style={{ marginTop: 6 }}>
+                          <input type="checkbox" checked={neverExpires} onChange={(e) => setNeverExpires(e.target.checked)} /> Never expires
+                        </label>
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="ns-btn ns-btn-success" onClick={handleCreateInvite} disabled={creatingInvite}>
                         {creatingInvite ? 'Creating...' : 'Create'}
                       </button>
-                      <button className="ns-btn ns-btn-ghost" onClick={() => { setShowCreateInvite(false); setMaxUses(''); setExpiresHours(''); }} disabled={creatingInvite}>
+                      <button className="ns-btn ns-btn-ghost" onClick={() => { setShowCreateInvite(false); resetInviteForm(); }} disabled={creatingInvite}>
                         Cancel
                       </button>
                     </div>
@@ -965,21 +999,21 @@ export function NodeSettings({
                     const maxedOut = isInviteMaxedOut(invite);
                     const isInactive = expired || maxedOut;
                     return (
-                      <div key={invite.code} className={`ns-invite-card ${isInactive ? 'inactive' : ''}`}>
+                      <div key={invite.id || invite.invite_code} className={`ns-invite-card ${isInactive ? 'inactive' : ''}`}>
                         <div className="ns-invite-header">
-                          <code className="ns-invite-code" title={getInviteLink(invite.code)}>{invite.code}</code>
+                          <code className="ns-invite-code" title={getInviteLink(invite.invite_code)}>{invite.invite_code}</code>
                           <div style={{ display: 'flex', gap: 8 }}>
-                            <button className="ns-btn ns-btn-primary" onClick={() => copyInviteCode(invite.code)} disabled={isInactive} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
+                            <button className="ns-btn ns-btn-primary" onClick={() => copyInviteCode(invite.invite_code)} disabled={isInactive} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
                               Copy
                             </button>
-                            <button className="ns-btn ns-btn-danger" onClick={() => handleRevokeInvite(invite.code)} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
+                            <button className="ns-btn ns-btn-danger" onClick={() => handleRevokeInvite(invite.id)} style={{ padding: '4px 8px', fontSize: 'var(--font-sm)' }}>
                               Revoke
                             </button>
                           </div>
                         </div>
                         <div className="ns-invite-meta">
                           <span>Created: {formatDate(invite.created_at)}</span>
-                          <span>Uses: {invite.uses}{invite.max_uses ? `/${invite.max_uses}` : ''}</span>
+                          <span>Uses: {invite.current_uses}{invite.max_uses ? `/${invite.max_uses}` : ''}</span>
                           {invite.expires_at && (
                             <span style={{ color: expired ? 'var(--red)' : 'var(--text-muted)' }}>
                               {expired ? 'Expired: ' : 'Expires: '}{formatDate(invite.expires_at)}

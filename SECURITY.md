@@ -29,6 +29,10 @@ Files are encrypted before upload, but with a key derived only from the channel 
 - **Relay mode (the default):** relay-mode voice is readable by the relay operator. Audio frames are encrypted with AES-256-GCM, but each participant's key is sent through the relay in a form the relay can read, so the operator can listen to calls and inject audio into them.
 - **P2P mode and screen sharing:** P2P voice and P2P screen sharing reveal your IP address to the other participants, and they can be intercepted by the relay. They connect participants directly through browser WebRTC (DTLS-SRTP), and the connection setup passes through the relay without any check that the keys belong to the other participants. A channel's voice mode can be changed by other users, so joining any voice channel can expose your IP address this way, even if you did not choose P2P mode. These connections also contact public STUN servers run by Google, which learn your IP address; starting a screen share does this even in relay mode.
 
+### Node membership is enforced by the relay, not by members' clients
+
+The relay decides who may join a node: only with a valid invite, an approved join request, or as the node's owner (see [GOVERNANCE.md](GOVERNANCE.md#admission-is-enforced-by-the-relay)). This protects a node from other users of an honest relay. It does not protect against a malicious relay operator, who can add members, and clients still send group keys to whichever members the relay lists. Invite codes are bearer secrets: anyone holding a valid code can join until it expires, runs out or is revoked. Members who joined a node by its id before the relay enforced admission are still members until an owner removes them.
+
 ### A malicious relay can intercept encrypted sessions when they are set up
 
 Until identity verification ships, a malicious relay can intercept end-to-end-encrypted (Double Ratchet) sessions when they are set up, by substituting keys. Prekeys are not signed, identity keys are not bound to accounts, and clients neither remember a contact's keys nor offer safety numbers to compare, so neither side can tell that the relay handed out its own keys instead of the contact's. A relay that does this can read and alter everything sent over the intercepted session. Channel keys (Sender Keys) and Node Metadata Keys are sent to other members over these sessions, so a relay that intercepts a session can also obtain the keys sent through it.
@@ -77,13 +81,14 @@ Keys rotate with every message via the Double Ratchet. Compromising a single mes
 - **Relay-mode voice audio** — the relay receives the voice keys (see [Known Limitations](#known-limitations))
 - Which channel each message and file belongs to (channel IDs are stored in the clear; channel names are encrypted)
 - Role names, role permission values, and which members hold which roles
+- **Node membership, invites and join requests** — the relay enforces admission, so it knows which accounts are members of which node, holds each node's invite codes and bans, and sees who asked to join which node (pending join requests, kept for up to 14 days)
 - IP addresses of connected clients — standard for any network service. The relay owner keeps a node-correlation-free connection log for DoS/DDoS defense and IP bans; IPs are **never** linked to nodes in that log and are not shown to node owners. P2P voice and P2P screen sharing do reveal IP addresses to the other participants (see [Known Limitations](#known-limitations))
 
 ### ❌ The relay **cannot** see:
 - Message contents
 - Display names, avatars, or profile information (encrypted per-Node)
 - Per-node policy (disappearing-message retention, screenshot protection, word filters) — carried in the NMK-encrypted settings blob
-- Per-node governance (kicks, bans, role changes) — there is no relay-level audit aggregate and no user roster
+- Why someone was banned (ban reasons are encrypted). The relay stores and enforces memberships, bans and roles, but there is no relay-level audit aggregate and no user roster in the admin surface
 
 This list assumes a relay that follows the protocol. A malicious relay can read message contents, and anything protected by keys sent over an intercepted session, by intercepting sessions when they are set up (see [Known Limitations](#known-limitations)).
 

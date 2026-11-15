@@ -6,20 +6,10 @@
 //! - Channel management (update, reorder, list overwrites, mark read)
 #![allow(clippy::all, unused_imports, dead_code)]
 
-use axum::{
-    routing::{delete, get, patch, post, put},
-    Router,
-};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
 use uuid::Uuid;
 
 use accord_server::{
@@ -41,120 +31,8 @@ impl TestServer {
     async fn new() -> Self {
         let state: SharedState = Arc::new(AppState::new_in_memory().await.unwrap());
 
-        let app = Router::new()
-            // Auth
-            .route("/register", post(register_handler))
-            .route("/auth", post(auth_handler))
-            // Nodes
-            .route(
-                "/nodes",
-                get(list_user_nodes_handler).post(create_node_handler),
-            )
-            .route("/nodes/:id", get(get_node_handler))
-            .route("/nodes/:id", axum::routing::patch(update_node_handler))
-            .route(
-                "/nodes/:id/channels",
-                get(list_node_channels_handler).post(create_channel_handler),
-            )
-            .route("/nodes/:id/join", post(join_node_handler))
-            .route("/nodes/:id/leave", post(leave_node_handler))
-            .route("/nodes/:id/members", get(get_node_members_handler))
-            .route("/nodes/:id/members/:user_id", delete(kick_user_handler))
-            // Roles
-            .route(
-                "/nodes/:id/roles",
-                get(list_roles_handler).post(create_role_handler),
-            )
-            .route(
-                "/nodes/:id/roles/reorder",
-                axum::routing::patch(reorder_roles_handler),
-            )
-            .route(
-                "/nodes/:id/roles/:role_id",
-                axum::routing::patch(update_role_handler).delete(delete_role_handler),
-            )
-            // Member roles
-            .route(
-                "/nodes/:id/members/:user_id/roles",
-                get(get_member_roles_handler),
-            )
-            .route(
-                "/nodes/:id/members/:user_id/roles/:role_id",
-                axum::routing::put(assign_member_role_handler).delete(remove_member_role_handler),
-            )
-            // Channel management
-            .route(
-                "/nodes/:id/channels/reorder",
-                axum::routing::put(reorder_channels_handler),
-            )
-            .route(
-                "/channels/:id",
-                axum::routing::patch(update_channel_handler).delete(delete_channel_handler),
-            )
-            .route("/channels/:id/messages", get(get_channel_messages_handler))
-            .route(
-                "/channels/:id/slow-mode",
-                axum::routing::put(set_slow_mode_handler).get(get_slow_mode_handler),
-            )
-            .route("/channels/:id/pins", get(get_pinned_messages_handler))
-            .route("/channels/:id/read", post(mark_channel_read_handler))
-            .route("/channels/:id/threads", get(get_channel_threads_handler))
-            .route(
-                "/channels/:id/permissions",
-                get(list_channel_overwrites_handler),
-            )
-            .route(
-                "/channels/:id/permissions/:role_id",
-                axum::routing::put(set_channel_overwrite_handler)
-                    .delete(delete_channel_overwrite_handler),
-            )
-            .route(
-                "/channels/:id/effective-permissions",
-                get(get_effective_permissions_handler),
-            )
-            // Message endpoints
-            .route(
-                "/messages/:id/pin",
-                axum::routing::put(pin_message_handler).delete(unpin_message_handler),
-            )
-            .route("/messages/:id/thread", get(get_message_thread_handler))
-            // Invites
-            .route(
-                "/nodes/:id/invites",
-                post(create_invite_handler).get(list_invites_handler),
-            )
-            .route("/invites/:invite_id", delete(revoke_invite_handler))
-            .route("/invites/:code/preview", get(invite_preview_handler))
-            .route("/invites/:code/join", post(use_invite_handler))
-            // Categories
-            .route(
-                "/nodes/:id/categories",
-                post(create_channel_category_handler),
-            )
-            .route(
-                "/categories/:id",
-                patch(update_channel_category_handler).delete(delete_channel_category_handler),
-            )
-            .with_state(state.clone())
-            .layer(
-                ServiceBuilder::new()
-                    .layer(TraceLayer::new_for_http())
-                    .layer(
-                        CorsLayer::new()
-                            .allow_methods(Any)
-                            .allow_headers(Any)
-                            .allow_origin(Any),
-                    ),
-            );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base_url = format!("http://{}", addr);
-
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The production route table and middleware (SPEC-01 §10.1).
+        let base_url = accord_server::test_support::spawn_relay(state.clone()).await;
 
         Self {
             base_url,
@@ -224,17 +102,18 @@ impl TestServer {
         Uuid::parse_str(body["id"].as_str().unwrap()).unwrap()
     }
 
+    /// Make the holder of `token` a member of `node_id` through the real
+    /// admission path: the node's owner creates an invite and `token`
+    /// redeems it (SPEC-01 REQ-18).
     async fn join_node(&self, token: &str, node_id: Uuid) {
-        let resp = self
-            .client
-            .post(&format!(
-                "{}/nodes/{}/join?token={}",
-                self.base_url, node_id, token
-            ))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200, "join_node failed");
+        accord_server::test_support::join_with_owner_invite(
+            &self.client,
+            &self.base_url,
+            &self.state,
+            token,
+            node_id,
+        )
+        .await;
     }
 
     /// Create a role in a node, return role_id.

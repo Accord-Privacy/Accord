@@ -3,6 +3,7 @@ import { useAppContext } from "./AppContext";
 import { Icon } from "./Icon";
 import { avatarColor } from "../avatarColor";
 import { api, parseInviteLink } from "../api";
+import { redeemInvite, joinErrorMessage, isPreviewUnavailable } from "../admission";
 import { verifyBuildHash, getTrustIndicator } from "../buildHash";
 import { notificationManager } from "../notifications";
 import { renderMessageMarkdown } from "../markdown";
@@ -221,6 +222,10 @@ export const ChatArea: React.FC = () => {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
+  // The preview failed for a reason that says nothing about the invite (rate
+  // limited, or no answer at all): Join stays available and redeems the
+  // pasted code directly (SPEC-01 REQ-43).
+  const [previewUnavailable, setPreviewUnavailable] = useState(false);
 
   const handlePreviewInvite = useCallback(async () => {
     const input = ctx.inviteLinkInput?.trim();
@@ -232,15 +237,50 @@ export const ChatArea: React.FC = () => {
     }
     setPreviewLoading(true);
     setPreviewError("");
+    setPreviewUnavailable(false);
     try {
       const preview = await api.previewInvite(parsed.relayUrl, parsed.inviteCode);
       setInvitePreview(preview);
     } catch (e: any) {
-      setPreviewError(e.message || "Failed to fetch invite preview");
+      if (isPreviewUnavailable(e)) {
+        setPreviewUnavailable(true);
+      } else {
+        setPreviewError(joinErrorMessage(e, "Failed to fetch invite preview"));
+      }
     } finally {
       setPreviewLoading(false);
     }
   }, [ctx.inviteLinkInput]);
+
+  // Redeem the pasted invite. With a preview, its node id gives the
+  // node-scoped device fingerprint; without one the code is redeemed as is.
+  const handleJoinInvite = useCallback(async () => {
+    const input = ctx.inviteLinkInput?.trim();
+    if (!input) return;
+    const parsed = parseInviteLink(input);
+    const code = parsed ? parsed.inviteCode : input;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const token = ctx.appState.token;
+      if (!token) {
+        setPreviewError("Not authenticated");
+        return;
+      }
+      api.setToken(token);
+      // `already_member` is a success hint: the node just opens.
+      await redeemInvite(api, code, token, { nodeId: invitePreview?.node_id, preview: false });
+      // Success — clear everything
+      setInvitePreview(null);
+      setPreviewUnavailable(false);
+      ctx.setInviteLinkInput('');
+      if (ctx.loadNodes) ctx.loadNodes();
+    } catch (e: any) {
+      setPreviewError(joinErrorMessage(e));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [ctx.inviteLinkInput, ctx.appState.token, invitePreview]);
 
   // Empty state: no nodes joined yet
   if (ctx.nodes.length === 0 && !ctx.selectedDmChannel) {
@@ -286,31 +326,32 @@ export const ChatArea: React.FC = () => {
                   <button
                     className="btn btn-primary btn-auto-width"
                     disabled={previewLoading}
-                    onClick={async () => {
-                      const input = ctx.inviteLinkInput?.trim();
-                      if (!input) return;
-                      const parsed = parseInviteLink(input);
-                      const code = parsed ? parsed.inviteCode : input;
-                      setPreviewLoading(true);
-                      setPreviewError("");
-                      try {
-                        let token = ctx.appState.token;
-                        if (!token) {
-                          setPreviewError("Not authenticated");
-                          return;
-                        }
-                        api.setToken(token);
-                        await api.joinNodeByInvite(code, token);
-                        // Success — clear everything
-                        setInvitePreview(null);
-                        ctx.setInviteLinkInput('');
-                        if (ctx.loadNodes) ctx.loadNodes();
-                      } catch (e: any) {
-                        setPreviewError(e.message || "Failed to join node");
-                      } finally {
-                        setPreviewLoading(false);
-                      }
-                    }}
+                    onClick={handleJoinInvite}
+                  >
+                    {previewLoading ? 'Joining...' : 'Join'}
+                  </button>
+                </div>
+              </>
+            ) : previewUnavailable ? (
+              <>
+                <h2 className="welcome-title">Preview unavailable</h2>
+                <p className="welcome-subtitle">
+                  The invite preview could not be loaded right now. You can still join with this invite.
+                </p>
+                {previewError && (
+                  <p className="welcome-error">{previewError}</p>
+                )}
+                <div className="welcome-card-actions">
+                  <button
+                    className="btn btn-outline btn-auto-width"
+                    onClick={() => { setPreviewUnavailable(false); setPreviewError(""); }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary btn-auto-width"
+                    disabled={previewLoading}
+                    onClick={handleJoinInvite}
                   >
                     {previewLoading ? 'Joining...' : 'Join'}
                   </button>

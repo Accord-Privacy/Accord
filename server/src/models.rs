@@ -45,6 +45,18 @@ pub mod permission_bits {
         | EMBED_LINKS
         | ATTACH_FILES;
 
+    /// The only bits a template import may write to @everyone (SPEC-01
+    /// REQ-49). They grant neither admission authority (`CREATE_INVITE`) nor
+    /// administration; the owner grants such bits afterwards, deliberately.
+    pub const SAFE_EVERYONE: u64 = VIEW_CHANNEL
+        | SEND_MESSAGES
+        | READ_MESSAGE_HISTORY
+        | ADD_REACTIONS
+        | EMBED_LINKS
+        | ATTACH_FILES
+        | CONNECT
+        | SPEAK;
+
     /// All Phase 1 permission bits OR'd together (for masking)
     pub const ALL_PERMISSIONS: u64 = CREATE_INVITE
         | KICK_MEMBERS
@@ -451,8 +463,17 @@ pub enum WsMessageType {
         name: String,
         description: Option<String>,
     },
-    /// Join an existing Node
-    JoinNode { node_id: Uuid },
+    /// Join an existing Node (SPEC-01 REQ-21). Old clients send only
+    /// `node_id`; the optional fields default to absent.
+    JoinNode {
+        node_id: Uuid,
+        /// An invite code of this node, consumed as the grant.
+        #[serde(default)]
+        invite_code: Option<String>,
+        /// Node-scoped device fingerprint, 64 lowercase hex characters.
+        #[serde(default)]
+        device_fingerprint_hash: Option<String>,
+    },
     /// Leave a Node
     LeaveNode { node_id: Uuid },
     /// Request Node info
@@ -809,11 +830,15 @@ pub struct NodeInvite {
     pub created_at: u64,
 }
 
-/// Create Node invite request
-#[derive(Debug, Deserialize)]
-pub struct CreateInviteRequest {
-    pub max_uses: Option<u32>,
-    pub expires_in_hours: Option<u32>,
+/// One pending join request as approvers list it
+/// (`GET /nodes/:id/join-requests`, SPEC-01 REQ-31).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRequestInfo {
+    pub user_id: Uuid,
+    pub public_key_hash: String,
+    pub display_name: Option<String>,
+    pub created_at: u64,
+    pub expires_at: u64,
 }
 
 /// Create Node invite response
@@ -868,6 +893,9 @@ pub struct ApiErrorResponse {
     pub code: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Seconds until a rate-limited request may be retried (`rate_limited`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<u64>,
 }
 
 impl ApiErrorResponse {
@@ -877,6 +905,7 @@ impl ApiErrorResponse {
             error: error.into(),
             code,
             reason: None,
+            retry_after: None,
         }
     }
 
@@ -886,6 +915,7 @@ impl ApiErrorResponse {
             error: error.into(),
             code,
             reason: Some(reason.to_string()),
+            retry_after: None,
         }
     }
 }
@@ -896,6 +926,7 @@ impl From<ErrorResponse> for ApiErrorResponse {
             error: e.error,
             code: e.code,
             reason: None,
+            retry_after: None,
         }
     }
 }
@@ -933,6 +964,13 @@ pub struct HealthResponse {
     pub database_ok: bool,
     pub websocket_connections: usize,
     pub memory_usage_bytes: u64,
+    /// The relay capability registry (SPEC-01 §6.8, REQ-42). Clients test
+    /// membership only.
+    pub features: Vec<String>,
+    /// When this relay began enforcing admission, in Unix seconds: the
+    /// `applied_at` of the `spec01_legacy_invite_expiry` ledger row, T0 of
+    /// REQ-46 (SPEC-01 REQ-42). An unauthenticated hint only.
+    pub admission_since: Option<u64>,
 }
 
 /// User profile information
@@ -1921,10 +1959,14 @@ mod tests {
     #[test]
     fn ws_message_type_roundtrip_with_data() {
         let id = uuid::Uuid::nil();
-        let original = WsMessageType::JoinNode { node_id: id };
+        let original = WsMessageType::JoinNode {
+            node_id: id,
+            invite_code: None,
+            device_fingerprint_hash: None,
+        };
         let json = serde_json::to_string(&original).unwrap();
         let back: WsMessageType = serde_json::from_str(&json).unwrap();
-        assert!(matches!(back, WsMessageType::JoinNode { node_id } if node_id == id));
+        assert!(matches!(back, WsMessageType::JoinNode { node_id, .. } if node_id == id));
     }
 
     // ── Serde round-trips for key request/response types ──
@@ -1968,11 +2010,15 @@ mod tests {
             database_ok: true,
             websocket_connections: 42,
             memory_usage_bytes: 1024,
+            features: vec!["admission/1".into()],
+            admission_since: Some(1_700_000_000),
         };
         let json = serde_json::to_string(&resp).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["status"], "ok");
         assert_eq!(v["database_ok"], true);
         assert_eq!(v["websocket_connections"], 42);
+        assert_eq!(v["features"], serde_json::json!(["admission/1"]));
+        assert_eq!(v["admission_since"], 1_700_000_000u64);
     }
 }

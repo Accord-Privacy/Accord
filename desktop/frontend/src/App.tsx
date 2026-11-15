@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay, probeServerUrl } from "./api";
+import { registerAdmissionHandlers, redeemInvite, joinErrorMessage, inviteCreateErrorMessage, admissionErrorMessage } from "./admission";
+import { errorReason } from "./apiError";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry, PresenceStatus } from "./types";
 import {
@@ -1090,6 +1092,16 @@ function App() {
     socket.on('hello' as any, (data: any) => {
       if (data.server_version) setServerHelloVersion(data.server_version);
       if (data.server_build_hash) setServerBuildHash(data.server_build_hash);
+    });
+
+    // Relay admission (SPEC-01 REQ-43): `node_joined` only reloads the node
+    // list. It is a hint and never sends a sender key or NMK by itself.
+    registerAdmissionHandlers(socket, {
+      reloadNodes: () => { loadNodesRef.current?.(); },
+      onNotice: (message) => {
+        setError(message);
+        setTimeout(() => setError(''), 5000);
+      },
     });
 
     socket.on('disconnected', () => {
@@ -2602,7 +2614,11 @@ function App() {
       if (expiry && expiry !== 'never') {
         expiresHoursNum = parseFloat(expiry);
       }
-      const response = await api.createInviteWithOptions(selectedNodeId, appState.token, maxUsesNum, expiresHoursNum);
+      // Fractional hours (0.5 = 30 minutes) become `expires_in_seconds` on
+      // relays that advertise admission/1, and whole hours elsewhere.
+      const response = await api.createInviteWithOptions(
+        selectedNodeId, appState.token, maxUsesNum, expiresHoursNum, ws?.relayFeatures?.(),
+      );
       const baseUrl = api.getBaseUrl();
       try {
         const url = new URL(baseUrl);
@@ -2613,7 +2629,8 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to generate invite:', error);
-      handleApiError(error);
+      setError(inviteCreateErrorMessage(error));
+      setTimeout(() => setError(''), 5000);
     } finally {
       setInviteGenerating(false);
     }
@@ -2631,8 +2648,15 @@ function App() {
       // Reload members
       await loadMembers(selectedNodeId);
     } catch (error) {
+      if (errorReason(error) === 'not_member') {
+        // Already gone on the relay (SPEC-01 §8): refresh the member list.
+        await loadMembers(selectedNodeId);
+        return;
+      }
       console.error('Failed to kick member:', error);
-      handleApiError(error);
+      // `rate_limited` and the other reasons map to the SPEC-01 §8 messages.
+      setError(admissionErrorMessage(error, 'Failed to kick member'));
+      setTimeout(() => setError(''), 5000);
     }
   };
 
@@ -2679,10 +2703,11 @@ function App() {
           return;
         }
         const conn = await rm.connectRelay(parsed.relayUrl, publicKey, pw);
-        // Join the node on that relay
-        const joinResult = await conn.api.joinNodeByInvite(code, conn.token!);
-        if (joinResult?.id) {
-          rm.addNodeToRelay(parsed.relayUrl, joinResult.id);
+        // Join the node on that relay, with this installation's fingerprint
+        // for the node; `already_member` counts as success.
+        const joinResult = await redeemInvite(conn.api, code, conn.token!);
+        if (joinResult.nodeId) {
+          rm.addNodeToRelay(parsed.relayUrl, joinResult.nodeId);
         }
         // Set up WS handlers and connect
         if (conn.ws) {
@@ -2732,7 +2757,7 @@ function App() {
         }
 
         api.setToken(token);
-        await api.joinNodeByInvite(code, token);
+        await redeemInvite(api, code, token);
       }
 
       setShowCreateNodeModal(false);
@@ -2741,7 +2766,7 @@ function App() {
       // Reload nodes to show the new one
       await loadNodes();
     } catch (error: any) {
-      setJoinError(error.message || "Failed to join node");
+      setJoinError(joinErrorMessage(error));
     } finally {
       setJoiningNode(false);
     }
@@ -2909,13 +2934,15 @@ function App() {
           }));
           setIsAuthenticated(true);
 
-          // Join node via invite code
+          // Join node via invite code (`already_member` counts as success)
           let joinedNodeId: string | undefined;
           try {
-            const joinResult = await api.joinNodeByInvite(parsed.inviteCode, existingToken);
-            joinedNodeId = joinResult?.id;
-          } catch (_e) {
-            // May already be a member, that's fine
+            const joinResult = await redeemInvite(api, parsed.inviteCode, existingToken);
+            joinedNodeId = joinResult.nodeId;
+          } catch (e) {
+            // Signed in either way; tell the user why the node did not open.
+            setError(joinErrorMessage(e));
+            setTimeout(() => setError(''), 8000);
           }
 
           // Register relay with RelayManager
@@ -3002,13 +3029,15 @@ function App() {
       storeRelayToken(parsedInvite.relayHost, response.token);
       storeRelayUserId(parsedInvite.relayHost, response.user_id);
 
-      // Join node via invite
+      // Join node via invite (`already_member` counts as success)
       let joinedNodeId: string | undefined;
       try {
-        const joinResult = await api.joinNodeByInvite(parsedInvite.inviteCode, response.token);
-        joinedNodeId = joinResult?.id;
-      } catch (_e) {
-        // May already be a member
+        const joinResult = await redeemInvite(api, parsedInvite.inviteCode, response.token);
+        joinedNodeId = joinResult.nodeId;
+      } catch (e) {
+        // The account exists either way; tell the user why the node did not open.
+        setError(joinErrorMessage(e));
+        setTimeout(() => setError(''), 8000);
       }
 
       // Register relay + node with RelayManager
@@ -4564,7 +4593,12 @@ function App() {
 
           // Join via invite if provided
           if (result.inviteCode) {
-            try { await api.joinNodeByInvite(result.inviteCode, response.token); } catch {}
+            try {
+              await redeemInvite(api, result.inviteCode, response.token);
+            } catch (e) {
+              setError(joinErrorMessage(e));
+              setTimeout(() => setError(''), 8000);
+            }
           }
 
           // Connect WebSocket
