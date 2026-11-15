@@ -259,6 +259,8 @@ accord-server restore /backups/accord-backup.tar.gz -d /var/lib/accord/accord.db
 
 Both commands automatically handle SQLCipher encryption if a `.key` file exists alongside the database path.
 
+> **Only restore archives you created yourself.** `restore` installs the archive's database files into the data directory, and the bundled SQLite (and SQLCipher's embedded SQLite in `--features sqlcipher` builds) is affected by RUSTSEC-2026-0459 / CVE-2026-119375: a crafted database plus `-wal` pair can make the server read back uninitialized process memory. Never restore an archive from an untrusted source.
+
 ---
 
 ## 5. Deployment
@@ -561,6 +563,8 @@ accord-server restore /backups/accord-2026-02-18.tar.gz -d /var/lib/accord/accor
 
 sudo systemctl start accord
 ```
+
+Only restore archives you created yourself (see the RUSTSEC-2026-0459 note under [Backup & Restore Commands](#backup--restore-commands)).
 
 ### Scheduled Backups
 

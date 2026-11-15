@@ -28,6 +28,28 @@ ignore = [
     # TRACKING: remove when plist/tauri bump quick-xml to >=0.41.
     "RUSTSEC-2026-0195",
     "RUSTSEC-2026-0194",
+
+    # libsqlite3-sys 0.30.1: bundled C SQLite 3.46.0 < 3.54.0 returns uninitialized
+    # page-cache memory when a database is opened with a sibling -wal file of a
+    # different page size (RUSTSEC-2026-0459, CVE-2026-119375; local, needs crafted files).
+    # Patched in libsqlite3-sys >=0.39, but no sqlx release accepts it: sqlx-sqlite 0.8.6
+    # requires ^0.30.1 and sqlx-sqlite 0.9.0 caps it at <0.38. Fixing it now would mean
+    # replacing sqlx (e.g. with rusqlite 0.41) across the server.
+    # The code IS compiled into accord-server only (`cargo tree -i libsqlite3-sys -e features`:
+    # sqlx "sqlite" -> sqlx-sqlite "bundled"); not in desktop, core, cli or bot-sdk.
+    # Not reachable remotely: the server only opens database files in its own data dir.
+    # The one path that installs third-party .db/-wal files is the operator-run
+    # `accord-server restore <archive>` (server/src/backup.rs restore_backup), so operators
+    # must only restore backup archives they created themselves.
+    # Also compiled when accord-server is built with `--features sqlcipher`
+    # (libsqlite3-sys/bundled-sqlcipher): that builds SQLCipher's embedded SQLite instead
+    # (SQLCipher 4.5.7 / SQLite 3.45.3 in libsqlite3-sys 0.30.1). That path stays affected
+    # even in libsqlite3-sys 0.39.x (sqlcipher-src =419.0.6 bundles SQLite 3.53.4), yet
+    # cargo audit will treat >=0.39 as patched. Removing this ignore therefore does NOT fix
+    # sqlcipher builds; the "restore only your own archives" rule still applies to them
+    # until a sqlcipher-src bundling SQLite >=3.54.0 is in the lockfile.
+    # TRACKING: remove when sqlx ships a release allowing libsqlite3-sys >=0.39.
+    "RUSTSEC-2026-0459",
 ]
 
 # Don't fail on unmaintained crates (Tauri's GTK3 bindings — resolves with GTK4 migration)
