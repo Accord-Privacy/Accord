@@ -1960,8 +1960,23 @@ async fn health(relay: &TestRelay) -> Value {
 fn lists_admission_only(features: &Value) {
     let features = features.as_array().expect("features is an array");
     assert!(features.iter().any(|t| t == "admission/1"), "{features:?}");
-    // SPEC-03's screen/1 is registered but not implemented by this relay.
-    assert!(!features.iter().any(|t| t == "screen/1"), "{features:?}");
+    // Only tokens of the batch registry are advertised (SPEC-01 §6.8);
+    // tokens of specs whose relay part has not landed are not.
+    for token in features {
+        let token = token.as_str().expect("tokens are strings");
+        assert!(
+            accord_server::capabilities::REGISTERED_TOKENS.contains(&token),
+            "{token} is not registered"
+        );
+        assert!(
+            accord_server::capabilities::RELAY_FEATURES.contains(&token),
+            "{token} is not implemented"
+        );
+    }
+    assert!(
+        !features.iter().any(|t| t == "governance/1"),
+        "{features:?}"
+    );
 }
 
 /// T-42 (REQ-42): `admission/1` is in the `features` of WS `hello` and of

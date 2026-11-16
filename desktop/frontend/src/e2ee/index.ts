@@ -41,9 +41,10 @@ export { x3dhInitiate, x3dhRespond } from './x3dh';
 export type { X3DHInitiatorOutput } from './x3dh';
 
 export { DoubleRatchetSession } from './ratchet';
-export type { MessageHeader, DoubleRatchetMessage, RatchetSessionState } from './ratchet';
+export type { MessageHeader, DoubleRatchetMessage, RatchetSessionState, RatchetDecryptResult } from './ratchet';
 
 export { SessionManager } from './session';
+export type { SessionDecryptResult } from './session';
 
 export {
   SenderKeyStore,
@@ -83,7 +84,7 @@ export type { StoredIdentityKeys } from './persistence';
 import type { IdentityKeyPair, SignedPreKeyPair, OneTimePreKeyPair, PreKeyBundle } from './keys';
 import { generateIdentityKeyPair, generateSignedPreKey, generateOneTimePreKeys, buildPreKeyBundle, keyToHex, hexToKey } from './keys';
 import { x3dhInitiate, x3dhRespond } from './x3dh';
-import { SessionManager } from './session';
+import { SessionManager, type SessionDecryptResult } from './session';
 
 /** Self-describing wire envelope for Double Ratchet payloads. On first contact
  *  the initiator embeds its X3DH handshake so the responder can establish the
@@ -250,6 +251,17 @@ export class E2EEManager {
    * session from the embedded X3DH handshake on first contact.
    */
   decryptEnvelope(peerId: string, envelopeStr: string): string {
+    return this.decryptEnvelopeDetailed(peerId, envelopeStr).plaintext;
+  }
+
+  /**
+   * Decrypt like `decryptEnvelope`, and report whether a stored skipped
+   * message key produced the plaintext (SPEC-03 §6.10). The voice path
+   * discards such call messages (SPEC-03 REQ-32); the decryption consumes the
+   * skipped key either way. Synchronous, so a caller that invokes it in its
+   * WebSocket handler fixes the message's place in Double Ratchet order.
+   */
+  decryptEnvelopeDetailed(peerId: string, envelopeStr: string): SessionDecryptResult {
     this.ensureInitialized();
     const env = JSON.parse(envelopeStr) as DrEnvelope;
     if (env.t === 'x3dh' && !this.sessionManager!.hasSession(peerId) && env.ik && env.ek) {
@@ -262,7 +274,19 @@ export class E2EEManager {
     }
     // Any message from the peer proves our handshake landed — stop resending it.
     this.pendingHandshakes.delete(peerId);
-    return this.sessionManager!.decrypt(peerId, env.ct);
+    return this.sessionManager!.decryptDetailed(peerId, env.ct);
+  }
+
+  /**
+   * The length of the current Double Ratchet sending chain toward a peer: the
+   * session's `sendN`, counting messages of every kind (DMs, Sender Key
+   * distributions, call messages) sent since the last DH ratchet step. Null
+   * when the manager is not initialized or no session exists (SPEC-03 REQ-21,
+   * §6.10 `sendingChainLength`).
+   */
+  sendingChainLength(peerId: string): number | null {
+    if (!this.sessionManager) return null;
+    return this.sessionManager.sendingChainLength(peerId);
   }
 
   /** Check if we have a session with a peer */

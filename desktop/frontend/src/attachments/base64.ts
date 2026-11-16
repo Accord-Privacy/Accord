@@ -63,25 +63,31 @@ function decodeStrict(s: string): Uint8Array | null {
   let pad = 0;
   if (len > 0 && s.charCodeAt(len - 1) === PAD) pad = s.charCodeAt(len - 2) === PAD ? 2 : 1;
   const out = new Uint8Array((len / 4) * 3 - pad);
+  // A rejection zero-fills what was decoded so far: the value may be key
+  // material (SPEC-03 REQ-27).
+  const fail = (): null => {
+    out.fill(0);
+    return null;
+  };
   let o = 0;
   for (let i = 0; i < len; i += 4) {
     const a = sextet(s, i);
     const b = sextet(s, i + 1);
-    if (a < 0 || b < 0) return null;
+    if (a < 0 || b < 0) return fail();
     const last = i + 4 === len;
     if (last && pad === 2) {
       out[o++] = (a << 2) | (b >> 4);
       break;
     }
     const c = sextet(s, i + 2);
-    if (c < 0) return null;
+    if (c < 0) return fail();
     if (last && pad === 1) {
       out[o++] = (a << 2) | (b >> 4);
       out[o++] = ((b & 15) << 4) | (c >> 2);
       break;
     }
     const d = sextet(s, i + 3);
-    if (d < 0) return null;
+    if (d < 0) return fail();
     out[o++] = (a << 2) | (b >> 4);
     out[o++] = ((b & 15) << 4) | (c >> 2);
     out[o++] = ((c & 3) << 6) | d;
@@ -97,8 +103,11 @@ function decodeStrict(s: string): Uint8Array | null {
 export function decodeCanonicalBase64(s: string, expectedLength?: number): Uint8Array | null {
   const bytes = decodeStrict(s);
   if (bytes === null) return null;
-  if (expectedLength !== undefined && bytes.length !== expectedLength) return null;
-  if (encodeBase64(bytes) !== s) return null;
+  if ((expectedLength !== undefined && bytes.length !== expectedLength) || encodeBase64(bytes) !== s) {
+    // Rejected values are zero-filled before they are dropped (REQ-27).
+    bytes.fill(0);
+    return null;
+  }
   return bytes;
 }
 

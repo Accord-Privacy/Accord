@@ -4,6 +4,7 @@ import { ConnectionInfo } from "../ws";
 import { NotificationPreferences } from "../notifications";
 import { AccordWebSocket } from "../ws";
 import { StagedFile } from "../FileManager";
+import type { CallKeyBridge } from "../voice/callKeyBridge";
 
 export interface AppContextType {
   // Server connection
@@ -150,6 +151,11 @@ export interface AppContextType {
   setVoiceChannelId: React.Dispatch<React.SetStateAction<string | null>>;
   voiceChannelName: string;
   setVoiceChannelName: React.Dispatch<React.SetStateAction<string>>;
+  /** SPEC-03 REQ-9: N, the node of the voice channel, recorded when the user selected it. */
+  voiceNodeId: string | null;
+  setVoiceNodeId: React.Dispatch<React.SetStateAction<string | null>>;
+  /** SPEC-03 §6.10: the voice code's only way to E2EE state. */
+  callKeyBridge: CallKeyBridge | null;
   voiceConnectedAt: number | null;
   setVoiceConnectedAt: React.Dispatch<React.SetStateAction<number | null>>;
   voiceMuted: boolean;

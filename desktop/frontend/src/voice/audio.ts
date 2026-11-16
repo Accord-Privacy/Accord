@@ -1,11 +1,14 @@
 /**
- * Audio management for voice chat.
- * Handles output device selection, per-user volume control, and AudioContext lifecycle.
+ * Audio output for relay-mode voice: the shared playback AudioContext, a gain
+ * node per remote participant and the master volume and deafen state.
+ *
+ * Only authenticated, decrypted audio reaches it (SPEC-03 REQ-3). The P2P
+ * output path (an `<audio>` element per peer stream) was removed with the P2P
+ * code (REQ-39, C215).
  */
 
 export class AudioManager {
   private audioContext: AudioContext | null = null;
-  private outputDeviceId: string = 'default';
   private userGains: Map<string, { gainNode: GainNode; volume: number }> = new Map();
   private masterVolume = 1.0;
   private isDeafened = false;
@@ -26,36 +29,6 @@ export class AudioManager {
     if (this.audioContext && this.audioContext.state === 'suspended') {
       await this.audioContext.resume();
     }
-  }
-
-  /** Create a GainNode for a remote user's audio stream. */
-  async createUserOutput(userId: string, stream: MediaStream): Promise<HTMLAudioElement> {
-    const audio = new Audio();
-    audio.srcObject = stream;
-    audio.autoplay = true;
-
-    // Set output device if supported
-    if ('setSinkId' in audio && this.outputDeviceId !== 'default') {
-      try {
-        await (audio as any).setSinkId(this.outputDeviceId);
-      } catch (e) {
-        console.warn('Failed to set output device:', e);
-      }
-    }
-
-    // Per-user volume via Web Audio
-    const ctx = await this.getContext();
-    const source = ctx.createMediaStreamSource(stream);
-    const gainNode = ctx.createGain();
-    const existing = this.userGains.get(userId);
-    const volume = existing?.volume ?? 1.0;
-    gainNode.gain.value = this.isDeafened ? 0 : volume * this.masterVolume;
-    source.connect(gainNode);
-    gainNode.connect(ctx.destination);
-
-    this.userGains.set(userId, { gainNode, volume });
-
-    return audio;
   }
 
   /** Set volume for a specific user (0.0 – 2.0). */
@@ -85,11 +58,6 @@ export class AudioManager {
     this.userGains.forEach(entry => {
       entry.gainNode.gain.value = deafened ? 0 : entry.volume * this.masterVolume;
     });
-  }
-
-  /** Set output device by device ID. */
-  async setOutputDevice(deviceId: string): Promise<void> {
-    this.outputDeviceId = deviceId;
   }
 
   /** List available audio output devices. */

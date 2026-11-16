@@ -161,11 +161,17 @@ export type WsMessageType =
   | { JoinVoiceChannel: { channel_id: string } }
   | { LeaveVoiceChannel: { channel_id: string } }
   | { GetVoiceParticipants: { channel_id: string } }
-  | { VoicePacket: { channel_id: string; encrypted_audio: number[]; sequence: number } }
   | { VoiceSpeakingState: { channel_id: string; user_id: string; speaking: boolean } }
-  | { SetVoiceMode: { channel_id: string; mode: string } }
-  | { VoiceKeyExchange: { channel_id: string; wrapped_key: string; target_user_id: string | null; sender_ssrc: number; key_generation: number } }
-  | { P2PSignal: { channel_id: string; target_user_id: string; signal_data: string } }
+  // SPEC-03 §6.1: a call message for exactly one target (REQ-1); the ssrc
+  // and generation fields are always 0.
+  | { VoiceKeyExchange: { channel_id: string; wrapped_key: string; target_user_id: string; sender_ssrc: number; key_generation: number } }
+  // SPEC-03 §6.1: one AMF1 audio frame, standard base64 (the name is historical).
+  | { SrtpVoicePacket: { channel_id: string; packet_data: string } }
+  // SPEC-03 §6.12.1: screen sharing on a relay that lists `screen/1`.
+  | { ScreenShareStart: { channel_id: string } }
+  | { ScreenShareStop: { channel_id: string } }
+  | { ScreenWatch: { channel_id: string; sharer_id: string; watch: boolean } }
+  | { ScreenKeyframeRequest: { channel_id: string; sharer_id: string } }
   | 'Ping'
   | 'Pong';
 
@@ -468,13 +474,6 @@ export interface VoiceLeaveMessage {
   type: 'voice_leave';
   channel_id: string;
   user_id: string;
-}
-
-export interface VoicePacketMessage {
-  type: 'voice_packet';
-  channel_id: string;
-  user_id: string;
-  data: string; // base64 encoded audio data
 }
 
 export interface VoiceSpeakingMessage {

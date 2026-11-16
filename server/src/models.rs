@@ -556,7 +556,10 @@ pub enum WsMessageType {
     LeaveVoiceChannel { channel_id: Uuid },
     /// Get current voice channel participants
     GetVoiceParticipants { channel_id: Uuid },
-    /// Voice packet (encrypted audio data)
+    /// Legacy relay-mode audio of outdated clients, sealed under a key that
+    /// those clients sent through the relay (C005), or not sealed at all.
+    /// Clients that implement SPEC-03 never send it (REQ-2); their audio is
+    /// [`WsMessageType::SrtpVoicePacket`].
     VoicePacket {
         channel_id: Uuid,
         encrypted_audio: Vec<u8>,
@@ -568,21 +571,53 @@ pub enum WsMessageType {
         user_id: Uuid,
         speaking: bool,
     },
-    /// SRTP voice key exchange (opaque to server)
+    /// A voice call message (SPEC-03 §6.1, §6.3), forwarded to the
+    /// connections of `target_user_id`, or to the other voice participants
+    /// when no target is given (legacy, refused by REQ-58). From clients that
+    /// implement SPEC-03 it has a target and an `acv1:` value, a Double
+    /// Ratchet envelope addressed to the target. Until SPEC-05 and SPEC-06,
+    /// an active relay can still substitute prekey bundles for a pair that
+    /// has no session (SPEC-03 §9.2 item 1). Older clients send a raw call
+    /// key, which the relay can read (C005).
     VoiceKeyExchange {
         channel_id: Uuid,
-        /// Base64-encoded wrapped key data
+        /// `acv1:` followed by a Double Ratchet envelope (clients that
+        /// implement SPEC-03), or a base64 raw call key (older clients)
         wrapped_key: String,
         target_user_id: Option<Uuid>,
+        /// 0 from clients that implement SPEC-03, and ignored
         sender_ssrc: u32,
+        /// 0 from clients that implement SPEC-03, and ignored
         key_generation: u32,
     },
-    /// SRTP encrypted voice packet (opaque to server)
+    /// A relay-mode audio frame, forwarded to the other participants of the
+    /// voice channel. The variant name is historical (SPEC-03 §6.1): the
+    /// payload is an AMF1 frame (SFrame, RFC 9605; SPEC-03 §6.2), sealed
+    /// under a key that its sender distributes only inside Double Ratchet
+    /// messages.
     SrtpVoicePacket {
         channel_id: Uuid,
-        /// Base64-encoded SrtpPacket
+        /// Standard base64 of one AMF1 frame
         packet_data: String,
     },
+
+    // ── Screen sharing, `screen/1` (SPEC-03 §6.12.1) ──
+    // Fragments travel as binary `SCREEN_UP` and `SCREEN_DOWN` messages
+    // (§6.12.2), never as JSON.
+    /// Start sharing in a voice channel; answered with
+    /// `screen_share_started` or `screen_share_rejected`.
+    ScreenShareStart { channel_id: Uuid },
+    /// Stop this connection's share in a voice channel. Never refused.
+    ScreenShareStop { channel_id: Uuid },
+    /// Watch (`watch: true`) or stop watching a participant's share.
+    ScreenWatch {
+        channel_id: Uuid,
+        sharer_id: Uuid,
+        watch: bool,
+    },
+    /// Ask the sharing connection for a keyframe; forwarded only from a
+    /// watching connection, at most once per second.
+    ScreenKeyframeRequest { channel_id: Uuid, sharer_id: Uuid },
 
     // ── Key exchange operations (Double Ratchet / X3DH) ──
     /// Publish prekey bundle
@@ -601,39 +636,43 @@ pub enum WsMessageType {
     /// Retrieve pending prekey messages
     GetPrekeyMessages,
 
-    /// Set voice mode for a channel (relay or p2p)
+    // ── Retired P2P voice (SPEC-03 REQ-56, §6.14) ──
+    // Every call is in relay mode. These variants stay so that outdated
+    // clients' messages still parse and are not reported as "Invalid message
+    // format"; the relay forwards no P2P signaling.
+    /// Deprecated. A `mode` other than `"relay"` is refused with an error
+    /// frame whose `code` and `reason` are `p2p_retired`; `"relay"` is
+    /// accepted. Nothing is broadcast.
     SetVoiceMode {
         channel_id: Uuid,
-        /// "relay" (default, server-routed) or "p2p" (direct WebRTC)
+        /// Only `"relay"` is accepted
         mode: String,
     },
-    /// Request current voice mode for a channel
+    /// Deprecated. Always answered with `voice_mode` `"relay"`.
     GetVoiceMode { channel_id: Uuid },
 
-    // ── P2P Voice Signaling ──
-    /// P2P voice signaling: relay ICE candidates and offer/answer between peers.
-    /// The server forwards this opaquely — it cannot interpret the content.
+    /// Retired P2P signaling of outdated clients (desktop P2P voice and
+    /// screen sharing, mobile voice). Dropped unread: never forwarded, and
+    /// answered with no error frame.
     P2PSignal {
         channel_id: Uuid,
         target_user_id: Uuid,
-        /// JSON-serialized P2PSignal from accord_core::p2p_voice
+        /// An outdated client's signaling data (SDP or ICE candidates)
         signal_data: String,
     },
-
-    // ── WebRTC Voice Signaling ──
-    /// WebRTC SDP offer — relayed to target peer
+    /// Retired WebRTC SDP offer of outdated clients. Dropped unread.
     VoiceOffer {
         channel_id: Uuid,
         target_user_id: Uuid,
         sdp: String,
     },
-    /// WebRTC SDP answer — relayed to target peer
+    /// Retired WebRTC SDP answer of outdated clients. Dropped unread.
     VoiceAnswer {
         channel_id: Uuid,
         target_user_id: Uuid,
         sdp: String,
     },
-    /// WebRTC ICE candidate — relayed to target peer
+    /// Retired WebRTC ICE candidate of outdated clients. Dropped unread.
     VoiceIceCandidate {
         channel_id: Uuid,
         target_user_id: Uuid,
@@ -1003,6 +1042,21 @@ pub struct HealthResponse {
     /// The version-2 attachment limits that go with `attachments/2`
     /// (SPEC-02 §6.4.6, REQ-44). They guide the client's interface only.
     pub attachment_limits: AttachmentLimits,
+    /// The screen-sharing limits that go with `screen/1` (SPEC-03 §6.12.1,
+    /// REQ-55); absent while the operator has screen sharing off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screen_limits: Option<ScreenLimits>,
+}
+
+/// `screen_limits` of the WS `hello` frame and `GET /health` (SPEC-03
+/// §6.12.1). `screen/1` fixes the fragment size and the watch limit, so they
+/// are not advertised.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScreenLimits {
+    /// Shares per voice channel, 1 to 8.
+    pub max_sharers: u8,
+    /// Bytes per second per share, at least 200,000.
+    pub max_bytes_per_second: u64,
 }
 
 /// `attachment_limits` of `GET /health` (SPEC-02 §6.4.6).
@@ -2075,9 +2129,12 @@ mod tests {
                 max_blob_bytes: 104_857_600,
                 max_per_message: 10,
             },
+            screen_limits: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Without screen sharing the member is absent, not null.
+        assert!(v.get("screen_limits").is_none(), "{v}");
         assert_eq!(v["status"], "ok");
         assert_eq!(v["database_ok"], true);
         assert_eq!(v["websocket_connections"], 42);

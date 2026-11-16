@@ -23,6 +23,12 @@ import type { IdentityKeyPair, RawKey } from './keys';
 import { keyToHex } from './keys';
 import { DoubleRatchetSession, type DoubleRatchetMessage, type RatchetSessionState } from './ratchet';
 
+/** A decrypted string and whether a stored skipped message key produced it. */
+export interface SessionDecryptResult {
+  plaintext: string;
+  usedSkippedKey: boolean;
+}
+
 const STORAGE_PREFIX = 'accord_e2ee_session_';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -152,11 +158,28 @@ export class SessionManager {
    * @throws If no session exists or decryption fails
    */
   decrypt(peerId: string, ciphertext: string): string {
+    return this.decryptDetailed(peerId, ciphertext).plaintext;
+  }
+
+  /**
+   * Decrypt like `decrypt`, and report whether a stored skipped message key
+   * produced the plaintext (SPEC-03 §6.10, REQ-32).
+   */
+  decryptDetailed(peerId: string, ciphertext: string): SessionDecryptResult {
     const session = this.getSession(peerId);
     const msg: DoubleRatchetMessage = JSON.parse(ciphertext);
-    const plaintext = session.decrypt(msg);
+    const { plaintext, usedSkippedKey } = session.decryptDetailed(msg);
     this.persistSession(peerId);
-    return new TextDecoder().decode(plaintext);
+    return { plaintext: new TextDecoder().decode(plaintext), usedSkippedKey };
+  }
+
+  /**
+   * The length of the current sending chain toward a peer (the session's
+   * `sendN`), or null when there is no session (SPEC-03 REQ-21, §6.10).
+   */
+  sendingChainLength(peerId: string): number | null {
+    if (!this.hasSession(peerId)) return null;
+    return this.getSession(peerId).sendingChainLength;
   }
 
   /**

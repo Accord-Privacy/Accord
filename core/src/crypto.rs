@@ -36,6 +36,10 @@ pub struct SessionKey {
 }
 
 /// Voice encryption key for real-time audio
+///
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug)]
 pub struct VoiceKey {
     pub aes_key: [u8; 32],
@@ -230,6 +234,10 @@ impl CryptoManager {
     }
 
     /// Generate voice encryption key for real-time audio
+    ///
+    /// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+    /// function: relay-mode calls use SPEC-03's AMF1 frames, keyed through
+    /// Double Ratchet messages. Read SPEC-03 before relying on it.
     pub fn generate_voice_key(&self) -> Result<VoiceKey> {
         let mut aes_key = [0u8; 32];
         let mut nonce_prefix = [0u8; 4];
@@ -249,6 +257,10 @@ impl CryptoManager {
     }
 
     /// Encrypt voice packet for real-time transmission
+    ///
+    /// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+    /// function: relay-mode calls use SPEC-03's AMF1 frames, keyed through
+    /// Double Ratchet messages. Read SPEC-03 before relying on it.
     pub fn encrypt_voice_packet(
         &self,
         voice_key: &mut VoiceKey,
@@ -277,6 +289,10 @@ impl CryptoManager {
     }
 
     /// Decrypt voice packet
+    ///
+    /// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+    /// function: relay-mode calls use SPEC-03's AMF1 frames, keyed through
+    /// Double Ratchet messages. Read SPEC-03 before relying on it.
     pub fn decrypt_voice_packet(
         &self,
         voice_key: &VoiceKey,

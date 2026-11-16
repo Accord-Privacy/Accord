@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Accord — Privacy-First Community Communication</title>
-  <meta name="description" content="Open-source, self-hostable community chat with community nodes, voice channels and end-to-end encrypted messages and attachments. Voice is not end-to-end encrypted yet.">
+  <meta name="description" content="Open-source, self-hostable community chat with community nodes, end-to-end encrypted messages, attachments, voice channels and screen sharing. Calls are not yet verified.">
   <link rel="icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -26,7 +26,7 @@
 <section class="hero">
   <div class="container">
     <h1><span>Privacy-First</span><br>Community Communication</h1>
-    <p>Discord-style communities with end-to-end encrypted messages and attachments. Attachments are only as authentic as their message and the relay sees their metadata, files uploaded before encrypted attachments shipped stay readable by the relay until they are retired, and voice is not end-to-end encrypted yet — <a href="https://github.com/Accord-Privacy/Accord/blob/main/SECURITY.md#known-limitations">read the known limitations</a>.</p>
+    <p>Discord-style communities with end-to-end encrypted messages, attachments, calls and screen sharing. Attachments are only as authentic as their message and the relay sees their metadata, files uploaded before encrypted attachments shipped stay readable by the relay until they are retired, and calls are not yet verified — <a href="https://github.com/Accord-Privacy/Accord/blob/main/SECURITY.md#known-limitations">read the known limitations</a>.</p>
     <div class="hero-buttons">
       <a href="https://github.com/Accord-Privacy/Accord/releases" class="btn btn-primary">Download</a>
       <a href="#get-started" class="btn btn-secondary">Self-Host →</a>
@@ -47,7 +47,7 @@
       <div class="feature-card">
         <span class="feature-icon">🎙️</span>
         <h3>Voice Channels</h3>
-        <p>Real-time voice, relay-routed by default. Voice is not end-to-end encrypted yet: the relay operator can listen to relay-mode calls, and P2P mode and screen sharing reveal your IP address to other participants.</p>
+        <p>Real-time voice and screen sharing through the relay, end-to-end encrypted with a new key for every change of participants and every 10 minutes, sent only inside your encrypted sessions with the other participants. The peer-to-peer mode of older versions is removed, so other participants never learn your IP address from a call. Not yet verified: until identity verification ships, the relay decides who counts as a member. Screen sharing is video only, reaches only the participants who choose Watch, and needs a relay that supports encrypted screen sharing; the relay still sees who shares and watches and the size and timing of the video. The macOS app can watch screen shares but not share. Voice does not work in the iOS and Android apps yet.</p>
       </div>
       <div class="feature-card">
         <span class="feature-icon">🏠</span>
@@ -67,7 +67,7 @@
       <div class="feature-card">
         <span class="feature-icon">📖</span>
         <h3>Open Source</h3>
-        <p>Licensed under AGPL-3.0. Every line of code is auditable. Trust is verified, not assumed.</p>
+        <p>Licensed under AGPL-3.0. Every line of code is auditable. Trust is verified, not assumed. The Rust voice modules in the repository (<code>srtp</code>, <code>voice</code>, <code>p2p_voice</code> and <code>jitter_buffer</code>) are unused: no shipped app uses them.</p>
       </div>
     </div>
   </div>
@@ -81,7 +81,7 @@
       <div class="how-step">
         <div class="how-num">1</div>
         <h3>Relays Are Dumb Pipes</h3>
-        <p>Relays route encrypted blobs between clients and are designed so they can't read your messages. Today a relay can still read relay-mode voice and files uploaded before encrypted attachments shipped, it sees attachment metadata such as padded sizes, and a malicious relay can intercept encrypted sessions when they are set up.</p>
+        <p>Relays route encrypted blobs between clients and are designed so they can't read your messages. Today a relay can still read files uploaded before encrypted attachments shipped and the voice of outdated apps, it sees attachment and call metadata such as padded sizes and timing, and a malicious relay can intercept encrypted sessions when they are set up.</p>
       </div>
       <div class="how-step">
         <div class="how-num">2</div>
@@ -91,7 +91,7 @@
       <div class="how-step">
         <div class="how-num">3</div>
         <h3>Messages Are E2EE</h3>
-        <p>Messages and attachments are encrypted on your device and decrypted on the recipient's; every file gets its own random key, sent only inside the encrypted message. Your private keys never leave your machine. Voice is not end-to-end encrypted yet.</p>
+        <p>Messages and attachments are encrypted on your device and decrypted on the recipient's; every file gets its own random key, sent only inside the encrypted message. Your private keys never leave your machine. Calls and screen sharing are end-to-end encrypted too, but not yet verified.</p>
       </div>
     </div>
   </div>
@@ -112,7 +112,7 @@
         <div class="trust-node neutral">
           <span class="icon">📡</span>
           <h4>Relay</h4>
-          <p>Routes encrypted blobs and sees metadata, including attachment counts, padded sizes and downloads. Today it can also read relay-mode voice and files uploaded before encrypted attachments shipped, and a malicious relay can intercept encrypted sessions when they are set up.</p>
+          <p>Routes encrypted blobs and sees metadata, including attachment counts, padded sizes and downloads. Today it can also read files uploaded before encrypted attachments shipped and the voice of outdated apps, and a malicious relay can intercept encrypted sessions when they are set up.</p>
           <div class="trust-label yellow">◆ Untrusted by design</div>
         </div>
         <div class="trust-node neutral">

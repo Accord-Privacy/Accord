@@ -14,6 +14,8 @@ use accord_server::{
     attachments::{self, AttachmentConfig},
     backup, db, federation, rate_limit, relay_mesh,
     router::{self, RouterConfig},
+    screen::{ScreenConfig, ScreenRelay},
+    socket_opts,
     state::{self, AppState, AppStateOptions, SharedState},
 };
 use anyhow::Result;
@@ -160,6 +162,30 @@ struct Args {
     #[arg(long, default_value_t = accord_server::rate_limit::DEFAULT_PREVIEW_LIMIT)]
     preview_rate_limit: usize,
 
+    /// Encrypted screen sharing over the relay (SPEC-03 §6.12): 'on'
+    /// advertises `screen/1`; 'off' removes it and answers screen-sharing
+    /// requests with `disabled`.
+    #[arg(long, default_value = "on", value_parser = ["on", "off"])]
+    screen_share: String,
+
+    /// Screen shares allowed at once in one voice channel (1 to 8).
+    #[arg(
+        long,
+        default_value_t = accord_server::screen::DEFAULT_MAX_SHARERS,
+        value_parser = clap::value_parser!(u8).range(1..=8)
+    )]
+    screen_max_sharers: u8,
+
+    /// Bytes per second per screen share (at least 200000). The burst is
+    /// 3 × this rate and at least 1,100,000 bytes. Clients size their video
+    /// bitrate from it.
+    #[arg(
+        long,
+        default_value_t = accord_server::screen::DEFAULT_MAX_BYTES_PER_SECOND,
+        value_parser = clap::value_parser!(u64).range(200_000..)
+    )]
+    screen_max_rate: u64,
+
     /// Directory of version-2 attachment blobs (SPEC-02). The relay refuses
     /// to start if it is the database's directory or an ancestor of it,
     /// overlaps the legacy file directory, or is a non-empty directory
@@ -267,6 +293,9 @@ struct FileConfig {
     attachment_reconcile_interval_secs: Option<u64>,
     legacy_attachments: Option<String>,
     legacy_attachments_retire_after_days: Option<u64>,
+    screen_share: Option<String>,
+    screen_max_sharers: Option<u8>,
+    screen_max_rate: Option<u64>,
     mesh_enabled: Option<bool>,
     mesh_port: Option<u16>,
     mesh_peers: Option<String>,
@@ -326,6 +355,15 @@ fn merge_args_with_config(args: &mut Args, cfg: FileConfig) {
     apply!(attachment_reconcile_interval_secs, 3600);
     apply!(legacy_attachments, "read-only");
     apply!(legacy_attachments_retire_after_days, 90);
+    apply!(screen_share, "on");
+    apply!(
+        screen_max_sharers,
+        accord_server::screen::DEFAULT_MAX_SHARERS
+    );
+    apply!(
+        screen_max_rate,
+        accord_server::screen::DEFAULT_MAX_BYTES_PER_SECOND
+    );
     apply!(mesh_port, 9443);
     apply!(mesh_peers, "");
     apply!(mesh_data_dir, "mesh_data");
@@ -376,6 +414,19 @@ fn attachment_config(args: &Args) -> Result<AttachmentConfig> {
     };
     config.validate()?;
     Ok(config)
+}
+
+/// The screen-sharing settings (SPEC-03 §6.12.5). The command line is
+/// checked by clap; values from a configuration file are checked here.
+/// Errors name the setting.
+fn screen_config(args: &Args) -> Result<ScreenConfig> {
+    let enabled = match args.screen_share.as_str() {
+        "on" => true,
+        "off" => false,
+        other => anyhow::bail!("--screen-share must be 'on' or 'off', got '{other}'"),
+    };
+    ScreenConfig::new(enabled, args.screen_max_sharers, args.screen_max_rate)
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 /// `accord-server purge-legacy-attachments` (SPEC-02 section 7.7): open the
@@ -597,6 +648,7 @@ async fn main() -> Result<()> {
     // The attachment directory is checked before the database is opened
     // (SPEC-02 REQ-42); a misconfiguration stops the relay here.
     let attachment_settings = attachment_config(&args)?;
+    let screen_settings = screen_config(&args)?;
     let mut app_state = AppState::new_with_options(
         &args.database,
         AppStateOptions {
@@ -610,6 +662,15 @@ async fn main() -> Result<()> {
     .await?;
     app_state.metadata_mode = metadata_mode;
     app_state.federation_enabled = args.mesh_enabled;
+    app_state.screen = ScreenRelay::new(screen_settings);
+    if screen_settings.enabled {
+        info!(
+            "Screen sharing: on (screen/1), {} shares per channel, {} bytes per second per share",
+            screen_settings.max_sharers, screen_settings.max_bytes_per_second
+        );
+    } else {
+        info!("Screen sharing: off");
+    }
     app_state
         .rate_limiter
         .set_preview_limit(args.preview_rate_limit);
@@ -968,7 +1029,10 @@ async fn main() -> Result<()> {
                 handle_clone.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
             });
 
-            axum_server::bind_rustls(addr.parse()?, tls_config)
+            // SPEC-03 A2 (§6.12.3): TCP_NOTSENT_LOWAT on every client
+            // connection, set before the TLS handshake; the support is
+            // logged once when the listener is built.
+            socket_opts::tls_server(addr.parse()?, tls_config)
                 .handle(handle)
                 .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                 .await?;
@@ -977,12 +1041,19 @@ async fn main() -> Result<()> {
             // Plain HTTP mode
             let listener = tokio::net::TcpListener::bind(&addr).await?;
             info!("Server starting in plain HTTP/WS mode on {}", addr);
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .with_graceful_shutdown(shutdown_signal)
-            .await?;
+            let handle = axum_server::Handle::new();
+            let handle_clone = handle.clone();
+            tokio::spawn(async move {
+                shutdown_signal.await;
+                handle_clone.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+            });
+            // axum_server rather than axum::serve, so that every accepted
+            // connection gets TCP_NOTSENT_LOWAT (SPEC-03 A2, §6.12.3); the
+            // support is logged once when the listener is built.
+            socket_opts::plain_server(listener.into_std()?)
+                .handle(handle)
+                .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                .await?;
         }
         _ => {
             anyhow::bail!("Both --tls-cert and --tls-key must be provided together for TLS mode");
@@ -1164,6 +1235,72 @@ mod tests {
             let args = Args::try_parse_from(["accord-server", flag, value]).unwrap();
             let error = attachment_config(&args).unwrap_err().to_string();
             assert!(error.contains(setting), "{flag} {value}: {error}");
+        }
+    }
+
+    /// SPEC-03 §6.12.5 (T-55): the screen-sharing flags, their OD-109
+    /// defaults, and the values refused at startup.
+    #[test]
+    fn screen_flags() {
+        let args = Args::try_parse_from(["accord-server"]).unwrap();
+        let config = screen_config(&args).unwrap();
+        assert_eq!(config, ScreenConfig::default());
+        assert!(config.enabled);
+        assert_eq!(config.max_sharers, 2);
+        assert_eq!(config.max_bytes_per_second, 500_000);
+
+        let args = Args::try_parse_from([
+            "accord-server",
+            "--screen-share",
+            "off",
+            "--screen-max-sharers",
+            "8",
+            "--screen-max-rate",
+            "200000",
+        ])
+        .unwrap();
+        let config = screen_config(&args).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.max_sharers, 8);
+        assert_eq!(config.max_bytes_per_second, 200_000);
+        assert_eq!(config.burst_bytes(), 1_100_000);
+
+        for (flag, value) in [
+            ("--screen-max-rate", "199999"),
+            ("--screen-max-rate", "0"),
+            ("--screen-max-sharers", "0"),
+            ("--screen-max-sharers", "9"),
+            ("--screen-share", "maybe"),
+        ] {
+            assert!(
+                Args::try_parse_from(["accord-server", flag, value]).is_err(),
+                "{flag} {value} was accepted"
+            );
+        }
+
+        // A configuration file sets them too, checked the same way.
+        let file: FileConfig = toml::from_str(
+            r#"
+            screen_share = "off"
+            screen_max_sharers = 4
+            screen_max_rate = 300000
+            "#,
+        )
+        .unwrap();
+        let mut args = Args::try_parse_from(["accord-server"]).unwrap();
+        merge_args_with_config(&mut args, file);
+        let config = screen_config(&args).unwrap();
+        assert_eq!(config, ScreenConfig::new(false, 4, 300_000).unwrap());
+        for (setting, toml) in [
+            ("--screen-max-rate", "screen_max_rate = 199999"),
+            ("--screen-max-sharers", "screen_max_sharers = 9"),
+            ("--screen-share", "screen_share = \"yes\""),
+        ] {
+            let file: FileConfig = toml::from_str(toml).unwrap();
+            let mut args = Args::try_parse_from(["accord-server"]).unwrap();
+            merge_args_with_config(&mut args, file);
+            let error = screen_config(&args).unwrap_err().to_string();
+            assert!(error.contains(setting), "{toml}: {error}");
         }
     }
 }

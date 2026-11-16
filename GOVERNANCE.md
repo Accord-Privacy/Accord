@@ -81,16 +81,21 @@ The relay owner's powers are deliberately narrow — a landlord's powers:
 | Set a relay-wide client **build-hash allowlist** | Enumerate users or view any per-node governance/audit |
 
 The *Cannot* column describes the design. In the current release the relay can
-also read files and relay-mode voice; see
+also read files uploaded before end-to-end-encrypted attachments shipped and
+the voice of clients older than end-to-end-encrypted calls; see
 [SECURITY.md](SECURITY.md#known-limitations).
 
 **IP addresses should be relay-only.** The rule is that a node owner, node admin,
 or any other end user must never be able to obtain another end user's IP, and
 that IPs are visible only to the relay owner, only in the node-correlation-free
-connection log, and only for abuse defense. **Current clients break this rule in
-calls:** P2P voice and P2P screen sharing connect participants directly, which
-reveals their IP addresses to each other, and other users can switch a voice
-channel to P2P mode. See [SECURITY.md](SECURITY.md#known-limitations).
+connection log, and only for abuse defense. Current clients keep this rule in
+calls: every call goes through the relay, and their peer-to-peer mode is removed,
+so a call does not reveal a participant's IP address to the others. Two caveats
+remain. Other paths can still reveal it, for example remote images that a client
+loads automatically. And older clients still have a P2P mode that connects
+participants directly and reveals their IP addresses to each other; relays from
+this release on no longer forward its signaling, so it stops working once the
+relay is updated. See [SECURITY.md](SECURITY.md#known-limitations).
 
 ### Node owner
 

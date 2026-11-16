@@ -27,6 +27,8 @@ pub mod push;
 pub mod rate_limit;
 pub mod relay_mesh;
 pub mod router;
+pub mod screen;
+pub mod socket_opts;
 pub mod state;
 /// Shared in-process relay harness for tests (SPEC-01 section 10.1). Only
 /// compiled for this crate's unit tests and with the `test-helpers` feature.

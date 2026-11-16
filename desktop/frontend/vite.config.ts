@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
@@ -9,6 +9,39 @@ import { assertReleaseConfig } from "./src/releaseChecks";
 assertReleaseConfig(process.env);
 
 const isTauri = !!process.env.TAURI_ENV_PLATFORM;
+
+/**
+ * SPEC-03 REQ-39, T-39: the client builds no peer connection of any kind,
+ * and the production bundle contains the identifier `RTCPeerConnection` only
+ * inside reviewed third-party modules listed here (none at A1). Any other
+ * occurrence fails the build.
+ */
+export const PEER_CONNECTION_ALLOWLIST: readonly string[] = [];
+const PEER_CONNECTION = /RTCPeerConnection/;
+
+function noPeerConnections(): Plugin {
+  return {
+    name: "accord-no-peer-connections",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      for (const [fileName, output] of Object.entries(bundle)) {
+        if (output.type !== "chunk" || !PEER_CONNECTION.test(output.code)) continue;
+        const modules = Object.entries(output.modules ?? {});
+        const offending = modules
+          .filter(([, m]) => typeof m?.code === "string" && PEER_CONNECTION.test(m.code))
+          .map(([id]) => id);
+        const explained = offending.length > 0 && offending.every(id => PEER_CONNECTION_ALLOWLIST.some(allowed => id.includes(allowed)));
+        if (!explained) {
+          this.error(
+            `SPEC-03 REQ-39: ${fileName} contains RTCPeerConnection` +
+              (offending.length > 0 ? ` (from ${offending.join(", ")})` : "") +
+              "; no peer connection may be built, and only reviewed third-party modules may mention it.",
+          );
+        }
+      }
+    },
+  };
+}
 
 // Generate a build hash from git commit + timestamp + random salt
 function generateBuildHash(): string {
@@ -26,7 +59,7 @@ function generateBuildHash(): string {
 }
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), noPeerConnections()],
   clearScreen: false,
   resolve: {
     alias: isTauri ? {} : {

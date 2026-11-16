@@ -182,8 +182,10 @@ pub struct AppState {
     pub connections: RwLock<HashMap<Uuid, HashMap<Uuid, broadcast::Sender<String>>>>,
     /// Voice channels state (channel_id -> set of user_ids)
     pub voice_channels: RwLock<HashMap<Uuid, HashSet<Uuid>>>,
-    /// Voice mode per channel: true = relay (default), false = p2p
-    pub voice_relay_mode: RwLock<HashMap<Uuid, bool>>,
+    /// The screen-sharing relay path `screen/1` (SPEC-03 §6.12): settings,
+    /// shares, watches and the per-connection screen queues. Its lock is
+    /// always taken after `voice_channels`, never before.
+    pub screen: crate::screen::ScreenRelay,
     /// Server start time
     pub start_time: u64,
     /// Node creation policy
@@ -362,7 +364,7 @@ impl AppState {
             auth_tokens: RwLock::new(HashMap::new()),
             connections: RwLock::new(HashMap::new()),
             voice_channels: RwLock::new(HashMap::new()),
-            voice_relay_mode: RwLock::new(HashMap::new()),
+            screen: crate::screen::ScreenRelay::default(),
             start_time: now(),
             node_creation_policy: NodeCreationPolicy::default(),
             rate_limiter: RateLimiter::new(),
@@ -1607,44 +1609,168 @@ impl AppState {
 
     // ── Voice channel operations ──
 
-    pub async fn join_voice_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
+    /// Add `user_id` to the voice channel's participants and return the
+    /// other participants at that moment. The list is taken under the same
+    /// write lock as the insert, so two users who join at the same time
+    /// cannot both miss each other: the later insert sees the earlier one,
+    /// and each one's `voice_peer_joined` reaches the other.
+    pub async fn join_voice_channel(
+        &self,
+        user_id: Uuid,
+        channel_id: Uuid,
+    ) -> Result<Vec<Uuid>, String> {
         // Verify user has access to the channel (is a member)
         let channel = self
             .get_channel(channel_id)
             .await?
             .ok_or_else(|| "Channel not found".to_string())?;
 
+        const NOT_MEMBER: &str = "Must be a member of the node to join voice channels";
         if !self
             .db
             .is_node_member(channel.node_id, user_id)
             .await
             .unwrap_or(false)
         {
-            return Err("Must be a member of the node to join voice channels".to_string());
+            return Err(NOT_MEMBER.to_string());
         }
 
-        let mut voice_channels = self.voice_channels.write().await;
-        voice_channels
-            .entry(channel_id)
-            .or_insert_with(HashSet::new)
-            .insert(user_id);
+        self.faults().pause("voice:join").await;
+        let (inserted, existing) = {
+            let mut voice_channels = self.voice_channels.write().await;
+            let participants = voice_channels
+                .entry(channel_id)
+                .or_insert_with(HashSet::new);
+            let existing: Vec<Uuid> = participants
+                .iter()
+                .copied()
+                .filter(|u| *u != user_id)
+                .collect();
+            (participants.insert(user_id), existing)
+        };
 
+        // SPEC-03 REQ-29: a removal that committed after the check above may
+        // already have run its eviction hook (removal hook 2), which found
+        // the user absent. Check again after the insert: a removal that
+        // commits later runs its hook later and finds the user. If the user
+        // is no longer a member, undo this join. A user who was already a
+        // participant is left for that removal's hook, which evicts it with
+        // its messages.
+        if !self
+            .db
+            .is_node_member(channel.node_id, user_id)
+            .await
+            .unwrap_or(false)
+        {
+            if inserted {
+                self.remove_from_voice_channels(
+                    user_id,
+                    Some(&[channel_id]),
+                    crate::screen::StopReason::Removed,
+                )
+                .await;
+            }
+            return Err(NOT_MEMBER.to_string());
+        }
+
+        Ok(existing)
+    }
+
+    /// Remove `user_id` from `channel_id`'s participants. Its screen share
+    /// there ends with `left` (SPEC-03 §6.12.4).
+    pub async fn leave_voice_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
+        self.remove_from_voice_channels(
+            user_id,
+            Some(&[channel_id]),
+            crate::screen::StopReason::Left,
+        )
+        .await;
         Ok(())
     }
 
-    pub async fn leave_voice_channel(&self, user_id: Uuid, channel_id: Uuid) -> Result<(), String> {
+    /// The one place where a user is removed from `voice_channels` (SPEC-03
+    /// §6.12.4): from the channels in `scope`, or from every voice channel
+    /// when `scope` is `None`. Empty channels are dropped. While the voice
+    /// write lock is held, the screen clean-up rule runs for every channel
+    /// the user left: the user's share there ends with `reason`
+    /// (`screen_share_stopped` to the remaining participants and the sharing
+    /// connection) and the watches of all of the user's connections there are
+    /// removed, so a later removal path cannot skip it. Returns the channels
+    /// the user left.
+    async fn remove_from_voice_channels(
+        &self,
+        user_id: Uuid,
+        scope: Option<&[Uuid]>,
+        reason: crate::screen::StopReason,
+    ) -> Vec<Uuid> {
         let mut voice_channels = self.voice_channels.write().await;
-
-        if let Some(participants) = voice_channels.get_mut(&channel_id) {
-            participants.remove(&user_id);
-
-            // Clean up empty voice channels
-            if participants.is_empty() {
-                voice_channels.remove(&channel_id);
+        let mut left_channels = Vec::new();
+        match scope {
+            Some(channels) => {
+                for channel_id in channels {
+                    let Some(participants) = voice_channels.get_mut(channel_id) else {
+                        continue;
+                    };
+                    if participants.remove(&user_id) && !left_channels.contains(channel_id) {
+                        left_channels.push(*channel_id);
+                    }
+                    if participants.is_empty() {
+                        voice_channels.remove(channel_id);
+                    }
+                }
             }
+            None => voice_channels.retain(|channel_id, participants| {
+                if participants.remove(&user_id) {
+                    left_channels.push(*channel_id);
+                }
+                !participants.is_empty()
+            }),
         }
+        self.screen
+            .users_left_voice(user_id, &left_channels, reason, &voice_channels);
+        left_channels
+    }
 
-        Ok(())
+    /// SPEC-03 REQ-29, hook 2 of SPEC-01's removal hook list: after a leave,
+    /// kick or ban removed the user's membership of a node, remove the user
+    /// from every voice channel of that node (`channel_ids`). Each remaining
+    /// participant gets `voice_peer_left`, the user's connections get
+    /// `voice_channel_left` with `"reason": "removed"`, and the user's
+    /// screen share and watches there end with `removed` (§6.9, §6.12.4).
+    /// Returns the voice channels the user was evicted from.
+    pub async fn evict_from_voice_channels(
+        &self,
+        user_id: Uuid,
+        channel_ids: &[Uuid],
+    ) -> Vec<Uuid> {
+        if channel_ids.is_empty() {
+            return Vec::new();
+        }
+        let left = self
+            .remove_from_voice_channels(
+                user_id,
+                Some(channel_ids),
+                crate::screen::StopReason::Removed,
+            )
+            .await;
+        for &channel_id in &left {
+            let peer_left = serde_json::json!({
+                "type": "voice_peer_left",
+                "channel_id": channel_id,
+                "user_id": user_id,
+            });
+            let _ = self
+                .send_to_voice_channel(channel_id, user_id, peer_left.to_string())
+                .await;
+            let channel_left = serde_json::json!({
+                "type": "voice_channel_left",
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "reason": "removed",
+            });
+            let _ = self.send_to_user(user_id, channel_left.to_string()).await;
+        }
+        left
     }
 
     pub async fn get_voice_channel_participants(&self, channel_id: Uuid) -> Vec<Uuid> {
@@ -1655,31 +1781,12 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    /// Remove user from all voice channels they're in, returning the channel IDs they left
+    /// Remove user from all voice channels they're in, returning the channel
+    /// IDs they left. Their screen shares there end with `left` (SPEC-03
+    /// §6.12.4).
     pub async fn leave_all_voice_channels(&self, user_id: Uuid) -> Vec<Uuid> {
-        let mut voice_channels = self.voice_channels.write().await;
-        let mut left_channels = Vec::new();
-
-        voice_channels.retain(|channel_id, participants| {
-            if participants.remove(&user_id) {
-                left_channels.push(*channel_id);
-            }
-            !participants.is_empty()
-        });
-
-        left_channels
-    }
-
-    /// Get voice mode for a channel (true = relay, false = p2p). Default is relay.
-    pub async fn get_voice_relay_mode(&self, channel_id: Uuid) -> bool {
-        let modes = self.voice_relay_mode.read().await;
-        modes.get(&channel_id).copied().unwrap_or(true) // default: relay
-    }
-
-    /// Set voice mode for a channel
-    pub async fn set_voice_relay_mode(&self, channel_id: Uuid, relay: bool) {
-        let mut modes = self.voice_relay_mode.write().await;
-        modes.insert(channel_id, relay);
+        self.remove_from_voice_channels(user_id, None, crate::screen::StopReason::Left)
+            .await
     }
 
     pub async fn send_to_voice_channel(
@@ -2288,6 +2395,49 @@ mod tests {
 
         let members = state.get_channel_members(channel.id).await;
         assert_eq!(members.len(), 2);
+    }
+
+    /// `join_voice_channel` returns the other participants as of its own
+    /// insert, so of two users who join at the same time at least one lists
+    /// the other (the voice_channel_joined reply's list, SPEC-03 §5.1).
+    #[tokio::test]
+    async fn simultaneous_voice_joins_do_not_both_miss_each_other() {
+        let state = std::sync::Arc::new(AppState::new_in_memory().await.unwrap());
+        let owner = state.register_user("k1".into(), "pw".into()).await.unwrap();
+        let node = state.create_node("Node".into(), owner, None).await.unwrap();
+        let channel = state
+            .create_channel("voice".into(), node.id, owner)
+            .await
+            .unwrap();
+        for round in 0..20 {
+            let a = state
+                .register_user(format!("ka{round}"), "pw".into())
+                .await
+                .unwrap();
+            let b = state
+                .register_user(format!("kb{round}"), "pw".into())
+                .await
+                .unwrap();
+            for u in [a, b] {
+                crate::test_support::admit_with_owner_invite(&state, node.id, u)
+                    .await
+                    .unwrap();
+            }
+            let (sa, sb) = (state.clone(), state.clone());
+            let ja =
+                tokio::spawn(async move { sa.join_voice_channel(a, channel.id).await.unwrap() });
+            let jb =
+                tokio::spawn(async move { sb.join_voice_channel(b, channel.id).await.unwrap() });
+            let (la, lb) = (ja.await.unwrap(), jb.await.unwrap());
+            assert!(!la.contains(&a) && !lb.contains(&b));
+            assert!(
+                la.contains(&b) || lb.contains(&a),
+                "round {round}: both joins missed each other"
+            );
+            for u in [a, b] {
+                state.leave_voice_channel(u, channel.id).await.unwrap();
+            }
+        }
     }
 
     #[tokio::test]
@@ -3059,24 +3209,6 @@ mod tests {
     // ── Voice channel additional tests ──
 
     #[tokio::test]
-    async fn test_voice_relay_mode_default() {
-        let state = AppState::new_in_memory().await.unwrap();
-        let channel_id = Uuid::new_v4();
-        // Default should be relay mode (true)
-        assert!(state.get_voice_relay_mode(channel_id).await);
-    }
-
-    #[tokio::test]
-    async fn test_voice_relay_mode_toggle() {
-        let state = AppState::new_in_memory().await.unwrap();
-        let channel_id = Uuid::new_v4();
-        state.set_voice_relay_mode(channel_id, false).await;
-        assert!(!state.get_voice_relay_mode(channel_id).await);
-        state.set_voice_relay_mode(channel_id, true).await;
-        assert!(state.get_voice_relay_mode(channel_id).await);
-    }
-
-    #[tokio::test]
     async fn test_leave_all_voice_channels() {
         let state = AppState::new_in_memory().await.unwrap();
         let user = state
@@ -3117,6 +3249,140 @@ mod tests {
             .get_voice_channel_participants(ch2.id)
             .await
             .is_empty());
+    }
+
+    /// The frames queued on a connection's receiver, parsed.
+    fn drain(rx: &mut broadcast::Receiver<String>) -> Vec<serde_json::Value> {
+        let mut frames = Vec::new();
+        while let Ok(text) = rx.try_recv() {
+            frames.push(serde_json::from_str(&text).unwrap());
+        }
+        frames
+    }
+
+    /// SPEC-03 REQ-29 (§6.9 step 2): the eviction helper removes the user
+    /// only from the voice channels it is given, tells the remaining
+    /// participants with `voice_peer_left` and every connection of the user
+    /// with `voice_channel_left` and reason `removed`, drops channels left
+    /// empty, and does nothing for channels the user is not in.
+    #[tokio::test]
+    async fn test_evict_from_voice_channels() {
+        let state = AppState::new_in_memory().await.unwrap();
+        let owner = state
+            .register_user("evict_owner".into(), "pw".into())
+            .await
+            .unwrap();
+        let user = state
+            .register_user("evict_user".into(), "pw".into())
+            .await
+            .unwrap();
+        let peer = state
+            .register_user("evict_peer".into(), "pw".into())
+            .await
+            .unwrap();
+        let node = state
+            .create_node("ENode".into(), owner, None)
+            .await
+            .unwrap();
+        for member in [user, peer] {
+            crate::test_support::admit_with_owner_invite(&state, node.id, member)
+                .await
+                .unwrap();
+        }
+        let shared = state
+            .create_channel("shared".into(), node.id, owner)
+            .await
+            .unwrap()
+            .id;
+        let alone = state
+            .create_channel("alone".into(), node.id, owner)
+            .await
+            .unwrap()
+            .id;
+        let kept = state
+            .create_channel("kept".into(), node.id, owner)
+            .await
+            .unwrap()
+            .id;
+        let unjoined = state
+            .create_channel("unjoined".into(), node.id, owner)
+            .await
+            .unwrap()
+            .id;
+
+        state.join_voice_channel(user, shared).await.unwrap();
+        state.join_voice_channel(user, alone).await.unwrap();
+        state.join_voice_channel(user, kept).await.unwrap();
+        state.join_voice_channel(peer, shared).await.unwrap();
+        state.join_voice_channel(peer, kept).await.unwrap();
+
+        // Two connections of the user, one of the peer.
+        let (user_tx1, mut user_rx1) = broadcast::channel(16);
+        let (user_tx2, mut user_rx2) = broadcast::channel(16);
+        let (peer_tx, mut peer_rx) = broadcast::channel(16);
+        state.add_connection(user, None, user_tx1).await;
+        state.add_connection(user, None, user_tx2).await;
+        state.add_connection(peer, None, peer_tx).await;
+
+        // `kept` is not among the channels given, so the user stays there.
+        let mut evicted = state
+            .evict_from_voice_channels(user, &[shared, alone, unjoined])
+            .await;
+        evicted.sort();
+        let mut expected = vec![shared, alone];
+        expected.sort();
+        assert_eq!(evicted, expected);
+
+        assert_eq!(
+            state.get_voice_channel_participants(shared).await,
+            vec![peer]
+        );
+        assert!(!state.voice_channels.read().await.contains_key(&alone));
+        let mut in_kept = state.get_voice_channel_participants(kept).await;
+        in_kept.sort();
+        let mut both = vec![user, peer];
+        both.sort();
+        assert_eq!(in_kept, both);
+
+        // The peer hears only about the channel it shares with the user.
+        let peer_frames = drain(&mut peer_rx);
+        assert_eq!(
+            peer_frames,
+            vec![serde_json::json!({
+                "type": "voice_peer_left",
+                "channel_id": shared,
+                "user_id": user,
+            })]
+        );
+        // Every connection of the user learns of each eviction.
+        for rx in [&mut user_rx1, &mut user_rx2] {
+            let mut frames = drain(rx);
+            frames.sort_by_key(|f| f["channel_id"].as_str().unwrap().to_string());
+            let mut expected: Vec<serde_json::Value> = [shared, alone]
+                .iter()
+                .map(|channel| {
+                    serde_json::json!({
+                        "type": "voice_channel_left",
+                        "channel_id": channel,
+                        "user_id": user,
+                        "reason": "removed",
+                    })
+                })
+                .collect();
+            expected.sort_by_key(|f| f["channel_id"].as_str().unwrap().to_string());
+            assert_eq!(frames, expected);
+        }
+
+        // A second eviction, and an eviction from no channels, find nothing
+        // to do and send nothing.
+        assert!(state
+            .evict_from_voice_channels(user, &[shared, alone])
+            .await
+            .is_empty());
+        assert!(state.evict_from_voice_channels(user, &[]).await.is_empty());
+        assert!(drain(&mut peer_rx).is_empty());
+        assert!(drain(&mut user_rx1).is_empty());
+        assert!(drain(&mut user_rx2).is_empty());
     }
 
     // ── Uptime test ──

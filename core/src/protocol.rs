@@ -49,6 +49,9 @@ pub enum MessageType {
     MessageDelete,
 
     // Voice Communication
+    // Unused (SPEC-03 REQ-30): no shipped Accord client sends or reads the
+    // voice messages below; relay-mode calls use SPEC-03's AMF1 frames over
+    // the relay's own WebSocket messages. Read SPEC-03 before relying on them.
     VoiceJoin,
     VoiceLeave,
     VoicePacket,
@@ -101,12 +104,15 @@ pub enum MessagePayload {
     MessageDelete(DeletePayload),
 
     // Voice Messages
+    // Unused (SPEC-03 REQ-30): no shipped Accord client sends or reads the
+    // voice messages below; relay-mode calls use SPEC-03's AMF1 frames over
+    // the relay's own WebSocket messages. Read SPEC-03 before relying on them.
     VoiceJoin(VoiceJoinPayload),
     VoiceLeave(VoiceLeavePayload),
     VoicePacket(VoicePacketPayload),
     VoiceSpeaking(VoiceSpeakingPayload),
 
-    // SRTP Voice Messages
+    // SRTP Voice Messages (unused, SPEC-03 REQ-30)
     VoiceKeyExchange(VoiceKeyExchangePayload),
     EncryptedVoicePacket(EncryptedVoicePacketPayload),
 
@@ -214,6 +220,9 @@ pub struct DeletePayload {
     pub delete_timestamp: chrono::DateTime<chrono::Utc>,
 }
 
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceJoinPayload {
     pub channel_id: Uuid,
@@ -221,16 +230,25 @@ pub struct VoiceJoinPayload {
     pub encryption_key: Vec<u8>, // Encrypted voice key
 }
 
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceLeavePayload {
     pub channel_id: Uuid,
 }
 
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoicePacketPayload {
     pub packet: VoicePacket,
 }
 
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceSpeakingPayload {
     pub is_speaking: bool,
@@ -238,6 +256,10 @@ pub struct VoiceSpeakingPayload {
 }
 
 /// Voice key exchange for SRTP session establishment
+///
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoiceKeyExchangePayload {
     pub channel_id: Uuid,
@@ -252,6 +274,10 @@ pub struct VoiceKeyExchangePayload {
 }
 
 /// An SRTP-encrypted voice packet with full header fields
+///
+/// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+/// type: relay-mode calls use SPEC-03's AMF1 frames, keyed through Double
+/// Ratchet messages. Read SPEC-03 before relying on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedVoicePacketPayload {
     pub channel_id: Uuid,
@@ -496,6 +522,9 @@ impl MessageBuilder {
         }
     }
 
+    /// **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this voice
+    /// function: relay-mode calls use SPEC-03's AMF1 frames, keyed through
+    /// Double Ratchet messages. Read SPEC-03 before relying on it.
     pub fn build_voice_packet(&self, voice_packet: VoicePacket) -> NetworkMessage {
         NetworkMessage {
             message_id: Uuid::new_v4(),

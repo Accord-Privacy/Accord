@@ -204,30 +204,6 @@
   color: var(--text-muted);
 }
 
-.voice-mode-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-  user-select: none;
-  font-weight: 600;
-  transition: opacity var(--transition-fast);
-}
-
-.voice-mode-badge:hover { opacity: 0.8; }
-
-.voice-mode-badge.relay {
-  background: rgba(35, 165, 89, 0.15);
-  color: var(--green);
-  border: 1px solid var(--green);
-}
-
-.voice-mode-badge.p2p {
-  background: rgba(240, 178, 50, 0.15);
-  color: var(--yellow);
-  border: 1px solid var(--yellow);
-}
-
 .voice-panel-disconnect {
   background: var(--red);
   border: none;
@@ -331,34 +307,272 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Screen Share Viewers */
-.voice-screenshare-viewers {
-  border-top: 1px solid var(--border);
-  padding: 8px;
+/* SPEC-03 §8.1 to §8.4: call security indicator, notes and participant states */
+.voice-panel-status-label.pending { color: var(--yellow); }
+
+.voice-security-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-active);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.voice-security-indicator.indicator-e2ee_not_verified,
+.voice-security-indicator.indicator-e2ee_verified {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.voice-security-indicator.indicator-unavailable,
+.voice-security-indicator.indicator-cant_verify_members {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.voice-panel-notes {
+  padding: 6px 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.voice-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-active);
+  border-left: 3px solid var(--yellow);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.voice-security-details {
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.voice-security-explainer {
+  margin: 0 0 4px;
+}
+
+.voice-security-list {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.voice-security-list code,
+.voice-user-pill-shortid {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.voice-user-pill-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.voice-user-pill-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.voice-user-pill-key {
+  display: inline-flex;
+  color: var(--green);
+}
+
+.voice-user-pill-dup {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--yellow);
+}
+
+.voice-user-pill-state {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.voice-user-pill.state-secure .voice-user-pill-state { color: var(--green); }
+.voice-user-pill.state-identity_changed .voice-user-pill-state,
+.voice-user-pill.state-not_verified_member .voice-user-pill-state,
+.voice-user-pill.state-cant_connect .voice-user-pill-state,
+.voice-user-pill.state-they_cant_hear_you .voice-user-pill-state,
+.voice-user-pill.state-cant_hear_them .voice-user-pill-state { color: var(--red); }
+.voice-user-pill.state-connecting .voice-user-pill-state,
+.voice-user-pill.state-checking_membership .voice-user-pill-state { color: var(--yellow); }
+
+.voice-user-pill-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.voice-user-pill-note {
+  font-size: 10px;
+  color: var(--yellow);
+}
+
+.voice-ctrl-round:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Screen sharing (SPEC-03 §8.4): the Share Screen state, the sharing
+   status, the local preview and one tile per share in the call. */
+.voice-screen {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 0 16px 10px;
 }
 
-.voice-screenshare-viewer {
-  background: var(--bg-darkest);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+.voice-screenshare-status {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-muted);
 }
 
-.voice-screenshare-label {
+.voice-screenshare-state {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.voice-screenshare-control.state-sharing {
+  background: var(--green);
+  color: var(--text-on-accent);
+}
+
+.voice-screen-sharing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.voice-screen-audience {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--text-primary);
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.voice-screen-indicator,
+.voice-screen-tile-indicator {
   font-size: 11px;
   color: var(--text-muted);
-  padding: 4px 8px;
-  background: var(--bg-active);
 }
 
-.voice-screenshare-video {
-  width: 100%;
-  max-height: 300px;
-  object-fit: contain;
-  background: #000;
+.voice-screen-audience-list {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+}
+
+.voice-screen-notice {
+  margin: 0;
+}
+
+.voice-screen-preview {
+  max-width: 320px;
+}
+
+.voice-screen-preview-video {
   display: block;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--bg-darkest);
+}
+
+.voice-screen-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-dark);
+}
+
+.voice-screen-tile-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+.voice-screen-tile-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.voice-screen-canvas {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  background: var(--bg-darkest);
+  border-radius: var(--radius-sm);
+}
+
+.voice-screen-canvas.dimmed {
+  opacity: 0.4;
+}
+
+.voice-screen-tile-status,
+.voice-screen-tile-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.voice-screen-tile.cant_verify .voice-screen-tile-status,
+.voice-screen-tile.blocked .voice-screen-tile-status {
+  color: var(--yellow);
+}
+
+.voice-screen-watch,
+.voice-screen-unwatch {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.voice-screen-unwatch {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.voice-screen-watch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* Voice channel hover tooltip */

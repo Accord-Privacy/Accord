@@ -284,7 +284,7 @@ export const ChannelSidebar: React.FC = () => {
         role="option"
         aria-selected={isActive}
         tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const isVoice = ctx.getChannelTypeNum(channel) === 2; if (isVoice) { if (ctx.voiceChannelId !== channel.id) { ctx.setVoiceChannelId(channel.id); ctx.setVoiceChannelName(channel.name); ctx.setVoiceConnectedAt(Date.now()); } } else { ctx.handleChannelSelect(channel.id, `#${channel.name}`); } } }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const isVoice = ctx.getChannelTypeNum(channel) === 2; if (isVoice) { if (ctx.voiceChannelId !== channel.id) { ctx.setVoiceChannelId(channel.id); ctx.setVoiceNodeId(channel.node_id ?? null); ctx.setVoiceChannelName(channel.name); ctx.setVoiceConnectedAt(Date.now()); } } else { ctx.handleChannelSelect(channel.id, `#${channel.name}`); } } }}
         draggable={canManageChannels}
         onDragStart={(e) => handleDragStart(e, { type: 'channel', id: channel.id, categoryId: channel.parent_id || null })}
         onDragEnd={handleDragEnd}
@@ -301,7 +301,9 @@ export const ChannelSidebar: React.FC = () => {
           onClick={() => {
             if (isVoiceChannel) {
               if (!isConnectedToVoice) {
+                // SPEC-03 REQ-9: record the channel's own node with it.
                 ctx.setVoiceChannelId(channel.id);
+                ctx.setVoiceNodeId(channel.node_id ?? null);
                 ctx.setVoiceChannelName(channel.name);
                 ctx.setVoiceConnectedAt(Date.now());
               }
@@ -767,7 +769,7 @@ const UserPanel: React.FC = () => {
               <Icon name={isDeafened ? 'speaker-off' : 'speaker'} size={18} />
             </button>
             <button className="voice-ctrl-btn voice-disconnect-btn" onClick={() => {
-              ctx.setVoiceChannelId(null); ctx.setVoiceChannelName(""); ctx.setVoiceConnectedAt(null);
+              ctx.setVoiceChannelId(null); ctx.setVoiceNodeId(null); ctx.setVoiceChannelName(""); ctx.setVoiceConnectedAt(null);
               ctx.setVoiceMuted(false); ctx.setVoiceDeafened(false);
             }} title="Disconnect"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg></button>
           </div>

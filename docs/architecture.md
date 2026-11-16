@@ -21,8 +21,9 @@ Accord exists because no platform combines Discord's community features with Sig
 > **Where the current release falls short.** These principles are goals, and the current release does not meet all of them:
 >
 > - Attachments are end-to-end encrypted (a random key per file, carried inside the encrypted message), but they are only as authentic as their message, the relay sees their metadata (count, padded size, uploader, channel, downloads), and files uploaded before this release are encrypted under a key the relay can compute until they are retired.
-> - Relay-mode voice (the default) is readable by the relay operator, because each participant's voice key is sent through the relay in a form the relay can read.
-> - P2P voice and P2P screen sharing reveal IP addresses to other participants and can be intercepted by the relay.
+> - Calls and screen sharing are end-to-end encrypted, but not verified: until identity verification and signed node rosters ship, the relay's member list decides who receives call keys, and a relay that intercepts a pair's first Double Ratchet session also gets the call keys sent over it. The relay sees call metadata (who is in a call, who shares and watches, frame sizes and timing).
+> - Clients older than end-to-end-encrypted calls send their voice keys through the relay in a form it can read; their P2P mode, removed from current clients, exposed IP addresses to other participants and is retired at the relay from this release.
+> - Voice does not work in the iOS and Android apps.
 > - Until identity verification ships, a malicious relay can intercept end-to-end-encrypted (Double Ratchet) sessions when they are set up, by substituting keys.
 >
 > See [section 9](#9-what-the-relay-sees-vs-doesnt-see) and [SECURITY.md](../SECURITY.md#known-limitations).
@@ -67,7 +68,7 @@ The client does all the heavy lifting:
 - Performs all encryption and decryption
 - Manages relay connections invisibly (users never see server addresses)
 - Handles key exchange (X3DH), ratcheting (Double Ratchet), and metadata encryption
-- Available as desktop (Tauri), CLI, iOS (Swift FFI), and Android (Kotlin JNI)
+- Available as desktop (Tauri), CLI, iOS (Swift FFI), and Android (Kotlin JNI). Calls and screen sharing work only in the desktop and web clients: voice does not work in the iOS and Android apps, which do not implement end-to-end-encrypted calls
 
 ---
 
@@ -272,7 +273,7 @@ The relay owner **cannot**:
 - Read any message content, or decrypt any metadata
 - See node membership, channels, roles, or a user roster
 - See any per-node governance (kicks, bans, role changes)
-- Correlate an IP to a node (by design; P2P voice and screen sharing still reveal IPs to other participants, see section 9)
+- Correlate an IP to a node (by design; calls of current clients do not reveal IPs to other participants, but the P2P mode of older clients did, see section 9)
 - Access any node as a member (unless explicitly invited)
 
 ### Permission Hierarchy (Relay Owner vs Node Owner)
@@ -313,15 +314,16 @@ it; if you want a trusted space, create one and invite only people you know. See
 | Attachment contents, names, types, keys, exact sizes | ❌ Nameless blob; the key travels only inside the E2EE message | ✅ Plaintext (recipients of the message) |
 | Attachment metadata | ✅ That a message has attachments and how many, padded size, upload time, uploader, channel, the message it belongs to, who downloads it and when | — |
 | Legacy uploads (before this release) | ✅ Readable until retired: encrypted under a key derived from the channel ID (not end-to-end) | — |
-| Voice audio (relay mode, the default) | ✅ Readable today: the voice keys are sent through the relay in a form it can read (not end-to-end) | — |
-| Voice audio and screen sharing (P2P mode) | ❌ Not routed through the relay, but the relay can intercept the connection setup | ✅ Audio and video (participants, who also learn each other's IP addresses) |
+| Call audio and screen video (current clients) | ❌ SFrame-encrypted frames; the epoch keys travel only inside Double Ratchet messages | ✅ Plaintext (participants the sender considers members; not yet verified, see below) |
+| Call metadata | ✅ Who is in a call and when, who shares and who watches whom, frame and fragment sizes and timing, speaking indicators | — |
+| Voice audio of older clients | ✅ Readable: their keys are sent through the relay in a form it can read; refused from the next relay release | — |
 | Public key + hash | ✅ | — |
 | User UUID | ✅ | — |
 | Password | ❌ Only Argon2id hash | — |
 | Node membership (UUIDs) | ✅ (routing) — never exposed in the admin surface | — |
 | Message timestamps | ✅ | — |
 | Message sender UUID | ✅ | — |
-| IP address | ✅ (transport; relay-owner connection log only, never node-correlated, not shown to node owners). P2P voice and P2P screen sharing also reveal it to other participants | — |
+| IP address | ✅ (transport; relay-owner connection log only, never node-correlated, not shown to node owners). Calls of current clients do not reveal it to other participants; the removed P2P mode of older clients did | — |
 | Device fingerprint | ❌ Only SHA-256 hash | — |
 | Device hardware details | ❌ | — |
 
@@ -331,8 +333,9 @@ The relay **does** see:
 - **Membership graphs** — which UUIDs belong to which Nodes. This is inherent to relay routing. Mitigated by UUIDs being pseudonymous.
 - **IP addresses** — standard for any TCP connection. Users who care should use Tor or a VPN.
 - **Attachments** — end-to-end encrypted with a random key per file, carried inside the Sender Keys or Double Ratchet message, so they are exactly as private and as authentic as that message: a relay that injects a sender key or intercepts a session at setup can read them and forge them, attributed to the member it impersonates. The relay sees their metadata (count, padded size, uploader, channel, message, downloads and their IP addresses) but not names, types, contents or exact sizes. Its deletion and expiry signals are unauthenticated and can make a device delete a DM attachment's only key. Files uploaded before this release stay readable by the relay until they are retired (90 days by default).
-- **Relay-mode voice** — not end-to-end encrypted today: relay-mode voice is readable by the relay operator, because each participant's key is sent through the relay in a form it can read.
-- **P2P voice and P2P screen sharing** — reveal IP addresses to other participants, and can be intercepted by the relay, because the connection setup passes through the relay unauthenticated. The voice mode is set per channel and other users can change it. These connections also contact public STUN servers run by Google, which learn your IP address; starting a screen share does this even in relay mode.
+- **Calls** — end-to-end encrypted, but not verified. Each participant draws a new random key per epoch and sends it only as Double Ratchet plaintext to each participant it considers a member, after that participant's client has said hello for its call instance; frames are SFrame (RFC 9605, AES-256-GCM) with the channel, sender, call instance, media kind, epoch and counter authenticated. Keys rotate on every join, departure and removal and every 10 minutes, and receivers erase them within 11 minutes. Under the interim rule the relay's member list decides membership, so a relay that seats an account it controls gives that account the call keys, and a relay that intercepts a pair's first session gets that pair's keys; the indicator says "not verified". Screen sharing uses video keys derived from the same epoch keys, carries video only (never sound), and is forwarded only to participants who choose to watch; it is unavailable on relays without `screen/1` and in apps that cannot capture or encode VP8 video (the macOS app can watch but not share), and the relay sees who shares, who watches whom, and the size and timing of the video.
+- **Mobile apps** — voice does not work in the iOS and Android apps: they do not implement end-to-end-encrypted calls.
+- **Older clients** — clients released before end-to-end-encrypted calls send voice keys the relay can read. Their P2P mode (browser DTLS-SRTP keyed through relay-forwarded, unauthenticated signaling) exposed IP addresses to other participants; it is removed from current clients, and relays from this release on no longer forward its signaling.
 - **Encrypted sessions at setup** — until identity verification ships, a malicious relay can substitute keys when an end-to-end-encrypted (Double Ratchet) session is set up, and read everything sent over it, including channel keys and Node Metadata Keys.
 - **Message timing** — timestamps are stored for ordering. Timing patterns can leak metadata. Future mitigation: onion routing (Phase 7).
 - **Traffic volume** — the relay knows how active a Node is, even if it can't read content.
@@ -347,8 +350,7 @@ The relay **does** see:
 | Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
 | Metadata encryption | AES-256-GCM | Channel/category names, display names, per-node policy blob (node name/description are relay-visible by design) |
 | Key derivation | HKDF-SHA256 | Deriving per-purpose keys from shared secrets |
-| Relay-mode audio | AES-256-GCM | Per-frame audio encryption. The key is sent through the relay in a form it can read, so this is not end-to-end encryption |
-| P2P voice and screen sharing | Browser WebRTC (DTLS-SRTP) | Direct connections between participants. Reveals IP addresses to other participants; the relay can intercept the setup |
+| Call audio and screen video | SFrame (RFC 9605), suite `AES_256_GCM_SHA512_128` (HKDF-SHA512, AES-256-GCM) | One random epoch key per sender and epoch, sent only inside Double Ratchet messages; audio and video keys derived per epoch, each with its own counter and replay window. Frames travel through the relay as `SrtpVoicePacket` (a historical name) and screen fragments as binary `SCREEN_UP` / `SCREEN_DOWN` messages |
 | File encryption | AES-256-GCM in 64 KiB records (`A256GCM-STREAM64K`), Padmé padding | A random key and nonce prefix per file, sent only inside the end-to-end-encrypted message with the name, type and ciphertext SHA-256. Legacy uploads used a key derived from the channel ID, which the relay can compute |
 | Identity keys | Ed25519 | Long-term identity for users and servers |
 | Password hashing | Argon2id | Server-side password verification |
@@ -378,7 +380,7 @@ Each Node has one NMK. The NMK is distributed to new members via the existing Do
 
 ### Forward Secrecy
 
-The Double Ratchet provides per-message forward secrecy: compromising a key reveals only the single message it encrypted. Past and future messages remain secure. Voice keys are not protected by the Double Ratchet: in relay mode they are sent through the relay in a form it can read (see section 9).
+The Double Ratchet provides per-message forward secrecy: compromising a key reveals only the single message it encrypted. Past and future messages remain secure. Call keys are carried by the Double Ratchet and rotate at least every 10 minutes, and on every change of the call's participants; a key reveals only the audio and video of its epoch.
 
 ### Future: Post-Quantum
 
@@ -391,7 +393,7 @@ Phase 7 will add hybrid key exchange (X25519 + ML-KEM/Kyber) to protect against 
 | Tradeoff | Why We Accept It |
 |----------|-----------------|
 | **Relay sees membership graphs** | Inherent to relay routing. UUIDs are pseudonymous. Full mitigation requires onion routing (Phase 7). |
-| **Relay sees IP addresses** | Standard TCP. Users can use Tor/VPN. The relay owner keeps a node-correlation-free connection log (IP + connect/disconnect) purely for DoS/DDoS defense and IP bans; IPs are never linked to nodes in that log and are not shown to node owners. Exception: P2P voice and P2P screen sharing reveal IP addresses to other participants. |
+| **Relay sees IP addresses** | Standard TCP. Users can use Tor/VPN. The relay owner keeps a node-correlation-free connection log (IP + connect/disconnect) purely for DoS/DDoS defense and IP bans; IPs are never linked to nodes in that log and are not shown to node owners. Calls of current clients do not reveal IP addresses to other participants; the P2P mode of older clients did, and is removed from current clients. |
 | **Relay sees message timing** | Required for message ordering. Timing analysis is a known metadata risk. Onion routing planned for Phase 7. |
 | **Device bans defeated by factory reset** | Closing this gap requires invasive hardware-level tracking that contradicts our privacy principles. The high barrier (new device or factory reset) is sufficient for most abuse scenarios. Invite-only Nodes provide the strongest defense. |
 | **NMK shared to all Node members** | A compromised member can decrypt metadata. This is inherent to group encryption. Revoking a member requires NMK rotation (planned). |
@@ -404,6 +406,8 @@ Phase 7 will add hybrid key exchange (X25519 + ML-KEM/Kyber) to protect against 
 | Component | Location |
 |-----------|----------|
 | Cryptography (encryption, keys, ratchet) | `core/src/` |
+| Call keys and frames (desktop and web) | `desktop/frontend/src/voice/` (`callKeys.ts`, `mediaFrame.ts`, `screenFrame.ts`, `screenShare.ts`, `relay.ts`) |
+| Unused Rust voice code | `core/src/srtp.rs`, `voice.rs`, `p2p_voice.rs` and `jitter_buffer.rs`, and the voice functions of `core/src/crypto.rs`, are unused: no shipped client uses them |
 | Metadata encryption | `core/src/metadata_crypto.rs` |
 | Device fingerprinting | `core/src/device_fingerprint.rs` |
 | Relay server | `server/src/` |

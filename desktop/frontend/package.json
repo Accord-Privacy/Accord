@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:voice": "vitest run --config vitest.voice.config.ts",
     "test:e2e": "playwright test",
     "auto:build": "VITE_ACCORD_AUTOMATION=1 npm run build && cd .. && frontend/node_modules/.bin/tauri build --debug --no-bundle",
     "auto:smoke": "node automation/smoke.mjs ../../target/debug/accord-desktop",

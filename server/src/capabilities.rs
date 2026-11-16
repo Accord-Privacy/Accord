@@ -19,7 +19,7 @@
 //! | `ctl-queue/1` | Non-destructive prekey queue: peek, acknowledge, push | SPEC-04 REQ-42, REQ-43 | no |
 //! | `identity/1` | Identity registration, `GET /keys/identity`, `POST /keys/identity/reset` | SPEC-05 REQ-77 | no |
 //! | `governance/1` | Governance log, receipts, audience endpoint, node-key queue, routing checks | SPEC-06 REQ-39 | no |
-//! | `screen/1` | Encrypted screen-sharing relay path; `hello` and `GET /health` also carry `screen_limits` | SPEC-03 REQ-55, §6.12 | no |
+//! | `screen/1` | Encrypted screen-sharing relay path; `hello` and `GET /health` also carry `screen_limits` | SPEC-03 REQ-55, §6.12 | yes, unless the operator turns screen sharing off |
 //!
 //! Each later relay release adds its own token to [`RELAY_FEATURES`] in the
 //! same change that completes the feature, and a new token is added to the
@@ -35,9 +35,19 @@ pub const ADMISSION_V1: &str = "admission/1";
 /// read-only legacy routes, and `attachment_limits` in `GET /health`.
 pub const ATTACHMENTS_V2: &str = "attachments/2";
 
+/// The encrypted screen-sharing relay path (SPEC-03 §6.12, REQ-55): the
+/// four JSON arms, the binary `SCREEN_UP` and `SCREEN_DOWN` messages and the
+/// per-connection screen queue, with `screen_limits` in `hello` and
+/// `GET /health`. Advertised only while the operator has screen sharing on
+/// (`--screen-share on`, the default). A relay that lists it also implements
+/// the P2P retirement of SPEC-03 §6.14 (REQ-56), which this relay applies
+/// whatever the screen-sharing setting.
+pub const SCREEN_V1: &str = "screen/1";
+
 /// Every token this relay implements, in the order it lists them. Clients
-/// must test membership only.
-pub const RELAY_FEATURES: &[&str] = &[ADMISSION_V1, ATTACHMENTS_V2];
+/// must test membership only. [`SCREEN_V1`] is left out of the advertised
+/// array while screen sharing is off ([`relay_features`]).
+pub const RELAY_FEATURES: &[&str] = &[ADMISSION_V1, ATTACHMENTS_V2, SCREEN_V1];
 
 /// Every token the batch registry defines (SPEC-01 §6.8). A token outside
 /// this list must never be advertised.
@@ -48,12 +58,17 @@ pub const REGISTERED_TOKENS: &[&str] = &[
     "ctl-queue/1",
     "identity/1",
     "governance/1",
-    "screen/1",
+    SCREEN_V1,
 ];
 
-/// The `features` array of `hello` and `GET /health`.
-pub fn relay_features() -> Vec<String> {
-    RELAY_FEATURES.iter().map(|t| (*t).to_string()).collect()
+/// The `features` array of `hello` and `GET /health`: every implemented
+/// token, without [`SCREEN_V1`] when the operator has screen sharing off.
+pub fn relay_features(screen_enabled: bool) -> Vec<String> {
+    RELAY_FEATURES
+        .iter()
+        .filter(|token| screen_enabled || **token != SCREEN_V1)
+        .map(|t| (*t).to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -61,9 +76,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn advertises_admission_and_attachments() {
+    fn advertises_admission_attachments_and_screen() {
         assert_eq!(
-            relay_features(),
+            relay_features(true),
+            vec![
+                "admission/1".to_string(),
+                "attachments/2".to_string(),
+                "screen/1".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn screen_sharing_off_removes_only_screen() {
+        assert_eq!(
+            relay_features(false),
             vec!["admission/1".to_string(), "attachments/2".to_string()]
         );
     }
@@ -80,15 +107,8 @@ mod tests {
 
     #[test]
     fn unimplemented_tokens_are_not_advertised() {
-        // SPEC-03's screen-sharing path, and the other batch specs' relay
-        // parts, have not landed on this relay.
-        for token in [
-            "screen/1",
-            "keys-status/1",
-            "ctl-queue/1",
-            "identity/1",
-            "governance/1",
-        ] {
+        // The other batch specs' relay parts have not landed on this relay.
+        for token in ["keys-status/1", "ctl-queue/1", "identity/1", "governance/1"] {
             assert!(!RELAY_FEATURES.contains(&token), "{token} is advertised");
         }
     }

@@ -198,7 +198,34 @@ Once connected, you'll see a voice connection panel at the bottom of the sidebar
 - **Disconnect** (📞) — Leave the voice channel.
 
 ### Speaking Indicators
-When someone is talking, their name will be highlighted with a green ring so you can see who's speaking.
+When someone is talking, their name will be highlighted with a green ring so you can see who's speaking. Speaking indicators are reported by the relay and are not encrypted.
+
+### Call Security
+Calls are **end-to-end encrypted**. Every call goes through the relay, but your audio is encrypted on your device with a key that only the other participants receive, each one inside your end-to-end-encrypted (Double Ratchet) session with them. The key changes whenever someone joins or leaves and every 10 minutes. The panel header shows the call's state:
+- **Waiting for others** — you are alone in the call.
+- **Checking membership…** / **Can't verify members** — the app is asking the relay which members the node has.
+- **Connecting securely…** — keys are being exchanged.
+- **End-to-end encrypted · not verified** — at least one participant is connected securely. "Not verified" means the app cannot yet check, independently of the relay, who is really a member and whose keys are whose; until identity verification ships, a malicious relay could add an account of its own to a node, and it would receive the call's keys like any member.
+
+Click the header to see every participant with their state ("Secure", "Connecting", "They can't hear you", "Can't hear them", "Not a verified member, audio blocked") and the first 8 characters of their user ID. Participants with the same display name are marked. A participant shown as "May be using an outdated app" runs a version without end-to-end-encrypted calls: you cannot hear each other, and nothing secret is sent to them.
+
+Accord has no peer-to-peer calls: the P2P mode of older versions is removed, so a call never reveals your IP address to other participants. If someone on an older version switches the channel to P2P, you see a note and your call continues unchanged.
+
+### Screen Sharing
+Click **Share Screen** in the voice panel and pick a screen or window in your system's picker. Only video is shared, never sound. Your screen is end-to-end encrypted to the same participants as your audio, and the panel says how many participants can see it; click that line to see who. Others see a tile saying you are sharing and choose **Watch**; the relay sends your video only to the people who watch, and at most two shares can be watched at once. Click **Stop Sharing** (or your system's own stop control) to end it. Leaving the call, reconnecting or being removed also ends it, and the app never restarts a share by itself.
+
+Where screen sharing works:
+- **Windows app** — sharing and watching. Windows shows its own screen picker.
+- **Linux app** — sharing and watching. Screen capture goes through PipeWire and the desktop portal (most Wayland desktops, such as GNOME and KDE); without them the app says "Couldn't capture your screen".
+- **macOS app** — watching only. The macOS webview offers apps no screen-capture permission, so Share Screen says "Screen sharing isn't available here: this app can't capture the screen".
+- **Web client** — in browsers that can capture the screen and encode and decode VP8 video (WebCodecs). Where your browser cannot, the button or the tile says why.
+- **Mobile apps** — no voice and no screen sharing.
+
+Screen sharing also needs a relay that supports encrypted screen sharing; on an older relay the button says "Encrypted screen sharing isn't available on this relay yet", and voice works as usual. Relay operators can turn screen sharing off or limit it (by default at most 2 people share at once in a channel). If the app has to read frames from its own preview, sharing may pause while Accord is minimized or hidden; the panel says so.
+
+On a slow connection: if your upload cannot keep up with your screen, the app sends fewer frames and lowers the video quality step by step (down to about 200 kbit/s), and raises it again once your connection keeps up; your voice is always sent ahead of the video. A viewer whose connection is too slow gets fewer frames rather than an ever-growing delay, because the relay drops video that has waited 2 seconds for them; their tile says "No new video for N s" or "No video received from [name] for N s" while nothing arrives. How late the video and your voice arrive still depends on the network, so on a slow link the picture can lag by a few seconds and your voice can lag while you share.
+
+The relay cannot see your screen, but it does see who shares, who watches whom, and the size and timing of the video, which follow how much changes on your screen.
 
 ### Voice Settings
 Open **Settings → Voice** to configure:
@@ -249,7 +276,7 @@ Messages in Accord are **end-to-end encrypted**. This means:
 - The relay server only sees encrypted data — it **cannot** read your messages.
 - Only the intended recipients can decrypt and read them.
 
-**Attachments are end-to-end encrypted, with limits.** They are exactly as private and as authentic as the message that carries them, the relay sees their metadata (how many, their padded sizes, who downloads them), and files uploaded before this release are readable by the relay until they are retired. Voice is not end-to-end encrypted, and a malicious relay can intercept encrypted sessions when they are set up. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations) before sharing anything sensitive.
+**Attachments are end-to-end encrypted, with limits.** They are exactly as private and as authentic as the message that carries them, the relay sees their metadata (how many, their padded sizes, who downloads them), and files uploaded before this release are readable by the relay until they are retired. Calls and screen sharing are end-to-end encrypted but not yet verified (see [Call Security](#call-security)), and a malicious relay can intercept encrypted sessions when they are set up. See [Known Limitations in SECURITY.md](../SECURITY.md#known-limitations) before sharing anything sensitive.
 
 Accord uses industry-standard cryptography (the same foundations as the Signal protocol) to protect your conversations.
 

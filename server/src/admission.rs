@@ -568,14 +568,18 @@ pub async fn run_removal_hooks(
             .await;
     }
 
-    // Hook 2: SPEC-03 REQ-29 (voice eviction of `removed_user_id` from the
-    // node's voice channels) attaches here once SPEC-03's relay part has
-    // landed.
+    // Hook 2: SPEC-03 REQ-29. Evict `removed_user_id` from the node's voice
+    // channels: `voice_peer_left` to the remaining participants,
+    // `voice_channel_left` with reason `removed` to the user, and the end of
+    // the user's screen shares and watches there (SPEC-03 §6.9, §6.12.4).
+    state
+        .evict_from_voice_channels(removed_user_id, channel_ids)
+        .await;
 
     // Hook 3: SPEC-06 REQ-36 (node-key distribution clean-up for `node_id`
     // and `removed_user_id`) and REQ-37 (`audience_changed`) attach here
     // once SPEC-06 has landed.
-    let _ = node_id; // read only by hooks 2 and 3, which are still empty
+    let _ = node_id; // read only by hook 3, which is still empty
 
     tracing::debug!(target: LOG_TARGET, "removal hooks ran");
 }

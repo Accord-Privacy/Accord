@@ -21,7 +21,7 @@
 
 Accord fills the gap between **Discord** (great features, no privacy) and **Signal** (great privacy, no community features). It's an open-source platform built on end-to-end encryption, designed so that the relay server can't read what you send.
 
-**It does not fully meet that goal yet.** Relay-mode voice is readable by the relay operator, a malicious relay can intercept encrypted sessions when they are set up (and then read and forge the messages and attachments sent over them), and files uploaded before end-to-end-encrypted attachments shipped stay readable by the relay until they are retired. See [Current security limitations](#current-security-limitations).
+**It does not fully meet that goal yet.** A malicious relay can intercept encrypted sessions when they are set up (and then read and forge the messages, attachments and call keys sent over them), it still decides who counts as a member of a node, and files uploaded before end-to-end-encrypted attachments shipped stay readable by the relay until they are retired. Calls are end-to-end encrypted but not yet verified. See [Current security limitations](#current-security-limitations).
 
 > **The relay admin is just a landlord — they provide the building but can't enter your apartment.**
 
@@ -35,12 +35,13 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 - **NMK metadata privacy** — channel/category names and per-node policies are encrypted under a Node Metadata Key the relay never sees (node names and descriptions are visible to the relay by design)
 - **Client-side encrypted search** — messages are decrypted locally before indexing
 - **End-to-end encrypted attachments** (desktop and web) — every file gets its own random key, which travels only inside the encrypted message that carries the file; the relay stores a nameless, padded blob and deletes it with its message. The relay still sees attachment metadata such as padded sizes — see [Current security limitations](#current-security-limitations)
-- **Not yet end-to-end encrypted:** voice — see [Current security limitations](#current-security-limitations)
+- **End-to-end encrypted calls and screen sharing** (desktop and web) — every participant draws a new random key for each epoch and sends it only inside its end-to-end-encrypted (Double Ratchet) session with each other participant; not yet verified — see [Current security limitations](#current-security-limitations)
 
 ### 🎙️ Voice Channels
-- **Relay mode** (the default) — audio goes through the relay, encrypted with AES-256-GCM, but the keys go through the relay too, so **relay-mode voice is readable by the relay operator**
-- **P2P mode** — browser WebRTC connections directly between participants; **P2P voice and P2P screen sharing reveal your IP address to other participants and can be intercepted by the relay**. They also contact public STUN servers run by Google, which learn your IP address; starting a screen share does this even in relay mode
-- The mode is set per channel and other users can change it, so joining any voice channel can expose your IP address
+- **End-to-end encrypted calls through the relay** — every call goes through the relay. Audio is sealed per frame with SFrame (RFC 9605, AES-256-GCM) under the sender's current epoch key, with the channel, sender, call instance, epoch and counter authenticated, so the relay can neither read nor forge it, nor replay it into the same or a later call. Each participant sends its epoch key only inside its Double Ratchet session with each participant it considers a member, after that participant's client has said hello. Keys change on every join and departure, when a member is removed, and every 10 minutes; old keys are erased
+- **Not verified yet** — until identity verification and signed node rosters ship, the relay's member list decides who receives your keys, and a relay can intercept a pair's first session; the call shows "End-to-end encrypted · not verified" (see [Current security limitations](#current-security-limitations))
+- **Screen sharing** — Share Screen sends your screen (video only, no audio) as VP8, end to end encrypted to the same participants as your audio. Others see a tile and choose Watch; the relay forwards the video only to those who watch. It needs a relay that offers encrypted screen sharing (`screen/1`) and an app that can capture and encode video; the macOS app can watch but not share. See the [user guide](docs/user-guide.md#screen-sharing)
+- **No peer-to-peer mode** — P2P voice and P2P screen sharing are removed from current clients: no WebRTC connections and no STUN or TURN servers, so other participants never learn your IP address from a call. Older clients still used browser DTLS-SRTP, keyed through relay-forwarded, unauthenticated signaling that exposed participants' IP addresses; relays from this release on no longer forward that signaling, so their P2P calls stop working on an updated relay
 - Mute/deafen controls, speaking indicators, Opus codec
 - Jitter buffer for smooth audio
 
@@ -132,9 +133,9 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 └──────────┘                                    └──────────┘
 ```
 
-**Relay** — routes encrypted blobs. It is not meant to hold decryption keys, but today it can decrypt relay-mode voice and files uploaded before end-to-end-encrypted attachments shipped (see [Current security limitations](#current-security-limitations)). Handles auth and presence; channel metadata is encrypted under a Node Metadata Key it never sees (node names and descriptions are visible to it by design). It does not show node membership to the relay owner — see [GOVERNANCE.md](GOVERNANCE.md).
+**Relay** — routes encrypted blobs. It is not meant to hold decryption keys, but today it can decrypt files uploaded before end-to-end-encrypted attachments shipped, and the voice of clients older than end-to-end-encrypted calls (see [Current security limitations](#current-security-limitations)). Handles auth and presence; channel metadata is encrypted under a Node Metadata Key it never sees (node names and descriptions are visible to it by design). It does not show node membership to the relay owner — see [GOVERNANCE.md](GOVERNANCE.md).
 
-**Node** — a community space (like a Discord server). Messages, attachments and channel metadata are E2E encrypted (node names and descriptions are visible to the relay by design); voice is not yet (see [Current security limitations](#current-security-limitations)).
+**Node** — a community space (like a Discord server). Messages, attachments, channel metadata, calls and screen sharing are E2E encrypted (node names and descriptions are visible to the relay by design), with the limits listed under [Current security limitations](#current-security-limitations).
 
 **Desktop** — Tauri app (Rust backend + React/TypeScript UI). Identity private keys stay local.
 
@@ -144,7 +145,7 @@ Accord fills the gap between **Discord** (great features, no privacy) and **Sign
 
 | Crate | Purpose |
 |---|---|
-| [`core/`](core/) | Cryptography, protocol, channels, voice, bots, invites |
+| [`core/`](core/) | Cryptography, protocol, channels, bots, invites. Its voice modules (`srtp`, `voice`, `p2p_voice`, `jitter_buffer`) and the voice functions of `crypto.rs` are unused: no shipped client uses them |
 | [`server/`](server/) | WebSocket relay server (zero-knowledge routing) |
 | [`desktop/`](desktop/) | Tauri desktop app (Rust + React/TypeScript) |
 | [`bot-sdk/`](bot-sdk/) | Bot SDK with examples (echo bot, moderation bot) |
@@ -164,8 +165,8 @@ Accord's security is built on a zero-knowledge architecture:
 2. **Messages and attachments are E2E encrypted** before leaving the client. Each file is encrypted with its own random key, carried inside the encrypted message; the relay still sees attachment metadata (see below)
 3. **DMs use the Double Ratchet** (X3DH key agreement, per-message forward secrecy)
 4. **Channel messages use AES-256-GCM** with shared channel keys
-5. **Voice is not E2E encrypted** — see below
-6. **The relay stores encrypted blobs** — it is designed not to read messages or attachments, but today it can read relay-mode voice and files uploaded before end-to-end-encrypted attachments shipped (see below)
+5. **Calls and screen sharing are E2E encrypted** with per-epoch keys sent only inside Double Ratchet sessions, but not yet verified (see below)
+6. **The relay stores encrypted blobs** — it is designed not to read messages, attachments or calls, but today it can read files uploaded before end-to-end-encrypted attachments shipped, and the voice of older clients (see below)
 7. **Per-Node profiles** ensure the relay can't correlate your identity across communities
 8. **Push notification payloads are encrypted** with 3 privacy levels (full, sender-only, minimal)
 
@@ -175,7 +176,9 @@ The current release falls short of this design in these ways:
 
 - **Attachments are end-to-end encrypted, but only as authentic as their message, and their metadata is visible.** Desktop and web clients encrypt every file with a new random key and send the key, the file name and the file type only inside the end-to-end-encrypted message. The relay still sees that a message has attachments, how many, each file's padded size, who uploaded it and when, in which channel and with which message, and who downloads it, when and from which IP address; it does not see file names, types, contents, keys or exact sizes. Attachments are exactly as private and as authentic as the message that carries them: until identity verification and key-recipient checks ship, a relay that injects its own sender key into a channel, or intercepts a Double Ratchet session (below), can read and forge attachments attributed to the member it impersonates. The relay's deletion and expiry signals are not authenticated, so a malicious relay can make your device delete a message together with its attachment keys; for a DM that can be the device's only copy of a file's key.
 - **Files uploaded before end-to-end-encrypted attachments shipped are not end-to-end encrypted.** They were encrypted under a key derived from the channel ID, which the relay knows, so the relay operator, or anyone with the relay's database, file storage or a backup, can decrypt and replace them and their names. The relay keeps them read-only and deletes them after a retirement window (90 days by default); clients show them only in an opt-in, badged "Legacy uploads" section.
-- **Voice is not end-to-end encrypted.** Relay-mode voice (the default) is readable by the relay operator, because each participant's key is sent through the relay in a form the relay can read. P2P voice and P2P screen sharing reveal your IP address to other participants and can be intercepted by the relay.
+- **Calls are end-to-end encrypted, but not verified.** Current desktop and web clients encrypt audio and screen video end to end and send each key only inside a Double Ratchet session (see Voice Channels above). Until identity verification and signed node rosters ship, three limits remain: the relay's member list decides who is a member, so a malicious relay can seat an account it controls in a node and that account receives call keys like any member (it is shown in the call with its own short id); a relay can intercept a pair's first Double Ratchet session (below) and with it that pair's call keys; and a participant who colludes with the relay can forge frames under the keys it received. A member who leaves or is removed stops receiving keys at once, and keys stop working within 11 minutes at the latest even if the relay withholds newer ones. The relay still sees who is in a call and when, who shares and who watches, packet sizes and timing (which follow speech and on-screen activity), and speaking indicators.
+- **Older clients.** Clients released before end-to-end-encrypted calls send their voice keys through the relay in a form it can read, so their calls are readable by the relay operator; current clients never send them a key and do not play their audio, so the two cannot hear each other. The P2P voice and P2P screen sharing of these older clients exposed IP addresses and could be intercepted by the relay; relays from this release on no longer forward P2P signaling, and the next relay release refuses their voice altogether. Update every client.
+- **Mobile voice does not work.** The iOS and Android apps do not implement end-to-end-encrypted calls, and the P2P signaling their old voice code used is retired at the relay.
 - **A malicious relay can intercept encrypted sessions when they are set up.** Until identity verification ships, nothing checks that a contact's keys really belong to that contact, so a malicious relay can substitute its own keys when an end-to-end-encrypted (Double Ratchet) session is set up.
 
 [SECURITY.md](SECURITY.md#known-limitations) describes these limits in detail.
@@ -246,7 +249,7 @@ cd desktop/frontend && npm install && npx vite build
 ./accord-server --port 8443 --frontend desktop/frontend/dist
 ```
 
-Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side and your private keys never leave the browser. Attachments are end-to-end encrypted with the limits listed under [Current security limitations](#current-security-limitations); voice is not end-to-end encrypted. A relay that serves the web client also serves its code, so it can change what the web client does.
+Visit your relay URL in any browser. The web client works as a **standalone application** — no desktop app or installation required. It auto-detects the relay, handles identity creation, and provides the full encrypted messaging experience including voice channels. All E2EE operations happen client-side and your private keys never leave the browser. Attachments, calls and screen sharing are end-to-end encrypted with the limits listed under [Current security limitations](#current-security-limitations). A relay that serves the web client also serves its code, so it can change what the web client does.
 
 ---
 
@@ -257,7 +260,7 @@ Native mobile apps for **iOS** and **Android** are under active development:
 - **iOS** — SwiftUI app with Rust FFI for E2EE (`mobile/ios/`)
 - **Android** — Jetpack Compose app with Rust JNI for E2EE (`mobile/android/`)
 
-Both apps have full networking (WebSocket + REST), E2EE (channel encryption + Double Ratchet DMs), WebRTC voice, and push notification support implemented. They are functional but not yet production-released.
+Both apps have networking (WebSocket + REST), E2EE (channel encryption + Double Ratchet DMs) and push notification support. Voice does not work in the mobile apps: they do not implement end-to-end-encrypted calls, and the P2P signaling their old voice code used is retired at the relay. They are not yet production-released.
 
 See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
@@ -278,7 +281,7 @@ See **[MOBILE.md](MOBILE.md)** for build instructions and current status.
 
 > ¹ Fluxer is fully open source — all features are available when self-hosted. Paywalling only applies to their official hosted servers.
 >
-> ² Messages and attachments (desktop and web). Voice is not end-to-end encrypted yet, the relay sees attachment metadata such as padded sizes, and a malicious relay can intercept encrypted sessions when they are set up — see [Current security limitations](#current-security-limitations).
+> ² Messages, attachments, calls and screen sharing (desktop and web). Calls are not verified yet, the relay sees attachment and call metadata such as padded sizes and timing, and a malicious relay can intercept encrypted sessions when they are set up — see [Current security limitations](#current-security-limitations).
 
 ---
 

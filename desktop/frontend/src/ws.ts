@@ -2,6 +2,8 @@
 
 import { WsMessage, WsMessageType, WsIncomingMessage } from './types';
 import { isSealedPayload, type SealedPayload } from './e2ee/sealed';
+import { encodeBase64 } from './attachments/base64';
+import { decodeScreenDown, encodeScreenUp } from './voice/screenFrame';
 
 /**
  * What the private send primitive reports (SPEC-02 REQ-48, shared with
@@ -22,6 +24,63 @@ export interface ChannelSendOptions {
   /** The descriptor `blob_id`s of the envelope (SPEC-02 §6.5.1); omitted when empty. */
   readonly attachmentIds?: readonly string[];
 }
+
+/**
+ * The relay's screen-sharing limits from `hello` (SPEC-03 §6.12.1), present
+ * only when well formed: `max_sharers` an integer from 1 to 8 and
+ * `max_bytes_per_second` an integer of at least 200,000.
+ */
+export interface ScreenLimits {
+  readonly maxSharers: number;
+  readonly maxBytesPerSecond: number;
+}
+
+/** The feature token of the screen-sharing relay path (SPEC-03 §6.12). */
+export const SCREEN_FEATURE = 'screen/1';
+
+/** A well-formed `SCREEN_DOWN` from the relay (SPEC-03 §6.12.2). */
+export interface ScreenFragmentEvent {
+  /** C, lowercase canonical. */
+  readonly channelId: string;
+  /** The sharer, stamped by the relay; lowercase canonical. */
+  readonly from: string;
+  /** The AMF1 fragment, byte for byte as the relay forwarded it. */
+  readonly fragment: Uint8Array;
+}
+
+/** Parse `screen_limits` of a `hello`; null unless well formed (§6.12.1). */
+export function parseScreenLimits(raw: unknown): ScreenLimits | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const sharers = o.max_sharers;
+  const rate = o.max_bytes_per_second;
+  if (typeof sharers !== 'number' || !Number.isSafeInteger(sharers) || sharers < 1 || sharers > 8) return null;
+  if (typeof rate !== 'number' || !Number.isSafeInteger(rate) || rate < 200_000) return null;
+  return Object.freeze({ maxSharers: sharers, maxBytesPerSecond: rate });
+}
+
+/** An `ArrayBuffer` from any realm (jsdom, Node, browsers). */
+function isArrayBuffer(data: unknown): data is ArrayBuffer {
+  return Object.prototype.toString.call(data) === '[object ArrayBuffer]';
+}
+
+/**
+ * Event names this class generates itself. A relay JSON message whose `type`
+ * is one of them is not emitted under that name: `screen_fragment` comes only
+ * from a well-formed binary SCREEN_DOWN (SPEC-03 §6.12.2), and the connection
+ * events only from the socket's own state. (`authenticated` is handled before
+ * this check.) `error` is not listed: the relay's `{"type":"error"}` frames
+ * (SPEC-01 §6.3) are delivered as `error` events by design.
+ */
+const LOCAL_EVENTS: ReadonlySet<string> = new Set([
+  'screen_fragment',
+  'disconnected',
+  'connected',
+  'connection_status',
+  'reconnecting',
+  'auth_error',
+  'message',
+]);
 
 // Event types for the WebSocket client
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting';
@@ -66,6 +125,7 @@ export interface WsEvents {
   pong: (data: any) => void;
   voice_join: (data: any) => void;
   voice_leave: (data: any) => void;
+  /** Legacy relay-readable audio from outdated clients: only legacy evidence (SPEC-03 REQ-3, REQ-4). */
   voice_packet: (data: any) => void;
   voice_speaking: (data: any) => void;
   voice_channel_joined: (data: any) => void;
@@ -75,7 +135,20 @@ export interface WsEvents {
   voice_participants: (data: any) => void;
   voice_speaking_state: (data: any) => void;
   voice_key_exchange: (data: any) => void;
-  p2p_signal: (data: any) => void;
+  /** An AMF1 audio frame (SPEC-03 §6.1): `{ from, channel_id, packet_data, timestamp }`. */
+  srtp_voice_packet: (data: any) => void;
+  /** Relay mode reports: they only drive a note (SPEC-03 REQ-41). */
+  voice_mode_changed: (data: any) => void;
+  voice_mode: (data: any) => void;
+  // SPEC-03 §6.12.1: the screen-sharing relay messages, and §6.12.2's
+  // binary SCREEN_DOWN, delivered as `screen_fragment`.
+  screen_share_started: (data: any) => void;
+  screen_share_stopped: (data: any) => void;
+  screen_share_rejected: (data: any) => void;
+  screen_watch_rejected: (data: any) => void;
+  screen_keyframe_request: (data: any) => void;
+  screen_watchers: (data: any) => void;
+  screen_fragment: (data: ScreenFragmentEvent) => void;
   reaction_add: (data: any) => void;
   reaction_remove: (data: any) => void;
   message_pin: (data: any) => void;
@@ -87,15 +160,33 @@ export interface WsEvents {
 
 type EventListener<T = any> = (data: T) => void;
 
-/** Whether a raw frame is a `ChannelMessage` or `EditMessage`. */
-function carriesMessagePayload(raw: string): boolean {
+/** The `message_type` object of a raw frame, if it has one. */
+function messageTypeOf(raw: string): object | null {
   try {
     const frame = JSON.parse(raw) as { message_type?: unknown } | null;
     const t = frame?.message_type;
-    return !!t && typeof t === 'object' && ('ChannelMessage' in t || 'EditMessage' in t || 'DirectMessage' in t);
+    return !!t && typeof t === 'object' ? t : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** Whether a raw frame is a `ChannelMessage` or `EditMessage`. */
+function carriesMessagePayload(raw: string): boolean {
+  const t = messageTypeOf(raw);
+  return !!t && ('ChannelMessage' in t || 'EditMessage' in t || 'DirectMessage' in t);
+}
+
+/**
+ * Call traffic (SPEC-03 REQ-37): frames, call messages and screen messages
+ * use the non-queuing primitive only, so nothing produced before a
+ * disconnect is sent after it.
+ */
+const CALL_TRAFFIC = ['VoiceKeyExchange', 'SrtpVoicePacket', 'ScreenShareStart', 'ScreenShareStop', 'ScreenWatch', 'ScreenKeyframeRequest'];
+
+function carriesCallTraffic(raw: string): boolean {
+  const t = messageTypeOf(raw);
+  return !!t && CALL_TRAFFIC.some(k => k in t);
 }
 
 export class AccordWebSocket {
@@ -118,6 +209,10 @@ export class AccordWebSocket {
   // The relay's capability tokens from this socket's `hello` (SPEC-01 §6.8),
   // forgotten on disconnect. Clients test membership only.
   private features: string[] = [];
+  // SPEC-03 §6.12.1: `screen_limits` of the same `hello`, when well formed.
+  private limits: ScreenLimits | null = null;
+  // SPEC-03 §8.4 row 3: whether this socket's `hello` has been processed.
+  private helloSeen = false;
 
   constructor(token: string, baseUrl?: string) {
     this.token = token;
@@ -190,6 +285,45 @@ export class AccordWebSocket {
     return this.features;
   }
 
+  /**
+   * The `screen_limits` of the current socket's `hello` (SPEC-03 §6.12.1),
+   * or null when it was missing or malformed, before the first `hello`, and
+   * after a disconnect.
+   */
+  screenLimits(): ScreenLimits | null {
+    return this.limits;
+  }
+
+  /**
+   * SPEC-03 §5.1: the current socket's `hello` listed `screen/1` with
+   * well-formed `screen_limits`. Until that `hello` has been processed the
+   * relay counts as not screen-capable.
+   */
+  isScreenCapable(): boolean {
+    return this.isConnected && this.features.includes(SCREEN_FEATURE) && this.limits !== null;
+  }
+
+  /**
+   * Whether the current socket's `hello` has been processed (SPEC-03 §8.4,
+   * row 3): until then the client does not know what the relay offers and
+   * shows screen sharing as "Not ready", not as unavailable.
+   */
+  helloProcessed(): boolean {
+    return this.isConnected && this.helloSeen;
+  }
+
+  /** `WebSocket.bufferedAmount` of the open socket, 0 otherwise (SPEC-03 REQ-47 pacing). */
+  bufferedAmount(): number {
+    const n = this.ws && this.ws.readyState === WebSocket.OPEN ? this.ws.bufferedAmount : 0;
+    return typeof n === 'number' && Number.isFinite(n) ? n : 0;
+  }
+
+  private forgetRelayFeatures(): void {
+    this.features = [];
+    this.limits = null;
+    this.helloSeen = false;
+  }
+
   getConnectionInfo(): ConnectionInfo {
     return {
       status: this.connectionStatus,
@@ -237,8 +371,13 @@ export class AccordWebSocket {
     // validates it within a 5-second window.
     const wsUrl = `${this.baseUrl}/ws`;
     
+    // A new socket has its own `hello` (SPEC-01 §6.8, SPEC-03 §6.1).
+    this.forgetRelayFeatures();
     try {
       this.ws = new WebSocket(wsUrl);
+      // SPEC-03 §6.12.2: binary messages arrive as ArrayBuffer, set before
+      // the socket opens.
+      this.ws.binaryType = 'arraybuffer';
       this.setupEventHandlers();
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
@@ -269,6 +408,13 @@ export class AccordWebSocket {
     };
 
     this.ws.onmessage = (event) => {
+      // SPEC-03 §6.12.2: binary messages are handled before JSON.parse. A
+      // well-formed SCREEN_DOWN becomes `screen_fragment`; every other binary
+      // message is dropped silently (REQ-26), never reported as an error.
+      if (typeof event.data !== 'string') {
+        this.handleBinary(event.data);
+        return;
+      }
       try {
         const message: WsIncomingMessage = JSON.parse(event.data);
         
@@ -279,12 +425,15 @@ export class AccordWebSocket {
           return;
         }
 
-        // Remember the relay's capability tokens until the socket closes.
+        // Remember the relay's capability tokens and screen limits until the
+        // socket closes.
         if (message.type === 'hello') {
           const features = (message as any).features;
           this.features = Array.isArray(features)
             ? features.filter((f: unknown): f is string => typeof f === 'string')
             : [];
+          this.limits = parseScreenLimits((message as any).screen_limits);
+          this.helloSeen = true;
         }
 
         // Handle server auth confirmation — NOW we're truly connected
@@ -303,8 +452,9 @@ export class AccordWebSocket {
         // Emit general message event
         this.emit('message', message);
         
-        // Emit specific event based on message type
-        if (message.type) {
+        // Emit specific event based on message type, never under a name this
+        // class generates itself (see LOCAL_EVENTS).
+        if (typeof message.type === 'string' && message.type && !LOCAL_EVENTS.has(message.type)) {
           this.emit(message.type as keyof WsEvents, message);
         }
       } catch (error) {
@@ -315,7 +465,7 @@ export class AccordWebSocket {
 
     this.ws.onclose = (event) => {
       this.isConnected = false;
-      this.features = [];
+      this.forgetRelayFeatures();
       this.stopPingInterval();
       
       // Auth rejection from server (4401 or 4403)
@@ -341,6 +491,15 @@ export class AccordWebSocket {
       console.error('WebSocket error:', event);
       this.emit('error', new Error('WebSocket connection error'));
     };
+  }
+
+  /** A binary message from the relay (SPEC-03 §6.12.2). */
+  private handleBinary(data: unknown): void {
+    if (!this.isConnected || !isArrayBuffer(data)) return;
+    const msg = decodeScreenDown(new Uint8Array(data));
+    if (!msg) return;
+    const ev: ScreenFragmentEvent = { channelId: msg.channelId, from: msg.from, fragment: msg.fragment };
+    this.emit('screen_fragment', ev);
   }
 
   private scheduleReconnect(): void {
@@ -424,6 +583,9 @@ export class AccordWebSocket {
   send(message: string): void {
     if (carriesMessagePayload(message)) {
       throw new TypeError('message and edit frames must use sendChannelMessage or sendEditMessage');
+    }
+    if (carriesCallTraffic(message)) {
+      throw new TypeError('call traffic must use the non-queuing voice and screen senders');
     }
     if (!this.isConnected || !this.ws) {
       // Queue message for later delivery
@@ -556,44 +718,94 @@ export class AccordWebSocket {
   }
 
   // Voice operations
-  joinVoiceChannel(channelId: string): void {
-    this.sendMessage({ JoinVoiceChannel: { channel_id: channelId } });
+  joinVoiceChannel(channelId: string): SendResult {
+    return this.sendMessage({ JoinVoiceChannel: { channel_id: channelId } });
   }
 
-  leaveVoiceChannel(channelId: string): void {
-    this.sendMessage({ LeaveVoiceChannel: { channel_id: channelId } });
+  leaveVoiceChannel(channelId: string): SendResult {
+    return this.sendMessage({ LeaveVoiceChannel: { channel_id: channelId } });
   }
 
-  getVoiceParticipants(channelId: string): void {
-    this.sendMessage({ GetVoiceParticipants: { channel_id: channelId } });
-  }
-
-  sendVoicePacket(channelId: string, encryptedAudio: number[], sequence: number): void {
-    this.sendMessage({ VoicePacket: { channel_id: channelId, encrypted_audio: encryptedAudio, sequence } });
+  getVoiceParticipants(channelId: string): SendResult {
+    return this.sendMessage({ GetVoiceParticipants: { channel_id: channelId } });
   }
 
   sendVoiceSpeakingState(channelId: string, userId: string, speaking: boolean): void {
     this.sendMessage({ VoiceSpeakingState: { channel_id: channelId, user_id: userId, speaking } });
   }
 
-  setVoiceMode(channelId: string, mode: string): void {
-    this.sendMessage({ SetVoiceMode: { channel_id: channelId, mode } });
+  /**
+   * One AMF1 audio frame (SPEC-03 §6.1, REQ-2): `SrtpVoicePacket` with the
+   * frame as standard base64. Never queued (REQ-37): returns whether it was
+   * handed to the open, authenticated socket.
+   */
+  sendMediaFrame(channelId: string, frame: Uint8Array): boolean {
+    if (!this.isConnected) return false;
+    return this.sendMessage({ SrtpVoicePacket: { channel_id: channelId, packet_data: encodeBase64(frame) } }).handedOff;
   }
 
-  sendVoiceKeyExchange(channelId: string, wrappedKey: string, targetUserId: string | null, senderSsrc: number, keyGeneration: number): void {
-    this.sendMessage({
+  /**
+   * One call message (SPEC-03 §6.3.1, REQ-1, REQ-37): `VoiceKeyExchange`
+   * for exactly one target, with `sender_ssrc` and `key_generation` 0. Never
+   * queued: returns whether it was handed to the open, authenticated socket.
+   */
+  sendCallMessage(channelId: string, targetUserId: string, wrappedKey: string): boolean {
+    if (typeof targetUserId !== 'string' || targetUserId.length === 0) return false;
+    if (!this.isConnected) return false;
+    return this.sendMessage({
       VoiceKeyExchange: {
         channel_id: channelId,
         wrapped_key: wrappedKey,
         target_user_id: targetUserId,
-        sender_ssrc: senderSsrc,
-        key_generation: keyGeneration,
+        sender_ssrc: 0,
+        key_generation: 0,
       },
-    });
+    }).handedOff;
   }
 
-  sendP2PSignal(channelId: string, targetUserId: string, signalData: string): void {
-    this.sendMessage({ P2PSignal: { channel_id: channelId, target_user_id: targetUserId, signal_data: signalData } });
+  /**
+   * One screen fragment as a binary `SCREEN_UP` (SPEC-03 §6.12.2, REQ-37):
+   * sent on the open, authenticated socket of a screen-capable relay, never
+   * queued. Returns whether it was handed off.
+   */
+  sendScreenFragment(channelId: string, fragment: Uint8Array): boolean {
+    if (!this.isScreenCapable() || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = encodeScreenUp(channelId, fragment);
+    } catch {
+      return false;
+    }
+    try {
+      this.ws.send(bytes);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // SPEC-03 §6.12.1: the screen-sharing JSON messages, on the shared send
+  // primitive (REQ-37), and only to a screen-capable relay: a relay without
+  // `screen/1` would reject them, and nothing falls back (REQ-42).
+  screenShareStart(channelId: string): SendResult {
+    return this.sendScreenMessage({ ScreenShareStart: { channel_id: channelId } });
+  }
+
+  screenShareStop(channelId: string): SendResult {
+    return this.sendScreenMessage({ ScreenShareStop: { channel_id: channelId } });
+  }
+
+  screenWatch(channelId: string, sharerId: string, watch: boolean): SendResult {
+    return this.sendScreenMessage({ ScreenWatch: { channel_id: channelId, sharer_id: sharerId, watch } });
+  }
+
+  screenKeyframeRequest(channelId: string, sharerId: string): SendResult {
+    return this.sendScreenMessage({ ScreenKeyframeRequest: { channel_id: channelId, sharer_id: sharerId } });
+  }
+
+  private sendScreenMessage(messageType: WsMessageType): SendResult {
+    if (!this.isScreenCapable()) return { handedOff: false, messageId: this.generateId() };
+    return this.sendMessage(messageType);
   }
 
   // Note: encryptedData should be base64-encoded encrypted content

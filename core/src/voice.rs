@@ -2,6 +2,15 @@
 //!
 //! Real-time encrypted voice communication with low latency.
 //! Supports both P2P and server-relayed voice channels.
+//!
+//! **Unused (SPEC-03 REQ-30).** No shipped Accord client uses this module.
+//! Relay-mode calls in the desktop and web client use the AMF1 frames of
+//! SPEC-03 ("Call media keys distributed end to end", stage 0) over the
+//! relay, with keys carried only in Double Ratchet messages; current clients
+//! contain no P2P code, and mobile voice is not functional. The module is
+//! built with the crate but used only by its own tests and benches; how it
+//! is compiled is unchanged (feature gating is a later change, SPEC-03 Q3
+//! and §11.4). Read SPEC-03 before relying on anything here.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

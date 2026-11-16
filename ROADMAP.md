@@ -16,15 +16,14 @@
 - Windows/Linux builds, CI/CD pipeline
 
 ### ✅ Phase 3: Voice & Real-Time — COMPLETE
-- P2P voice mesh for small groups (≤4 users)
-- ICE-lite connectivity, SRTP encryption (Rust module, not used by current clients)
+- Voice channels routed through the relay (the early P2P mode has since been removed from current clients)
+- Rust voice modules (`srtp`, `voice`, `p2p_voice`, `jitter_buffer`) — written, but unused: no shipped client uses them
 - Opus codec, jitter buffer, packet loss handling
-- Relay fallback for restrictive NATs
 - Voice UI (mute, deafen, speaking indicators)
 
 ### ✅ Phase 4: Security Hardening — COMPLETE
 - **Double Ratchet** — full Signal protocol spec with X3DH key agreement
-- **SRTP voice encryption** — replaced placeholder with proper WebRTC-grade encryption (Rust module, not used by current clients)
+- **Rust SRTP module** — written for an earlier voice design and unused by every shipped client
 - **Dependency upgrades** — quinn 0.11, sqlx 0.8, all audit findings resolved
 - **Reproducible builds** verified
 - **Performance benchmarks** (10k+ concurrent users target)
@@ -45,6 +44,11 @@
 - [x] Metadata encryption Phase 2 (NMK) — node/channel names as opaque relay blobs
 - [x] Security hardening (CSP, OS-keyring tokens, error-detail sanitization, boundary tests)
 - [x] Linux packaging (.deb/.AppImage, signed updater feed, release pipeline)
+- [x] End-to-end-encrypted calls (desktop and web): a random key per sender and epoch, sent only inside Double Ratchet sessions, SFrame frames bound to channel, sender and call instance, rotation on every join, departure and removal and every 10 minutes; not verified until identity verification ships
+- [x] End-to-end-encrypted screen sharing through the relay (`screen/1`): video only (VP8, no sound) under keys derived from the call's epoch keys, opt-in watching, viewing only in the macOS app; unavailable on relays without `screen/1`, and the relay still sees who shares and watches and the size and timing of the video
+- [x] P2P voice and P2P screen sharing removed from clients, and P2P signaling retired at the relay in the same relay release as `screen/1`
+- [ ] Relay refuses the readable voice of older clients (the first relay release after the client release)
+- [ ] Mobile voice on the end-to-end-encrypted relay path (mobile voice does not work today)
 - [ ] Windows packaging (CI)
 - [ ] Beta program
 - [ ] Community feedback integration
@@ -72,7 +76,7 @@
 |-----------|-----------|---------|
 | Key agreement | X3DH + X25519 | Full Signal protocol handshake |
 | Message encryption | Double Ratchet (AES-256-GCM) | Per-message forward secrecy |
-| Relay-mode audio | AES-256-GCM | Key sent through the relay, readable by it (not end-to-end); the Rust SRTP module is unused |
+| Calls and screen sharing | SFrame (RFC 9605), AES-256-GCM, HKDF-SHA512 | A random key per sender and epoch, sent only inside Double Ratchet messages; not yet verified. The Rust voice modules are unused |
 | Identity keys | Ed25519 | Long-term identity verification |
 | Key derivation | HKDF-SHA256 | Separate info strings per key type |
 | Password hashing | Argon2id | Server-side registration/login |
@@ -98,7 +102,7 @@
 | Mobile apps | ✅ | ✅ | ✅ | ✅ |
 | Open source | ✅ | ❌ | ✅ | ✅ |
 
-> ¹ Messages and attachments (desktop and web). Attachments are only as authentic as their message and the relay sees their metadata, files uploaded before encrypted attachments shipped stay readable by the relay until they are retired, voice is not end-to-end encrypted yet, and a malicious relay can intercept encrypted sessions when they are set up — see [SECURITY.md](SECURITY.md#known-limitations).
+> ¹ Messages and attachments (desktop and web). Attachments are only as authentic as their message and the relay sees their metadata, files uploaded before encrypted attachments shipped stay readable by the relay until they are retired, calls and screen sharing are end-to-end encrypted but not yet verified, and a malicious relay can intercept encrypted sessions when they are set up — see [SECURITY.md](SECURITY.md#known-limitations).
 
 ## Architecture
 

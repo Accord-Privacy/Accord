@@ -19,9 +19,16 @@
  *   happens there in stage 1 (their content is relay JSON, REQ-51); the
  *   search overlay's legacy decryption shows legacy text only.
  *
- * The voice path (SPEC-03) and the control queue (SPEC-04) do not exist in
- * this client yet; a static check makes sure nothing outside the classifier
- * parses the control framing, so whichever spec adds them must call it.
+ * - the voice path (SPEC-03): `parseCallPayload` (`voice/callPayload.ts`),
+ *   which classifies before it reads anything.
+ *
+ * The control queue (SPEC-04) does not exist in this client yet; a static
+ * check makes sure nothing outside the classifier parses the control framing,
+ * so the spec that adds it must call it.
+ *
+ * SPEC-03 T-13 (REQ-13) follows: real call messages carrying an epoch secret,
+ * delivered over the Double Ratchet to every other consumer path, are
+ * discarded there without leaving the secret anywhere.
  *
  * Discarded plaintexts leave no rendered content, cache record, store entry,
  * applied key, console output or storage write containing them.
@@ -33,9 +40,11 @@ import { join, relative } from 'node:path';
 import { E2EEManager } from './index';
 import { SenderKeyStore, buildDistributionMessage, decryptChannelMessage, isSenderKeyEnvelope, parseDistributionMessage } from './senderKeys';
 import { sealForChannel } from './sealed';
-import { readKeyDistribution, type ConsumerPath } from './plaintext';
+import { needsEnvelopeEscape, readKeyDistribution, type ConsumerPath } from './plaintext';
 import { decodeEdit, decodeMessage, type Decryptors } from '../attachments/decode';
 import { AttachmentStore } from '../attachments/store';
+import { buildEscapeEnvelope, textPlaintextFor } from '../attachments/envelope';
+import { parseCallPayload } from '../voice/callPayload';
 
 const REPO_ROOT = join(process.cwd(), '..', '..');
 const SRC = join(process.cwd(), 'src');
@@ -152,6 +161,13 @@ describe('T-53 (REQ-53): every consumer path acts only on what the registry give
       expect(store.listChannel(ORIGIN, X)).toEqual([]);
     });
 
+    it(`${v.id}: the voice path ${accepts('voice') ? 'may accept it' : 'discards it'}`, () => {
+      const decrypted = bob.decryptEnvelope(ALICE, fromWire(drWire(v.text)));
+      // The vectors' call payloads come from 5b0f3c1a-… in channel 7c9e6679-….
+      const p = parseCallPayload(decrypted, { from: '5b0f3c1a-8d2e-4f6a-9b7c-1d2e3f4a5b6c', ch: X });
+      if (!accepts('voice')) expect(p).toBeNull();
+    });
+
     it(`${v.id}: the key-distribution path ${accepts('key_distribution') ? 'accepts it' : 'discards it'}`, () => {
       const decrypted = bob.decryptEnvelope(ALICE, fromWire(drWire(v.text)));
       expect(decrypted).toBe(v.text);
@@ -178,6 +194,129 @@ describe('T-53 (REQ-53): every consumer path acts only on what the registry give
   });
 });
 
+describe('T-13 (SPEC-03 REQ-13): call messages act only on the voice path', () => {
+  const C = X;
+  const alice = new E2EEManager();
+  const bob = new E2EEManager();
+  const bobKeys = new SenderKeyStore();
+  let bundle: ReturnType<E2EEManager['initialize']>;
+  const logged: string[] = [];
+  const stored: string[] = [];
+
+  const secret = crypto.getRandomValues(new Uint8Array(32));
+  const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
+  const hex = Array.from(secret, b => b.toString(16).padStart(2, '0')).join('');
+  const secretForms = [b64(secret), b64(secret).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'), hex, String.fromCharCode(...secret)];
+  const inst = b64(crypto.getRandomValues(new Uint8Array(16)));
+  const peerInst = b64(crypto.getRandomValues(new Uint8Array(16)));
+  const CALL = '\u001eaccord-call\u001e';
+  const ckm = CALL + JSON.stringify({ type: 'call_key', v: 1, suite: 5, from: ALICE, ch: C, inst, to_inst: peerInst, epoch: 7, key: b64(secret) });
+  const hello = CALL + JSON.stringify({ type: 'call_hello', v: 1, from: ALICE, ch: C, inst, to_inst: null });
+  const ack = CALL + JSON.stringify({ type: 'call_key_ack', v: 1, from: ALICE, ch: C, inst, to_inst: peerInst, epoch: 7 });
+  const callMessages = [ckm, hello, ack];
+
+  beforeAll(() => {
+    alice.initialize();
+    bundle = bob.initialize();
+    for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        logged.push(args.map(a => (a instanceof Error ? `${a.message} ${a.stack}` : typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+      });
+    }
+    const setItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, k: string, v: string) {
+      stored.push(`${k}=${v}`);
+      setItem.call(this, k, v);
+    });
+  });
+
+  afterAll(() => {
+    vi.restoreAllMocks();
+  });
+
+  const drWire = (text: string) => toWire(alice.encryptEnvelope(BOB, text, bundle));
+  const decryptors: Decryptors = {
+    doubleRatchet: (sender, payload) => bob.decryptEnvelope(sender, fromWire(payload)),
+    senderKeys: () => null,
+  };
+
+  it('the voice path accepts the call messages and reads the secret from the call_key', () => {
+    const p = parseCallPayload(bob.decryptEnvelope(ALICE, fromWire(drWire(ckm))), { from: ALICE, ch: C });
+    if (!p || p.type !== 'call_key') throw new Error('call_key expected');
+    expect(p.key).toEqual(secret);
+    expect(parseCallPayload(bob.decryptEnvelope(ALICE, fromWire(drWire(hello))), { from: ALICE, ch: C })?.type).toBe('call_hello');
+    expect(parseCallPayload(bob.decryptEnvelope(ALICE, fromWire(drWire(ack))), { from: ALICE, ch: C })?.type).toBe('call_key_ack');
+  });
+
+  it('a live DM and a DM history item carrying a call message render nothing and cache nothing', async () => {
+    for (const message of callMessages) {
+      for (const kind of ['live', 'history']) {
+        const store = new AttachmentStore();
+        const cache = new Map<string, unknown>();
+        const decoded = await decodeMessage(
+          { origin: ORIGIN, renderedChannelId: D, ownUserId: BOB },
+          { channelId: D, messageId: `${kind}-${message.length}`, senderId: ALICE, payload: drWire(message), editedAt: null },
+          { decryptors, store, cache: { get: k => cache.get(k), put: r => void cache.set(r.message_id, r) } },
+        );
+        expect(decoded.display).toBe('hidden');
+        expect(decoded.body).toBe('');
+        expect(cache.size).toBe(0);
+        expect(store.listChannel(ORIGIN, D)).toEqual([]);
+      }
+    }
+  });
+
+  it('live sender_key_distribution and pending_sender_keys discard them: no Sender Key or NMK is applied', () => {
+    const before = JSON.stringify(bobKeys.exportStore());
+    for (const message of callMessages) {
+      // Both App.tsx handlers decrypt, then call readKeyDistribution before anything else (static test below).
+      expect(readKeyDistribution(bob.decryptEnvelope(ALICE, fromWire(drWire(message))))).toBeNull();
+    }
+    expect(JSON.stringify(bobKeys.exportStore())).toBe(before);
+    expect(bobKeys.hasChannelKeys(C)).toBe(false);
+  });
+
+  it('the voice path discards accord-keys payloads, content envelopes, DM text and other control payloads', () => {
+    const others = [
+      '\u001eaccord-keys\u001e' + JSON.stringify({ type: 'skdm', v: 2, from: ALICE, ch: C, skid: '00112233445566778899aabbccddeeff', ck: b64(secret), n: 0 }),
+      '\u001eaccord-ctl\u001e' + JSON.stringify({ type: 'session_reset', v: 1 }),
+      '\u001eaccord-calls\u001e' + ckm.slice(CALL.length),
+      buildEscapeEnvelope(C, ckm),
+      '{"type":"accord.content","v":1,"channel_id":"' + C + '","body":"hi"}',
+      'hello there',
+      JSON.stringify({ type: 'call_key', v: 1, suite: 5, from: ALICE, ch: C, inst, to_inst: peerInst, epoch: 7, key: b64(secret) }),
+      JSON.stringify({ type: 'skdm', ch: C }),
+    ];
+    for (const text of others) {
+      expect(parseCallPayload(text, { from: ALICE, ch: C }), text.slice(0, 24)).toBeNull();
+      expect(parseCallPayload(bob.decryptEnvelope(ALICE, fromWire(drWire(text))), { from: ALICE, ch: C })).toBeNull();
+    }
+  });
+
+  it('user text that begins with U+001E is sent as an escape envelope: it renders verbatim and never reaches the voice path', async () => {
+    expect(needsEnvelopeEscape(ckm)).toBe(true);
+    const sent = textPlaintextFor(D, ckm); // the envelope names the DM channel it is rendered in
+    if (!sent.ok) throw new Error('escape expected');
+    expect(sent.escaped).toBe(true);
+    expect(parseCallPayload(sent.plaintext, { from: ALICE, ch: C })).toBeNull();
+    const decoded = await decodeMessage(
+      { origin: ORIGIN, renderedChannelId: D, ownUserId: BOB },
+      { channelId: D, messageId: 'escaped', senderId: ALICE, payload: drWire(sent.plaintext), editedAt: null },
+      { decryptors, store: new AttachmentStore(), cache: { get: () => undefined, put: () => undefined } },
+    );
+    expect(decoded.display).toBe('content');
+    expect(decoded.body).toBe(ckm);
+  });
+
+  it('no console output or storage write contains the secret (raw, base64, base64url or hex) or the call tag', () => {
+    expect(stored.length).toBeGreaterThan(0); // sessions were persisted
+    for (const line of [...logged, ...stored]) {
+      for (const form of secretForms) expect(line.includes(form)).toBe(false);
+      expect(line.includes('accord-call')).toBe(false);
+    }
+  });
+});
+
 describe('T-53 static: one classifier, used by every consumer', () => {
   function sources(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
@@ -200,7 +339,7 @@ describe('T-53 static: one classifier, used by every consumer', () => {
   });
 
   it('every path that consumes decrypted plaintext imports the classifier', () => {
-    for (const rel of ['attachments/decode.ts', 'attachments/envelope.ts', 'e2ee/sealed.ts', 'App.tsx', 'SearchOverlay.tsx']) {
+    for (const rel of ['attachments/decode.ts', 'attachments/envelope.ts', 'e2ee/sealed.ts', 'App.tsx', 'SearchOverlay.tsx', 'voice/callPayload.ts']) {
       expect(readFileSync(join(SRC, rel), 'utf8'), rel).toMatch(/from ['"](?:\.\.?\/)+(?:e2ee\/)?plaintext['"]|from ['"]\.\/e2ee\/plaintext['"]|from ['"]\.\/plaintext['"]/);
     }
   });

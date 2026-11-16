@@ -188,7 +188,7 @@ This is enforced by the relay. It protects a Node from other users when the rela
 | Who is in which Node | ✅ Membership table (UUIDs) — never shown in the admin surface; the relay needs it to enforce admission | ✅ |
 | Who asked to join which Node | ✅ Pending join requests, for up to 14 days | Members with admission authority |
 | Ban list | ✅ Hashes only | Admins see encrypted reasons |
-| IP address | ✅ Transport layer; relay-owner connection log only, never node-correlated, not shown to node owners; P2P voice and P2P screen sharing reveal it to other participants | ❌ |
+| IP address | ✅ Transport layer; relay-owner connection log only, never node-correlated, not shown to node owners; calls of current clients do not reveal it to other participants (the P2P mode of older clients did, and is removed from current clients) | ❌ |
 | Message timestamps | ✅ | ✅ |
 | Message sender UUID | ✅ | ✅ |
 

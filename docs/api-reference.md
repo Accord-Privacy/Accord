@@ -4,7 +4,7 @@
 > **Base URL:** `http(s)://<host>:<port>`  
 > **Authentication:** Most endpoints require `?token=<auth_token>` query parameter or `Authorization: Bearer <auth_token>` header.  
 > **Content-Type:** `application/json` unless noted. Attachment blobs are uploaded as `application/octet-stream`; avatar, node icon and custom emoji uploads use `multipart/form-data`.  
-> **Zero-Knowledge Design:** The server is designed so that it cannot decrypt user content. Encrypted payloads are base64-encoded opaque blobs. The current release has exceptions: legacy file uploads from before end-to-end-encrypted attachments are not end-to-end encrypted (see [Files](#files)), the relay sees attachment metadata, and relay-mode voice keys pass through the relay in a form it can read. See [SECURITY.md](../SECURITY.md#known-limitations).
+> **Zero-Knowledge Design:** The server is designed so that it cannot decrypt user content. Encrypted payloads are base64-encoded opaque blobs. The current release has exceptions: legacy file uploads from before end-to-end-encrypted attachments are not end-to-end encrypted (see [Files](#files)), the relay sees attachment metadata, and clients released before end-to-end-encrypted calls still send their voice keys through the relay in a form it can read. Current clients send call keys only inside end-to-end-encrypted (Double Ratchet) call messages (see [Voice](#voice)). See [SECURITY.md](../SECURITY.md#known-limitations).
 
 ---
 
@@ -1846,17 +1846,35 @@ Bit positions are intentionally Discord-compatible for template import.
 
 ## Voice
 
-Voice is handled entirely over WebSocket. See the [WebSocket API](#websocket-api) section for voice message types:
+Voice and screen sharing are handled entirely over WebSocket; the message tables are in the [WebSocket API](#websocket-api) section. Every call goes through the relay ("relay mode"). Current clients (from the stage 0 client release on) encrypt audio and screen video end to end; the relay forwards frames and call messages without holding any key.
 
-- `JoinVoiceChannel` / `LeaveVoiceChannel`
-- `GetVoiceParticipants`
-- `VoicePacket` (encrypted audio relay)
-- `VoiceSpeakingState`
-- `VoiceKeyExchange` (relay-mode voice key exchange; the key is readable by the relay, not end-to-end)
-- `SrtpVoicePacket` (unused by current clients)
-- `SetVoiceMode` / `GetVoiceMode` (switch between relay and P2P mode)
-- `VoiceOffer` / `VoiceAnswer` / `VoiceIceCandidate` (WebRTC signaling for P2P mode)
-- `P2PSignal` (generic WebRTC signaling, used by current clients for P2P voice and screen sharing; not encrypted, so the relay can read and alter it)
+Limits, for clients and operators alike:
+- Calls are not verified: until identity verification and signed node rosters ship, the relay's member list decides who receives call keys, and a relay that intercepts a pair's first Double Ratchet session also gets the call keys sent over it.
+- Screen sharing is video only (no audio track is ever sent), watched only by connections that send `ScreenWatch`, and offered only by relays that list `screen/1`; clients whose capture or decoding probes fail do not offer sharing or watching (the macOS app can watch but not share). The relay sees who shares, who watches whom, keyframe requests, and the sizes and timing of fragments.
+- Voice does not work in the iOS and Android apps: they do not implement end-to-end-encrypted calls, and the `P2PSignal` signaling their old voice code used is retired (below).
+- The Rust `srtp`, `voice`, `p2p_voice` and `jitter_buffer` modules of `accord-core`, and the voice functions of its `crypto.rs`, are unused: no client uses them for calls.
+
+**Calls (current clients).**
+- `JoinVoiceChannel` / `LeaveVoiceChannel`, `GetVoiceParticipants` and `VoiceSpeakingState` as before. `voice_channel_joined` lists the other participants (taken atomically with the join) and, on a relay with `screen/1`, `screen_sharers`; `voice_participants` carries `screen_sharers` too. A removed member's connections receive `voice_channel_left` with `"reason": "removed"`, and the remaining participants `voice_peer_left`.
+- `VoiceKeyExchange` carries a **call message**: `wrapped_key` is `acv1:` followed by the standard base64 of a Double Ratchet envelope addressed to `target_user_id`, which current clients always set; `sender_ssrc` and `key_generation` are 0. Inside the envelope is a `call_hello`, `call_key` or `call_key_ack`; only a `call_key` carries an epoch key, and only to one recipient. The relay forwards it to the target's connections unchanged.
+- `SrtpVoicePacket` carries one audio frame: `packet_data` is the standard base64 of an AMF1 frame (Accord media frame v1: SFrame, RFC 9605, with AES-256-GCM and authenticated metadata binding the channel, the sender, the sender's call instance, the media kind, the epoch and the counter). The relay forwards it to the other participants as `srtp_voice_packet` with a stamped `from`. The name is historical; nothing in it is SRTP.
+
+**Screen sharing (`screen/1`).** A relay that lists `screen/1` in `features` implements these messages; `hello` and `GET /health` then also carry `screen_limits`. Clients send none of them to a relay without the token.
+- `ScreenShareStart { channel_id }`: starts the sending connection's share in the voice channel. Checks, in order: screen sharing turned off by the operator (`screen_share_rejected` with `reason` `disabled`), the user is not a participant (`not_participant`), more than 10 starts and stops by the user in 60 s (`rate_limited`), a repeat from the sharing connection (answered again with `screen_share_started`), another connection of the same user sharing (that share ends first), the channel already at `max_sharers` (`limit`). Otherwise every participant's connections receive `screen_share_started` (`channel_id`, `user_id`; the requester's copy carries `request_id`), then the sharer receives `screen_watchers` with `watchers: 0`.
+- `ScreenShareStop { channel_id }`: ends the connection's own share, if any. Never refused and never checked for participation. Everyone in the call and the stopping connection receive `screen_share_stopped` (`reason` `stopped`; the stopping connection's copy carries `request_id`).
+- `ScreenWatch { channel_id, sharer_id, watch }`: watching is opt-in and per connection. `watch: true` checks `disabled`, `not_participant`, more than 30 `watch: true` per connection in 60 s (`rate_limited`), no share by `sharer_id` or watching oneself (`not_sharing`), and a connection already watching 2 shares (`watch_limit`); refusals are `screen_watch_rejected` (`channel_id`, `sharer_id`, `reason`, `error`, `request_id`). `watch: false` removes the watch and is never refused. The sharer receives `screen_watchers` (the number of watching connections), at most once per second.
+- `ScreenKeyframeRequest { channel_id, sharer_id }`: forwarded as `screen_keyframe_request` (`channel_id`, `from`) to the sharing connection only, only from a connection that watches that share, at most once per second per connection and share; otherwise dropped silently.
+- Binary messages carry the video. `SCREEN_UP` (client to relay, 37 to 16,401 bytes): type byte `0x01`, the channel id as 16 bytes (RFC 9562 order), then one AMF1 fragment of media kind `0x02` (20 to 16,384 bytes). `SCREEN_DOWN` (relay to client, 53 to 16,417 bytes): type byte `0x02`, the channel id, the sharer's user id stamped by the relay, then the fragment byte for byte. The relay accepts `SCREEN_UP` only from the connection that holds the share, within the share's byte bucket, and forwards `SCREEN_DOWN` only to connections that watch it, through a separate per-connection queue (at most 256 messages and 1 MiB; the oldest are dropped first, and anything older than 2 s is dropped instead of sent), so video never delays control messages. Other binary messages are dropped. The 2 s bound is the relay's queue only: bytes already handed to the operating system are bounded by `TCP_NOTSENT_LOWAT`, which the relay sets to 32,768 bytes on every connection where the platform supports it (Linux, macOS; elsewhere it logs once at startup that it cannot), plus the data in flight. End-to-end delay therefore also depends on link speed and kernel buffers.
+- The video is VP8, split into fragments of at most 16,000 bytes, each sealed under a key derived from the sender's current epoch secret, so it reaches exactly the participants who received that epoch's `call_key`. The relay reads nothing of a fragment beyond the transport header.
+- Relay settings: `--screen-share on|off` (default `on`; `off` removes `screen/1` and `screen_limits` and the `screen_sharers` fields, and answers with `disabled`), `--screen-max-sharers 1..8` (default 2), `--screen-max-rate` in bytes per second per share (default 500,000, at least 200,000; the burst is 3 × the rate and at least 1,100,000 bytes). They are advertised as `screen_limits: {"max_sharers", "max_bytes_per_second"}`; clients size their bitrate from it.
+- Client pacing: a sharing client hands a fragment to its socket only while `bufferedAmount` is at most 65,536 bytes and skips (does not queue) new source frames while it is above that, so at most 64 KiB and one `SCREEN_UP` of video are queued ahead of any audio frame. After more than 15 skipped frames within 10 s it halves its encoder's target and maximum bitrate, halves them again after each further 10 s with more than 15 skips, down to a 200,000 bit/s target, and doubles them after each 10 s without a skip, up to the values derived from `max_bytes_per_second` (target at most 1,500,000 and maximum at most 2,500,000 bit/s).
+
+**Retired P2P messages.** Current clients have no peer-to-peer mode and never send these. From relay release R-A1 (the release that adds `screen/1`) the relay retires them for older clients too:
+- `SetVoiceMode` is retired: any `mode` other than `"relay"` is answered on the sending connection with an `error` frame whose `code` and `reason` are `p2p_retired` (with `channel_id` and `request_id`); `"relay"` is accepted silently; nothing is broadcast.
+- `GetVoiceMode` remains, and it and the `voice_mode` field of `voice_channel_joined` always report `relay`.
+- `P2PSignal`, `VoiceOffer`, `VoiceAnswer` and `VoiceIceCandidate` are retired: the relay drops them without forwarding and without an error frame (they still parse, so older clients see no format error).
+
+**Legacy voice of older clients.** `VoicePacket`, and a `VoiceKeyExchange` whose `wrapped_key` is a raw key (no `acv1:` prefix) or that has no target, come only from clients released before end-to-end-encrypted calls. Their keys pass through the relay readably. This relay release still forwards them; the first relay release after the client release refuses them (no forwarding, and an `error` frame with `code` and `reason` `legacy_voice_retired`, at most once per connection per 60 s). Current clients discard them.
 
 ---
 
@@ -3084,9 +3102,10 @@ All require token auth + ManageNode permission.
   "database_ok": true,
   "websocket_connections": 12,
   "memory_usage_bytes": 52428800,
-  "features": ["admission/1", "attachments/2"],
+  "features": ["admission/1", "attachments/2", "screen/1"],
   "admission_since": 1700000000,
-  "attachment_limits": { "max_blob_bytes": 104857600, "max_per_message": 10 }
+  "attachment_limits": { "max_blob_bytes": 104857600, "max_per_message": 10 },
+  "screen_limits": { "max_sharers": 2, "max_bytes_per_second": 500000 }
 }
 ```
 
@@ -3100,10 +3119,11 @@ All require token auth + ManageNode permission.
   | `ctl-queue/1` | Non-destructive prekey queue (not implemented yet) |
   | `identity/1` | Identity registration and reset (not implemented yet) |
   | `governance/1` | Governance log and node-key queue (not implemented yet) |
-  | `screen/1` | End-to-end-encrypted screen sharing through the relay (not implemented yet) |
+  | `screen/1` | End-to-end-encrypted screen sharing through the relay: the four screen messages and the binary `SCREEN_UP` / `SCREEN_DOWN` messages of [Voice](#voice), `screen_sharers` in the voice replies; `hello` and `GET /health` also carry `screen_limits`. Absent when the operator runs `--screen-share off` |
 
   A relay lists a token only when it implements everything the token stands for. On a relay without `admission/1`, clients use only `POST /invites/:code/join` and integer `expires_in_hours`.
 - `attachment_limits` — the relay's `attachment_max_blob_bytes` and the per-message maximum of 10. They guide the client's interface only; clients keep their own limits (100 MiB per blob).
+- `screen_limits` — present with `screen/1`: the shares allowed at once per voice channel (`max_sharers`, 1 to 8) and the bytes per second allowed per share (`max_bytes_per_second`, at least 200,000). A client treats a relay whose `screen_limits` is missing or out of these ranges as not offering screen sharing.
 - `admission_since` — when this relay began enforcing admission, in Unix seconds (the first boot of the admission release). It is an unauthenticated hint: members whose `joined_at` (`GET /nodes/:id/members`) is earlier may have joined by node id alone, before invites were enforced.
 
 ```bash
@@ -3194,11 +3214,12 @@ Then a welcome message:
   "server_version": "0.1.0",
   "server_build_hash": "abc...",
   "protocol_version": 1,
-  "features": ["admission/1"]
+  "features": ["admission/1", "attachments/2", "screen/1"],
+  "screen_limits": { "max_sharers": 2, "max_bytes_per_second": 500000 }
 }
 ```
 
-`features` is the relay capability registry, as in [`GET /health`](#get-health--health-check). A client forgets it when the socket disconnects and reads it again from the next `hello`.
+`features` is the relay capability registry, as in [`GET /health`](#get-health--health-check), and `screen_limits` is present with `screen/1`. A client forgets both when the socket disconnects and reads them again from the next `hello`.
 
 A frame that answers a client message may carry `request_id`, equal to that message's envelope `message_id`. The join and leave answers below always do.
 
@@ -3237,16 +3258,20 @@ All client → server messages use this envelope:
 | `JoinVoiceChannel` | `channel_id` | Join voice channel |
 | `LeaveVoiceChannel` | `channel_id` | Leave voice channel |
 | `GetVoiceParticipants` | `channel_id` | List voice participants |
-| `VoicePacket` | `channel_id`, `encrypted_audio`, `sequence` | Send encrypted audio |
-| `VoiceSpeakingState` | `channel_id`, `user_id`, `speaking` | Speaking state |
-| `VoiceKeyExchange` | `channel_id`, `wrapped_key`, `target_user_id?`, `sender_ssrc`, `key_generation` | Relay-mode voice key exchange; the key is readable by the relay, not end-to-end |
-| `SrtpVoicePacket` | `channel_id`, `packet_data` | Unused by current clients |
-| `SetVoiceMode` | `channel_id`, `mode` | Set voice mode (`"relay"` or `"p2p"`) |
-| `GetVoiceMode` | `channel_id` | Get current voice mode for channel |
-| `P2PSignal` | `channel_id`, `target_user_id`, `signal_data` | Legacy generic WebRTC signaling |
-| `VoiceOffer` | `channel_id`, `target_user_id`, `sdp` | WebRTC SDP offer (P2P mode only) |
-| `VoiceAnswer` | `channel_id`, `target_user_id`, `sdp` | WebRTC SDP answer (P2P mode only) |
-| `VoiceIceCandidate` | `channel_id`, `target_user_id`, `candidate` | WebRTC ICE candidate (P2P mode only) |
+| `VoicePacket` | `channel_id`, `encrypted_audio`, `sequence` | Legacy audio of older clients, under a key the relay can read; never sent by current clients. Forwarded by this relay release, refused from the first relay release after the client release (`legacy_voice_retired`) |
+| `VoiceSpeakingState` | `channel_id`, `user_id`, `speaking` | Speaking state (plaintext) |
+| `VoiceKeyExchange` | `channel_id`, `wrapped_key`, `target_user_id`, `sender_ssrc`, `key_generation` | Call message: `wrapped_key` is `acv1:` and the base64 of a Double Ratchet envelope for `target_user_id`; `sender_ssrc` and `key_generation` are 0. Older clients sent raw keys here, readable by the relay |
+| `SrtpVoicePacket` | `channel_id`, `packet_data` | One audio frame: base64 of an AMF1 frame (SFrame with AES-256-GCM under the sender's epoch key). The name is historical |
+| `ScreenShareStart` | `channel_id` | Start sharing the screen (`screen/1`); answered with `screen_share_started` or `screen_share_rejected` carrying `request_id` |
+| `ScreenShareStop` | `channel_id` | Stop the connection's share; never refused |
+| `ScreenWatch` | `channel_id`, `sharer_id`, `watch` | Watch (`true`) or stop watching (`false`) a share; a refused watch is answered with `screen_watch_rejected` |
+| `ScreenKeyframeRequest` | `channel_id`, `sharer_id` | Ask a watched sharer for a keyframe (forwarded at most once per second) |
+| `SetVoiceMode` | `channel_id`, `mode` | Deprecated and retired from relay release R-A1: any mode but `"relay"` gets an `error` frame with `code` `p2p_retired`; nothing is broadcast. Current clients never send it |
+| `GetVoiceMode` | `channel_id` | Answered with `voice_mode`, which always reports `relay` from relay release R-A1 on |
+| `P2PSignal` | `channel_id`, `target_user_id`, `signal_data` | Deprecated WebRTC signaling of older clients; retired from relay release R-A1 (dropped, never forwarded) |
+| `VoiceOffer` | `channel_id`, `target_user_id`, `sdp` | Deprecated WebRTC SDP offer; retired from relay release R-A1 (dropped, never forwarded) |
+| `VoiceAnswer` | `channel_id`, `target_user_id`, `sdp` | Deprecated WebRTC SDP answer; retired from relay release R-A1 (dropped, never forwarded) |
+| `VoiceIceCandidate` | `channel_id`, `target_user_id`, `candidate` | Deprecated WebRTC ICE candidate; retired from relay release R-A1 (dropped, never forwarded) |
 | `PublishKeyBundle` | `identity_key`, `signed_prekey`, `one_time_prekeys` | Publish E2EE keys |
 | `FetchKeyBundle` | `target_user_id` | Fetch user's keys |
 | `StorePrekeyMessage` | `recipient_id`, `message_data` | Store prekey message |
@@ -3273,20 +3298,24 @@ All client → server messages use this envelope:
 | `message_unpin` | Message unpinned |
 | `typing_start` | User started typing (includes `channel_id`, `user_id`) |
 | `read_receipt` | Channel read receipt (includes `user_id`, `channel_id`, `message_id`) |
-| `voice_channel_joined` | Joined voice (includes participant list) |
-| `voice_channel_left` | Left voice |
+| `voice_channel_joined` | Joined voice: `participants` (the others, taken atomically with the join), `voice_mode` (always `relay`), and `screen_sharers` (oldest first) with `screen/1` |
+| `voice_channel_left` | Left voice; with `"reason": "removed"` when a leave, kick or ban removed the user from the node |
 | `voice_peer_joined` | New peer in voice channel |
 | `voice_peer_left` | Peer left voice channel |
-| `voice_participants` | Voice participant list |
-| `voice_packet` | Encrypted audio from peer |
-| `voice_speaking_state` | Peer speaking state change |
-| `voice_key_exchange` | Relay-mode voice key exchange; the key is readable by the relay, not end-to-end |
-| `srtp_voice_packet` | Unused by current clients |
-| `p2p_signal` | WebRTC signaling relay |
-| `voice_offer` | WebRTC SDP offer relay (P2P mode) |
-| `voice_answer` | WebRTC SDP answer relay (P2P mode) |
-| `voice_ice_candidate` | WebRTC ICE candidate relay (P2P mode) |
-| `voice_mode` | Voice mode response (`channel_id`, `mode`) |
+| `voice_participants` | Voice participant list, with `screen_sharers` with `screen/1` |
+| `voice_packet` | Legacy audio of an older client (discarded by current clients) |
+| `voice_speaking_state` | Peer speaking state change (relay-asserted) |
+| `voice_key_exchange` | A call message (`from`, `channel_id`, `wrapped_key` with the `acv1:` prefix); raw keys from older clients are discarded |
+| `srtp_voice_packet` | An AMF1 audio frame (`from`, `channel_id`, `packet_data`) |
+| `screen_share_started` | A share started (`channel_id`, `user_id`; `request_id` on the requester's copy) |
+| `screen_share_stopped` | A share ended (`channel_id`, `user_id`, `reason`: `stopped`, `left` or `removed`; `request_id` on the copy to the connection whose stop caused it) |
+| `screen_share_rejected` | `ScreenShareStart` refused (`channel_id`, `reason`, `error`, `request_id`) |
+| `screen_watch_rejected` | `ScreenWatch` refused (`channel_id`, `sharer_id`, `reason`, `error`, `request_id`) |
+| `screen_keyframe_request` | A watcher asks for a keyframe (`channel_id`, `from`); to the sharing connection only |
+| `screen_watchers` | How many connections watch your share (`channel_id`, `watchers`); at most once per second |
+| `p2p_signal`, `voice_offer`, `voice_answer`, `voice_ice_candidate` | Deprecated and retired from relay release R-A1: the relay no longer forwards P2P signaling, and current clients have no listener for it |
+| `voice_mode` | Voice mode response (`channel_id`, `voice_mode`); always `relay` from relay release R-A1 on |
+| `error` with `code: "p2p_retired"` | A `SetVoiceMode` with a mode other than `relay` was refused (`reason`, `error`, `channel_id`, `request_id`) |
 | `sender_key_distribution` | Sender Key received notification |
 | `bot_response` | Bot command response (`bot_id`, `invocation_id`, `content`) |
 | `node_created` | Node created confirmation |

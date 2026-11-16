@@ -57,6 +57,15 @@ describe('useVoice — initial state', () => {
     expect(result.current.voiceChannelUsers).toEqual([]);
   });
 
+  it('voiceNodeId is null by default and records the node of the voice channel (SPEC-03 REQ-9)', () => {
+    const { result } = renderHook(() => useVoice());
+    expect(result.current.voiceNodeId).toBeNull();
+    act(() => result.current.setVoiceNodeId('node-1'));
+    expect(result.current.voiceNodeId).toBe('node-1');
+    act(() => result.current.setVoiceNodeId(null));
+    expect(result.current.voiceNodeId).toBeNull();
+  });
+
   it('exposes all required setter functions', () => {
     const { result } = renderHook(() => useVoice());
     expect(typeof result.current.setVoiceChannelId).toBe('function');

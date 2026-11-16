@@ -1088,8 +1088,11 @@ export const ChatArea: React.FC = () => {
                 currentUserId={localStorage.getItem('accord_user_id')}
                 channelId={ctx.voiceChannelId}
                 channelName={ctx.voiceChannelName}
+                nodeId={ctx.voiceNodeId}
+                bridge={ctx.callKeyBridge}
                 onLeave={() => {
                   ctx.setVoiceChannelId(null);
+                  ctx.setVoiceNodeId(null);
                   ctx.setVoiceChannelName("");
                   ctx.setVoiceConnectedAt(null);
                   ctx.setVoiceMuted(false);

@@ -39,7 +39,9 @@ Status legend: ✅ shipped · 🔶 designed, not built · 💭 option under cons
 - ✅ **Reproducible builds** (`REPRODUCIBLE-BUILDS.md`) + **relay build-hash
   attestation allowlist** — the raw material for scanning-resistance (§5).
 - ✅ **Microphone scoped** (`3fc1377`): capture is granted only while in a voice
-  call; camera always denied. Shrinks the "silent surveillance" surface.
+  call; camera always denied. Shrinks the "silent surveillance" surface. Screen
+  capture (Share Screen) is allowed only while a call is armed and only through
+  the platform's own picker; the macOS app does not capture the screen.
 
 ---
 

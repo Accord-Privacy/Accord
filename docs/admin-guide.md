@@ -4,9 +4,9 @@ This guide covers installation, configuration, deployment, and ongoing administr
 
 > **Key concept:** The Accord relay is designed as a *zero-knowledge* routing layer. It never decrypts user content. As an admin, you manage infrastructure, not user data.
 >
-> **Current limitation:** attachments uploaded before end-to-end-encrypted attachments shipped (legacy uploads, kept read-only until they are retired) are encrypted under a key derived from the channel ID, so anyone with the database, the legacy file store or a backup can decrypt them; relay-mode voice keys pass through the relay. New attachments are end-to-end encrypted, but the relay still sees their metadata, and `accord-server backup` does not include `attachments_dir` (see [SELF-HOSTING.md](SELF-HOSTING.md#attachment-storage)). Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
+> **Current limitation:** attachments uploaded before end-to-end-encrypted attachments shipped (legacy uploads, kept read-only until they are retired) are encrypted under a key derived from the channel ID, so anyone with the database, the legacy file store or a backup can decrypt them; the voice keys of clients older than end-to-end-encrypted calls pass through the relay readably (the next relay release refuses their voice). New attachments are end-to-end encrypted, but the relay still sees their metadata, and `accord-server backup` does not include `attachments_dir` (see [SELF-HOSTING.md](SELF-HOSTING.md#attachment-storage)). Protect backups accordingly; see [../SECURITY.md](../SECURITY.md#known-limitations).
 >
-> **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and the connection log is not shown to node owners. Note that P2P voice and P2P screen sharing reveal users' IP addresses to other call participants (see [../SECURITY.md](../SECURITY.md#known-limitations)). See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
+> **You are the relay owner if you have localhost access to the machine.** There is no relay account and no login — the admin dashboard binds to `127.0.0.1` only. Your powers are a landlord's: see node **names and descriptions**, create/delete nodes, view a node-correlation-free **connection log** and ban an IP for abuse defense, and pin allowed client build hashes. You **cannot** see node membership, messages, channels, roles, a user roster, or any per-node governance — and the connection log is not shown to node owners. Calls of current clients do not reveal users' IP addresses to other participants: the P2P voice and P2P screen sharing of older clients, which did, are removed from current clients, and this relay no longer forwards their signaling (see [../SECURITY.md](../SECURITY.md#known-limitations)). See **[../GOVERNANCE.md](../GOVERNANCE.md)**.
 
 ---
 
@@ -457,8 +457,8 @@ GET /channels/:id/effective-permissions  — view computed result
 ## 7. Moderation
 
 > **Moderation is the node owner's job, not the relay's.** The relay performs no
-> content moderation and cannot — it is not meant to see plaintext (except files
-> and relay-mode voice today; see [../SECURITY.md](../SECURITY.md#known-limitations)). Everything below is
+> content moderation and cannot — it is not meant to see plaintext (except legacy
+> files and the voice of outdated clients today; see [../SECURITY.md](../SECURITY.md#known-limitations)). Everything below is
 > operated by node owners/moderators; the relay only routes or stores opaque
 > values it can't interpret. See [../GOVERNANCE.md](../GOVERNANCE.md).
 

@@ -197,6 +197,22 @@ The relay refuses to start if `attachments_dir` is the database's directory or o
 
 **Backups.** `accord-server backup` archives the database only. Back up `attachments_dir` as well (the Volume Backup below covers it), or restored messages will point at missing attachments.
 
+## Voice and Screen Sharing
+
+Calls go through the relay. Current clients encrypt audio and screen video end to end: the relay forwards frames and Double Ratchet call messages without holding any key, and sees only who is in a call, who shares and who watches, and the sizes and timing of the frames. The relay also no longer forwards the peer-to-peer signaling of older clients and always reports a channel's voice mode as `relay`; their relay-mode voice, whose keys it can read, is still forwarded by this release and refused by the next one.
+
+Encrypted screen sharing (the `screen/1` feature) is on by default. Each setting is a CLI flag and a key of the same name in the TOML config file:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `screen_share` (`--screen-share`) | `on` | `off` removes `screen/1` from `hello` and `GET /health`, and clients show screen sharing as unavailable on this relay |
+| `screen_max_sharers` (`--screen-max-sharers`) | 2 | Shares at once in one voice channel (1 to 8) |
+| `screen_max_rate` (`--screen-max-rate`) | 500000 | Bytes per second per share, at least 200000; the burst is 3 × this rate and at least 1,100,000 bytes. Clients size their video bitrate from it |
+
+The relay sends a share only to the connections that chose to watch it, through a per-connection queue of at most 256 messages and 1 MiB, so each viewer costs about the share's bitrate (1.5 Mbit/s by default, 4 Mbit/s at most) in egress. A reverse proxy must pass binary WebSocket messages of up to 16,417 bytes. Invalid values stop the relay at startup.
+
+**Slow connections and delay.** The relay drops screen video that has waited 2 s in a viewer's queue, so a viewer whose connection is slower than the share gets fewer, newer frames instead of a growing delay, and the sharer's app lowers its bitrate in steps (down to 200 kbit/s) while its own upload cannot keep up, and raises it again afterwards. The 2 s limit covers only the relay's queue: data already handed to the operating system cannot be recalled. So that the kernel does not hold seconds of video behind it, the relay sets `TCP_NOTSENT_LOWAT` to 32,768 bytes on every client connection where the platform supports it (Linux and macOS): unsent data in its kernel send buffer then stays near that size, and the rest of the delay is the data in flight and the buffers of the network and the viewer. On other platforms (Windows) the relay logs once at startup that the option is unavailable, and video to a slow viewer can arrive later. The relay's setting covers its own connections only: behind a reverse proxy it applies to the proxy's connection to the relay, not to the proxy's connections to clients. On Linux, `sysctl -w net.ipv4.tcp_notsent_lowat=32768` sets the same limit for every TCP connection of the machine, the proxy's included. Audio and video share one connection per client; clients send audio first, with at most 64 KiB and one video fragment queued ahead of any audio frame, but how late audio and video arrive still depends on link speed and kernel buffers, not only on Accord.
+
 ## Firewall Configuration
 
 ### UFW (Ubuntu)

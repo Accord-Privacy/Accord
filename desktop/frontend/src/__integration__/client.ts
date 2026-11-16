@@ -20,6 +20,7 @@ import { AccordWebSocket } from '../ws';
 import { E2EEManager } from '../e2ee';
 import type { PreKeyBundle } from '../e2ee/keys';
 import { readKeyDistribution } from '../e2ee/plaintext';
+import { NodeMetadataKey } from '../e2ee/metadata';
 import {
   SenderKeyStore,
   buildDistributionMessage,
@@ -113,6 +114,8 @@ export class TestClient {
   readonly api: AccordApi;
   readonly e2ee = new E2EEManager();
   readonly senderKeys = new SenderKeyStore();
+  /** App.tsx's NMK store (nmkStoreRef): node id → Node Metadata Key, filled by `nmk` key distributions. */
+  readonly nmks = new Map<string, NodeMetadataKey>();
   readonly store = new AttachmentStore();
   /** The own-message cache (ownMessagesRef), relay message id → §6.2.4 record or legacy string. */
   readonly cacheMap = new Map<string, unknown>();
@@ -363,11 +366,32 @@ export class TestClient {
       if (read?.kind === 'legacy' && read.message.type === 'skdm') {
         const msg = read.message as unknown as SenderKeyDistributionMessage;
         this.senderKeys.setPeerKey(msg.ch, from, parseDistributionMessage(msg).state);
+      } else if (read?.kind === 'legacy') {
+        this.acceptNmkDistribution(read.message);
       }
       if (typeof data.distribution_id === 'string') this.ws?.ackSenderKeys([data.distribution_id]);
     } catch {
       // discarded silently (REQ-53)
     }
+  }
+
+  /**
+   * App.tsx's `nmk` branch of both key-distribution consumers: a legacy key
+   * message `{type: 'nmk', node, key}` stores that node's metadata key.
+   */
+  acceptNmkDistribution(message: Readonly<Record<string, unknown>>): void {
+    if (message.type !== 'nmk' || typeof message.node !== 'string' || typeof message.key !== 'string' || !message.node || !message.key) return;
+    const binary = atob(message.key);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    this.nmks.set(message.node, NodeMetadataKey.fromBytes(bytes));
+  }
+
+  /** The NMK store as node id → hex key, for comparing snapshots. */
+  nmkSnapshot(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [node, key] of [...this.nmks].sort(([a], [b]) => a.localeCompare(b))) out[node] = Buffer.from(key.asBytes()).toString('hex');
+    return out;
   }
 
   /** Open a channel as App.tsx does when the user selects it (`JoinChannel`). */

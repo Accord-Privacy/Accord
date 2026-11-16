@@ -4827,25 +4827,21 @@ impl Database {
         let identity_key: Vec<u8> = row.get("identity_key");
         let signed_prekey: Vec<u8> = row.get("signed_prekey");
 
-        // Try to consume one one-time prekey (FIFO)
-        let opk_row =
-            sqlx::query("SELECT id, prekey FROM one_time_prekeys WHERE user_id = ? LIMIT 1")
-                .bind(user_id.to_string())
-                .fetch_optional(&self.pool)
-                .await?;
-
-        let one_time_prekey = if let Some(opk_row) = opk_row {
-            let opk_id: i64 = opk_row.get("id");
-            let prekey: Vec<u8> = opk_row.get("prekey");
-            // Delete the consumed prekey
-            sqlx::query("DELETE FROM one_time_prekeys WHERE id = ?")
-                .bind(opk_id)
-                .execute(&self.pool)
-                .await?;
-            Some(prekey)
-        } else {
-            None
-        };
+        // Consume one one-time prekey (FIFO) in a single statement, so two
+        // concurrent fetches never receive the same prekey. With a SELECT
+        // followed by a DELETE, two initiators of X3DH toward the same user
+        // (for example two call participants greeting a newcomer at once)
+        // could both get it; the responder then accepts only the first
+        // session, and the second fails for good.
+        let one_time_prekey: Option<Vec<u8>> = sqlx::query(
+            "DELETE FROM one_time_prekeys WHERE id = \
+             (SELECT id FROM one_time_prekeys WHERE user_id = ? ORDER BY id LIMIT 1) \
+             RETURNING prekey",
+        )
+        .bind(user_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| r.get("prekey"));
 
         Ok(Some((identity_key, signed_prekey, one_time_prekey)))
     }
@@ -6897,6 +6893,34 @@ mod tests {
         let _db = Database::new(":memory:")
             .await
             .expect("Failed to create in-memory database");
+    }
+
+    /// Concurrent bundle fetches never hand out the same one-time prekey
+    /// (SPEC-03 integration finding: two call participants greeting a
+    /// newcomer at once both initiated X3DH with one prekey, and the
+    /// newcomer's second session could never decrypt).
+    #[tokio::test]
+    async fn concurrent_bundle_fetches_consume_distinct_one_time_prekeys() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = std::sync::Arc::new(Database::new(dir.path().join("otpk.db")).await.unwrap());
+        let user = db.create_user("otpk_user", "").await.unwrap();
+        let prekeys: Vec<Vec<u8>> = (0u8..8).map(|i| vec![i; 32]).collect();
+        db.publish_key_bundle(user.id, &[1u8; 32], &[2u8; 32], &prekeys)
+            .await
+            .unwrap();
+        let fetches = (0..16).map(|_| {
+            let db = db.clone();
+            tokio::spawn(async move { db.fetch_key_bundle(user.id).await.unwrap().unwrap().2 })
+        });
+        let mut served = Vec::new();
+        for f in fetches {
+            if let Some(opk) = f.await.unwrap() {
+                served.push(opk);
+            }
+        }
+        // Every prekey is served exactly once, and the rest of the fetches get none.
+        served.sort();
+        assert_eq!(served, prekeys);
     }
 
     #[tokio::test]

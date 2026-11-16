@@ -614,6 +614,62 @@ export function readKeyDistribution(plaintext: string): KeyDistributionPlaintext
 }
 
 // ---------------------------------------------------------------------------
+// Producing control payloads
+// ---------------------------------------------------------------------------
+
+/** A JSON value a control payload body may carry (§6.2 rules 1 to 4). */
+export type ControlJson =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly ControlJson[]
+  | { readonly [name: string]: ControlJson };
+
+/** The body of a control payload: a registered `type`, its `v`, and the type's fields. */
+export type ControlBody = { readonly type: string; readonly v: number } & { readonly [name: string]: ControlJson };
+
+function checkControlJson(v: ControlJson, depth: number): void {
+  if (depth > MAX_NESTING_DEPTH) throw new TypeError('control payload: nesting too deep');
+  if (typeof v === 'number') {
+    if (!Number.isSafeInteger(v)) throw new TypeError('control payload: integers only');
+  } else if (typeof v === 'string') {
+    if (!isWellFormedUtf16(v)) throw new TypeError('control payload: lone surrogate');
+  } else if (Array.isArray(v)) {
+    for (const x of v as readonly ControlJson[]) checkControlJson(x, depth + 1);
+  } else if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      if (!isWellFormedUtf16(k)) throw new TypeError('control payload: lone surrogate');
+      checkControlJson(x as ControlJson, depth + 1);
+    }
+  }
+}
+
+/**
+ * Frame a control payload for the one tag that `path` accepts (§6.1):
+ * `0x1E ‖ tag ‖ 0x1E ‖ UTF-8 JSON object`. Producers name the consumer path,
+ * not the tag, so the framing and the registry stay in this module only.
+ *
+ * `body.type` must be registered for that tag and `body.v` must be its
+ * version; numbers must be safe integers and nesting at most 8 levels (rules
+ * 1 to 4). The result is checked with the classifier before it is returned,
+ * so a producer can never emit a payload its own consumer would discard.
+ * Throws a TypeError on any violation (a programming error); the message
+ * never contains the body.
+ */
+export function encodeControlPayloadFor(path: ConsumerPath, body: ControlBody): string {
+  const tags = (Object.keys(CONTROL_REGISTRY) as ControlTag[]).filter(t => CONTROL_REGISTRY[t].path === path);
+  if (tags.length !== 1) throw new TypeError('control payload: no single tag for this path');
+  const reg = CONTROL_REGISTRY[tags[0]];
+  if (!reg.types.includes(body.type) || body.v !== reg.v) throw new TypeError('control payload: unregistered type or version');
+  checkControlJson(body as ControlJson, 1);
+  const out = CONTROL_SEPARATOR + tags[0] + CONTROL_SEPARATOR + JSON.stringify(body);
+  const c = classifyFor(path, out);
+  if (!c || c.class !== 'control' || !c.valid) throw new TypeError('control payload: rejected by the classifier');
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Sender escape (REQ-10)
 // ---------------------------------------------------------------------------
 

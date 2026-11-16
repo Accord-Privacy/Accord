@@ -46,6 +46,30 @@ pub async fn spawn_relay(state: SharedState) -> String {
     serve(router::build_public_router(state)).await
 }
 
+/// Like [`serve`], but every accepted socket has a send buffer of
+/// `send_buffer` bytes (`SO_SNDBUF` on the listener, which accepted sockets
+/// inherit on Linux). Tests use it so that the relay's own queues, not the
+/// kernel's, absorb a stalled reader (SPEC-03 §10.1).
+pub async fn serve_with_send_buffer(app: Router, send_buffer: u32) -> String {
+    let socket = tokio::net::TcpSocket::new_v4().expect("create a test socket");
+    socket
+        .set_send_buffer_size(send_buffer)
+        .expect("set the send buffer size");
+    socket
+        .bind("127.0.0.1:0".parse().expect("loopback address"))
+        .expect("bind a test listener");
+    let listener = socket.listen(1024).expect("listen");
+    let addr = listener.local_addr().expect("listener address");
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await;
+    });
+    format!("http://{addr}")
+}
+
 /// The node's owner creates a single-use invite through the relay's invite
 /// creation path and returns its code.
 pub async fn owner_invite_code(state: &AppState, node_id: Uuid) -> String {
@@ -142,6 +166,18 @@ impl TestRelay {
         }
     }
 
+    /// A relay serving the given state whose sockets have a send buffer of
+    /// `send_buffer` bytes ([`serve_with_send_buffer`]).
+    pub async fn with_state_and_send_buffer(state: SharedState, send_buffer: u32) -> Self {
+        let base_url =
+            serve_with_send_buffer(router::build_public_router(state.clone()), send_buffer).await;
+        Self {
+            base_url,
+            client: reqwest::Client::new(),
+            state,
+        }
+    }
+
     pub fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
@@ -212,7 +248,9 @@ impl TestRelay {
 
 /// A WebSocket client of the test relay, authenticated after the upgrade as
 /// the desktop does. As an observer it records the frames it receives for a
-/// while after an action (SPEC-01 section 10.1).
+/// while after an action (SPEC-01 section 10.1). Binary messages (SPEC-03
+/// `SCREEN_DOWN`) are kept apart from JSON frames: reading one kind buffers
+/// the other, in arrival order.
 pub struct WsClient {
     sink: futures_util::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<
@@ -227,6 +265,10 @@ pub struct WsClient {
     >,
     /// The relay's `hello` frame on this connection.
     pub hello: Value,
+    /// JSON frames received while reading binary messages.
+    texts: std::collections::VecDeque<Value>,
+    /// Binary messages received while reading JSON frames.
+    binaries: std::collections::VecDeque<Vec<u8>>,
 }
 
 impl WsClient {
@@ -234,10 +276,47 @@ impl WsClient {
     /// registered the connection (its `hello` frame), then drop the initial
     /// presence frames.
     pub async fn connect(relay: &TestRelay, token: &str) -> Self {
-        use futures_util::{SinkExt, StreamExt};
         let (ws, _) = tokio_tungstenite::connect_async(relay.ws_url("/ws"))
             .await
             .expect("websocket connect");
+        Self::authenticate(ws, token).await
+    }
+
+    /// Like [`WsClient::connect`], over a socket whose receive buffer is
+    /// `recv_buffer` bytes (`SO_RCVBUF`, set before connecting), so that a
+    /// client that stops reading makes the relay's queues fill (SPEC-03
+    /// §10.1).
+    pub async fn connect_with_recv_buffer(
+        relay: &TestRelay,
+        token: &str,
+        recv_buffer: u32,
+    ) -> Self {
+        let addr: SocketAddr = relay
+            .base_url
+            .trim_start_matches("http://")
+            .parse()
+            .expect("relay address");
+        let socket = tokio::net::TcpSocket::new_v4().expect("create a client socket");
+        socket
+            .set_recv_buffer_size(recv_buffer)
+            .expect("set the receive buffer size");
+        let tcp = socket.connect(addr).await.expect("tcp connect");
+        let (ws, _) = tokio_tungstenite::client_async(
+            relay.ws_url("/ws"),
+            tokio_tungstenite::MaybeTlsStream::Plain(tcp),
+        )
+        .await
+        .expect("websocket connect");
+        Self::authenticate(ws, token).await
+    }
+
+    async fn authenticate(
+        ws: tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        token: &str,
+    ) -> Self {
+        use futures_util::{SinkExt, StreamExt};
         let (mut sink, stream) = ws.split();
         sink.send(tokio_tungstenite::tungstenite::Message::Text(
             json!({ "Authenticate": { "token": token } }).to_string(),
@@ -248,6 +327,8 @@ impl WsClient {
             sink,
             stream,
             hello: Value::Null,
+            texts: std::collections::VecDeque::new(),
+            binaries: std::collections::VecDeque::new(),
         };
         client.hello = client
             .wait_for("hello", std::time::Duration::from_secs(5))
@@ -278,9 +359,32 @@ impl WsClient {
         message_id
     }
 
-    /// The next JSON text frame, or `None` after `timeout`.
+    /// Send one binary WebSocket message.
+    pub async fn send_binary(&mut self, data: Vec<u8>) {
+        use futures_util::SinkExt;
+        self.sink
+            .send(tokio_tungstenite::tungstenite::Message::Binary(data))
+            .await
+            .expect("send binary websocket message");
+    }
+
+    /// Close the connection with a close frame and drop it.
+    pub async fn close(mut self) {
+        use futures_util::SinkExt;
+        let _ = self
+            .sink
+            .send(tokio_tungstenite::tungstenite::Message::Close(None))
+            .await;
+        let _ = self.sink.close().await;
+    }
+
+    /// The next JSON text frame, or `None` after `timeout`. Binary messages
+    /// received meanwhile are kept for [`WsClient::next_binary`].
     pub async fn next_frame(&mut self, timeout: std::time::Duration) -> Option<Value> {
         use futures_util::StreamExt;
+        if let Some(frame) = self.texts.pop_front() {
+            return Some(frame);
+        }
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -288,8 +392,74 @@ impl WsClient {
                 Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))) => {
                     return Some(serde_json::from_str(&text).unwrap_or(Value::Null));
                 }
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data)))) => {
+                    self.binaries.push_back(data);
+                }
                 Ok(Some(Ok(_))) => continue,
                 _ => return None,
+            }
+        }
+    }
+
+    /// The next binary message, or `None` after `timeout`. JSON frames
+    /// received meanwhile are kept for [`WsClient::next_frame`].
+    pub async fn next_binary(&mut self, timeout: std::time::Duration) -> Option<Vec<u8>> {
+        use futures_util::StreamExt;
+        if let Some(data) = self.binaries.pop_front() {
+            return Some(data);
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, self.stream.next()).await {
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data)))) => {
+                    return Some(data);
+                }
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))) => {
+                    self.texts
+                        .push_back(serde_json::from_str(&text).unwrap_or(Value::Null));
+                }
+                Ok(Some(Ok(_))) => continue,
+                _ => return None,
+            }
+        }
+    }
+
+    /// Every binary message received during `duration`.
+    pub async fn binaries_for(&mut self, duration: std::time::Duration) -> Vec<Vec<u8>> {
+        let deadline = tokio::time::Instant::now() + duration;
+        let mut messages = Vec::new();
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return messages;
+            }
+            match self.next_binary(remaining).await {
+                Some(data) => messages.push(data),
+                None => return messages,
+            }
+        }
+    }
+
+    /// Whether the relay has closed the connection: the stream ends or
+    /// fails within `timeout`. Frames received meanwhile are kept.
+    pub async fn is_closed_within(&mut self, timeout: std::time::Duration) -> bool {
+        use futures_util::StreamExt;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, self.stream.next()).await {
+                Err(_) => return false,
+                Ok(None) | Ok(Some(Err(_))) => return true,
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))) => return true,
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))) => {
+                    self.texts
+                        .push_back(serde_json::from_str(&text).unwrap_or(Value::Null));
+                }
+                Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data)))) => {
+                    self.binaries.push_back(data);
+                }
+                Ok(Some(Ok(_))) => continue,
             }
         }
     }

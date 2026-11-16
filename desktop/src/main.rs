@@ -16,16 +16,105 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// True only while the user is actively in a voice call. Gates the WebKitGTK
-/// microphone permission handler: capture is denied unless the user has
-/// explicitly joined voice, so an XSS payload cannot silently open the mic.
+/// True only while the user is in a voice call. Gates the WebKitGTK
+/// user-media permission handler (`decide_user_media`): microphone requests
+/// and display-capture requests (Share Screen, SPEC-03 REQ-57) are allowed
+/// only while it is set, so an XSS payload cannot silently open the mic or
+/// capture the screen outside a call. Camera requests are always denied.
 static VOICE_CAPTURE_ARMED: AtomicBool = AtomicBool::new(false);
 
-/// Called by the frontend when it joins/leaves a voice channel, arming or
-/// disarming microphone permission. Camera is never granted (no video feature).
+/// Called by the frontend when it joins or leaves a voice channel, arming or
+/// disarming capture. While armed, microphone and display-capture requests
+/// are allowed; a display-capture request still goes through the platform's
+/// own picker, so the user chooses what is shared. Camera is never granted:
+/// Accord has no camera feature.
 #[tauri::command]
 fn set_voice_capture_armed(armed: bool) {
     VOICE_CAPTURE_ARMED.store(armed, Ordering::SeqCst);
+}
+
+/// Whether this desktop app can capture the screen for Share Screen
+/// (SPEC-03 REQ-57, §6.13.1). The frontend runs it once per voice session,
+/// before its capture probe and never from the Share Screen click handler,
+/// which must call `getDisplayMedia` before any `await` (REQ-43).
+///
+/// - Linux (WebKitGTK): true. The permission handler allows display capture
+///   during calls, and WebKitGTK captures through PipeWire and the desktop
+///   portal, whose picker the user sees.
+/// - Windows (WebView2): true. WebView2 shows its own screen-capture UI; the
+///   shell neither suppresses nor auto-approves it.
+/// - macOS (WKWebView): false. WKWebView has no public display-capture
+///   permission, so the macOS app offers viewing only (OD-112, Q17); there is
+///   no native capture code and no private API.
+/// - Any other target: false.
+#[tauri::command]
+fn display_capture_supported() -> bool {
+    display_capture_supported_on(std::env::consts::OS)
+}
+
+/// `display_capture_supported` for a given `std::env::consts::OS` value.
+fn display_capture_supported_on(target_os: &str) -> bool {
+    matches!(target_os, "linux" | "windows")
+}
+
+/// What the WebKitGTK permission handler answers to a user-media request.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaPermission {
+    Allow,
+    Deny,
+}
+
+/// The decision of the Linux user-media permission handler (SPEC-03 REQ-57).
+///
+/// The display flag is tested first: WebKitGTK does not document how it sets
+/// the video flag on a display-capture request, so a `getDisplayMedia`
+/// request must never reach the camera test. Then:
+///
+/// - display capture: allowed only while a call is armed;
+/// - video (camera): always denied, also when combined with audio;
+/// - audio (microphone): allowed only while a call is armed;
+/// - a request that names none of them: denied.
+#[cfg(any(target_os = "linux", test))]
+fn decide_user_media(
+    is_display: bool,
+    is_video: bool,
+    is_audio: bool,
+    armed: bool,
+) -> MediaPermission {
+    if is_display {
+        return if armed {
+            MediaPermission::Allow
+        } else {
+            MediaPermission::Deny
+        };
+    }
+    if is_video {
+        return MediaPermission::Deny;
+    }
+    if is_audio && armed {
+        MediaPermission::Allow
+    } else {
+        MediaPermission::Deny
+    }
+}
+
+/// Whether a WebKitGTK user-media request is for a display device, through
+/// `webkit_user_media_permission_is_for_display_device` (WebKitGTK 2.34 and
+/// later). The safe permission-request trait of the locked `webkit2gtk` 2.0.2
+/// offers only the audio and video flags, so this is the shell's one raw call
+/// into WebKitGTK, made through the crate's `webkit2gtk-sys` bindings
+/// (re-exported as `webkit2gtk::ffi`).
+///
+/// # Safety
+///
+/// `request` must point to a live `WebKitUserMediaPermissionRequest` for the
+/// duration of the call. The function only reads the request.
+#[cfg(target_os = "linux")]
+unsafe fn request_is_for_display_device(
+    request: *mut webkit2gtk::ffi::WebKitUserMediaPermissionRequest,
+) -> bool {
+    webkit2gtk::ffi::webkit_user_media_permission_is_for_display_device(request) != 0
 }
 
 /// Screenshot protection: exclude the window from OS screen capture / recording.
@@ -350,14 +439,23 @@ fn main() {
             println!("🔒 End-to-end encryption enabled");
             println!("📱 Cross-platform desktop client");
 
-            // WebKitGTK denies getUserMedia by default (no permission UI in a
-            // plain webview), which breaks voice chat. We grant it, but only
-            // narrowly: microphone requests are honoured *only while the user
-            // has actively joined a voice channel* (VOICE_CAPTURE_ARMED, set by
-            // the frontend via set_voice_capture_armed), and camera/video
-            // requests are always denied (there is no video feature). This
-            // keeps an XSS payload from silently opening the mic despite the
-            // strong CSP. ACCORD_MOCK_MEDIA=1 additionally swaps in WebKit's
+            // WebKitGTK has no permission UI in a plain webview, so every
+            // getUserMedia and getDisplayMedia request reaches this handler,
+            // and without it voice chat and screen sharing could not work.
+            // It grants them narrowly (SPEC-03 REQ-57, decide_user_media):
+            // display-capture requests (Share Screen) and microphone requests
+            // are allowed *only while the user has joined a voice channel*
+            // (VOICE_CAPTURE_ARMED, set by the frontend via
+            // set_voice_capture_armed), and camera requests are always denied
+            // (there is no camera feature). Display capture is classified
+            // before the camera test, because WebKitGTK does not document how
+            // it sets the video flag on a display-capture request; the desktop
+            // portal's picker still lets the user choose what is shared. This
+            // keeps an XSS payload from silently opening the mic or capturing
+            // the screen outside a call, despite the strong CSP. WebRTC peer
+            // connections stay off (enable-webrtc pinned to its documented
+            // default, false) as defense in depth: the client never builds
+            // one (REQ-39). ACCORD_MOCK_MEDIA=1 additionally swaps in WebKit's
             // mock capture devices so automated tests can join voice without
             // real hardware.
             #[cfg(target_os = "linux")]
@@ -365,35 +463,39 @@ fn main() {
                 use tauri::Manager;
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.with_webview(|webview| {
-                        use webkit2gtk::glib::object::Cast as _;
+                        use webkit2gtk::glib::object::{Cast as _, ObjectType as _};
                         use webkit2gtk::{PermissionRequestExt, SettingsExt, WebViewExt};
                         let wv = webview.inner();
-                        if std::env::var("ACCORD_MOCK_MEDIA").as_deref() == Ok("1") {
-                            if let Some(settings) = WebViewExt::settings(&wv) {
+                        if let Some(settings) = WebViewExt::settings(&wv) {
+                            settings.set_enable_webrtc(false);
+                            if std::env::var("ACCORD_MOCK_MEDIA").as_deref() == Ok("1") {
                                 settings.set_enable_mock_capture_devices(true);
                             }
                         }
                         wv.connect_permission_request(|_, request| {
                             use webkit2gtk::UserMediaPermissionRequest;
                             use webkit2gtk::UserMediaPermissionRequestExt;
-                            if let Some(media_req) =
+                            let Some(media_req) =
                                 request.dynamic_cast_ref::<UserMediaPermissionRequest>()
-                            {
-                                // Deny anything requesting video/camera outright.
-                                if media_req.is_for_video_device() {
-                                    request.deny();
-                                    return true;
-                                }
-                                // Audio: allow only while in a voice call.
-                                if VOICE_CAPTURE_ARMED.load(Ordering::SeqCst) {
-                                    request.allow();
-                                } else {
-                                    request.deny();
-                                }
-                                true
-                            } else {
-                                false
+                            else {
+                                return false;
+                            };
+                            // SAFETY: `media_req` borrows a live
+                            // WebKitUserMediaPermissionRequest for this whole
+                            // call, and the function only reads it.
+                            let is_display =
+                                unsafe { request_is_for_display_device(media_req.as_ptr()) };
+                            let decision = decide_user_media(
+                                is_display,
+                                media_req.is_for_video_device(),
+                                media_req.is_for_audio_device(),
+                                VOICE_CAPTURE_ARMED.load(Ordering::SeqCst),
+                            );
+                            match decision {
+                                MediaPermission::Allow => request.allow(),
+                                MediaPermission::Deny => request.deny(),
                             }
+                            true
                         });
                     });
                 }
@@ -419,6 +521,7 @@ fn main() {
             list_identities,
             get_device_identity,
             set_voice_capture_armed,
+            display_capture_supported,
             set_content_protected,
             get_or_create_smk,
             delete_smk,
@@ -426,4 +529,288 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    //! SPEC-03 T-57 (REQ-57), the shell part: the Linux decision function,
+    //! the `display_capture_supported` report, and the static checks of the
+    //! T-57 "CI grep" over this file. The release-checklist part of T-57
+    //! (probes and manual shares on each platform) is manual.
+
+    use super::*;
+
+    use MediaPermission::{Allow, Deny};
+
+    #[test]
+    fn t57_decide_user_media_table() {
+        // (is_display, is_video, is_audio, armed) -> expected
+        let cases = [
+            // Display capture and armed: allow.
+            ((true, false, false, true), Allow),
+            // Display capture and not armed: deny.
+            ((true, false, false, false), Deny),
+            // Video (camera): deny, armed or not, alone or with audio.
+            ((false, true, false, true), Deny),
+            ((false, true, false, false), Deny),
+            ((false, true, true, true), Deny),
+            ((false, true, true, false), Deny),
+            // Audio and armed: allow. Audio and not armed: deny.
+            ((false, false, true, true), Allow),
+            ((false, false, true, false), Deny),
+            // A request that names no device: deny.
+            ((false, false, false, true), Deny),
+            ((false, false, false, false), Deny),
+        ];
+        for ((display, video, audio, armed), expected) in cases {
+            assert_eq!(
+                decide_user_media(display, video, audio, armed),
+                expected,
+                "display={display} video={video} audio={audio} armed={armed}"
+            );
+        }
+    }
+
+    #[test]
+    fn t57_display_is_classified_before_the_video_test() {
+        // WebKitGTK may also set the video (or audio) flag on a display-capture
+        // request; the display flag alone decides it, never the camera rule.
+        for video in [false, true] {
+            for audio in [false, true] {
+                assert_eq!(decide_user_media(true, video, audio, true), Allow);
+                assert_eq!(decide_user_media(true, video, audio, false), Deny);
+            }
+        }
+    }
+
+    #[test]
+    fn t57_disarmed_shell_allows_nothing() {
+        for display in [false, true] {
+            for video in [false, true] {
+                for audio in [false, true] {
+                    assert_eq!(decide_user_media(display, video, audio, false), Deny);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn t57_display_capture_supported_per_platform() {
+        assert!(!display_capture_supported_on("macos"));
+        assert!(display_capture_supported_on("windows"));
+        assert!(display_capture_supported_on("linux"));
+        for other in ["ios", "android", "freebsd", "openbsd", ""] {
+            assert!(!display_capture_supported_on(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn t57_display_capture_supported_for_this_build() {
+        #[cfg(target_os = "macos")]
+        assert!(!display_capture_supported());
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        assert!(display_capture_supported());
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        assert!(!display_capture_supported());
+    }
+
+    /// This file without its test module, with full-line comments removed.
+    fn shell_code() -> String {
+        let source = include_str!("main.rs");
+        let marker = "\n#[cfg(test)]\nmod tests {";
+        let end = source
+            .find(marker)
+            .expect("main.rs keeps its test module last");
+        source[..end]
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The text from `start` to the `close` that balances the first `open`
+    /// at or after it.
+    fn balanced<'a>(code: &'a str, start: &str, open: char, close: char) -> &'a str {
+        let begin = code
+            .find(start)
+            .unwrap_or_else(|| panic!("`{start}` not found"));
+        let mut depth = 0usize;
+        for (offset, c) in code[begin..].char_indices() {
+            if c == open {
+                depth += 1;
+            } else if c == close {
+                depth -= 1;
+                if depth == 0 {
+                    return &code[begin..begin + offset + c.len_utf8()];
+                }
+            }
+        }
+        panic!("unbalanced `{open}` after `{start}`");
+    }
+
+    /// The text from `start` to the parenthesis that closes the first `(`
+    /// at or after it.
+    fn balanced_call<'a>(code: &'a str, start: &str) -> &'a str {
+        balanced(code, start, '(', ')')
+    }
+
+    /// `text` without any whitespace.
+    fn squeeze(text: &str) -> String {
+        text.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// The attribute lines directly above the line that contains `needle`.
+    fn attributes_above(code: &str, needle: &str) -> Vec<String> {
+        let lines: Vec<&str> = code.lines().collect();
+        let at = lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("`{needle}` not found"));
+        lines[..at]
+            .iter()
+            .rev()
+            .map(|line| line.trim())
+            .take_while(|line| line.starts_with("#["))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn t57_linux_handler_tests_display_through_one_unsafe_call() {
+        let code = shell_code();
+
+        // The raw call lives in one small Linux-only function whose only
+        // input is the request pointer.
+        let raw = "webkit_user_media_permission_is_for_display_device(";
+        assert_eq!(code.matches(raw).count(), 1, "exactly one raw call");
+        assert!(
+            attributes_above(&code, "unsafe fn request_is_for_display_device(")
+                .iter()
+                .any(|attr| attr == "#[cfg(target_os = \"linux\")]"),
+            "the raw call is on the Linux path only"
+        );
+        let start = "unsafe fn request_is_for_display_device(";
+        let signature = balanced_call(&code, start);
+        let parameters = signature[start.len()..signature.len() - 1]
+            .trim()
+            .trim_end_matches(',');
+        assert_eq!(
+            parameters, "request: *mut webkit2gtk::ffi::WebKitUserMediaPermissionRequest",
+            "one parameter, the request pointer"
+        );
+        assert_eq!(code.matches("unsafe fn").count(), 1);
+
+        // The permission handler holds exactly one unsafe block, around that
+        // call, and leaves the decision to decide_user_media, display first.
+        let handler = balanced_call(&code, "connect_permission_request(");
+        assert_eq!(
+            handler.matches("unsafe").count(),
+            1,
+            "no other unsafe block in the permission handler"
+        );
+        assert!(handler.contains("unsafe { request_is_for_display_device(media_req.as_ptr()) }"));
+        let display = handler.find("request_is_for_display_device(").unwrap();
+        let video = handler.find("is_for_video_device()").unwrap();
+        assert!(display < video, "the display flag is read first");
+        // The flags reach decide_user_media in its parameter order
+        // (is_display, is_video, is_audio, armed): the arguments are
+        // positional bools, so a swap would compile and, for example, allow
+        // a camera request while armed.
+        assert_eq!(
+            handler.matches("is_display").count(),
+            2,
+            "is_display is bound once, from the raw call, and used once"
+        );
+        let decide = squeeze(balanced_call(handler, "decide_user_media("));
+        assert_eq!(
+            decide.replace(",)", ")"),
+            "decide_user_media(is_display,media_req.is_for_video_device(),\
+             media_req.is_for_audio_device(),VOICE_CAPTURE_ARMED.load(Ordering::SeqCst))"
+        );
+        assert!(handler.contains("MediaPermission::Allow => request.allow()"));
+        assert!(handler.contains("MediaPermission::Deny => request.deny()"));
+    }
+
+    #[test]
+    fn t57_linux_webview_pins_webrtc_off_next_to_the_mock_devices() {
+        let code = shell_code();
+        assert_eq!(code.matches("set_enable_webrtc(false)").count(), 1);
+        assert!(!code.contains("set_enable_webrtc(true)"));
+        let webrtc = code.find("set_enable_webrtc(false)").unwrap();
+        let mock_env = code.find("ACCORD_MOCK_MEDIA").unwrap();
+        let mock = code.find("set_enable_mock_capture_devices(true)").unwrap();
+        let settings = code.find("WebViewExt::settings(&wv)").unwrap();
+        assert!(
+            settings < webrtc && webrtc < mock_env && mock_env < mock,
+            "same settings block, before the mock-device test"
+        );
+        // The pin is unconditional within the settings block, so production
+        // builds get it: it is not inside the ACCORD_MOCK_MEDIA branch.
+        let mock_branch = balanced(&code, "if std::env::var(\"ACCORD_MOCK_MEDIA\")", '{', '}');
+        assert!(!mock_branch.contains("set_enable_webrtc"), "{mock_branch}");
+        let settings_block = squeeze(balanced(
+            &code,
+            "if let Some(settings) = WebViewExt::settings(&wv)",
+            '{',
+            '}',
+        ));
+        assert_eq!(
+            settings_block,
+            "ifletSome(settings)=WebViewExt::settings(&wv){\
+             settings.set_enable_webrtc(false);\
+             ifstd::env::var(\"ACCORD_MOCK_MEDIA\").as_deref()==Ok(\"1\"){\
+             settings.set_enable_mock_capture_devices(true);}}",
+            "the pin is the settings block's first, unconditional statement"
+        );
+        let linux_block = code
+            .find("#[cfg(target_os = \"linux\")]\n            {")
+            .unwrap();
+        assert!(linux_block < settings, "on the Linux path");
+    }
+
+    #[test]
+    fn t57_display_capture_supported_is_a_registered_command() {
+        let code = shell_code();
+        let handlers = balanced(&code, "generate_handler![", '[', ']');
+        let registered: Vec<&str> = handlers
+            .trim_start_matches("generate_handler![")
+            .trim_end_matches(']')
+            .split(',')
+            .map(str::trim)
+            .collect();
+        assert!(registered.contains(&"display_capture_supported"));
+        assert!(registered.contains(&"set_voice_capture_armed"));
+    }
+
+    #[test]
+    fn t57_no_screen_capture_auto_approval_on_windows() {
+        // No code sets WebView2's ScreenCaptureStarting `Cancel` to false, and
+        // nothing passes the Chromium switches that skip or answer the
+        // capture picker by themselves (also not through the Tauri config).
+        let sources = [
+            ("main.rs", shell_code()),
+            (
+                "tauri.conf.json",
+                include_str!("../tauri.conf.json").to_owned(),
+            ),
+            (
+                "tauri.ci.conf.json",
+                include_str!("../tauri.ci.conf.json").to_owned(),
+            ),
+        ];
+        for (name, text) in sources {
+            let squeezed = squeeze(&text).to_lowercase();
+            for forbidden in [
+                "cancel(false)",
+                "cancel=false",
+                "cancel:false",
+                "auto-select-desktop-capture-source",
+                "auto-select-tab-capture-source-by-title",
+                "auto-accept-this-tab-capture",
+                "use-fake-ui-for-media-stream",
+            ] {
+                assert!(!squeezed.contains(forbidden), "{name} contains {forbidden}");
+            }
+        }
+    }
 }

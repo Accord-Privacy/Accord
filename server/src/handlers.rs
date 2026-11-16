@@ -124,7 +124,7 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
         database_ok,
         websocket_connections,
         memory_usage_bytes,
-        features: crate::capabilities::relay_features(),
+        features: crate::capabilities::relay_features(state.screen.enabled()),
         admission_since: state
             .db
             .repair_report()
@@ -135,6 +135,8 @@ pub async fn health_handler(State(state): State<SharedState>) -> Json<HealthResp
             max_blob_bytes: state.attachments.config().max_blob_bytes,
             max_per_message: crate::attachments::MAX_ATTACHMENTS_PER_MESSAGE,
         },
+        // SPEC-03 §6.12.1 (REQ-55): the limits that go with `screen/1`.
+        screen_limits: state.screen.config().limits(),
     })
 }
 
@@ -4058,18 +4060,27 @@ async fn websocket_handler_inner(
 
     // TODO: pass real device_id from auth response when available
     let ws_device_id = state.add_connection(user_id, None, tx.clone()).await;
+    // The connection's second outbound queue, for screen fragments only
+    // (SPEC-03 §6.12.3). Screen control frames use the control queue `tx`.
+    let screen_queue = state
+        .screen
+        .register_connection(ws_device_id, user_id, tx.clone());
 
     // Send welcome message with server build info for mutual verification
     {
         let bi = &state.build_verification.server_build_info;
-        let welcome = serde_json::json!({
+        let mut welcome = serde_json::json!({
             "type": "hello",
             "server_version": bi.version,
             "server_build_hash": bi.build_hash,
             "protocol_version": accord_core::PROTOCOL_VERSION,
             // The relay capability registry (SPEC-01 §6.8, REQ-42).
-            "features": crate::capabilities::RELAY_FEATURES,
+            "features": crate::capabilities::relay_features(state.screen.enabled()),
         });
+        // SPEC-03 §6.12.1: `screen_limits` goes with `screen/1`.
+        if let Some(limits) = state.screen.config().limits() {
+            welcome["screen_limits"] = serde_json::json!(limits);
+        }
         let _ = sender.send(Message::Text(welcome.to_string())).await;
     }
 
@@ -4083,32 +4094,75 @@ async fn websocket_handler_inner(
         error!("Failed to send initial presence: {}", err);
     }
 
+    // The outgoing task serves two queues: the control queue (text frames)
+    // and the screen queue (binary `SCREEN_DOWN`). `biased` polls the control
+    // queue first on every turn, so control traffic always goes ahead of
+    // fragments and screen video cannot make the control queue lag (SPEC-03
+    // §6.12.3, C115). It ends when the socket or the control queue closes.
     let outgoing_task = tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(message) => {
-                    if sender.send(Message::Text(message)).await.is_err() {
+            tokio::select! {
+                biased;
+                control = rx.recv() => match control {
+                    Ok(message) => {
+                        if sender.send(Message::Text(message)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Client lagged, skipped {} messages for user", n);
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                fragment = screen_queue.pop() => {
+                    if sender.send(Message::Binary(fragment.to_vec())).await.is_err() {
                         break;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Client lagged, skipped {} messages for user", n);
-                    continue;
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });
+
+    // Binary messages record activity at most once per 10 s (SPEC-03
+    // §6.12.2): `record_user_activity` takes a global write lock and reads
+    // the user's profile.
+    let mut last_binary_activity: Option<std::time::Instant> = None;
 
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
                 // Record activity for idle detection
                 let _ = state.record_user_activity(user_id).await;
-                if let Err(err) = handle_ws_message(&text, user_id, &state, &tx).await {
+                if let Err(err) = handle_ws_message(&text, user_id, ws_device_id, &state, &tx).await
+                {
                     error!("Error handling WebSocket message: {}", err);
                     let error_msg = serde_json::json!({ "error": err, "type": "error" });
                     let _ = tx.send(error_msg.to_string());
+                }
+            }
+            Ok(Message::Binary(data)) => {
+                // SPEC-03 §6.12.2: screen fragments (`SCREEN_UP`). Nothing of
+                // the fragment is read, logged or stored.
+                let now = std::time::Instant::now();
+                if last_binary_activity.is_none_or(|at| {
+                    now.saturating_duration_since(at) >= crate::screen::BINARY_ACTIVITY_MIN_GAP
+                }) {
+                    last_binary_activity = Some(now);
+                    let _ = state.record_user_activity(user_id).await;
+                }
+                let outcome = {
+                    let voice = state.voice_channels.read().await;
+                    state
+                        .screen
+                        .forward_up(ws_device_id, user_id, &data, &voice)
+                };
+                if let crate::screen::UpOutcome::Malformed { close: true } = outcome {
+                    tracing::debug!(
+                        target: crate::screen::LOG_TARGET,
+                        "closing a connection that sent too many malformed binary messages"
+                    );
+                    break;
                 }
             }
             Ok(Message::Close(_)) => {
@@ -4127,6 +4181,14 @@ async fn websocket_handler_inner(
                 break;
             }
         }
+    }
+
+    // SPEC-03 §6.12.4: this connection's own share ends (`left`) and its
+    // watches are removed; the voice leave below then ends the user's shares
+    // from any other connection in the channels it leaves (C154).
+    {
+        let voice = state.voice_channels.read().await;
+        state.screen.connection_closed(ws_device_id, &voice);
     }
 
     state.remove_connection(user_id, ws_device_id).await;
@@ -4560,13 +4622,42 @@ async fn broadcast_channel_message(
     state.send_to_channel(channel_id, relay.to_string()).await
 }
 
+/// The only voice mode (SPEC-03 REQ-56, §6.14): `voice_channel_joined` and
+/// `voice_mode` always report it, and `SetVoiceMode` accepts only it.
+const VOICE_MODE_RELAY: &str = "relay";
+
+/// The `code` and `reason` of the error frame that refuses `SetVoiceMode`
+/// for any mode other than `relay` (SPEC-03 §6.14, SPEC-01 §6.3).
+const P2P_RETIRED: &str = "p2p_retired";
+
+/// The text of that error frame, which outdated clients show.
+const P2P_RETIRED_TEXT: &str =
+    "Peer-to-peer voice is no longer available on this relay. Voice calls use the relay.";
+
+/// The generic error frame, extended with `code` and `reason`
+/// `p2p_retired` (SPEC-01 §6.3), that answers a `SetVoiceMode` for any mode
+/// other than `relay` whose envelope `message_id` was `request_id`.
+fn p2p_retired_frame(channel_id: Uuid, request_id: Uuid) -> serde_json::Value {
+    serde_json::json!({
+        "type": "error",
+        "code": P2P_RETIRED,
+        "reason": P2P_RETIRED,
+        "error": P2P_RETIRED_TEXT,
+        "channel_id": channel_id,
+        "request_id": request_id,
+    })
+}
+
 /// Handle one client frame. A returned error becomes the generic
 /// `{"type": "error", "error": …}` frame on the originating connection.
 /// Typed failure frames that must reach only the originating connection
 /// (SPEC-02 §6.5.3) are sent on `reply`, the sender of that connection.
+/// `connection_id` is that connection's `ws_device_id`, which the
+/// screen-sharing arms register shares and watches under (SPEC-03 §6.12.1).
 async fn handle_ws_message(
     message: &str,
     sender_user_id: Uuid,
+    connection_id: Uuid,
     state: &SharedState,
     reply: &broadcast::Sender<String>,
 ) -> Result<(), String> {
@@ -5433,20 +5524,24 @@ async fn handle_ws_message(
                 }
             }
 
-            // Get existing participants before joining (so new user knows who's there)
-            let existing = state.get_voice_channel_participants(channel_id).await;
+            // The other participants at the moment of the join, taken
+            // atomically with it, so that the new user knows who is there and
+            // two simultaneous joiners never both miss each other.
+            let existing = state.join_voice_channel(sender_user_id, channel_id).await?;
 
-            state.join_voice_channel(sender_user_id, channel_id).await?;
-
-            // Send the joining user the current participant list + voice mode
-            let is_relay = state.get_voice_relay_mode(channel_id).await;
-            let resp = serde_json::json!({
+            // Send the joining user the current participant list. Every call
+            // is in relay mode (SPEC-03 REQ-56, §6.14).
+            let mut resp = serde_json::json!({
                 "type": "voice_channel_joined",
                 "channel_id": channel_id,
                 "user_id": sender_user_id,
                 "participants": existing,
-                "voice_mode": if is_relay { "relay" } else { "p2p" }
+                "voice_mode": VOICE_MODE_RELAY
             });
+            // SPEC-03 §6.12.1: the channel's sharers, oldest first.
+            if state.screen.enabled() {
+                resp["screen_sharers"] = serde_json::json!(state.screen.sharers(channel_id));
+            }
             state.send_to_user(sender_user_id, resp.to_string()).await?;
 
             // Broadcast to existing participants that a new user joined
@@ -5466,7 +5561,12 @@ async fn handle_ws_message(
         }
 
         WsMessageType::LeaveVoiceChannel { channel_id } => {
-            // Broadcast to remaining participants before leaving
+            // Leave first: the user's screen share in the channel ends there
+            // with `screen_share_stopped` (SPEC-03 §6.12.4), ahead of the
+            // `voice_peer_left` that the remaining participants get next.
+            state
+                .leave_voice_channel(sender_user_id, channel_id)
+                .await?;
             let broadcast = serde_json::json!({
                 "type": "voice_peer_left",
                 "channel_id": channel_id,
@@ -5474,10 +5574,6 @@ async fn handle_ws_message(
             });
             state
                 .send_to_voice_channel(channel_id, sender_user_id, broadcast.to_string())
-                .await?;
-
-            state
-                .leave_voice_channel(sender_user_id, channel_id)
                 .await?;
             let resp = serde_json::json!({
                 "type": "voice_channel_left",
@@ -5490,12 +5586,78 @@ async fn handle_ws_message(
 
         WsMessageType::GetVoiceParticipants { channel_id } => {
             let participants = state.get_voice_channel_participants(channel_id).await;
-            let resp = serde_json::json!({
+            let mut resp = serde_json::json!({
                 "type": "voice_participants",
                 "channel_id": channel_id,
                 "participants": participants
             });
+            // SPEC-03 §6.12.1: the channel's sharers, oldest first.
+            if state.screen.enabled() {
+                resp["screen_sharers"] = serde_json::json!(state.screen.sharers(channel_id));
+            }
             state.send_to_user(sender_user_id, resp.to_string()).await?;
+        }
+
+        // ── Screen sharing, `screen/1` (SPEC-03 §6.12.1, REQ-55) ──
+        // Each arm answers with its typed frames on the screen registry's
+        // record of this connection and returns without error, so no generic
+        // error frame follows. The voice participant map is read first and
+        // held while the registry acts, so a leave cannot slip between the
+        // participation check and the registration.
+        WsMessageType::ScreenShareStart { channel_id } => {
+            let voice = state.voice_channels.read().await;
+            state.screen.share_start(
+                connection_id,
+                sender_user_id,
+                channel_id,
+                ws_message.message_id,
+                !state.rate_limiter.is_disabled(),
+                &voice,
+            );
+        }
+
+        WsMessageType::ScreenShareStop { channel_id } => {
+            let voice = state.voice_channels.read().await;
+            state.screen.share_stop(
+                connection_id,
+                sender_user_id,
+                channel_id,
+                ws_message.message_id,
+                !state.rate_limiter.is_disabled(),
+                &voice,
+            );
+        }
+
+        WsMessageType::ScreenWatch {
+            channel_id,
+            sharer_id,
+            watch,
+        } => {
+            let voice = state.voice_channels.read().await;
+            state.screen.watch(
+                connection_id,
+                sender_user_id,
+                channel_id,
+                sharer_id,
+                watch,
+                ws_message.message_id,
+                !state.rate_limiter.is_disabled(),
+                &voice,
+            );
+        }
+
+        WsMessageType::ScreenKeyframeRequest {
+            channel_id,
+            sharer_id,
+        } => {
+            let voice = state.voice_channels.read().await;
+            state.screen.keyframe_request(
+                connection_id,
+                sender_user_id,
+                channel_id,
+                sharer_id,
+                &voice,
+            );
         }
 
         WsMessageType::VoicePacket {
@@ -5503,7 +5665,11 @@ async fn handle_ws_message(
             encrypted_audio,
             sequence,
         } => {
-            // Relay encrypted voice packet to all other participants in the channel
+            // Legacy relay-mode audio of outdated clients, sealed under a key
+            // those clients sent through the relay (C005), or not sealed at
+            // all. Clients that implement SPEC-03 never send it (REQ-2). It is
+            // still forwarded to the other participants: its refusal is
+            // REQ-58, which ships one relay release after the client release.
             let relay = serde_json::json!({
                 "type": "voice_packet",
                 "from": sender_user_id,
@@ -5535,35 +5701,25 @@ async fn handle_ws_message(
                 .await?;
         }
 
+        // ── Retired P2P voice (SPEC-03 REQ-56, §6.14; relay release R-A1) ──
+        // Every call is in relay mode, and the relay keeps no mode per
+        // channel. The P2P variants still parse, so outdated clients'
+        // messages are never answered with "Invalid message format".
         WsMessageType::SetVoiceMode { channel_id, mode } => {
-            let relay = mode == "relay";
-            state.set_voice_relay_mode(channel_id, relay).await;
-
-            // Broadcast mode change to all participants
-            let broadcast = serde_json::json!({
-                "type": "voice_mode_changed",
-                "channel_id": channel_id,
-                "voice_mode": mode,
-                "changed_by": sender_user_id,
-            });
-            // Send to all participants including sender
-            let participants = state.get_voice_channel_participants(channel_id).await;
-            for pid in participants {
-                let _ = state.send_to_user(pid, broadcast.to_string()).await;
+            // `relay` is accepted and every other mode refused, on this
+            // connection only. Neither is broadcast: nobody can switch a
+            // channel to P2P (C003).
+            if mode != VOICE_MODE_RELAY {
+                let frame = p2p_retired_frame(channel_id, ws_message.message_id);
+                let _ = reply.send(frame.to_string());
             }
-
-            info!(
-                "Voice mode set to '{}' for channel {} by {}",
-                mode, channel_id, sender_user_id
-            );
         }
 
         WsMessageType::GetVoiceMode { channel_id } => {
-            let is_relay = state.get_voice_relay_mode(channel_id).await;
             let resp = serde_json::json!({
                 "type": "voice_mode",
                 "channel_id": channel_id,
-                "voice_mode": if is_relay { "relay" } else { "p2p" }
+                "voice_mode": VOICE_MODE_RELAY
             });
             state.send_to_user(sender_user_id, resp.to_string()).await?;
         }
@@ -5575,7 +5731,14 @@ async fn handle_ws_message(
             sender_ssrc,
             key_generation,
         } => {
-            // Relay voice key exchange opaquely — server cannot decrypt
+            // A call message (SPEC-03 §6.3), forwarded unchanged. From clients
+            // that implement SPEC-03 it has a target and an `acv1:` value, a
+            // Double Ratchet envelope addressed to the target. Until SPEC-05
+            // and SPEC-06, an active relay can still substitute prekey bundles
+            // for a pair that has no session (SPEC-03 §9.2 item 1). Older
+            // clients send a raw call key, which the relay can read (C005);
+            // its refusal is REQ-58, one relay release after the client
+            // release.
             let relay = serde_json::json!({
                 "type": "voice_key_exchange",
                 "from": sender_user_id,
@@ -5600,7 +5763,10 @@ async fn handle_ws_message(
             channel_id,
             packet_data,
         } => {
-            // Relay SRTP packet opaquely — server cannot decrypt
+            // A relay-mode audio frame, forwarded unchanged to the other
+            // participants. The variant name is historical (SPEC-03 §6.1): the
+            // payload is an AMF1 frame (SFrame, §6.2) sealed under a key that
+            // its sender distributes only inside Double Ratchet messages.
             let relay = serde_json::json!({
                 "type": "srtp_voice_packet",
                 "from": sender_user_id,
@@ -5612,104 +5778,16 @@ async fn handle_ws_message(
                 .send_to_voice_channel(channel_id, sender_user_id, relay.to_string())
                 .await?;
         }
-        WsMessageType::P2PSignal {
-            channel_id,
-            target_user_id,
-            signal_data,
-        } => {
-            // Block P2P signaling in relay mode (prevents IP exposure)
-            if state.get_voice_relay_mode(channel_id).await {
-                info!(
-                    "P2P signaling blocked in relay mode for channel {}",
-                    channel_id
-                );
-                return Ok(());
-            }
-            // Relay P2P signaling message to the target peer — server cannot interpret content
-            let relay = serde_json::json!({
-                "type": "p2p_signal",
-                "from": sender_user_id,
-                "channel_id": channel_id,
-                "signal_data": signal_data,
-                "timestamp": ws_message.timestamp
-            });
-            state
-                .send_to_user(target_user_id, relay.to_string())
-                .await?;
-        }
 
-        // ── WebRTC Voice Signaling ──
-        WsMessageType::VoiceOffer {
-            channel_id,
-            target_user_id,
-            sdp,
-        } => {
-            // Block WebRTC signaling in relay mode
-            if state.get_voice_relay_mode(channel_id).await {
-                info!(
-                    "VoiceOffer blocked in relay mode for channel {}",
-                    channel_id
-                );
-                return Ok(());
-            }
-            let relay = serde_json::json!({
-                "type": "voice_offer",
-                "from": sender_user_id,
-                "channel_id": channel_id,
-                "sdp": sdp,
-                "timestamp": ws_message.timestamp
-            });
-            state
-                .send_to_user(target_user_id, relay.to_string())
-                .await?;
-        }
-
-        WsMessageType::VoiceAnswer {
-            channel_id,
-            target_user_id,
-            sdp,
-        } => {
-            if state.get_voice_relay_mode(channel_id).await {
-                info!(
-                    "VoiceAnswer blocked in relay mode for channel {}",
-                    channel_id
-                );
-                return Ok(());
-            }
-            let relay = serde_json::json!({
-                "type": "voice_answer",
-                "from": sender_user_id,
-                "channel_id": channel_id,
-                "sdp": sdp,
-                "timestamp": ws_message.timestamp
-            });
-            state
-                .send_to_user(target_user_id, relay.to_string())
-                .await?;
-        }
-
-        WsMessageType::VoiceIceCandidate {
-            channel_id,
-            target_user_id,
-            candidate,
-        } => {
-            if state.get_voice_relay_mode(channel_id).await {
-                info!(
-                    "VoiceIceCandidate blocked in relay mode for channel {}",
-                    channel_id
-                );
-                return Ok(());
-            }
-            let relay = serde_json::json!({
-                "type": "voice_ice_candidate",
-                "from": sender_user_id,
-                "channel_id": channel_id,
-                "candidate": candidate,
-                "timestamp": ws_message.timestamp
-            });
-            state
-                .send_to_user(target_user_id, relay.to_string())
-                .await?;
+        // Retired P2P signaling (SPEC-03 REQ-56, §6.14): dropped unread, never
+        // forwarded and never answered with an error frame. Its SDP and ICE
+        // candidates reveal participants' IP addresses (C003), and the relay
+        // could rewrite their DTLS fingerprints (C027).
+        WsMessageType::P2PSignal { .. }
+        | WsMessageType::VoiceOffer { .. }
+        | WsMessageType::VoiceAnswer { .. }
+        | WsMessageType::VoiceIceCandidate { .. } => {
+            tracing::debug!("retired P2P signaling dropped");
         } // WsMessageType::UpdateChannel is handled above
 
         WsMessageType::BotResponse { .. } => {

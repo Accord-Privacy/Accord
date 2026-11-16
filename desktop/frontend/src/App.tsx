@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { api, parseInviteLink, generateInviteLink, storeRelayToken, storeRelayUserId, getRelayToken, getRelayUserId, detectSameOriginRelay, probeServerUrl } from "./api";
 import { registerAdmissionHandlers, redeemInvite, joinErrorMessage, inviteCreateErrorMessage, admissionErrorMessage } from "./admission";
 import { errorReason } from "./apiError";
+import { CallKeyBridgeImpl } from "./voice/callKeyBridgeImpl";
 import { AccordWebSocket, ConnectionInfo } from "./ws";
 import { AppState, Message, WsIncomingMessage, Node, Channel, NodeMember, User, TypingStartMessage, DmChannelWithInfo, ParsedInviteLink, Role, ReadReceiptMessage, InstalledBot, BotResponseMessage, BatchMemberEntry, PresenceStatus } from "./types";
 import {
@@ -271,6 +272,7 @@ function App() {
   const {
     voiceChannelId, setVoiceChannelId,
     voiceChannelName, setVoiceChannelName,
+    voiceNodeId, setVoiceNodeId,
     voiceConnectedAt, setVoiceConnectedAt,
     voiceMuted, setVoiceMuted,
     voiceDeafened, setVoiceDeafened,
@@ -473,6 +475,18 @@ function App() {
   // Keys the attachment store; read at render, like the decode paths do.
   const attachmentOrigin = currentOrigin();
   const getPeerBundleRef = useRef<((peerId: string, token: string) => Promise<PreKeyBundle | undefined>) | null>(null);
+  // SPEC-03 §6.10: the voice code's only way to E2EE state, membership and the
+  // channel directory (interim rule, REQ-9). One instance for the app.
+  const [callKeyBridge] = useState(() => new CallKeyBridgeImpl({
+    e2ee: () => e2eeManagerRef.current,
+    selfId: () => localStorage.getItem('accord_user_id'),
+    fetchBundle: async (peerId) => {
+      const token = tokenRef.current;
+      return token && getPeerBundleRef.current ? getPeerBundleRef.current(peerId, token) : undefined;
+    },
+    fetchMembers: async (nodeId) => (await api.getNodeMembers(nodeId, tokenRef.current ?? '')).map(m => m.user_id),
+    fetchChannels: async (nodeId) => (await api.getNodeChannels(nodeId, tokenRef.current ?? '')).map(c => c.id),
+  }));
   const bootstrapSenderKeysRef = useRef<((socket: AccordWebSocket, channelId: string) => boolean) | null>(null);
   const persistSenderKeyStoreRef = useRef<(() => void) | null>(null);
 
@@ -1695,6 +1709,8 @@ function App() {
     // Handle member joined — update members list in real-time
     socket.on('member_joined' as any, (data: any) => {
       console.info(`[e2ee] member_joined user=${String(data.user_id).slice(0, 8)} node=${String(data.node_id).slice(0, 8)}`);
+      // SPEC-03 REQ-9: a refresh hint for a call's member list.
+      if (data.node_id) callKeyBridge.noteMemberJoined(String(data.node_id));
       if (data.user_id && data.node_id) {
         // Add new member to the members list if we're viewing this node
         const currentNodeId = nodesRef.current.find(n => 
@@ -1768,6 +1784,9 @@ function App() {
     // Server tells us to rotate sender keys (member left/kicked)
     socket.on('sender_key_rotation_required' as any, async (data: any) => {
       if (!data.channel_id || !data.removed_user_id) return;
+      // SPEC-03 REQ-9: excludes the user from calls in this channel's node at
+      // once, before anything else runs (the call rotates in this turn, REQ-16).
+      callKeyBridge.noteRotationRequired(String(data.channel_id), String(data.removed_user_id));
       const channelId = data.channel_id;
       // Remove the departed user's key
       senderKeyStoreRef.current.removePeerKey(channelId, data.removed_user_id);
@@ -4363,6 +4382,8 @@ function App() {
     // Voice
     voiceChannelId, setVoiceChannelId,
     voiceChannelName, setVoiceChannelName,
+    voiceNodeId, setVoiceNodeId,
+    callKeyBridge,
     voiceConnectedAt, setVoiceConnectedAt,
     voiceMuted, setVoiceMuted,
     voiceDeafened, setVoiceDeafened,

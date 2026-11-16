@@ -45,6 +45,13 @@ jobs:
     - name: Run tests
       run: cargo test -p accord-core -p accord-core-minimal -p accord-server
 
+    # SPEC-03 T-57: the desktop shell's decision-function tests and the static
+    # checks over desktop/src/main.rs (webrtc pin, the one unsafe display-flag
+    # call, display_capture_supported registration). The debug build uses
+    # devUrl, so no frontend build is needed.
+    - name: Run desktop shell tests
+      run: cargo test -p accord-desktop
+
   clippy:
     name: Clippy Lint
     runs-on: ubuntu-latest
@@ -77,7 +84,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run clippy
-      run: cargo clippy --workspace -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
 
   security-audit:
     name: Security Audit
@@ -132,6 +139,26 @@ jobs:
       run: npx tsc --noEmit
       working-directory: desktop/frontend
 
+    # SPEC-03 REQ-39 (T-39 CI grep): no non-test file under src may contain
+    # peer-connection code, a STUN or TURN server, or P2P signaling. Test
+    # files are *.test.ts(x) and everything under __tests__/. The production
+    # bundle is checked by the build (vite.config.ts, noPeerConnections).
+    - name: No peer connections in the client (SPEC-03 REQ-39)
+      working-directory: desktop/frontend
+      run: |
+        hits=$(grep -rlE 'RTCPeerConnection|stun:|turn:|P2PSignal|SetVoiceMode|sendP2PSignal' src \
+          --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' \
+          --include='*.cjs' --include='*.css' --include='*.html' --include='*.json' \
+          | grep -vE '\.test\.tsx?$|/__tests__/' || true)
+        if [ -n "$hits" ]; then
+          echo "SPEC-03 REQ-39: peer-connection or P2P code in production files:"
+          echo "$hits"
+          exit 1
+        fi
+        for f in src/voice/webrtc.ts src/voice/screenshare.ts; do
+          if [ -e "$f" ]; then echo "SPEC-03 REQ-39: $f must not exist"; exit 1; fi
+        done
+
     - name: Run tests
       run: npm test -- --run
       working-directory: desktop/frontend
@@ -172,3 +199,74 @@ jobs:
       working-directory: desktop/frontend
       env:
         ACCORD_SERVER_BIN: ${{ github.workspace }}/target/debug/accord-server
+
+  voice-integration:
+    name: Voice Integration (SPEC-03)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Build the relay
+      run: cargo build -p accord-server --bin accord-server
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: desktop/frontend/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+      working-directory: desktop/frontend
+
+    # SPEC-03 §10.1: 64 KiB receive buffers on the hostile relay proxy's
+    # sockets, so that a slow link pushes back within a test instead of being
+    # absorbed by loopback buffers (T-47, T-51, RG-SCR-8). Node cannot set
+    # SO_RCVBUF on a TCP socket, so the runner's kernel TCP receive buffers
+    # are capped for this job. Send buffers are deliberately left large (4 MiB
+    # maximum): the relay's kernel send buffer to a slow reader would then
+    # hold megabytes, and only the relay's TCP_NOTSENT_LOWAT (amendment A2,
+    # §14.2) keeps its unsent data near 32 KiB, so the capped T-51 (fragment
+    # and frame age bounds) and RG-SCR-8 (bytes in transit during a stall)
+    # fail if the relay does not set it. With ACCORD_VOICE_TCP_CAP=required
+    # the tests refuse to run without these settings rather than fall back to
+    # their uncapped forms. Since A2, T-47 asserts the client's pacing and
+    # bitrate steps, and T-51 the relay's 2 s queue age plus the relay's
+    # unsent data and the link's buffers at the link's rate; the 500 ms audio
+    # and 3 s video targets are measured over real links on the release
+    # checklist (docs/release-checklist.md), and the tests only print their
+    # loopback measurements.
+    - name: Cap kernel TCP receive buffers at 64 KiB (SPEC-03 §10.1)
+      run: |
+        cat /proc/sys/net/ipv4/tcp_rmem > "$RUNNER_TEMP/tcp_rmem.orig"
+        cat /proc/sys/net/ipv4/tcp_wmem > "$RUNNER_TEMP/tcp_wmem.orig"
+        sudo sysctl -w net.ipv4.tcp_rmem='4096 65536 65536' net.ipv4.tcp_wmem='4096 16384 4194304'
+        cat /proc/sys/net/ipv4/tcp_rmem /proc/sys/net/ipv4/tcp_wmem
+
+    # SPEC-03 §10.1: headless clients (real ws.ts, E2EE, bridge, call keys
+    # and voice connection) against the real relay through the hostile relay
+    # proxy: the I and I+HRP tests and the regression replays of §10.3.
+    - name: Run the voice integration and hostile-relay tests
+      run: npm run test:voice
+      working-directory: desktop/frontend
+      env:
+        ACCORD_SERVER_BIN: ${{ github.workspace }}/target/debug/accord-server
+        ACCORD_VOICE_TCP_CAP: required
+
+    # Restore the runner's TCP buffers, so the cache upload after the job runs at full speed.
+    - name: Restore kernel TCP buffers
+      if: always()
+      run: |
+        if [ -f "$RUNNER_TEMP/tcp_rmem.orig" ]; then
+          sudo sysctl -w net.ipv4.tcp_rmem="$(cat "$RUNNER_TEMP/tcp_rmem.orig")" net.ipv4.tcp_wmem="$(cat "$RUNNER_TEMP/tcp_wmem.orig")"
+        fi

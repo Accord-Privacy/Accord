@@ -133,6 +133,9 @@ const createMockContext = (overrides: Partial<AppContextType> = {}): AppContextT
   setVoiceChannelId: vi.fn(),
   voiceChannelName: '',
   setVoiceChannelName: vi.fn(),
+  voiceNodeId: null,
+  setVoiceNodeId: vi.fn(),
+  callKeyBridge: null,
   voiceConnectedAt: null,
   setVoiceConnectedAt: vi.fn(),
   voiceMuted: false,
@@ -571,12 +574,14 @@ describe('ChannelSidebar', () => {
     const setVoiceChannelId = vi.fn();
     const setVoiceChannelName = vi.fn();
     const setVoiceConnectedAt = vi.fn();
+    const setVoiceNodeId = vi.fn();
     const channels = [mockVoiceChannel('vc-1', 'Voice Chat')];
     const ctx = createMockContext({
       uncategorizedChannels: channels,
       setVoiceChannelId,
       setVoiceChannelName,
       setVoiceConnectedAt,
+      setVoiceNodeId,
     });
     render(
       <AppContext.Provider value={ctx}>
@@ -588,6 +593,21 @@ describe('ChannelSidebar', () => {
     expect(setVoiceChannelId).toHaveBeenCalledWith('vc-1');
     expect(setVoiceChannelName).toHaveBeenCalledWith('Voice Chat');
     expect(setVoiceConnectedAt).toHaveBeenCalled();
+    // SPEC-03 REQ-9: the channel's own node is recorded with it.
+    expect(setVoiceNodeId).toHaveBeenCalledWith('node-1');
+  });
+
+  it('records the voice channel\'s own node, not the selected node (SPEC-03 REQ-9)', () => {
+    const setVoiceNodeId = vi.fn();
+    const channels = [{ ...mockVoiceChannel('vc-9', 'Elsewhere'), node_id: 'node-7' }];
+    const ctx = createMockContext({ uncategorizedChannels: channels, selectedNodeId: 'node-1', setVoiceNodeId });
+    render(
+      <AppContext.Provider value={ctx}>
+        <ChannelSidebar />
+      </AppContext.Provider>
+    );
+    fireEvent.click(screen.getByText('Elsewhere').closest('.channel-item-inner')!);
+    expect(setVoiceNodeId).toHaveBeenCalledWith('node-7');
   });
 
   it('displays voice connected indicator for connected voice channel', () => {

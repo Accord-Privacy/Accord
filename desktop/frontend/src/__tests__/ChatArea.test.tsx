@@ -161,8 +161,12 @@ vi.mock('../hooks/useBookmarks', () => ({
 }));
 
 // Mock VoiceChat as a lazy component
+const voiceProps = vi.hoisted(() => ({ last: null as null | Record<string, unknown> }));
 vi.mock('../VoiceChat', () => ({
-  VoiceChat: () => <div data-testid="voice-chat">Voice Chat</div>,
+  VoiceChat: (props: Record<string, unknown>) => {
+    voiceProps.last = props;
+    return <div data-testid="voice-chat">Voice Chat</div>;
+  },
 }));
 
 const mockUser = (id: string, displayName: string): User => ({
@@ -251,6 +255,9 @@ const createMockContext = (overrides: Partial<AppContextType> = {}): AppContextT
   setVoiceChannelId: vi.fn(),
   voiceChannelName: '',
   setVoiceChannelName: vi.fn(),
+  voiceNodeId: null,
+  setVoiceNodeId: vi.fn(),
+  callKeyBridge: null,
   voiceConnectedAt: null,
   setVoiceConnectedAt: vi.fn(),
   setVoiceMuted: vi.fn(),
@@ -1204,6 +1211,24 @@ describe('ChatArea', () => {
       await waitFor(() => {
         expect(screen.getByTestId('voice-chat')).toBeInTheDocument();
       });
+    });
+
+    it('passes the node recorded with the voice channel and the call-key bridge to VoiceChat, and clears the node on leave (SPEC-03 REQ-9)', async () => {
+      const setVoiceNodeId = vi.fn();
+      const bridge = { isReady: () => true } as unknown as AppContextType['callKeyBridge'];
+      const ctx = createMockContext({ voiceChannelId: 'vc-1', voiceChannelName: 'Voice Chat', voiceNodeId: 'node-7', setVoiceNodeId, callKeyBridge: bridge });
+      render(
+        <AppContext.Provider value={ctx}>
+          <ChatArea />
+        </AppContext.Provider>
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId('voice-chat')).toBeInTheDocument();
+      });
+      expect(voiceProps.last?.nodeId).toBe('node-7');
+      expect(voiceProps.last?.bridge).toBe(bridge);
+      act(() => (voiceProps.last?.onLeave as () => void)());
+      expect(setVoiceNodeId).toHaveBeenCalledWith(null);
     });
   });
 

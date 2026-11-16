@@ -7,7 +7,8 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/__tests__/setup.ts'],
-    // The two-client tests need a relay: `npm run test:integration`.
-    exclude: ['e2e/**', 'node_modules/**', 'src/__integration__/**'],
+    // The two-client tests need a relay: `npm run test:integration`. The
+    // SPEC-03 voice harness needs one too: `npm run test:voice`.
+    exclude: ['e2e/**', 'node_modules/**', 'src/__integration__/**', 'tests/voice/**'],
   },
 });

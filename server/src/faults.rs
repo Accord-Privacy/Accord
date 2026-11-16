@@ -17,6 +17,13 @@
 //!
 //! Counters: `removal:hooks` counts runs of the removal-hook list of SPEC-01
 //! REQ-34 step 6 (`admission::REMOVAL_HOOKS_COUNTER`).
+//!
+//! Pause points: production code awaits [`FaultPlan::pause`] where a test
+//! must interleave another request (SPEC-03 REQ-29's join race). With the
+//! feature, a test takes a `PauseGate` with `FaultPlan::hold`; the next
+//! task that reaches the point waits there until the gate is released.
+//! Points: `voice:join`, in `AppState::join_voice_channel` between the
+//! membership check and the insert into the participant map.
 
 /// The class of database error an armed fault point produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,10 +87,58 @@ impl FaultPlan {
         }
         let _ = name;
     }
+
+    /// Wait at `point` while a test holds it (`FaultPlan::hold`). Returns at
+    /// once when the point is not held, and always without the
+    /// `fault-injection` feature.
+    #[inline]
+    pub async fn pause(&self, point: &str) {
+        #[cfg(feature = "fault-injection")]
+        {
+            let gate = imp::lock(&self.inner).holds.remove(point);
+            if let Some(gate) = gate {
+                gate.reached.notify_one();
+                gate.release.notified().await;
+            }
+        }
+        let _ = point;
+    }
+}
+
+/// A held pause point (`FaultPlan::hold`): the test waits until a task
+/// reaches the point, does what must happen meanwhile, then releases it.
+#[cfg(feature = "fault-injection")]
+#[derive(Debug, Default)]
+pub struct PauseGate {
+    reached: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(feature = "fault-injection")]
+impl PauseGate {
+    /// Wait until a task has reached the held point and is waiting there.
+    pub async fn reached(&self) {
+        self.reached.notified().await;
+    }
+
+    /// Let the waiting task (or the next one to arrive) continue.
+    pub fn release(&self) {
+        self.release.notify_one();
+    }
 }
 
 #[cfg(feature = "fault-injection")]
 impl FaultPlan {
+    /// Hold `point`: the next task that reaches `pause(point)` waits there
+    /// until the returned gate is released. Fires once, like `arm`.
+    pub fn hold(&self, point: &str) -> std::sync::Arc<PauseGate> {
+        let gate = std::sync::Arc::new(PauseGate::default());
+        imp::lock(&self.inner)
+            .holds
+            .insert(point.to_string(), std::sync::Arc::clone(&gate));
+        gate
+    }
+
     /// Arm `point`: its next `check` fails with an error of class `kind`.
     pub fn arm(&self, point: &str, kind: FaultKind) {
         imp::lock(&self.inner).armed.insert(point.to_string(), kind);
@@ -125,6 +180,7 @@ mod imp {
     pub(super) struct Inner {
         pub(super) armed: HashMap<String, FaultKind>,
         pub(super) counters: HashMap<String, u64>,
+        pub(super) holds: HashMap<String, std::sync::Arc<super::PauseGate>>,
     }
 
     /// Lock the plan, ignoring poisoning: the data is plain maps.
@@ -202,6 +258,28 @@ mod tests {
             other => panic!("unexpected error {other:?}"),
         }
         assert!(plan.check("repair:B6").is_ok());
+    }
+
+    #[tokio::test]
+    async fn held_point_waits_until_released() {
+        let plan = FaultPlan::new();
+        // Not held: no wait.
+        plan.pause("voice:join").await;
+        let gate = plan.hold("voice:join");
+        let task = {
+            let plan = plan.clone();
+            tokio::spawn(async move { plan.pause("voice:join").await })
+        };
+        gate.reached().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(!task.is_finished());
+        gate.release();
+        tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("released")
+            .unwrap();
+        // Fired once.
+        plan.pause("voice:join").await;
     }
 
     #[test]

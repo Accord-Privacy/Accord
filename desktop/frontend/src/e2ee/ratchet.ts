@@ -56,6 +56,17 @@ export interface DoubleRatchetMessage {
   ciphertext: string;
 }
 
+/**
+ * A decryption together with the fact SPEC-03 §6.10 needs: whether a stored
+ * skipped message key produced the plaintext. The voice path refuses such
+ * messages (SPEC-03 REQ-32); every other caller ignores the flag.
+ */
+export interface RatchetDecryptResult {
+  plaintext: Uint8Array;
+  /** True when the stored-skipped-key branch decrypted the message. */
+  usedSkippedKey: boolean;
+}
+
 /** Serializable session state for persistence */
 export interface RatchetSessionState {
   dhPrivateKey: string;  // hex
@@ -291,6 +302,14 @@ export class DoubleRatchetSession {
    * 4. Derive message key and decrypt
    */
   decrypt(msg: DoubleRatchetMessage): Uint8Array {
+    return this.decryptDetailed(msg).plaintext;
+  }
+
+  /**
+   * Decrypt like `decrypt`, and report whether a stored skipped message key
+   * produced the plaintext (SPEC-03 §6.10). The key is consumed either way.
+   */
+  decryptDetailed(msg: DoubleRatchetMessage): RatchetDecryptResult {
     // Per the Signal spec, decryption failure must discard all state changes:
     // otherwise a replayed or tampered message advances the receive chain and
     // desyncs the session for every subsequent legitimate message.
@@ -303,7 +322,7 @@ export class DoubleRatchetSession {
     }
   }
 
-  private decryptInner(msg: DoubleRatchetMessage): Uint8Array {
+  private decryptInner(msg: DoubleRatchetMessage): RatchetDecryptResult {
     const theirPubHex = msg.header.dhPublicKey;
     const theirPub = fromHex(theirPubHex);
 
@@ -315,7 +334,7 @@ export class DoubleRatchetSession {
       const ad = headerToAD(msg.header);
       const result = aesGcmDecrypt(skippedMk, fromBase64(msg.ciphertext), ad);
       skippedMk.fill(0);
-      return result;
+      return { plaintext: result, usedSkippedKey: true };
     }
 
     // 2. Check if DH ratchet needed
@@ -358,7 +377,7 @@ export class DoubleRatchetSession {
     const ad = headerToAD(msg.header);
     const result = aesGcmDecrypt(messageKey, fromBase64(msg.ciphertext), ad);
     messageKey.fill(0);
-    return result;
+    return { plaintext: result, usedSkippedKey: false };
   }
 
   /**
@@ -387,6 +406,16 @@ export class DoubleRatchetSession {
       }
     }
     this.chainKeyRecv = ck;
+  }
+
+  /**
+   * The length of the current sending chain (`sendN`): the number of messages
+   * of any kind encrypted since the last DH ratchet step. It returns to 0 only
+   * when a message carrying a new ratchet key from the peer is decrypted
+   * (SPEC-03 REQ-21, §6.10).
+   */
+  get sendingChainLength(): number {
+    return this.sendN;
   }
 
   /** Get our current ratchet public key */

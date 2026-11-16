@@ -1118,23 +1118,21 @@ impl RelayDatabase {
         let identity_key: Vec<u8> = row.get("identity_key");
         let signed_prekey: Vec<u8> = row.get("signed_prekey");
 
-        let opk_row =
-            sqlx::query("SELECT id, prekey FROM one_time_prekeys WHERE user_id = ? LIMIT 1")
-                .bind(user_id.to_string())
-                .fetch_optional(&self.pool)
-                .await?;
-
-        let one_time_prekey = if let Some(opk_row) = opk_row {
-            let opk_id: i64 = opk_row.get("id");
-            let prekey: Vec<u8> = opk_row.get("prekey");
-            sqlx::query("DELETE FROM one_time_prekeys WHERE id = ?")
-                .bind(opk_id)
-                .execute(&self.pool)
-                .await?;
-            Some(prekey)
-        } else {
-            None
-        };
+        // Consume one one-time prekey (FIFO) in a single statement, so two
+        // concurrent fetches never receive the same prekey. With a SELECT
+        // followed by a DELETE, two initiators of X3DH toward the same user
+        // (for example two call participants greeting a newcomer at once)
+        // could both get it; the responder then accepts only the first
+        // session, and the second fails for good.
+        let one_time_prekey: Option<Vec<u8>> = sqlx::query(
+            "DELETE FROM one_time_prekeys WHERE id = \
+             (SELECT id FROM one_time_prekeys WHERE user_id = ? ORDER BY id LIMIT 1) \
+             RETURNING prekey",
+        )
+        .bind(user_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|r| r.get("prekey"));
 
         Ok(Some((identity_key, signed_prekey, one_time_prekey)))
     }
